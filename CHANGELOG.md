@@ -1,0 +1,282 @@
+# Changelog
+
+## [Current] — SYS_READ + keyboard input buffer
+
+### Added
+
+* `SYS_READ (5)` syscall — blocking keyboard input for ring-3 user programs (`syscall.c`)
+  * Reads up to `len` bytes into a user buffer, blocking (STI + HLT loop) until input arrives
+  * Echoes each character to the terminal as it is received
+  * Terminates early on newline (`\n`)
+  * Re-enables interrupts (`sti`) on entry and restores `cli` before returning — required
+    because the syscall gate is an interrupt gate (IF cleared on entry by CPU)
+
+* Keyboard input ring buffer — 256-byte circular buffer in `keyboard.c`
+  * `keyboard_set_process_mode(1)` redirects ASCII keystrokes into the buffer instead of
+    the shell; `keyboard_set_process_mode(0)` restores shell routing and clears the buffer
+  * `keyboard_buf_available()` / `keyboard_buf_pop()` — polled by `sys_read_impl`
+  * New public API declared in `keyboard.h`
+
+* `s_process_running` flag and `elf_process_running()` in `elf_loader.c`
+  * Set to 1 just before `paging_switch` + `iret` into ring 3
+  * Cleared to 0 as the first action in `elf_process_exit()`, before PD teardown
+
+* `SYS_READ` wired end-to-end: `uapi_syscall.h` (number) → `syscall.c` (impl) →
+  `user_syscall.h` (`sys_read` wrapper) → `user_lib.h` (`u_readline` helper)
+
+* `readline` user program — interactive test for `SYS_READ`
+  * Prompts for name and a free-form line, echoes both back with length
+  * Added to `USER_PROGS` in Makefile; lives in `src/user/readline.c`
+
+### Fixed
+
+* **IRQ1 permanently blocked during process execution** (`idt.c`)
+  * Root cause: `irq1_handler_main` sent the PIC EOI *after* `keyboard_handle_irq` returned.
+    When the Enter keypress that launched a process arrived via IRQ1, the call chain
+    `keyboard_handle_irq → shell_input_char → shell_execute → elf_run_named → iret`
+    never returned — so the EOI was never sent. The 8259 left IRQ1 in-service for the
+    entire lifetime of the process, blocking all further keyboard interrupts.
+  * Fix: send EOI at the **top** of `irq1_handler_main`, before calling `keyboard_handle_irq`,
+    so it is always delivered regardless of whether the handler returns.
+  * Note: `irq0_handler_main` (timer) was not affected because `timer_handle_irq` always
+    returns; the EOI ordering there is fine either way.
+
+---
+
+## [Previous] — Per-process kernel stacks + PMM frame leak fix
+
+### Added
+
+* Per-process kernel stacks (`elf_loader.c`)
+  * Each `runelf` allocates a dedicated 4 KB PMM frame for the kernel stack
+  * `tss_set_kernel_stack(frame + PAGE_SIZE)` called before `setjmp` — no window where TSS ESP0 is invalid
+  * Frame freed by `elf_process_exit()` via `pmm_free_frame(s_kernel_stack_frame)`
+  * Replaces the fragile `esp_now + 64` hack which pointed TSS ESP0 into the live C call frame
+
+### Fixed
+
+* ELF frame leak — user ELFs linked with `-Ttext` placed a PT_LOAD segment at `0x3FF000`
+  (PD index 0), which shares the kernel page table. `process_pd_destroy` skipped it as
+  a shared kernel entry, leaking one PMM frame per `runelf`. Fixed by switching all user
+  program link rules to `-Ttext-segment 0x400000`, which places the entire PT_LOAD segment
+  at `0x400000` (PD index 1 — the private ELF region).
+* `meminfo` now shows 1536/1536 frames free after any number of `runelf` invocations.
+
+---
+
+## [Previous] — Physical memory manager
+
+### Added
+- Added `runelf_test` user program for ELF regression testing
+- Added `args` user program for argv/argc validation
+- Introduced repeatable user-mode test workflow via `runelf`
+
+### Changed
+- Refactored Makefile to use `USER_PROGS` for user ELF builds and ramdisk inclusion
+- Ramdisk is now generated dynamically from user program list
+
+### Fixed
+- Fixed ELF loader PT_LOAD handling:
+  - Correctly handles non-page-aligned segments
+  - Properly copies `.data` (file-backed region)
+  - Preserves `.bss` zeroing behavior
+- Fixed `.data` initialization bug (was always zero)
+
+### Added
+
+* `pmm.h` / `pmm.c` — bitmap-based physical page frame allocator
+  * Manages physical frames in the range `0x200000`–`0x7FFFFF` (6 MB, 1536 frames)
+  * `pmm_init()` — initialises the bitmap; all frames start free (BSS is pre-zeroed)
+  * `pmm_alloc_frame()` — returns a 4 KB-aligned physical address; linear scan from a
+    search hint for O(n) worst case; returns 0 and prints a message on exhaustion
+  * `pmm_free_frame(addr)` — returns a frame to the pool; detects and warns on double-free
+  * `pmm_free_count()` — returns current free frame count; used by `meminfo`
+  * 192-byte bitmap in BSS — zero runtime cost, zeroed before `kernel_main` by
+    `kernel_entry.asm`
+
+* `terminal_put_uint(value)` / `terminal_put_hex(value)` added to `terminal.h` / `terminal.c`
+  * Shared decimal and hex integer printers available to all kernel modules
+  * Eliminates the multiple private `static void terminal_put_uint` copies that existed
+    in `shell.c`, `commands.c`, and `image_programs.c`
+
+* `memory_get_heap_top()` added to `memory.h` / `memory.c`
+  * Exposes the bump allocator's current pointer
+  * Used by the `meminfo` shell command
+
+* `meminfo` shell command
+  * Prints heap base, top, and used KB
+  * Prints PMM free/used/total frame counts and KB equivalents
+  * Validates that frames are being reclaimed after `runelf` (used for regression testing)
+
+### Changed
+
+* `process_pd_destroy()` in `paging.c` — no longer a stub
+  * Walks all PD entries that differ from the kernel PD (i.e., privately owned by the process)
+  * For each private PDE: frees every present PTE's physical frame via `pmm_free_frame()`
+  * For PD index 1 (the ELF region): also frees the page table itself via `pmm_free_frame()`
+  * Clears each freed PDE to prevent stale CR3 access after destruction
+
+* `paging_map_page()` in `paging.c` — page table allocator split by PD index
+  * PD index 1 (ELF region, `USER_PD_INDEX`): page table allocated from PMM so
+    `process_pd_destroy()` can free it
+  * All other PD indices (including index 767 for the user stack at `0xBFFFF000`):
+    page table allocated from `kmalloc_page()` — kernel-owned bookkeeping
+  * The physical frames that PTEs point to are always freed by `process_pd_destroy()`
+    regardless of which allocator provided the page table
+
+* `elf_loader.c` — user frame allocation moved from bump allocator to PMM
+  * ELF segment frames: `pmm_alloc_frame()` instead of `kmalloc_page()`
+  * User stack frame: `pmm_alloc_frame()` instead of `kmalloc_page()`
+  * These frames are now reclaimed by `process_pd_destroy()` on process exit
+
+* `kernel_main()` — `pmm_init()` called after `memory_init()`
+
+* Physical address space split formalised:
+
+  ```text
+  0x100000 – 0x1FFFFF   bump allocator (process PDs, page tables, parse buffers)
+  0x200000 – 0x7FFFFF   PMM (user ELF frames, user stack frames)
+  ```
+
+  The two ranges are disjoint — `pmm_alloc_frame()` and `kmalloc_page()` can never
+  return the same address.
+
+### Fixed
+
+* `process_pd_destroy()` was a stub — physical frames leaked on every `runelf` call.
+  The system would exhaust heap memory after repeated executions. Now fully implemented.
+
+* Private `static void terminal_put_uint` in `shell.c` and `image_programs.c` conflicted
+  with the new shared declaration in `terminal.h`. Removed from both files.
+
+---
+
+## [Previous] – Ring 3 user mode
+
+### Added
+
+* Ring-3 GDT segments
+  * User code descriptor (index 3, DPL=3, selector `0x1B`)
+  * User data descriptor (index 4, DPL=3, selector `0x23`)
+  * TSS descriptor (index 5, selector `0x28`) — 32-bit available TSS
+  * GDT grown from 3 to 6 entries
+* TSS (`tss_t`) in `gdt.c`
+  * `ss0 = 0x10` (kernel stack segment)
+  * `esp0` set per-process via `tss_set_kernel_stack()` before each `iret`
+  * `iomap_base = sizeof(tss)` — no I/O permission bitmap
+* `tss_set_kernel_stack(esp0)` — updates TSS ESP0; called before every ring-3 launch
+* `tss_flush(selector)` in `interrupts.asm` — executes `ltr ax`; called once from `gdt_init()`
+* Segment selector constants in `gdt.h`: `SEG_KERNEL_CODE`, `SEG_KERNEL_DATA`, `SEG_USER_CODE`, `SEG_USER_DATA`, `SEG_TSS`
+* `elf_process_exit()` in `elf_loader.c`
+  * Called by `sys_exit()` from inside the syscall handler
+  * Restores kernel CR3, destroys process PD, longjmps back to shell
+* Freestanding `setjmp`/`longjmp` (`src/kernel/setjmp.asm`, `src/kernel/setjmp.h`)
+  * Saves/restores `ebx`, `esi`, `edi`, `ebp`, `esp`, `eip`
+  * Used by `elf_run_image()` to save kernel context before `iret`, restored on `sys_exit`
+
+### Changed
+
+* `elf_run_image()` completely rewritten for ring-3 launch
+  * Saves kernel context with `setjmp` before `iret`
+  * Sets `TSS.ESP0` to top of dedicated PMM kernel stack frame before switching CR3
+  * Launches ELF via `iret` into ring 3 instead of direct function call
+  * Returns to shell via `longjmp` triggered by `sys_exit`
+* `elf_enter_ring3()` — new internal function
+  * Copies argv strings into user stack memory (ring-3 accessible)
+  * Builds argv pointer array on user stack
+  * Builds cdecl call frame (`argv`, `argc`, fake return address)
+  * Loads user data selector into DS/ES/FS/GS
+  * Pushes iret frame (SS, ESP, EFLAGS, CS, EIP) and executes `iret`
+* `sys_exit()` in `syscall.c` — no longer a stub; calls `elf_process_exit()`
+* `int 0x80` IDT gate changed from `IDT_FLAG_INT_GATE_KERNEL` (DPL=0) to `IDT_FLAG_INT_GATE_USER` (DPL=3)
+
+### Fixed
+
+* argv strings were in kernel heap memory — inaccessible to ring-3 code
+* Programs previously ran in ring 0 with no privilege enforcement
+
+---
+
+## Per-process page directories
+
+### Added
+
+* Per-process page directories (`process_pd_create`, `process_pd_destroy`)
+* `kmalloc_page()` in `memory.c`
+* `paging_switch(pd)`, `paging_get_kernel_pd()`
+* User stack allocation per process — one page at `USER_STACK_TOP - PAGE_SIZE`
+
+### Changed
+
+* `elf_loader.c` rewritten to use per-process page directories
+* All user ELFs linked at `0x400000`
+* `paging_map_page()` signature changed: first argument is now `u32* pd`
+
+### Fixed
+
+* User programs previously ran in the kernel's flat address space with no isolation
+
+---
+
+## Paging, ramdisk, LBA boot
+
+### Added
+
+* x86 paging — identity-maps first 8 MB
+* Ramdisk — flat ELF archive loaded from disk, no kernel rebuild to add programs
+* LBA extended disk reads in loader2 (INT 0x13 AH=0x42)
+* BSS zeroing in `kernel_entry.asm`
+* `mkramdisk` build tool (C)
+
+### Fixed
+
+* Triple fault on boot — BSS not zeroed before `paging_init()`
+* Disk read error — CHS limit, real-mode 1MB limit, sector alignment
+* "ramdisk: bad magic" — all three root causes resolved
+
+---
+
+## Syscalls, GDT stabilization, project reorganization
+
+### Added
+
+* Kernel-owned GDT
+* Syscall interface (`int 0x80`): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`
+* Userspace syscall wrapper (`user_syscall.h`)
+* ELF execution via syscalls
+* Structured project layout
+
+### Fixed
+
+* Triple fault after `sti` — kernel GDT not installed
+* Syscall breakage — `syscall_regs_t` mismatch with ISR stack layout
+
+---
+
+## ELF loader and shell stabilization
+
+### Added
+
+* ELF loader, `runelf` command
+* `runimg` execution layer
+* Line editor, command parser, command dispatcher
+
+---
+
+## [Initial] – Core system bring-up
+
+### Added
+
+* Bootloader (real → protected mode)
+* Kernel entry and initialization
+* IDT, PIC remap, timer (PIT), keyboard driver
+* VGA text output, terminal abstraction, basic shell
+
+---
+
+## Future Milestones
+
+* `SYS_READ` + keyboard input buffer for user programs
+* Process abstraction (`process_t` struct, process table)
+* Preemptive scheduler (timer IRQ triggers context switch)
+* Filesystem-backed ELF loading (FAT12 or custom FS via ATA PIO)

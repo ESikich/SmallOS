@@ -1,0 +1,17 @@
+# Build output
+build/
+
+# Generated files (just in case)
+*.o
+*.bin
+*.elf
+*.gen.asm
+
+# Editor
+.vscode/
+*.swp
+*.swo
+
+# OS junk
+.DS_Store
+Thumbs.db
