@@ -1,6 +1,6 @@
 # SmallOS
 
-SimpleOS is a BIOS-based x86 hobby operating system built with:
+SmallOS is a BIOS-based x86 hobby operating system built with:
 
 * `nasm`
 * `i686-elf-gcc`
