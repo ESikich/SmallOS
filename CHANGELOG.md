@@ -1,3 +1,43 @@
+## [Current] — shell promoted to a real kernel task (transitional execution model)
+
+### Added
+
+* `shell.c` / `shell.h`
+  * Added a small shell event queue and `shell_poll()`
+  * `shell_input_char()`, cursor movement, delete/backspace, and history navigation now enqueue work instead of mutating shell/editor state directly from IRQ1
+  * Added `shell_task_main()` so the shell can run as an explicit schedulable kernel task
+
+* `process.c` / `process.h`
+  * Added `process_create_kernel_task(name, entry)`
+  * Added `kernel_entry` to `process_t` and kernel-task bootstrap logic that seeds an initial `sched_esp` for first entry via `sched_switch()`
+
+* `scheduler.c` / `scheduler.h`
+  * Added `sched_start(first_proc)` to switch from the boot stack into the first runnable kernel task
+
+### Changed
+
+* `kernel.c`
+  * Boot now creates the shell as an explicit kernel task and enters it with `sched_start()` instead of calling `shell_init()` directly on the boot stack
+
+* `keyboard.c` / shell path
+  * IRQ1 now feeds the shell through queued events; shell editing logic runs in task context instead of interrupt context
+
+* `elf_loader.c` / `process.c`
+  * Kept `runelf` on the older foreground `setjmp`/`longjmp` path for this increment
+  * `process_get_current()` now prefers the explicit foreground process pointer while one is set, so `SYS_EXIT` tears down the user ELF process instead of the shell task
+  * `elf_process_exit()` now executes `sti` before `longjmp()` so the shell resumes with interrupts enabled and keyboard IRQs continue to fire
+
+### Notes
+
+This is an intentional hybrid stage:
+
+* the **shell** is scheduler-owned
+* **ELF user processes** are still foreground-only
+
+The next architectural step is to make `runelf` create real scheduler-owned user tasks and remove the remaining `setjmp`/`longjmp` foreground return path.
+
+---
+
 # Changelog
 
 ## [Current] — zero-allocation shell command parsing

@@ -8,6 +8,7 @@
 #include "parse.h"
 
 #define HISTORY_MAX 8
+#define SHELL_EVENT_QUEUE_SIZE 64
 
 static line_editor_t editor;
 
@@ -18,6 +19,29 @@ static char history[HISTORY_MAX][LINE_EDITOR_MAX];
 static int history_count = 0;
 static int history_index = -1;
 static char saved_current[LINE_EDITOR_MAX];
+
+typedef enum {
+    SHELL_EVENT_NONE = 0,
+    SHELL_EVENT_INPUT_CHAR,
+    SHELL_EVENT_BACKSPACE,
+    SHELL_EVENT_MOVE_LEFT,
+    SHELL_EVENT_MOVE_RIGHT,
+    SHELL_EVENT_MOVE_HOME,
+    SHELL_EVENT_MOVE_END,
+    SHELL_EVENT_DELETE,
+    SHELL_EVENT_HISTORY_UP,
+    SHELL_EVENT_HISTORY_DOWN,
+} shell_event_type_t;
+
+typedef struct {
+    shell_event_type_t type;
+    char c;
+} shell_event_t;
+
+static shell_event_t event_queue[SHELL_EVENT_QUEUE_SIZE];
+static int event_head = 0;
+static int event_tail = 0;
+static int event_count = 0;
 
 static int str_eq(const char* a, const char* b) {
     int i = 0;
@@ -48,6 +72,29 @@ static void str_copy(char* dst, const char* src, int max_len) {
         i++;
     }
     dst[i] = '\0';
+}
+
+static int shell_enqueue_event(shell_event_type_t type, char c) {
+    if (event_count >= SHELL_EVENT_QUEUE_SIZE) {
+        return 0;
+    }
+
+    event_queue[event_head].type = type;
+    event_queue[event_head].c = c;
+    event_head = (event_head + 1) % SHELL_EVENT_QUEUE_SIZE;
+    event_count++;
+    return 1;
+}
+
+static int shell_dequeue_event(shell_event_t* ev) {
+    if (event_count == 0) {
+        return 0;
+    }
+
+    *ev = event_queue[event_tail];
+    event_tail = (event_tail + 1) % SHELL_EVENT_QUEUE_SIZE;
+    event_count--;
+    return 1;
 }
 
 static void shell_render_current_line(void) {
@@ -117,88 +164,140 @@ void shell_init(void) {
     line_editor_init(&editor);
     history_count = 0;
     history_index = -1;
+    event_head = 0;
+    event_tail = 0;
+    event_count = 0;
     shell_start_prompt();
 }
 
+void shell_poll(void) {
+    shell_event_t ev;
+
+    while (shell_dequeue_event(&ev)) {
+        switch (ev.type) {
+            case SHELL_EVENT_INPUT_CHAR:
+                if (ev.c == '\n') {
+                    terminal_set_cursor(prompt_row, prompt_col + 2 + editor.len);
+                    terminal_putc('\n');
+
+                    shell_history_add(editor.buf);
+                    shell_execute(editor.buf);
+
+                    shell_start_prompt();
+                } else if (ev.c != '\t') {
+                    if (line_editor_insert(&editor, ev.c)) {
+                        shell_render_current_line();
+                    }
+                }
+                break;
+
+            case SHELL_EVENT_BACKSPACE:
+                if (line_editor_backspace(&editor)) {
+                    shell_render_current_line();
+                }
+                break;
+
+            case SHELL_EVENT_MOVE_LEFT:
+                line_editor_move_left(&editor);
+                terminal_set_cursor(prompt_row, prompt_col + 2 + editor.cursor);
+                break;
+
+            case SHELL_EVENT_MOVE_RIGHT:
+                line_editor_move_right(&editor);
+                terminal_set_cursor(prompt_row, prompt_col + 2 + editor.cursor);
+                break;
+
+            case SHELL_EVENT_MOVE_HOME:
+                line_editor_move_home(&editor);
+                terminal_set_cursor(prompt_row, prompt_col + 2 + editor.cursor);
+                break;
+
+            case SHELL_EVENT_MOVE_END:
+                line_editor_move_end(&editor);
+                terminal_set_cursor(prompt_row, prompt_col + 2 + editor.cursor);
+                break;
+
+            case SHELL_EVENT_DELETE:
+                if (line_editor_delete(&editor)) {
+                    shell_render_current_line();
+                }
+                break;
+
+            case SHELL_EVENT_HISTORY_UP:
+                if (history_count == 0) {
+                    break;
+                }
+
+                if (history_index == -1) {
+                    str_copy(saved_current, editor.buf, LINE_EDITOR_MAX);
+                    history_index = history_count - 1;
+                } else if (history_index > 0) {
+                    history_index--;
+                }
+
+                shell_set_editor_text(history[history_index]);
+                break;
+
+            case SHELL_EVENT_HISTORY_DOWN:
+                if (history_index == -1) {
+                    break;
+                }
+
+                if (history_index < history_count - 1) {
+                    history_index++;
+                    shell_set_editor_text(history[history_index]);
+                } else {
+                    history_index = -1;
+                    shell_set_editor_text(saved_current);
+                }
+                break;
+
+            default:
+                break;
+        }
+    }
+}
+
+void shell_task_main(void) {
+    shell_init();
+
+    for (;;) {
+        shell_poll();
+    }
+}
+
 void shell_input_char(char c) {
-    if (c == '\n') {
-        terminal_set_cursor(prompt_row, prompt_col + 2 + editor.len);
-        terminal_putc('\n');
-
-        shell_history_add(editor.buf);
-        shell_execute(editor.buf);
-
-        shell_start_prompt();
-        return;
-    }
-
-    if (c == '\t') {
-        return;
-    }
-
-    if (line_editor_insert(&editor, c)) {
-        shell_render_current_line();
-    }
+    shell_enqueue_event(SHELL_EVENT_INPUT_CHAR, c);
 }
 
 void shell_backspace(void) {
-    if (line_editor_backspace(&editor)) {
-        shell_render_current_line();
-    }
+    shell_enqueue_event(SHELL_EVENT_BACKSPACE, 0);
 }
 
 void shell_delete(void) {
-    if (line_editor_delete(&editor)) {
-        shell_render_current_line();
-    }
+    shell_enqueue_event(SHELL_EVENT_DELETE, 0);
 }
 
 void shell_move_left(void) {
-    line_editor_move_left(&editor);
-    terminal_set_cursor(prompt_row, prompt_col + 2 + editor.cursor);
+    shell_enqueue_event(SHELL_EVENT_MOVE_LEFT, 0);
 }
 
 void shell_move_right(void) {
-    line_editor_move_right(&editor);
-    terminal_set_cursor(prompt_row, prompt_col + 2 + editor.cursor);
+    shell_enqueue_event(SHELL_EVENT_MOVE_RIGHT, 0);
 }
 
 void shell_move_home(void) {
-    line_editor_move_home(&editor);
-    terminal_set_cursor(prompt_row, prompt_col + 2 + editor.cursor);
+    shell_enqueue_event(SHELL_EVENT_MOVE_HOME, 0);
 }
 
 void shell_move_end(void) {
-    line_editor_move_end(&editor);
-    terminal_set_cursor(prompt_row, prompt_col + 2 + editor.cursor);
+    shell_enqueue_event(SHELL_EVENT_MOVE_END, 0);
 }
 
 void shell_history_up(void) {
-    if (history_count == 0) {
-        return;
-    }
-
-    if (history_index == -1) {
-        str_copy(saved_current, editor.buf, LINE_EDITOR_MAX);
-        history_index = history_count - 1;
-    } else if (history_index > 0) {
-        history_index--;
-    }
-
-    shell_set_editor_text(history[history_index]);
+    shell_enqueue_event(SHELL_EVENT_HISTORY_UP, 0);
 }
 
 void shell_history_down(void) {
-    if (history_index == -1) {
-        return;
-    }
-
-    if (history_index < history_count - 1) {
-        history_index++;
-        shell_set_editor_text(history[history_index]);
-        return;
-    }
-
-    history_index = -1;
-    shell_set_editor_text(saved_current);
+    shell_enqueue_event(SHELL_EVENT_HISTORY_DOWN, 0);
 }

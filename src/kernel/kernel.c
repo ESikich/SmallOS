@@ -9,6 +9,7 @@
 #include "paging.h"
 #include "ramdisk.h"
 #include "scheduler.h"
+#include "process.h"
 
 #define RAMDISK_BASE 0x10000u
 
@@ -32,17 +33,38 @@ void kernel_main(void) {
     idt_init();
 
     /*
-     * Initialise the scheduler before enabling interrupts.  sched_init
-     * registers the shell context as slot 0 so that the first timer
-     * tick has a valid current-context pointer to save into.
+     * Initialise the scheduler before enabling interrupts.  This build
+     * starts scheduling by creating an explicit shell kernel task,
+     * rather than treating the boot stack as an implicit shell slot.
+     *
+     * We intentionally do not add an idle task yet.  The goal of this
+     * increment is only to prove that the shell itself can run as a
+     * schedulable kernel task while preserving keyboard behaviour.
      */
     sched_init();
 
-    __asm__ __volatile__("sti");
-
     ramdisk_init(RAMDISK_BASE);
 
-    shell_init();
+    process_t* shell_proc = process_create_kernel_task("shell", shell_task_main);
 
-    for (;;) {}
+    if (!shell_proc) {
+        terminal_puts("kernel: failed to create shell task\n");
+        for (;;) {
+            __asm__ __volatile__("cli; hlt");
+        }
+    }
+
+    if (!sched_enqueue(shell_proc)) {
+        terminal_puts("kernel: failed to enqueue shell task\n");
+        for (;;) {
+            __asm__ __volatile__("cli; hlt");
+        }
+    }
+
+    __asm__ __volatile__("sti");
+    sched_start(shell_proc);
+
+    for (;;) {
+        __asm__ __volatile__("hlt");
+    }
 }

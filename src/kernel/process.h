@@ -31,6 +31,11 @@ typedef enum {
 /*                        process is preempted; restored on switch-in   */
 /*   state              – lifecycle flag                                 */
 /*   name               – null-terminated name (truncated to 31 chars)  */
+/*                                                                      */
+/* Kernel tasks reuse the same structure:                               */
+/*   pd == 0            – sentinel meaning "run on kernel page dir"     */
+/*   kernel_entry       – C entry point used the first time the task    */
+/*                        is scheduled                                  */
 /* ------------------------------------------------------------------ */
 
 #define PROCESS_NAME_MAX 32
@@ -41,6 +46,7 @@ typedef struct {
     jmp_buf         exit_ctx;
     unsigned int    sched_esp;          /* scheduler: saved kernel ESP  */
     process_state_t state;
+    void          (*kernel_entry)(void);
     char            name[PROCESS_NAME_MAX];
 } process_t;
 
@@ -60,6 +66,17 @@ typedef struct {
 process_t* process_create(const char* name);
 
 /*
+ * process_create_kernel_task(name, entry)
+ *
+ * Allocate a kernel task with its own dedicated kernel stack.
+ * The task starts executing at entry() the first time the scheduler
+ * switches to it.
+ *
+ * Returns a pointer to the new task, or 0 on allocation failure.
+ */
+process_t* process_create_kernel_task(const char* name, void (*entry)(void));
+
+/*
  * process_destroy(proc)
  *
  * Free all resources held by the process:
@@ -75,9 +92,10 @@ void process_destroy(process_t* proc);
  * process_set_current(proc)
  * process_get_current()
  *
- * Track the currently executing process.  Only one process runs at a
- * time (no scheduler yet).  process_get_current() returns 0 when the
- * kernel is running outside any user process.
+ * Track the currently executing process.  Existing ELF launch / exit
+ * code still uses this directly.  Kernel tasks are scheduled through
+ * scheduler.c, so process_get_current() may also be backed by the
+ * scheduler when one is active.
  */
 void       process_set_current(process_t* proc);
 process_t* process_get_current(void);

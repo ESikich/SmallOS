@@ -7,7 +7,7 @@ SimpleOS is a BIOS-based x86 hobby operating system built with:
 * `i686-elf-ld`
 * `QEMU`
 
-It boots from a raw disk image, switches to 32-bit protected mode, enables paging, loads a ramdisk from disk, and runs a C kernel with a terminal shell, ring-3 ELF program execution, and a preemptive round-robin scheduler.
+It boots from a raw disk image, switches to 32-bit protected mode, enables paging, loads a ramdisk from disk, and runs a C kernel with a terminal shell, ring-3 ELF program execution, and a preemptive round-robin scheduler. The current tree is in a transitional state: the shell now runs as a real kernel task, while `runelf` still uses the older foreground `setjmp`/`longjmp` exit path.
 
 ---
 
@@ -21,6 +21,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * IDT with PIT timer (IRQ0), keyboard (IRQ1), and syscalls (INT 0x80)
 * VGA text-mode display and terminal abstraction
 * Shell with line editing, history, and command parsing
+* Shell input processing decoupled from IRQ1 via a small event queue
 * Bump allocator (`kmalloc`) for permanent kernel structures
 * Physical memory manager (`pmm`) — bitmap allocator for reclaimable frames
   * Manages `0x200000`–`0x7FFFFF` (6 MB, 1536 frames)
@@ -32,9 +33,10 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Ring 3 user mode — hardware-enforced privilege separation
 * Syscall layer via `int 0x80` (DPL=3 gate): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`, `SYS_READ`
 * `sys_exit()` returns cleanly to the shell via `setjmp`/`longjmp`
+* Shell now runs as an explicit kernel task scheduled by `scheduler.c`
 * Per-process kernel stacks — dedicated PMM frame per process; TSS ESP0 set from it; freed on exit
 * `SYS_READ` — blocking keyboard input for user programs; keyboard IRQ routed to ring buffer while process is running
-* **Preemptive round-robin scheduler** — timer IRQ (100 Hz) context-switches between the shell and up to 7 user processes; 100 ms quantum; assembly `sched_switch` saves/restores kernel stacks and CR3
+* **Preemptive round-robin scheduler** — timer IRQ (100 Hz) context-switches between schedulable kernel contexts; current code boots into an explicit shell task and keeps `runelf` on a foreground path until user processes are converted to full scheduler-owned tasks
 
 ---
 
@@ -42,18 +44,17 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 
 ```text
 .
-├── docs/           documentation
-├── src/
-│   ├── boot/       boot.asm, loader2.asm, kernel_entry.asm
-│   ├── kernel/     kernel.c, gdt, idt, paging, memory, pmm, process,
-│   │               scheduler, sched_switch.asm, syscall, timer, system, setjmp
-│   ├── drivers/    keyboard, screen, terminal
-│   ├── shell/      shell, line_editor, parse, commands
-│   ├── exec/       elf_loader, exec, images, programs
-│   └── user/       hello.c, ticks.c, args.c, readline.c, user_lib.h
-├── tools/
-│   └── mkramdisk.c
-├── build/
+├── boot.asm
+├── loader2.asm
+├── kernel_entry.asm
+├── kernel.c
+├── gdt.* / idt.* / paging.* / memory.* / pmm.*
+├── process.* / scheduler.* / sched_switch.asm
+├── syscall.* / timer.* / keyboard.* / terminal.*
+├── shell.* / line_editor.* / parse.* / commands.*
+├── elf_loader.* / exec.* / image_programs.c
+├── hello.c / ticks.c / args.c / readline.c / user_lib.h
+├── docs (*.md in this archive root)
 ├── Makefile
 ├── linker.ld
 ```
@@ -106,23 +107,22 @@ kernel_main()
  → memory_init()         bump allocator at 0x100000
  → pmm_init()            bitmap allocator at 0x200000
  → keyboard/timer/idt    drivers and interrupt table
- → sched_init()          register shell as slot 0, wire tss_esp0_ptr
- → sti
+ → sched_init()          initialise runnable task table
  → ramdisk_init()        validate ramdisk at 0x10000
- → shell_init()          interactive shell
+ → create shell task     explicit kernel task with its own stack
+ → sti
+ → sched_start(shell)    switch from boot stack into shell task
 
 runelf hello
  → process_create()      allocate process_t from PMM
  → process_pd_create()   fresh page directory (PMM), kernel entries shared
  → map ELF + stack       pmm_alloc_frame() per page
  → alloc kernel stack    tss_set_kernel_stack(frame + PAGE_SIZE)
- → sched_enqueue(proc)   add to scheduler run queue
  → setjmp()              save kernel context for sys_exit return
  → paging_switch(pd)     load process CR3
  → iret into ring 3
- → [program runs; timer preempts every ~100 ms]
+ → [program runs in foreground; timer still ticks]
  → sys_exit() → elf_process_exit()
- → sched_dequeue(proc)
  → paging_switch(kpd)
  → process_destroy()     free all PMM frames
  → longjmp()             return to shell
@@ -139,7 +139,7 @@ runelf hello
 0x00006000   kernel .bss start (page tables + PMM bitmap)
 0x0000A008   kernel .bss end (approx)
 0x00010000   ramdisk (permanent)
-0x00090000   kernel stack top (shell context)
+0x00090000   legacy static kernel stack top used by foreground runelf exit path
 0x00100000   bump allocator — permanent kernel structures
 0x00200000   PMM — reclaimable frames
                process_t structs, process PDs, ELF frames,
@@ -154,6 +154,8 @@ runelf hello
 ## Scheduler
 
 Round-robin, preemptive, timer-driven at 100 Hz with a 10-tick (100 ms) quantum.
+
+Today, the scheduler owns kernel tasks such as the shell. User ELF programs are still in transition: they run through the older foreground launch/exit path and are not yet enqueued as scheduler-owned tasks.
 
 ```text
 irq0_stub       → pushes full register frame + ESP

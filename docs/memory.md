@@ -16,7 +16,7 @@ This document describes the physical memory layout, allocators, and paging archi
 0x00090000   kernel stack top (grows downward from here)
 
 0x00100000   bump allocator base — permanent kernel structures
-               kmalloc()      — argv arrays, command-line parse buffers
+               kmalloc()      — long-lived kernel-owned data only
              grows upward to 0x1FFFFF
 
 0x00200000   PMM base — reclaimable frames
@@ -61,7 +61,9 @@ void* kmalloc_page(void);               // allocate one 4096-byte page-aligned b
 unsigned int memory_get_heap_top(void); // current bump pointer (for meminfo)
 ```
 
-No free. Suitable for structures that live for the lifetime of the kernel: parse buffers and other permanent kernel-owned data. `memory_get_heap_top()` is used by `meminfo` to report heap usage.
+No free. Suitable for structures that live for the lifetime of the kernel: long-lived kernel-owned data and other permanent structures. `memory_get_heap_top()` is used by `meminfo` to report heap usage.
+
+Shell command parsing is intentionally **not** a bump-allocation use case anymore. `parse_command()` tokenizes the mutable input buffer in place and stores pointers in a fixed-size `argv[MAX_ARGS]` array, so repeated shell commands do not grow `heap used`.
 
 ---
 
@@ -209,9 +211,9 @@ after kernel  ramdisk.rd
 
 ## Current Limitations
 
-* No scheduler — shell blocks during program execution
 * ELF programs linked at fixed address 0x400000 — no PIE/relocation
 * No filesystem — programs must be in ramdisk at build time
+* No `SYS_YIELD` / `SYS_EXEC` yet
 * Bump allocator has no free — permanent kernel structures only
 
 ---
@@ -220,8 +222,8 @@ after kernel  ramdisk.rd
 
 Next steps:
 
-* Preemptive scheduler — timer IRQ context switch using per-process kernel stacks and `process_t`
 * Filesystem-backed storage (FAT12 or custom FS via ATA PIO)
+* `SYS_YIELD` / `SYS_EXEC` syscall work on top of the existing scheduler
 
 ---
 

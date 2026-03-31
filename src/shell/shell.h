@@ -2,6 +2,8 @@
 #define SHELL_H
 
 void shell_init(void);
+void shell_poll(void);
+void shell_task_main(void);
 void shell_input_char(char c);
 void shell_backspace(void);
 

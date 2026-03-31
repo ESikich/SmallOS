@@ -24,10 +24,11 @@ kernel_main()
   memory_init()     ← bump allocator base at 0x100000
   pmm_init()        ← bitmap allocator at 0x200000–0x7FFFFF
   keyboard/timer/idt
-  sched_init()      ← register shell as slot 0, wire tss_esp0_ptr
-  sti
+  sched_init()      ← initialise runnable task table, wire tss_esp0_ptr
   ramdisk_init()
-  shell_init()
+  create shell task ← explicit kernel task with dedicated stack
+  sti
+  sched_start()     ← switch from boot stack into shell task
 ```
 
 ---
@@ -85,12 +86,14 @@ Inside `kernel_main()`:
 4. `memory_init(0x100000)` — bump allocator starts at 1 MB
 5. `pmm_init()` — bitmap allocator covers 0x200000–0x7FFFFF; all frames start free
 6. `keyboard_init()`, `timer_init(100)`, `idt_init()` — drivers and interrupt table
-7. `sched_init()` — register shell context as slot 0; wire TSS ESP0 pointer for the switch helper
-8. `sti` — enable interrupts
-9. `ramdisk_init(0x10000)` — validate ramdisk magic, store pointer
-10. `shell_init()` — start interactive shell
+7. `sched_init()` — initialise the scheduler data structures and wire the TSS ESP0 pointer for the switch helper
+8. `ramdisk_init(0x10000)` — validate ramdisk magic, store pointer
+9. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
+10. `sched_enqueue(shell_proc)` — make the shell runnable
+11. `sti` — enable interrupts
+12. `sched_start(shell_proc)` — switch from the boot stack into the shell task
 
-`sched_init()` must be called before `sti` so that the first timer tick has a valid current-slot pointer.
+`sched_init()` must still be called before `sti`, and `sched_start()` must happen only after the first runnable task has been created.
 
 ---
 
@@ -111,7 +114,7 @@ Selector values for ring-3 entries include RPL=3 in the low two bits (`0x18|3=0x
 
 # Process Abstraction
 
-Each `runelf` invocation creates a `process_t` struct allocated from a single PMM frame:
+Each `runelf` invocation still creates a `process_t` struct allocated from a single PMM frame. The same structure is now also used for kernel tasks such as the shell:
 
 ```c
 typedef struct {
@@ -198,7 +201,7 @@ sys_exit:
 0x00010000   ramdisk (permanent)
 0x00090000   kernel stack top (grows downward; shell context)
 0x00100000   bump allocator base — permanent kernel structures
-               kmalloc()      — argv arrays, parse buffers
+               kmalloc()      — long-lived kernel-owned data only
 0x00200000   PMM base — reclaimable frames
                pmm_alloc_frame() — process_t structs, process PDs,
                                    ELF segment frames, user stack frames,

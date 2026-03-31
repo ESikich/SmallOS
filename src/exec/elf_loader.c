@@ -84,8 +84,11 @@ void elf_process_exit(void) {
     proc->state = PROCESS_STATE_EXITED;
     keyboard_set_process_mode(0);
 
-    /* Remove from scheduler before freeing resources. */
-    sched_dequeue(proc);
+    /*
+     * This increment still runs ELF programs in the old foreground model.
+     * The shell is now a kernel task, but user ELF processes are not yet
+     * scheduler-owned tasks, so there is nothing to dequeue here.
+     */
 
     /* Restore kernel CR3 before destroying the process PD. */
     paging_switch(paging_get_kernel_pd());
@@ -98,6 +101,16 @@ void elf_process_exit(void) {
 
     process_destroy(proc);
     process_set_current(0);
+
+    /*
+     * sys_exit reaches us through the syscall interrupt gate, which
+     * clears IF on entry.  We return to the shell with longjmp()
+     * instead of unwinding back through iretd, so EFLAGS is not
+     * restored automatically.  Re-enable interrupts explicitly before
+     * resuming the shell, otherwise keyboard IRQs remain masked off
+     * and the shell appears dead after the program exits.
+     */
+    __asm__ __volatile__("sti");
 
     longjmp(*ctx, 1);
 }
@@ -184,7 +197,16 @@ int elf_run_image(const unsigned char* image, int argc, char** argv) {
     process_set_current(proc);
     proc->state = PROCESS_STATE_RUNNING;
 
-    sched_enqueue(proc);
+    /*
+     * Do not enqueue the ELF process yet.
+     *
+     * The shell is now a real kernel task, but this loader still enters
+     * ring 3 through the old foreground iret/longjmp path rather than
+     * through a scheduler-owned task bootstrap.  Enqueuing the process
+     * here lets IRQ0 think it can context-switch to/from a task whose
+     * scheduler state has not been initialised correctly, which corrupts
+     * control flow and currently reboots the system.
+     */
 
     if (setjmp(proc->exit_ctx) != 0) {
         return 1;

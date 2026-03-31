@@ -52,9 +52,10 @@ int sys_write(const char* buf, uint32_t len);
 void sys_exit(int code);
 ```
 
-* Terminates program execution
-* Currently just returns control to caller
-* Future: process teardown
+* Terminates the current ring-3 process
+* Does not return to the caller
+* Control returns to the shell via `elf_process_exit()` → `longjmp()` after foreground process teardown
+* `elf_process_exit()` explicitly executes `sti` before `longjmp()` because `SYS_EXIT` entered through an interrupt gate and does not return through `iretd`
 
 ---
 
@@ -195,7 +196,7 @@ u_readline(...)   // sys_read + null-terminate + strip newline
 
 * Programs run in **ring 3** — hardware-enforced privilege separation
 * Kernel trusts user pointers (no copy-from-user validation yet)
-* `SYS_READ` blocks with STI+HLT — no scheduler, single process at a time
+* `SYS_READ` blocks with STI+HLT in the calling process while timer interrupts remain active
 * EOI for IRQ1 is sent at the **top** of `irq1_handler_main` (before calling
   `keyboard_handle_irq`) so it is always delivered even when the handler
   launches a process and never returns through the normal path

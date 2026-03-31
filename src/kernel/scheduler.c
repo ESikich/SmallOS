@@ -23,19 +23,28 @@ extern void sched_switch(unsigned int* save_esp,
 /* Process table                                                        */
 /* ------------------------------------------------------------------ */
 
-static process_t  s_shell_proc;
-static process_t* s_table[SCHED_MAX_PROCS];
-static int        s_count       = 0;
-static int        s_current_idx = 0;
-static unsigned int s_tick_count = 0;
+static process_t*   s_table[SCHED_MAX_PROCS];
+static int          s_count       = 0;
+static int          s_current_idx = -1;
+static unsigned int s_tick_count  = 0;
+static unsigned int s_boot_esp    = 0;
 
 /* ------------------------------------------------------------------ */
 /* Internal helpers                                                     */
 /* ------------------------------------------------------------------ */
 
-static void proc_zero_sched(process_t* p) {
-    unsigned char* b = (unsigned char*)p;
-    for (unsigned int i = 0; i < sizeof(process_t); i++) b[i] = 0;
+static unsigned int sched_proc_cr3(process_t* proc) {
+    if (!proc || proc->pd == 0) {
+        return (unsigned int)paging_get_kernel_pd();
+    }
+    return (unsigned int)proc->pd;
+}
+
+static unsigned int sched_proc_esp0(process_t* proc) {
+    if (!proc || proc->kernel_stack_frame == 0) {
+        return 0x90000u;
+    }
+    return proc->kernel_stack_frame + 4096u;
 }
 
 /* ------------------------------------------------------------------ */
@@ -43,24 +52,14 @@ static void proc_zero_sched(process_t* p) {
 /* ------------------------------------------------------------------ */
 
 void sched_init(void) {
-    proc_zero_sched(&s_shell_proc);
-    s_shell_proc.state = PROCESS_STATE_RUNNING;
-    s_shell_proc.name[0] = 's';
-    s_shell_proc.name[1] = 'h';
-    s_shell_proc.name[2] = 'e';
-    s_shell_proc.name[3] = 'l';
-    s_shell_proc.name[4] = 'l';
-    s_shell_proc.name[5] = '\0';
-    /*
-     * pd == 0 is the sentinel meaning "use kernel PD".
-     * sched_esp starts at 0 and is written the first time the timer
-     * fires while the shell is running.
-     */
-    s_shell_proc.pd = 0;
+    for (int i = 0; i < SCHED_MAX_PROCS; i++) {
+        s_table[i] = 0;
+    }
 
-    s_table[0] = &s_shell_proc;
-    s_count = 1;
-    s_current_idx = 0;
+    s_count = 0;
+    s_current_idx = -1;
+    s_tick_count = 0;
+    s_boot_esp = 0;
 
     tss_esp0_ptr = tss_get_esp0_ptr();
 }
@@ -80,7 +79,7 @@ void sched_dequeue(process_t* proc) {
     if (!proc) return;
 
     int idx = -1;
-    for (int i = 1; i < s_count; i++) {
+    for (int i = 0; i < s_count; i++) {
         if (s_table[i] == proc) { idx = i; break; }
     }
     if (idx < 0) return;
@@ -92,9 +91,42 @@ void sched_dequeue(process_t* proc) {
     s_table[s_count - 1] = 0;
     s_count--;
 
-    /* Reset to shell slot. elf_process_exit will longjmp back there. */
-    s_current_idx = 0;
+    if (s_count == 0) {
+        s_current_idx = -1;
+    } else if (s_current_idx >= s_count) {
+        s_current_idx = 0;
+    }
+
     s_tick_count  = 0;
+}
+
+void sched_start(process_t* first_proc) {
+    if (!first_proc) {
+        terminal_puts("sched: no first process\n");
+        return;
+    }
+
+    for (int i = 0; i < s_count; i++) {
+        if (s_table[i] == first_proc) {
+            s_current_idx = i;
+            break;
+        }
+    }
+
+    if (s_current_idx < 0) {
+        terminal_puts("sched: first process not enqueued\n");
+        return;
+    }
+
+    sched_switch(&s_boot_esp,
+                 first_proc->sched_esp,
+                 sched_proc_cr3(first_proc),
+                 sched_proc_esp0(first_proc));
+
+    terminal_puts("sched: unexpected return from sched_start\n");
+    for (;;) {
+        __asm__ __volatile__("cli; hlt");
+    }
 }
 
 void sched_tick(unsigned int esp) {
@@ -102,45 +134,23 @@ void sched_tick(unsigned int esp) {
     if (s_tick_count < SCHED_TICKS_PER_QUANTUM) return;
     s_tick_count = 0;
 
-    if (s_count <= 1) return;   /* only the shell — nothing to switch to */
+    if (s_count <= 1 || s_current_idx < 0) return;
 
     /*
-     * Save the current context's kernel ESP.  This is the ESP value
-     * passed in from irq0_stub — it points at the register frame on
-     * the kernel stack just below irq0_handler_main's own frame.
-     * sched_switch will also save the ESP inside itself (one level
-     * deeper), but we need the *irq0_stub* frame level for the iretd
-     * on the way back.  We therefore pass &cur->sched_esp to
-     * sched_switch as the save pointer so that sched_switch overwrites
-     * it with the ESP at call-return depth, giving us the right level
-     * to resume from.
-     *
-     * For context: the resume path is:
-     *   sched_switch ret -> sched_tick -> irq0_handler_main -> irq0_stub iretd
-     * which is exactly what we want.
+     * Save the current ESP so this task can resume at exactly the point
+     * where IRQ0 interrupted it.
      */
-    s_table[s_current_idx]->sched_esp = esp; /* record for debugging / future use */
+    s_table[s_current_idx]->sched_esp = esp;
 
-    /* Pick next runnable slot. */
     int next = (s_current_idx + 1) % s_count;
     int tries = 0;
     while (tries < s_count) {
         process_t* candidate = s_table[next];
+
         /*
-         * A slot is switchable if:
-         *   - state == RUNNING
-         *   - sched_esp != 0  (has been suspended at least once, so its
-         *                      kernel stack has a valid resume address)
-         *
-         * The shell slot (pd==0) satisfies sched_esp!=0 after the first
-         * time it was preempted.  A brand-new user process has sched_esp==0
-         * until it has been preempted for the first time; skip it on the
-         * very first tick to avoid jumping to ESP=0.
-         *
-         * Exception: if the candidate is the shell and it has never been
-         * preempted (sched_esp==0), we still cannot switch to it — but
-         * this should only happen before the first user process ever runs,
-         * at which point s_count==1 and we returned above.
+         * A runnable task must have a valid saved kernel ESP.  Newly
+         * created kernel tasks are seeded with one by process.c; user
+         * processes get theirs the first time they enter the scheduler.
          */
         if (candidate->state == PROCESS_STATE_RUNNING &&
             candidate->sched_esp != 0) {
@@ -158,18 +168,6 @@ void sched_tick(unsigned int esp) {
     process_t* cur = s_table[prev];
     process_t* nxt = s_table[next];
 
-    unsigned int next_cr3;
-    unsigned int next_esp0;
-
-    if (nxt->pd == 0) {
-        /* Shell slot — kernel PD. */
-        next_cr3  = (unsigned int)paging_get_kernel_pd();
-        next_esp0 = 0x90000;
-    } else {
-        next_cr3  = (unsigned int)nxt->pd;
-        next_esp0 = nxt->kernel_stack_frame + 4096u;
-    }
-
     /*
      * sched_switch(&cur->sched_esp, nxt->sched_esp, next_cr3, next_esp0)
      *
@@ -183,8 +181,8 @@ void sched_tick(unsigned int esp) {
      */
     sched_switch(&cur->sched_esp,
                  nxt->sched_esp,
-                 next_cr3,
-                 next_esp0);
+                 sched_proc_cr3(nxt),
+                 sched_proc_esp0(nxt));
 
     /*
      * Execution resumes here when this context is switched back to.
@@ -193,5 +191,8 @@ void sched_tick(unsigned int esp) {
 }
 
 process_t* sched_current(void) {
+    if (s_current_idx < 0 || s_current_idx >= s_count) {
+        return 0;
+    }
     return s_table[s_current_idx];
 }
