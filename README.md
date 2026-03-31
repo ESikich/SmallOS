@@ -44,17 +44,18 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 
 ```text
 .
-├── boot.asm
-├── loader2.asm
-├── kernel_entry.asm
-├── kernel.c
-├── gdt.* / idt.* / paging.* / memory.* / pmm.*
-├── process.* / scheduler.* / sched_switch.asm
-├── syscall.* / timer.* / keyboard.* / terminal.*
-├── shell.* / line_editor.* / parse.* / commands.*
-├── elf_loader.* / exec.* / image_programs.c
-├── hello.c / ticks.c / args.c / readline.c / user_lib.h
-├── docs (*.md in this archive root)
+├── docs/           documentation
+├── src/
+│   ├── boot/       boot.asm, loader2.asm, kernel_entry.asm
+│   ├── kernel/     kernel.c, gdt, idt, paging, memory, pmm, process,
+│   │               scheduler, sched_switch.asm, syscall, timer, system, setjmp
+│   ├── drivers/    keyboard, screen, terminal
+│   ├── shell/      shell, line_editor, parse, commands
+│   ├── exec/       elf_loader, exec, images, programs
+│   └── user/       hello.c, ticks.c, args.c, readline.c, user_lib.h
+├── tools/
+│   └── mkramdisk.c
+├── build/
 ├── Makefile
 ├── linker.ld
 ```
