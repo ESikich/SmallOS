@@ -5,9 +5,9 @@
 
 typedef struct {
     int argc;
-    char** argv;
+    char* argv[MAX_ARGS];
 } command_t;
 
-command_t parse_command(const char* input);
+command_t parse_command(char* input);
 
 #endif

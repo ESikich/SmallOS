@@ -1,46 +1,27 @@
 #include "parse.h"
-#include "memory.h"
 
-static int is_space(char c) {
-    return c == ' ' || c == '\t';
-}
-
-command_t parse_command(const char* input) {
+command_t parse_command(char* input) {
     command_t cmd;
     cmd.argc = 0;
-    cmd.argv = (char**)kmalloc(sizeof(char*) * MAX_ARGS);
 
-    int i = 0;
+    // Skip leading spaces
+    while (*input == ' ') input++;
 
-    while (input[i] != '\0') {
-        while (is_space(input[i])) {
-            i++;
+    while (*input && cmd.argc < MAX_ARGS) {
+        cmd.argv[cmd.argc++] = input;
+
+        while (*input && *input != ' ') {
+            input++;
         }
 
-        if (input[i] == '\0') {
+        if (*input == '\0') {
             break;
         }
 
-        if (cmd.argc >= MAX_ARGS) {
-            break;
-        }
+        *input = '\0';
+        input++;
 
-        int start = i;
-
-        while (input[i] != '\0' && !is_space(input[i])) {
-            i++;
-        }
-
-        int len = i - start;
-
-        char* arg = (char*)kmalloc(len + 1);
-
-        for (int j = 0; j < len; j++) {
-            arg[j] = input[start + j];
-        }
-        arg[len] = '\0';
-
-        cmd.argv[cmd.argc++] = arg;
+        while (*input == ' ') input++;
     }
 
     return cmd;

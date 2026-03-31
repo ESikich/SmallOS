@@ -87,7 +87,7 @@ kmalloc / kmalloc_page   0x100000 – 0x1FFFFF   permanent (no free)
 pmm_alloc_frame          0x200000 – 0x7FFFFF   reclaimable on process exit
 ```
 
-`kmalloc` / `kmalloc_page` are for permanent kernel structures only, such as argv buffers and other bump-allocator data.
+`kmalloc` / `kmalloc_page` are for permanent kernel structures only. Do not use them for short-lived shell parsing state or other per-command allocations.
 
 `pmm_alloc_frame` is for everything reclaimed on exit: `process_t` structs, process page directories, ELF frames, stack frames, all process-private page tables, and kernel stack frames.
 
@@ -98,6 +98,16 @@ meminfo              ← note free frame count
 runelf hello
 meminfo              ← count must be unchanged
 ```
+
+### Shell parser rule
+
+`parse_command()` must not allocate from the bump heap. It tokenizes the mutable shell input buffer in place, stores pointers in a fixed-size `argv[MAX_ARGS]` array, and must not call `kmalloc()`.
+
+Why:
+
+* Per-command `kmalloc()` use leaks permanently because the bump allocator has no free path
+* Repeated shell commands would otherwise increase `heap used` even when PMM accounting is correct
+* Zero-allocation parsing keeps shell memory usage stable and makes `meminfo` output trustworthy during repeated `runelf` tests
 
 ---
 

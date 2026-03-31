@@ -1,5 +1,23 @@
 # Changelog
 
+## [Current] — zero-allocation shell command parsing
+
+### Changed
+
+* `parse.h` / `parse.c`
+  * `command_t` now stores arguments in a fixed-size `argv[MAX_ARGS]` array instead of a heap-allocated `char**`
+  * `parse_command()` now tokenizes the mutable input buffer in place instead of allocating argv storage and token copies
+
+### Fixed
+
+* **Per-command shell heap leak** — repeated commands such as `runelf hello` no longer grow `heap used` through parser-side `kmalloc()` allocations
+
+### Documentation
+
+* Updated `development.md` to document the zero-allocation parsing rule and clarify that bump-allocator memory is for permanent kernel structures only
+
+---
+
 ## [Current] — process-private page tables moved to PMM
 
 ### Changed
