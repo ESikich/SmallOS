@@ -85,8 +85,8 @@ void elf_process_exit(void) {
     keyboard_set_process_mode(0);
 
     /*
-     * This increment still runs ELF programs in the old foreground model.
-     * The shell is now a kernel task, but user ELF processes are not yet
+     * ELF processes still use the foreground setjmp/longjmp exit path.
+     * The shell runs as a kernel task, but user ELF processes are not yet
      * scheduler-owned tasks, so there is nothing to dequeue here.
      */
 
