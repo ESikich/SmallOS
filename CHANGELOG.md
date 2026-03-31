@@ -1,6 +1,55 @@
 # Changelog
 
-## [Current] — process_t abstraction + PD heap leak closed
+## [Current] — Preemptive round-robin scheduler
+
+### Added
+
+* `src/kernel/scheduler.h` / `src/kernel/scheduler.c` — round-robin scheduler
+  * Fixed-size process table (`SCHED_MAX_PROCS = 8`); slot 0 is always the shell/idle context
+  * `sched_init()` — registers the shell as slot 0, wires `tss_esp0_ptr` for the assembly switch helper; must be called before `sti`
+  * `sched_enqueue(proc)` — adds a process to the run queue; called by `elf_run_image` just before `iret`
+  * `sched_dequeue(proc)` — removes a process and resets to slot 0; called by `elf_process_exit` before `longjmp`
+  * `sched_tick(esp)` — called from `irq0_handler_main` on every timer tick; after `SCHED_TICKS_PER_QUANTUM` ticks (10 = 100 ms at 100 Hz) picks the next runnable slot and calls `sched_switch`
+  * `sched_current()` — returns the active `process_t*`
+  * Guard: slots with `sched_esp == 0` are skipped — a brand-new process is not scheduled until its kernel stack has a valid resume point from its first preemption
+
+* `src/kernel/sched_switch.asm` — low-level context switch
+  * `sched_switch(save_esp, next_esp, next_cr3, next_esp0)` — loads all four arguments into registers before modifying ESP, then: writes current ESP to `*save_esp`; updates `tss.esp0` via `tss_esp0_ptr`; loads `next_cr3` into CR3 (flushing TLB); sets ESP to `next_esp`; `ret` (which pops the incoming context's return address and resumes it)
+  * Resume path: `sched_switch ret` → `sched_tick` → `irq0_handler_main` → `irq0_stub iretd` → ring 3
+
+* `src/kernel/process.h` — added `sched_esp` field to `process_t`
+  * Holds the kernel ESP saved at the point of preemption; `0` means the process has never been preempted
+
+* `src/kernel/gdt.h` / `src/kernel/gdt.c` — added `tss_get_esp0_ptr()`
+  * Returns `&tss.esp0` so `sched_switch.asm` can update it directly without knowing the TSS struct layout
+
+### Changed
+
+* `src/kernel/interrupts.asm` — `irq0_stub` now passes ESP to C (identical pattern to `isr128_stub`)
+  * `push esp` before `call irq0_handler_main`; `add esp, 4` after
+  * The pushed ESP value points at the full register frame on the kernel stack — the scheduler saves this as the resume point
+
+* `src/kernel/idt.h` / `src/kernel/idt.c` — `irq0_handler_main` signature changed to `void irq0_handler_main(unsigned int esp)`
+  * Sends PIC EOI **before** calling `sched_tick` — critical: if `sched_switch` lands on a different context and `irq0_handler_main` never returns through the normal path, the PIC must already be unmasked so future timer ticks fire on the new context
+  * `irq0_handler_main` calls `timer_handle_irq()`, sends EOI, then `sched_tick(esp)`
+
+* `src/kernel/kernel.c` — calls `sched_init()` after `idt_init()` and before `sti`
+
+* `src/exec/elf_loader.c`
+  * `elf_run_image()` calls `sched_enqueue(proc)` after setting `proc->state = RUNNING` and before `setjmp`/`iret`
+  * `elf_process_exit()` calls `sched_dequeue(proc)` before `paging_switch` and `process_destroy`; also restores TSS ESP0 to `0x90000` (static kernel stack top for the shell context)
+
+* `Makefile` — added `sched_switch.o` (asm) and `scheduler.o` (C) to `KERNEL_OBJS` with correct header dependencies
+
+### Design notes
+
+The shell context (slot 0) uses a static `process_t s_shell_proc` with `pd = 0` as a sentinel meaning "kernel PD". Its `sched_esp` is written the first time the timer preempts the shell. Switching back to the shell from a user process goes through `sched_switch` in the normal round-robin path; process *exit* still uses `longjmp` as before, bypassing `sched_switch` entirely.
+
+There is no `sched_yield` syscall yet — processes run until preempted by the timer or until they call `sys_exit`.
+
+---
+
+## [Previous] — process_t abstraction + PD heap leak closed
 
 ### Added
 

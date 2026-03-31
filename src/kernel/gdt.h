@@ -30,4 +30,16 @@ void gdt_init(void);
  */
 void tss_set_kernel_stack(unsigned int esp0);
 
-#endif
+/*
+ * tss_get_esp0_ptr()
+ *
+ * Return a pointer to the tss.esp0 field.  Used by the scheduler to
+ * update TSS ESP0 directly during a context switch without calling
+ * tss_set_kernel_stack() (which would add a function-call overhead
+ * inside the hot IRQ path).
+ *
+ * The returned pointer remains valid for the lifetime of the kernel.
+ */
+unsigned int* tss_get_esp0_ptr(void);
+
+#endif /* GDT_H */

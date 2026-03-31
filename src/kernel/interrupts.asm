@@ -29,6 +29,33 @@ idt_flush:
     lidt [eax]
     ret
 
+; irq0_stub — timer IRQ handler
+;
+; Passes the current kernel ESP to irq0_handler_main so the scheduler
+; can save it as the preempted context's stack pointer.
+;
+; Stack layout after pusha + segment pushes (same as isr128_stub):
+;
+;   [esp]    = gs        (last pushed)
+;   [esp+4]  = fs
+;   [esp+8]  = es
+;   [esp+12] = ds
+;   [esp+16] = edi       \
+;   [esp+20] = esi        |
+;   [esp+24] = ebp        | pusha frame
+;   [esp+28] = (orig esp) |
+;   [esp+32] = ebx        |
+;   [esp+36] = edx        |
+;   [esp+40] = ecx        |
+;   [esp+44] = eax       /
+;   [esp+48] = eip       \  pushed by CPU on interrupt
+;   [esp+52] = cs         |
+;   [esp+56] = eflags    /
+;   (if ring-3 → ring-0 transition, CPU also pushes esp and ss)
+;
+; We pass esp (after the frame is fully built) to irq0_handler_main.
+; The scheduler records this value and uses it to resume this context
+; later via sched_switch.
 irq0_stub:
     pusha
     push ds
@@ -42,7 +69,9 @@ irq0_stub:
     mov fs, ax
     mov gs, ax
 
+    push esp                ; pass current esp to C — scheduler saves it
     call irq0_handler_main
+    add esp, 4
 
     pop gs
     pop fs

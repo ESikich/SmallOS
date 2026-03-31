@@ -2,6 +2,7 @@
 #include "ports.h"
 #include "keyboard.h"
 #include "timer.h"
+#include "scheduler.h"
 
 extern void idt_flush(unsigned int);
 extern void irq0_stub(void);
@@ -82,9 +83,23 @@ void idt_init(void) {
     outb(0xA1, 0xFF);
 }
 
-void irq0_handler_main(void) {
+/*
+ * irq0_handler_main(esp)
+ *
+ * Timer IRQ handler.  esp is the kernel stack pointer at the point
+ * irq0_stub called us — it points at the saved register frame.
+ *
+ * We must send EOI before calling sched_tick, because sched_switch may
+ * resume a different context that never returns through this function.
+ * If EOI were sent after sched_tick, the outgoing context would have
+ * its EOI sent when it is eventually rescheduled — but the incoming
+ * context would run with IRQ0 still masked in the PIC, meaning no
+ * further timer ticks until the original context runs again.
+ */
+void irq0_handler_main(unsigned int esp) {
     timer_handle_irq();
-    outb(0x20, 0x20);
+    outb(0x20, 0x20);   /* EOI before sched_tick — see above */
+    sched_tick(esp);
 }
 
 void irq1_handler_main(void) {

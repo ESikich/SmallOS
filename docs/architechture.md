@@ -24,6 +24,7 @@ kernel_main()
   memory_init()     ← bump allocator base at 0x100000
   pmm_init()        ← bitmap allocator at 0x200000–0x7FFFFF
   keyboard/timer/idt
+  sched_init()      ← register shell as slot 0, wire tss_esp0_ptr
   sti
   ramdisk_init()
   shell_init()
@@ -84,9 +85,12 @@ Inside `kernel_main()`:
 4. `memory_init(0x100000)` — bump allocator starts at 1 MB
 5. `pmm_init()` — bitmap allocator covers 0x200000–0x7FFFFF; all frames start free
 6. `keyboard_init()`, `timer_init(100)`, `idt_init()` — drivers and interrupt table
-7. `sti` — enable interrupts
-8. `ramdisk_init(0x10000)` — validate ramdisk magic, store pointer
-9. `shell_init()` — start interactive shell
+7. `sched_init()` — register shell context as slot 0; wire TSS ESP0 pointer for the switch helper
+8. `sti` — enable interrupts
+9. `ramdisk_init(0x10000)` — validate ramdisk magic, store pointer
+10. `shell_init()` — start interactive shell
+
+`sched_init()` must be called before `sti` so that the first timer tick has a valid current-slot pointer.
 
 ---
 
@@ -111,17 +115,75 @@ Each `runelf` invocation creates a `process_t` struct allocated from a single PM
 
 ```c
 typedef struct {
-    u32*            pd;                     /* PMM-allocated page directory */
+    u32*            pd;                     /* PMM-allocated page directory     */
     u32             kernel_stack_frame;     /* PMM frame for ring-0 syscall stack */
     jmp_buf         exit_ctx;               /* setjmp context for sys_exit return */
-    process_state_t state;                  /* UNUSED / RUNNING / EXITED */
-    char            name[32];               /* null-terminated process name */
+    unsigned int    sched_esp;              /* kernel ESP saved on preemption    */
+    process_state_t state;                  /* UNUSED / RUNNING / EXITED        */
+    char            name[32];               /* null-terminated process name      */
 } process_t;
 ```
 
-`process_create()` / `process_destroy()` manage the lifecycle. `process_get_current()` returns the active process (or 0 when the kernel is running outside any user process).
+`sched_esp` is 0 until the process has been preempted at least once. The scheduler skips slots with `sched_esp == 0`.
 
-All fields — pd, kernel_stack_frame, and the process_t frame itself — are PMM-allocated and fully reclaimed on exit. There is no heap leak per `runelf`.
+---
+
+# Scheduler
+
+A round-robin preemptive scheduler runs on every timer tick (100 Hz, quantum = 10 ticks = 100 ms).
+
+## Process table
+
+Fixed array of up to 8 `process_t*` slots. Slot 0 is always the shell/idle context — a static `process_t` with `pd = 0` as a sentinel meaning "use kernel PD".
+
+## Context switch path
+
+```text
+timer fires (IRQ0)
+  ↓
+irq0_stub — pusha + segment pushes, then push esp, call irq0_handler_main
+  ↓
+irq0_handler_main(esp)
+  timer_handle_irq()
+  EOI sent here (before sched_tick — see ordering note below)
+  sched_tick(esp)
+    ↓
+    [if quantum not expired] return
+    ↓
+    save esp → s_table[current]->sched_esp
+    pick next slot (skip if sched_esp == 0 or state != RUNNING)
+    sched_switch(&cur->sched_esp, nxt->sched_esp, next_cr3, next_esp0)
+      load all args into registers
+      *save_esp = current esp
+      tss.esp0  = next_esp0
+      cr3       = next_cr3
+      esp       = next_esp
+      ret  ←  resumes incoming context here
+    ↓
+    [outgoing context resumes here when switched back to]
+  ↓
+irq0_handler_main returns
+  ↓
+irq0_stub — add esp 4, pop segments, popa, iretd → ring 3 resumes
+```
+
+**EOI ordering**: EOI is sent before `sched_tick`. If `sched_switch` lands on a different context and the outgoing `irq0_handler_main` never returns through the normal path, the PIC is already unmasked and future timer ticks fire correctly on the new context. Sending EOI after `sched_tick` would permanently mask IRQ0 for the incoming context.
+
+## Lifecycle
+
+```text
+runelf:
+  process_create()
+  sched_enqueue(proc)      ← added to run queue before iret
+  setjmp / iret into ring 3
+
+sys_exit:
+  sched_dequeue(proc)      ← removed from run queue
+  paging_switch(kernel_pd)
+  tss_set_kernel_stack(0x90000)
+  process_destroy(proc)
+  longjmp → shell
+```
 
 ---
 
@@ -129,21 +191,21 @@ All fields — pd, kernel_stack_frame, and the process_t frame itself — are PM
 
 ```text
 0x00007C00   bootloader stage 1
-0x00008000   loader2 stage 2 (done after jump to kernel)
+0x00008000   loader2 stage 2 (done after protected-mode jump)
 0x00001000   kernel image
-0x00006000   kernel .bss start (page tables + PMM bitmap here)
+0x00006000   kernel .bss start (page tables + PMM bitmap)
 ~0x0000A008  kernel .bss end
 0x00010000   ramdisk (permanent)
-0x00090000   kernel stack top (grows downward)
-0x00100000   bump allocator base → grows upward to 0x1FFFFF
+0x00090000   kernel stack top (grows downward; shell context)
+0x00100000   bump allocator base — permanent kernel structures
                kmalloc()      — argv arrays, parse buffers
                kmalloc_page() — page tables for non-ELF PDEs (e.g. stack PT)
-0x00200000   PMM base → reclaimed frames reused
+0x00200000   PMM base — reclaimable frames
                pmm_alloc_frame() — process_t structs, process PDs,
                                    ELF segment frames, user stack frames,
                                    ELF-region page tables,
                                    per-process kernel stack frames
-0x00800000   PMM + identity-map ceiling
+0x00800000   PMM ceiling (= identity-map limit)
 0x00400000   USER_CODE_BASE — user ELF virtual address (per-process mapping)
 0xBFFFF000   user stack virtual address (per-process mapping)
 ```
@@ -158,8 +220,6 @@ All fields — pd, kernel_stack_frame, and the process_t frame itself — are PM
 0xBFFFF000            user stack page (private, PAGE_USER | PAGE_WRITE)
 PD 2–1023 range       kernel heap etc. (shared, supervisor-only)
 ```
-
-Both kernel and user regions are identity-mapped so physical address == virtual address.
 
 ---
 
@@ -182,53 +242,35 @@ Current programs: `hello`, `ticks`, `args`, `readline` — all linked at `0x4000
 ```text
 runelf hello arg1
   ↓
-ramdisk_find("hello")           → pointer into ramdisk at 0x10000
+ramdisk_find("hello")
   ↓
 elf_run_image(data, argc, argv)
   ↓
 validate ELF magic
-  ↓
 process_create("elf")           → allocate process_t from PMM
-  ↓
 process_pd_create()             → fresh PD (pmm_alloc_frame), kernel entries shared
+map ELF segments                → pmm_alloc_frame() per page, PAGE_USER at 0x400000
+map user stack                  → pmm_alloc_frame(), PAGE_USER at 0xBFFFF000
+alloc kernel stack              → pmm_alloc_frame(), tss_set_kernel_stack(frame + PAGE_SIZE)
+process_set_current(proc)
+proc->state = RUNNING
+sched_enqueue(proc)             → added to scheduler run queue
+setjmp(proc->exit_ctx)          → save kernel context for sys_exit return
+keyboard_set_process_mode(1)
+paging_switch(proc->pd)
+iret → ring 3
   ↓
-for each PT_LOAD segment:
-    pages = ceil(p_memsz / 4096)
-    for each page:
-        frame = pmm_alloc_frame()   ← from 0x200000–0x7FFFFF
-        mem_zero(frame, 4096)
-        paging_map_page(pd, p_vaddr + p*4096, frame, PAGE_USER | PAGE_WRITE)
-    copy p_filesz bytes from ramdisk into frames via physical addresses
-  ↓
-stack_frame = pmm_alloc_frame()
-paging_map_page(pd, 0xBFFFF000, stack_frame, PAGE_USER | PAGE_WRITE)
-  ↓
-kernel_stack_frame = pmm_alloc_frame()
-tss_set_kernel_stack(kernel_stack_frame + PAGE_SIZE)  → TSS ESP0 for ring-3 syscalls
-  ↓
-process_set_current(proc)       → register as active process
-setjmp(proc->exit_ctx)          → save kernel stack context for sys_exit return
-  ↓
-keyboard_set_process_mode(1)    → route keystrokes to ring buffer
-paging_switch(process_pd)       → load process CR3, flush TLB
-  ↓
-elf_enter_ring3()
-  copy argv to user stack
-  build cdecl frame
-  iret → ring 3, EIP=e_entry
-  ↓
-[program runs at CPL=3]
+[program runs at CPL=3; timer preempts it every ~100 ms]
   ↓
 sys_exit() → int 0x80 → elf_process_exit()
   proc->state = EXITED
   keyboard_set_process_mode(0)
+  sched_dequeue(proc)
   paging_switch(kernel_pd)
-  process_destroy(proc)         → process_pd_destroy (frames + PD) + kernel stack frame
-                                   + process_t frame itself
+  tss_set_kernel_stack(0x90000)
+  process_destroy(proc)
   process_set_current(0)
-  longjmp(exit_ctx, 1)          → resume in elf_run_image
-  ↓
-return to shell
+  longjmp(exit_ctx, 1)          → resume in elf_run_image → return to shell
 ```
 
 ---
@@ -244,34 +286,43 @@ return to shell
 128  → syscall int 0x80 (DPL=3 — callable from ring 3)
 ```
 
-## IRQ flow
+## IRQ0 flow (with scheduler)
 
 ```text
-hardware interrupt
+timer fires
   ↓
-irqX_stub (saves registers, loads kernel segments 0x10)
+irq0_stub: pusha, push segments, push esp, call irq0_handler_main(esp)
   ↓
-irqX_handler_main (C)
+irq0_handler_main:
+  timer_handle_irq()
+  EOI (outb 0x20, 0x20)        ← before sched_tick
+  sched_tick(esp)
+    [may call sched_switch and not return to this invocation]
   ↓
-driver logic + EOI (outb 0x20, 0x20)
-  ↓
-iretd
+irq0_stub: add esp 4, pop segments, popa, iretd
 ```
 
-Note: IRQ1 sends EOI at the **top** of `irq1_handler_main`, before calling `keyboard_handle_irq`. This ensures EOI is always delivered even when the handler launches a process and never returns through the normal path.
+## IRQ1 flow
+
+```text
+irq1_stub: pusha, push segments
+  ↓
+irq1_handler_main:
+  EOI (outb 0x20, 0x20)        ← before keyboard_handle_irq (may never return)
+  keyboard_handle_irq()
+  ↓
+irq1_stub: pop segments, popa, iretd
+```
 
 ## Syscall flow (ring 3 → ring 0 → ring 3)
 
 ```text
 int 0x80 (CPL=3)
   ↓
-CPU: check IDT[128].DPL=3 — OK
-CPU: load SS0/ESP0 from TSS — switch to kernel stack
+CPU: load SS0/ESP0 from TSS — switch to per-process kernel stack
 CPU: push SS, ESP, EFLAGS, CS, EIP
   ↓
-isr128_stub: pusha, push segments, load kernel DS=0x10
-  ↓
-syscall_handler_main(regs)
+isr128_stub: pusha, push segments, push esp, call syscall_handler_main(regs)
   ↓
 regs->eax = result
   ↓
@@ -291,10 +342,6 @@ ecx = arg2
 edx = arg3
 return → eax
 ```
-
-## Stack frame contract
-
-`isr128_stub` pushes: `pusha` then `ds/es/fs/gs`. The struct pointer passed to C points to `gs` (last pushed = lowest address = first field). See `syscalls.md` for the full layout.
 
 ---
 
@@ -329,14 +376,7 @@ Entry point convention:
 void _start(int argc, char** argv)
 ```
 
-All user programs must be linked at `USER_CODE_BASE` (0x400000) using `-Ttext-segment`:
-
-```bash
-i686-elf-ld -m elf_i386 -Ttext-segment 0x400000 -e _start prog.o -o prog.elf
-```
-
-Use `-Ttext-segment`, not `-Ttext`. `-Ttext` causes the linker to insert a header segment
-at `0x3FF000` (PD index 0), which shares the kernel page table and leaks a PMM frame per run.
+All user programs must be linked at `USER_CODE_BASE` (0x400000) using `-Ttext-segment`.
 
 I/O via syscalls. No libc, no runtime. Must call `sys_exit(0)` before returning.
 
@@ -362,6 +402,7 @@ build/gen/loader2.gen.asm    KERNEL_SECTORS / RAMDISK_SECTORS / RAMDISK_LBA inje
 build/bin/kernel_padded.bin  kernel.bin padded to sector boundary
 build/bin/ramdisk.rd         packed by build/tools/mkramdisk
 build/obj/setjmp.o           assembled from src/kernel/setjmp.asm
+build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
 ```
 
 ---
@@ -369,30 +410,30 @@ build/obj/setjmp.o           assembled from src/kernel/setjmp.asm
 # Known Limitations
 
 * Page tables for non-ELF PDEs (e.g. the stack's PD index 767) come from `kmalloc_page` and are not freed per-process
-* No scheduler — shell blocks during program execution
 * ELF link address fixed at 0x400000 — no PIE/relocation support
 * No filesystem — programs must be in ramdisk at build time
+* No `sched_yield` syscall — voluntary preemption not yet possible
 
 ---
 
 # Future Architecture Direction
 
-1. Preemptive scheduler — timer IRQ context switch using per-process kernel stacks and `process_t`
-2. Filesystem-backed ELF loading — FAT12 or custom FS via ATA PIO
-3. Free non-ELF page tables — move stack PT allocation to PMM
+1. Filesystem-backed ELF loading — FAT12 or custom FS via ATA PIO
+2. `SYS_YIELD` / `SYS_EXEC` syscalls
+3. Free non-ELF page tables — allocate stack PT from PMM
 
 ---
 
 # Debugging Map
 
-| Stage              | Tool                           |
-| ------------------ | ------------------------------ |
-| boot (real mode)   | BIOS print (int 0x10)          |
-| early kernel       | VGA direct (0xB8000)           |
-| kernel             | terminal_puts                  |
-| user process       | sys_write / sys_putc / sys_read |
-| memory accounting  | meminfo command                |
-| crash analysis     | QEMU -d int,cpu_reset,guest_errors -D qemu.log |
+| Stage              | Tool                                                    |
+| ------------------ | ------------------------------------------------------- |
+| boot (real mode)   | BIOS print (int 0x10)                                   |
+| early kernel       | VGA direct (0xB8000)                                    |
+| kernel             | terminal_puts                                           |
+| user process       | sys_write / sys_putc / sys_read                         |
+| memory accounting  | meminfo command                                         |
+| crash analysis     | QEMU -d int,cpu_reset,guest_errors -D qemu.log          |
 
 ---
 
@@ -404,7 +445,7 @@ SimpleOS is currently:
 two-stage bootloader (CHS + LBA)
 paging enabled (identity-mapped 8 MB)
 GDT with ring-3 user segments and TSS
-process_t abstraction — per-process struct (PD, kernel stack, exit ctx, name)
+process_t abstraction — per-process struct (PD, kernel stack, exit ctx, sched_esp, name)
 per-process page directories — address space isolation, fully reclaimed on exit
 ring-3 ELF execution (hardware privilege enforcement)
 int 0x80 syscall interface (DPL=3 gate, TSS stack switch)
@@ -413,10 +454,11 @@ clean process exit via setjmp/longjmp
 physical memory manager (bitmap, all frames reclaimed on exit — no leak)
 per-process kernel stacks (PMM frame per process, freed on exit)
 SYS_READ — blocking keyboard input for user programs
+preemptive round-robin scheduler — timer IRQ context switch, 100 ms quantum
 interactive shell with meminfo command
 ```
 
 Foundation for:
 
-* preemptive scheduler (timer IRQ context switch — process_t is ready)
 * filesystem access
+* SYS_YIELD / SYS_EXEC

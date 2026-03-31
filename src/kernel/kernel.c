@@ -8,6 +8,7 @@
 #include "pmm.h"
 #include "paging.h"
 #include "ramdisk.h"
+#include "scheduler.h"
 
 #define RAMDISK_BASE 0x10000u
 
@@ -29,6 +30,13 @@ void kernel_main(void) {
     keyboard_init();
     timer_init(100);
     idt_init();
+
+    /*
+     * Initialise the scheduler before enabling interrupts.  sched_init
+     * registers the shell context as slot 0 so that the first timer
+     * tick has a valid current-context pointer to save into.
+     */
+    sched_init();
 
     __asm__ __volatile__("sti");
 

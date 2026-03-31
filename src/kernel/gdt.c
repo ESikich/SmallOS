@@ -131,3 +131,7 @@ void gdt_init(void) {
 void tss_set_kernel_stack(unsigned int esp0) {
     tss.esp0 = esp0;
 }
+
+unsigned int* tss_get_esp0_ptr(void) {
+    return &tss.esp0;
+}

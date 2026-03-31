@@ -40,13 +40,16 @@ void paging_init(void);
  *
  * Maps a single 4 KB page in the given page directory.
  *
- *   pd    – physical address of the page directory to modify
+ *   pd    – virtual/physical address of the page directory to modify
  *   virt  – virtual address (rounded down to page boundary)
  *   phys  – physical address (rounded down to page boundary)
  *   flags – PAGE_PRESENT | PAGE_WRITE | PAGE_USER as needed
  *
- * Allocates a page table via kmalloc_page() if one does not already
- * exist for the relevant directory entry. Panics on allocation failure.
+ * Page table allocation:
+ *   PD index 1 (ELF region): from pmm_alloc_frame() — freed on exit
+ *   All other indices:        from kmalloc_page()    — kernel-owned
+ *
+ * Panics on allocation failure.
  */
 void paging_map_page(u32* pd, u32 virt, u32 phys, u32 flags);
 
@@ -54,7 +57,7 @@ void paging_map_page(u32* pd, u32 virt, u32 phys, u32 flags);
  * paging_get_kernel_pd()
  *
  * Returns a pointer to the kernel page directory.
- * Used by process_create() to copy kernel mappings into new directories.
+ * Used by process_pd_create() to copy kernel mappings into new directories.
  */
 u32* paging_get_kernel_pd(void);
 
@@ -63,6 +66,9 @@ u32* paging_get_kernel_pd(void);
  *
  * Allocate and initialize a new page directory for a user process.
  *
+ * Allocation is from pmm_alloc_frame() so that process_pd_destroy() can
+ * free the directory itself on exit (no heap leak per runelf).
+ *
  * The kernel's identity-mapped entries (PD indices 0 and 2–1023) are
  * copied in so that kernel code, ramdisk, heap, and VGA remain accessible
  * after switching CR3. PD index 1 (0x400000–0x7FFFFF) is left empty so
@@ -70,18 +76,25 @@ u32* paging_get_kernel_pd(void);
  *
  * Returns a pointer to the new page directory (page-aligned, identity-
  * mapped so the value is usable as both a virtual and physical address).
+ * Returns 0 (via paging_panic — halts) on allocation failure.
  */
 u32* process_pd_create(void);
 
 /*
  * process_pd_destroy(pd)
  *
- * Free all page tables and page frames that were privately allocated for
- * this process (PD index 1 only — kernel entries are shared and not freed).
+ * Free all resources privately allocated for this process:
  *
- * Does NOT free the page directory itself (it came from kmalloc_page and
- * the bump allocator has no free). This is a known limitation until a
- * proper physical memory manager is added.
+ *   1. For each private PDE (present and not shared from the kernel PD):
+ *      a. pmm_free_frame() every present PTE frame (ELF pages, stack page)
+ *      b. pmm_free_frame() the page table itself if it is PD index 1
+ *         (the ELF region PT, which came from the PMM)
+ *   2. pmm_free_frame() the page directory frame itself
+ *
+ * Page tables at other indices (e.g. index 767 for the stack) came from
+ * kmalloc_page() and are not freed — those are kernel-owned bookkeeping.
+ *
+ * Safe to call with a null pointer (no-op).
  */
 void process_pd_destroy(u32* pd);
 
@@ -92,4 +105,4 @@ void process_pd_destroy(u32* pd);
  */
 void paging_switch(u32* pd);
 
-#endif
+#endif /* PAGING_H */

@@ -22,25 +22,11 @@ subsystem (timer / keyboard / syscall)
 
 # IDT (Interrupt Descriptor Table)
 
-Defined in:
-
-```text
-src/kernel/idt.c
-```
-
-Each entry contains:
-
-* handler address
-* code segment selector
-* flags
-
-Initialization:
+Defined in `src/kernel/idt.c`. Each entry contains a handler address, code segment selector, and flags.
 
 ```c
-idt_set_gate(vector, handler, 0x08, 0x8E);
+idt_set_gate(vector, handler, 0x08, flags);
 ```
-
----
 
 ## Active Entries
 
@@ -55,82 +41,79 @@ idt_set_gate(vector, handler, 0x08, 0x8E);
 
 # PIC Remapping
 
-The PIC is remapped to avoid conflicts with CPU exceptions.
-
-Default IRQ range:
+IRQs 0–15 are remapped away from CPU exception vectors 0–15.
 
 ```text
-0–15 → conflicts with CPU exceptions
-```
-
-Remapped:
-
-```text
-IRQ0 → 32
-IRQ1 → 33
+IRQ0 → vector 32
+IRQ1 → vector 33
 ```
 
 ---
 
-## PIC Initialization
+# Interrupt Stubs (interrupts.asm)
 
-Sequence:
-
-```c
-outb(0x20, 0x11);
-outb(0xA0, 0x11);
-
-outb(0x21, 0x20);
-outb(0xA1, 0x28);
-
-outb(0x21, 0x04);
-outb(0xA1, 0x02);
-
-outb(0x21, 0x01);
-outb(0xA1, 0x01);
-```
-
----
-
-# Interrupt Stubs (Assembly)
-
-Defined in:
-
-```text
-src/kernel/interrupts.asm
-```
-
-Each stub performs:
-
-1. Save registers
-2. Switch to kernel segments
-3. Call C handler
-4. Restore registers
-5. Return via `iretd`
-
----
-
-## IRQ Stub Pattern
+## IRQ1 stub (keyboard) — standard pattern
 
 ```asm
 pusha
-push ds
-push es
-push fs
-push gs
+push ds / es / fs / gs
+mov ax, 0x10          ; load kernel data segment
+mov ds/es/fs/gs, ax
+call irq1_handler_main
+pop gs / fs / es / ds
+popa
+iretd
+```
 
+## IRQ0 stub (timer) — passes ESP to C
+
+`irq0_stub` uses the same frame layout but pushes ESP and passes it to C, mirroring `isr128_stub`. This gives the scheduler the kernel stack pointer it needs to save and restore contexts.
+
+```asm
+pusha
+push ds / es / fs / gs
 mov ax, 0x10
-mov ds, ax
-mov es, ax
-mov fs, ax
-mov gs, ax
+mov ds/es/fs/gs, ax
+push esp                  ; pass register-frame pointer to C
+call irq0_handler_main    ; void irq0_handler_main(unsigned int esp)
+add esp, 4
+pop gs / fs / es / ds
+popa
+iretd
+```
 
-call handler
+Stack layout after push (used by the scheduler as the resume point):
 
-pop gs
-pop fs
-pop es
-pop ds
+```text
+[esp]    gs   (lowest address — last pushed)
+[esp+4]  fs
+[esp+8]  es
+[esp+12] ds
+[esp+16] edi  \
+[esp+20] esi   |
+[esp+24] ebp   | pusha frame
+[esp+28] esp0  |  (original ESP before pusha)
+[esp+32] ebx   |
+[esp+36] edx   |
+[esp+40] ecx   |
+[esp+44] eax  /
+[esp+48] eip  \  pushed by CPU on interrupt
+[esp+52] cs    |
+[esp+56] eflags/
+(+ esp/ss if ring-3 → ring-0 transition)
+```
+
+## ISR128 stub (syscall) — same ESP-passing pattern
+
+```asm
+pusha
+push ds / es / fs / gs
+mov ax, 0x10
+mov ds/es/fs/gs, ax
+push esp
+call syscall_handler_main
+add esp, 4
+pop gs / fs / es / ds
 popa
 iretd
 ```
@@ -142,22 +125,18 @@ iretd
 ## Timer (IRQ0)
 
 ```text
-vector 32 → irq0_stub → irq0_handler_main
+vector 32 → irq0_stub → irq0_handler_main(esp)
 ```
-
-Handler:
 
 ```c
-timer_handle_irq();
-outb(0x20, 0x20);
+void irq0_handler_main(unsigned int esp) {
+    timer_handle_irq();
+    outb(0x20, 0x20);   /* EOI before sched_tick */
+    sched_tick(esp);
+}
 ```
 
-Responsibilities:
-
-* increment tick counter
-* acknowledge interrupt
-
----
+**EOI ordering**: EOI is sent *before* `sched_tick`. If `sched_tick` calls `sched_switch` and the current invocation of `irq0_handler_main` never returns through the normal path, the PIC is already unmasked. Sending EOI after `sched_tick` would permanently mask IRQ0 for the incoming context until the outgoing one was next scheduled.
 
 ## Keyboard (IRQ1)
 
@@ -165,78 +144,58 @@ Responsibilities:
 vector 33 → irq1_stub → irq1_handler_main
 ```
 
-Handler:
-
 ```c
-keyboard_handle_irq();
-outb(0x20, 0x20);
+void irq1_handler_main(void) {
+    outb(0x20, 0x20);       /* EOI first — handler may never return */
+    keyboard_handle_irq();
+}
 ```
 
-Responsibilities:
-
-* read scancode
-* update input buffer
+EOI is sent first for the same reason: when the Enter keypress launches a process, `keyboard_handle_irq` → `shell_execute` → `elf_run_image` → `iret` never returns, so EOI must already be sent.
 
 ---
 
 # End of Interrupt (EOI)
 
-Required for all IRQs.
-
 ```c
 outb(0x20, 0x20);
 ```
 
-Without EOI:
+Required for every IRQ. Without it, the PIC keeps the line in-service and no further interrupts fire.
 
-* interrupts stop firing
-* system appears frozen
+**Rule**: send EOI at the top of any handler that might not return.
 
 ---
 
 # System Call Path (int 0x80)
 
 ```text
-int 0x80
+int 0x80 (CPL=3)
   ↓
-isr128_stub
+CPU checks IDT[128].DPL=3 — allowed from ring 3
+CPU loads SS0/ESP0 from TSS — switches to per-process kernel stack
+CPU pushes SS, ESP, EFLAGS, CS, EIP
   ↓
-syscall_handler_main
+isr128_stub: saves full register frame, loads kernel DS=0x10
+  push esp → call syscall_handler_main(regs)
+  ↓
+handler sets regs->eax = return value
+  ↓
+pop frame, iretd → ring 3 resumes
 ```
 
 ---
 
-## ISR Stub (syscall)
+# Register Frame Contract (syscall)
 
-Key difference from IRQ:
-
-* passes register frame to C
-
-```asm
-pusha
-push ds
-push es
-push fs
-push gs
-
-push esp
-call syscall_handler_main
-add esp, 4
-```
-
----
-
-# Register Frame Contract
-
-Stack layout must match:
+The `isr128_stub` push order determines the `syscall_regs_t` field layout. Last pushed = lowest address = first struct field.
 
 ```c
 typedef struct syscall_regs {
-    unsigned int gs;   // pushed last → lowest address → first field
+    unsigned int gs;   /* pushed last  → lowest address → first field */
     unsigned int fs;
     unsigned int es;
     unsigned int ds;
-
     unsigned int edi;
     unsigned int esi;
     unsigned int ebp;
@@ -244,154 +203,73 @@ typedef struct syscall_regs {
     unsigned int ebx;
     unsigned int edx;
     unsigned int ecx;
-    unsigned int eax;  // pushed first by pusha → highest address → last field
+    unsigned int eax;  /* pushed first → highest address → last field */
 } syscall_regs_t;
 ```
 
-Because the stack grows downward, the last item pushed (`gs`) sits at the lowest address. The pointer passed to C points there, so the struct reads fields in reverse push order.
+**If you modify `isr128_stub`, you must update `syscall_regs_t` to match.**
 
 ---
 
-## Constraint
+# Scheduler Integration
 
-The assembly push order defines the struct layout.
+`irq0_stub` was extended to pass ESP to C specifically to support the scheduler. The kernel ESP at that point is the address of the register frame sitting on the current context's kernel stack. The scheduler records this as `sched_esp` and passes it to `sched_switch` as `next_esp` when resuming the context.
 
-Any deviation breaks:
-
-* syscall arguments
-* return values
+See `scheduler.h` / `sched_switch.asm` for the full context-switch mechanism.
 
 ---
 
 # Double Fault Handler (ISR8)
 
-Defined as:
-
 ```asm
 isr8_stub:
-    write '8' to VGA
-    halt
+    write '8' to VGA (red)
+    cli / hlt loop
 ```
 
-Purpose:
-
-* detect catastrophic failure
-* prevent silent reboot
+Halts the system visibly rather than silently rebooting.
 
 ---
 
 # Enabling Interrupts
 
-Interrupts are enabled with:
+`sti` is called in `kernel_main()` after all of the following are valid:
 
-```asm
-sti
-```
+* GDT loaded and flushed
+* IDT loaded
+* PIC remapped
+* All IRQ handlers installed
+* TSS loaded (`ltr 0x28`)
+* Scheduler initialised (`sched_init()`)
 
----
-
-## Hard Requirement
-
-Before `sti`, the following must be valid:
-
-* GDT
-* IDT
-* segment registers
-* IRQ handlers
-
-Failure results in:
-
-```text
-#GP → #DF → triple fault → reset
-```
-
----
-
-# GDT Dependency
-
-Interrupt handling requires a valid GDT.
-
-The kernel installs its own GDT.
-
-The bootloader GDT is not sufficient once interrupts are enabled.
+Any gap in this list causes `#GP → #DF → triple fault → reboot`.
 
 ---
 
 # Failure Modes
 
-## Immediate reboot after `sti`
-
-Cause:
-
-* invalid GDT
-* invalid IDT
-* bad segment selectors
-
----
-
-## No keyboard input
-
-Cause:
-
-* IRQ1 not enabled
-* missing EOI
-* handler not installed
-
----
-
-## Timer not advancing
-
-Cause:
-
-* IRQ0 not firing
-* missing EOI
-
----
-
-## Syscalls fail silently
-
-Cause:
-
-* register frame mismatch
-* incorrect stub
-
----
-
-# Design Notes
-
-* All interrupts run in ring 0
-* No interrupt nesting control
-* No preemption yet
-* Handlers are minimal and synchronous
-
----
-
-# Future Work
-
-* interrupt masking
-* nested interrupt handling
-* preemptive scheduling
-* user-mode interrupt transitions
-* separate syscall gate (ring 3)
+| Symptom | Likely cause |
+|---|---|
+| Reboot immediately after `sti` | Bad GDT, bad IDT, or missing segment setup |
+| Red '8' on screen | Double fault — corrupt kernel stack or bad IDT entry |
+| Timer not advancing | IRQ0 not firing; missing EOI |
+| No keyboard input | IRQ1 masked or missing EOI |
+| Syscalls silently broken | `syscall_regs_t` mismatch with `isr128_stub` push order |
+| Timer fires but process never preempted | `sched_tick` not called; EOI sent after `sched_switch` |
+| Crash on first context switch | `sched_esp == 0` guard missing; switching to process with no saved stack |
 
 ---
 
 # Summary
 
-Interrupt flow:
-
 ```text
 interrupt
- → IDT lookup
- → assembly stub
- → C handler
- → subsystem logic
- → EOI
- → return (iretd)
+  → IDT lookup
+  → assembly stub (saves frame, loads kernel DS)
+    IRQ0: also pushes ESP → passes to C for scheduler
+  → C handler
+    IRQ0: timer_handle_irq(), EOI, sched_tick(esp)
+    IRQ1: EOI, keyboard_handle_irq()
+    int 0x80: syscall_handler_main(regs)
+  → return (iretd) or context switch via sched_switch
 ```
-
-The system depends on:
-
-* correct descriptor tables
-* consistent register handling
-* strict ABI adherence

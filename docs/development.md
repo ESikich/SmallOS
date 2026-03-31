@@ -29,7 +29,7 @@ If you see `implicit declaration of function` — you forgot a header.
 
 ### 5. No private copies of shared utilities
 
-`terminal_put_uint` and `terminal_put_hex` are declared in `terminal.h` and defined in `terminal.c`. Do not add `static void terminal_put_uint(...)` in any other file — the compiler will reject it as a conflicting declaration.
+`terminal_put_uint` and `terminal_put_hex` are declared in `terminal.h` and defined in `terminal.c`. Do not add private copies in any other file.
 
 ---
 
@@ -38,38 +38,21 @@ If you see `implicit declaration of function` — you forgot a header.
 * `boot.asm` must be **exactly 512 bytes**, ending with `dw 0xAA55`
 * `loader2.asm` must be **exactly 2048 bytes**
 * `kernel.bin` must be padded to a 512-byte sector boundary in the image (Makefile handles this)
-* `RAMDISK_LBA` is computed as `5 + kernel_sectors` — if the padding step is skipped, the ramdisk will not load
+* `RAMDISK_LBA` is computed as `5 + kernel_sectors` — if padding is skipped, the ramdisk will not load
 
 ---
 
 ## GDT Rules
 
-Kernel must load its own GDT as the **first act** of `kernel_main()`. Do NOT rely on the loader2 GDT.
-
-The GDT has 6 entries:
-
-```text
-0  null
-1  kernel code  DPL=0  (0x08)
-2  kernel data  DPL=0  (0x10)
-3  user code    DPL=3  (0x1B)
-4  user data    DPL=3  (0x23)
-5  TSS          DPL=0  (0x28)
-```
-
-The task register must be loaded with `ltr 0x28` after writing the TSS descriptor. This is done in `gdt_init()` via `tss_flush()`.
-
-If you add GDT entries, update the `gdt[N]` array size in `gdt.c` and the `gp.limit` computation — it is `sizeof(gdt) - 1` and is computed automatically.
+Kernel must load its own GDT as the **first act** of `kernel_main()`. The GDT has 6 entries (null, k-code, k-data, u-code, u-data, TSS). The task register must be loaded with `ltr 0x28` in `gdt_init()`. If you add entries, update the array size and `gp.limit`.
 
 ---
 
 ## TSS Rules
 
-`tss_set_kernel_stack(esp0)` must be called before `setjmp` and before every `iret` into ring 3. The value must be `kernel_stack_frame + PAGE_SIZE` — the top of a dedicated PMM frame allocated per process. Never point TSS ESP0 at the current C call frame — the CPU will overwrite live kernel stack data on the first syscall.
+`tss_set_kernel_stack(esp0)` must be called before `setjmp` and before every `iret` into ring 3. The value must be `kernel_stack_frame + PAGE_SIZE`. On process exit, `elf_process_exit` restores it to `0x90000` (the static kernel stack top for the shell).
 
-`TSS.SS0` must equal the kernel data selector (`0x10`). This is set once in `gdt_init()`.
-
-The task register does **not** need to be reloaded when `tss.esp0` changes — writing to the struct in place is sufficient.
+`tss_get_esp0_ptr()` returns `&tss.esp0` and is used by the scheduler to update TSS directly during context switches. Do not remove this function.
 
 ---
 
@@ -77,157 +60,136 @@ The task register does **not** need to be reloaded when `tss.esp0` changes — w
 
 ### BSS must be zeroed before paging_init() and pmm_init()
 
-Page tables and the PMM bitmap live in `.bss`. Without zeroing they contain garbage and the CPU triple-faults (page tables) or the PMM incorrectly marks all frames as used (bitmap).
-
 ### paging_map_page() takes a page directory pointer
 
 ```c
 void paging_map_page(u32* pd, u32 virt, u32 phys, u32 flags);
 ```
 
-Pass `paging_get_kernel_pd()` to modify the kernel's own mappings. Pass a process PD to set up user mappings. Never pass NULL.
-
 ### Page table allocator split
 
-`paging_map_page` uses different allocators depending on the PD index being filled:
+* **PD index 1** (ELF region): page table from `pmm_alloc_frame()` — freed on exit
+* **All other indices**: page table from `kmalloc_page()` — permanent
 
-* **PD index 1** (`USER_PD_INDEX`, ELF region): page table from `pmm_alloc_frame()` — so `process_pd_destroy()` can free it
-* **All other indices**: page table from `kmalloc_page()` — kernel-owned, not freed per-process
-
-Do not change this logic without updating `process_pd_destroy()` accordingly.
+Do not change this without updating `process_pd_destroy()`.
 
 ### Switching CR3
 
-`paging_switch(pd)` flushes the entire TLB. After switching to a process PD, only memory mapped in that directory is accessible. After the process exits, `paging_switch(paging_get_kernel_pd())` must be called before touching any kernel data structures. This happens inside `elf_process_exit()`.
+`paging_switch(pd)` flushes the TLB. After switching to a process PD, only memory mapped in that directory is accessible. Always switch back to the kernel PD before touching kernel data structures.
 
 ---
 
 ## Memory Allocator Rules
 
-The system has two physical allocators with disjoint ranges:
-
 ```text
-kmalloc / kmalloc_page   0x100000 – 0x1FFFFF   kernel structures (no free)
-pmm_alloc_frame          0x200000 – 0x7FFFFF   user frames (freed on process exit)
+kmalloc / kmalloc_page   0x100000 – 0x1FFFFF   permanent (no free)
+pmm_alloc_frame          0x200000 – 0x7FFFFF   reclaimable on process exit
 ```
 
-**`kmalloc_page` is for permanent kernel structures only** — page tables for non-ELF PDEs (e.g. the stack PT at index 767), argv parse buffers. These are never freed.
+`kmalloc_page` is for permanent kernel structures: page tables for non-ELF PDEs, argv buffers.
 
-**`pmm_alloc_frame` is for everything that must be reclaimed on exit** — process_t structs, process page directories, ELF segment frames, user stack frames, ELF-region page tables, kernel stack frames. All of these are freed by `process_destroy()`.
-
-**PMM ceiling is the identity-map limit (0x800000 = 8 MB).** Frames above this address are not identity-mapped — the kernel cannot access them as pointers. `PMM_BASE + PMM_SIZE` must not exceed `0x800000`.
+`pmm_alloc_frame` is for everything reclaimed on exit: `process_t` structs, process page directories, ELF frames, stack frames, ELF-region page tables, kernel stack frames.
 
 **Verify after changes with `meminfo`:**
 
 ```
 meminfo              ← note free frame count
 runelf hello
-meminfo              ← count must be unchanged (frames fully reclaimed)
+meminfo              ← count must be unchanged
 ```
+
+---
+
+## Scheduler Rules
+
+`sched_init()` must be called **after `idt_init()` and before `sti`**. It registers the shell as slot 0 and wires `tss_esp0_ptr`. If called after `sti`, the first timer tick may fire with a null slot pointer.
+
+`sched_enqueue(proc)` — call after `proc->state = RUNNING`, before `iret`. If the table is full the process still runs but is not preempted.
+
+`sched_dequeue(proc)` — call before `paging_switch` and `process_destroy` in `elf_process_exit`. It resets `s_current_idx` to 0 so the next tick schedules the shell correctly.
+
+**EOI ordering in `irq0_handler_main`**: EOI is sent **before** `sched_tick`. If `sched_switch` lands on a different context and `irq0_handler_main` never returns, EOI must already be sent. Do not move it after `sched_tick`.
+
+**`irq0_stub` passes ESP to C**: `irq0_stub` pushes ESP and passes it to `irq0_handler_main`. This ESP is the address of the register frame on the kernel stack — the scheduler saves it as the resume point. If you modify `irq0_stub`, ensure ESP is still passed correctly.
+
+**`sched_switch` argument loading**: `sched_switch.asm` loads all four arguments (`save_esp`, `next_esp`, `next_cr3`, `next_esp0`) into registers **before** modifying ESP. Any change to the argument order must update both the C caller and the assembly. The arguments must all be read from the old stack before `esp` is replaced.
+
+**`sched_esp == 0` guard**: the scheduler skips slots with `sched_esp == 0` — this prevents switching to a process that has never been preempted and has no valid resume stack. Do not remove this guard.
 
 ---
 
 ## Process Rules
 
-`process_create(name)` allocates a `process_t` from the PMM. Fill `pd` and `kernel_stack_frame` before launching. Set `state = RUNNING` just before `iret`.
+`process_create(name)` allocates from PMM. Fill `pd`, `kernel_stack_frame`, and `sched_esp` (leave 0 — set by first preemption) before launching.
 
-`process_destroy(proc)` frees the PD (via `process_pd_destroy`), the kernel stack frame, and the process_t frame itself. After this call, `proc` is dangling — do not dereference it.
+`process_destroy(proc)` frees PD, kernel stack frame, and the process_t frame. After this call `proc` is dangling.
 
-`elf_process_exit()` must save a pointer to `proc->exit_ctx` **before** calling `process_destroy()`. The longjmp target lives inside the process_t frame, which destroy frees.
-
-`process_get_current()` returns the active process or 0. Use it instead of file-scope statics.
+`elf_process_exit()` must save `&proc->exit_ctx` before calling `process_destroy()`.
 
 ---
 
 ## ELF Loader Rules
 
-* All user ELFs must be linked at `USER_CODE_BASE` (0x400000) using `-Ttext-segment`
-* User frames come from `pmm_alloc_frame()` — not `kmalloc_page()`
-* Segments are copied via physical frame addresses (identity-mapped) while still in the kernel address space, before CR3 is switched
-* `tss_set_kernel_stack()` must be called **before** `setjmp()` — TSS ESP0 must be valid before the process could possibly trigger a syscall
-* `setjmp()` must be called before `paging_switch()` and `iret` — it saves the kernel context that `longjmp()` will restore on `sys_exit`
-* argv strings must be copied onto the user stack before `iret` — kernel heap memory is supervisor-only and inaccessible from ring 3
-
-```bash
-# Correct link command for user programs
-i686-elf-ld -m elf_i386 -Ttext-segment 0x400000 -e _start myprog.o -o myprog.elf
-```
-
-Use `-Ttext-segment`, not `-Ttext`. `-Ttext` sets the address of `.text` but the linker
-inserts a preceding ELF header segment at `0x3FF000` (PD index 0), which shares the kernel
-page table and is never reclaimed by `process_pd_destroy()`.
-
----
-
-## Ring 3 Rules
-
-* The `int 0x80` IDT gate must have DPL=3 (`IDT_FLAG_INT_GATE_USER`). DPL=0 causes a #GP when ring-3 code tries to invoke it.
-* User data selector (0x23) must be loaded into DS/ES/FS/GS before `iret` so the first user memory access uses the correct descriptor.
-* User programs must call `sys_exit()` before returning from `_start`. A bare `ret` from `_start` has no valid return address and will fault.
-* `sys_exit()` → `elf_process_exit()` → `longjmp()` is the only valid exit path. There is no kernel frame to return through after `iret`.
+* Link user ELFs with `-Ttext-segment 0x400000`, not `-Ttext`
+* User frames from `pmm_alloc_frame()` only
+* `tss_set_kernel_stack()` before `setjmp()` before `paging_switch()` before `iret`
+* `sched_enqueue()` after `proc->state = RUNNING`, before `iret`
+* `sched_dequeue()` as the first action in `elf_process_exit()`
 
 ---
 
 ## Interrupt Rules
 
-### After `sti`, everything must be correct
+### After `sti`, everything must be valid
 
-Checklist:
-* GDT loaded (kernel-owned, `gdt_init()` called first)
+* GDT loaded
 * IDT loaded
 * PIC remapped
-* IRQ handlers installed and valid
+* All IRQ handlers installed
 * TSS loaded (`ltr` executed)
+* Scheduler initialised (`sched_init()` called)
 
 Failure → `#GP → #DF → triple fault → reboot`.
 
-### IRQ1 EOI ordering
+### IRQ EOI must be sent before any handler that may not return
 
-IRQ1 sends EOI at the **top** of `irq1_handler_main`, before calling `keyboard_handle_irq`. This is intentional — when the Enter keypress that launches a process arrives via IRQ1, the handler never returns through the normal path (it ends in `iret`), so EOI must be sent first. Do not move the EOI below the `keyboard_handle_irq` call.
+Both `irq0_handler_main` and `irq1_handler_main` send EOI as their first meaningful action. Do not move EOI below `sched_tick` or `keyboard_handle_irq`.
 
 ---
 
 ## Syscall Rules
 
-If you touch `isr128_stub`, you MUST update `syscall_regs_t` to match.
-
-The struct field order is determined by the assembly push order. See `syscalls.md` for the full explanation.
+If you touch `isr128_stub`, you MUST update `syscall_regs_t` to match. The struct field order is determined by the assembly push order. See `syscalls.md`.
 
 ---
 
 ## Debugging Strategy
 
-### Early boot (before terminal)
+### Early boot
 
 ```asm
 mov byte [0xB8000], 'X'
-mov byte [0xB8001], 0x4F   ; red background
+mov byte [0xB8001], 0x4F
 ```
 
 ### Kernel stage
 
 ```c
 terminal_puts("debug\n");
-terminal_put_uint(some_value);
-terminal_putc('\n');
+terminal_put_uint(value);
 ```
 
-### Inside a user process (ring 3)
+### Inside ring 3
 
 ```c
 sys_write("debug\n", 6);
-sys_putc('X');
 ```
-
-Do not call `terminal_puts` from user programs — it is a kernel function in supervisor memory, inaccessible from ring 3.
 
 ### Memory accounting
 
 ```
-meminfo
+meminfo   ← before and after runelf
 ```
-
-Run before and after `runelf` to confirm frames are reclaimed. If the free count drops and doesn't recover, there is a leak in `process_destroy()`, a missed `pmm_free_frame()` call, or a user ELF linked with `-Ttext` instead of `-Ttext-segment`.
 
 ### QEMU logging
 
@@ -238,79 +200,43 @@ qemu-system-i386 -drive format=raw,file=build/img/os-image.bin \
     -D qemu.log
 ```
 
-Useful signals in the log:
-
-* `v=0e` at `cpl=3` — page fault from ring 3 (check CR2 for faulting address)
-* `v=0d` — general protection fault (bad selector, privilege violation)
-* `v=08` — double fault (kernel stack corrupt, bad GDT/IDT)
-* `TR=0000` — task register not loaded (`ltr` not called)
-* `CPU Reset` → triple fault
-* Repeated `INT 0x20` at same EIP — timer fires but execution is stuck
+Useful signals:
+* `v=0e` at `cpl=3` — page fault from ring 3
+* `v=0d` — general protection fault
+* `v=08` — double fault
+* `TR=0000` — task register not loaded
+* `CPU Reset` — triple fault
+* Repeated `INT 0x20` at same EIP — timer stuck
 
 ---
 
 ## Common Failure Modes
 
-### 1. Reboot loop
-
-Bad GDT, bad IDT, or broken interrupt handler. Confirm `gdt_init()` is the first call in `kernel_main()`.
-
-### 2. Triple fault on boot
-
-BSS not zeroed before `paging_init()`.
-
-### 3. "ramdisk: bad magic"
-
-`kernel.bin` not padded to 512-byte boundary, or launched with `-fda`.
-
-### 4. Red '8' on screen
-
-Double fault. Common causes: corrupt kernel stack (wrong TSS ESP0), bad IDT entry, privilege violation during interrupt handling.
-
-### 5. Crash after iret into ring 3
-
-* TSS not loaded (`ltr` not called in `gdt_init`)
-* TSS ESP0 not set from a dedicated PMM frame — must be `kernel_stack_frame + PAGE_SIZE`
-* User code/data GDT entries missing or wrong DPL
-* `int 0x80` IDT gate has DPL=0 instead of DPL=3
-
-### 6. argv reads garbage in ring 3
-
-argv strings are on the kernel heap — supervisor-only, inaccessible from ring 3. Must be copied onto the user stack before `iret`.
-
-### 7. Program runs but shell doesn't return
-
-`sys_exit()` not called, or `longjmp` context corrupted. Verify `setjmp` is called before `paging_switch` and that TSS ESP0 does not point into the setjmp save area.
-
-### 8. Syscalls silently broken
-
-`syscall_regs_t` struct mismatch with `isr128_stub` push order. See `syscalls.md`.
-
-### 9. runelf crashes / reboots
-
-If `runelf` worked before the PMM was added and now crashes: verify that `PMM_BASE` (0x200000) > the bump allocator's high-water mark at the time `pmm_alloc_frame()` is first called. If they overlap, both allocators return the same frame address → corruption. Use `meminfo` to inspect the heap top.
-
-### 10. "pmm: double free" warning
-
-`process_destroy()` called twice on the same process, or a frame was mapped into multiple PTEs. Ensure `process_set_current(0)` is called immediately after `process_destroy()`.
-
-### 11. PMM frame count leaks after runelf
-
-User ELF was linked with `-Ttext` instead of `-Ttext-segment`. This places a PT_LOAD segment
-at `0x3FF000` (PD index 0), which shares the kernel page table and is never reclaimed by
-`process_pd_destroy()`. Always use `-Ttext-segment 0x400000`.
+| # | Symptom | Cause |
+|---|---|---|
+| 1 | Reboot loop | Bad GDT or IDT |
+| 2 | Triple fault on boot | BSS not zeroed |
+| 3 | "ramdisk: bad magic" | kernel.bin not sector-padded, or `-fda` mode |
+| 4 | Red '8' on screen | Double fault — bad TSS ESP0 or corrupt stack |
+| 5 | Crash after iret | TSS not loaded; wrong TSS ESP0; bad user GDT entries; DPL=0 on int 0x80 gate |
+| 6 | argv garbage in ring 3 | Strings not copied to user stack before iret |
+| 7 | Shell doesn't return | sys_exit not called, or longjmp context corrupted |
+| 8 | Syscalls silently broken | syscall_regs_t mismatch |
+| 9 | PMM leak after runelf | ELF linked with `-Ttext` not `-Ttext-segment` |
+| 10 | "pmm: double free" | process_destroy called twice; call process_set_current(0) after destroy |
+| 11 | Crash on first context switch | sched_esp==0 guard missing; or sched_init not called before sti |
+| 12 | Timer fires but no preemption | EOI sent after sched_tick; or irq0_stub not passing ESP |
+| 13 | System freezes after context switch | EOI not sent before sched_switch; IRQ0 permanently masked |
 
 ---
 
 ## Safe Development Order
 
-When adding features:
-
-1. Build — fix compile errors first
-2. Boot — verify shell appears
-3. Verify interrupts — run `uptime`, confirm ticks advance
-4. Test `runelf hello` — confirm ring-3 execution, argc/argv, and clean shell return
-5. Run `meminfo` before and after `runelf` — confirm free frame count is unchanged
+1. Build — fix compile errors
+2. Boot — confirm shell appears
+3. Verify timer — run `uptime`, confirm ticks advance
+4. Test `runelf hello` — confirm exit is clean
+5. Run `meminfo` before and after — confirm frame count unchanged
 6. Then expand
 
 ---
@@ -318,14 +244,11 @@ When adding features:
 ## Adding a New User Program
 
 1. Create `src/user/myprog.c` with `void _start(int argc, char** argv)`
-2. End `_start` with `sys_exit(0)` — do not rely on returning
-3. Add compile rule to Makefile
-4. Add link rule at `-Ttext-segment 0x400000`  ← not `-Ttext`
-5. Add to ramdisk rule
-6. `make clean && make`
-7. `runelf myprog`
-
-All programs share `-Ttext-segment 0x400000` safely — each gets its own page directory.
+2. End with `sys_exit(0)`
+3. Add compile + link rules to Makefile (`-Ttext-segment 0x400000`)
+4. Add to ramdisk rule
+5. `make clean && make`
+6. `runelf myprog`
 
 ---
 
@@ -340,9 +263,9 @@ All programs share `-Ttext-segment 0x400000` safely — each gets its own page d
 
 ## Next Steps (Recommended)
 
-* Preemptive scheduler — timer IRQ context switch using per-process kernel stacks and `process_t`
 * Filesystem — FAT12 or custom FS via ATA PIO
-* `SYS_SLEEP` / `SYS_EXEC` syscalls
+* `SYS_YIELD` / `SYS_EXEC` syscalls
+* Free non-ELF page tables (stack PT at PD index 767)
 
 ---
 
@@ -350,6 +273,6 @@ All programs share `-Ttext-segment 0x400000` safely — each gets its own page d
 
 If something breaks:
 
-👉 Assume **you violated a contract** (ABI, memory layout, paging, privilege level, allocator invariants, or hardware expectations).
+👉 Assume **you violated a contract** (ABI, memory layout, paging, privilege level, allocator invariants, scheduler invariants, or hardware expectations).
 
 Then trace from there.

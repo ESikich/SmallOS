@@ -27,6 +27,8 @@ typedef enum {
 /*                        TSS ESP0 = kernel_stack_frame + PAGE_SIZE     */
 /*   exit_ctx           – setjmp buffer saved just before iret into     */
 /*                        ring 3; longjmp target for sys_exit           */
+/*   sched_esp          – kernel ESP saved by the scheduler when this   */
+/*                        process is preempted; restored on switch-in   */
 /*   state              – lifecycle flag                                 */
 /*   name               – null-terminated name (truncated to 31 chars)  */
 /* ------------------------------------------------------------------ */
@@ -34,11 +36,12 @@ typedef enum {
 #define PROCESS_NAME_MAX 32
 
 typedef struct {
-    u32*           pd;
-    u32            kernel_stack_frame;
-    jmp_buf        exit_ctx;
+    u32*            pd;
+    u32             kernel_stack_frame;
+    jmp_buf         exit_ctx;
+    unsigned int    sched_esp;          /* scheduler: saved kernel ESP  */
     process_state_t state;
-    char           name[PROCESS_NAME_MAX];
+    char            name[PROCESS_NAME_MAX];
 } process_t;
 
 /* ------------------------------------------------------------------ */

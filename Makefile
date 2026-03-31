@@ -23,16 +23,11 @@ CFLAGS=-ffreestanding -m32 -fno-pie -fno-stack-protector -nostdlib -nostartfiles
 HOST_CC=gcc
 LDFLAGS=-T linker.ld -m elf_i386
 
-# Disk image layout contract:
-#   sector 1      -> boot.bin
-#   sectors 2..5  -> loader2.bin (must be exactly 2048 bytes)
-#   sector 6..    -> kernel.bin
-#   after kernel  -> ramdisk.rd
-
 KERNEL_OBJS=\
 	$(OBJ_DIR)/kernel_entry.o \
 	$(OBJ_DIR)/interrupts.o \
 	$(OBJ_DIR)/setjmp.o \
+	$(OBJ_DIR)/sched_switch.o \
 	$(OBJ_DIR)/kernel.o \
 	$(OBJ_DIR)/idt.o \
 	$(OBJ_DIR)/keyboard.o \
@@ -45,6 +40,7 @@ KERNEL_OBJS=\
 	$(OBJ_DIR)/memory.o \
 	$(OBJ_DIR)/pmm.o \
 	$(OBJ_DIR)/process.o \
+	$(OBJ_DIR)/scheduler.o \
 	$(OBJ_DIR)/parse.o \
 	$(OBJ_DIR)/commands.o \
 	$(OBJ_DIR)/programs.o \
@@ -71,16 +67,19 @@ dirs:
 $(OBJ_DIR)/setjmp.o: $(KERNEL_DIR)/setjmp.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
+$(OBJ_DIR)/sched_switch.o: $(KERNEL_DIR)/sched_switch.asm | dirs
+	$(ASM) -f elf32 $< -o $@
+
 $(OBJ_DIR)/kernel_entry.o: $(BOOT_DIR)/kernel_entry.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
 $(OBJ_DIR)/interrupts.o: $(KERNEL_DIR)/interrupts.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
-$(OBJ_DIR)/kernel.o: $(KERNEL_DIR)/kernel.c $(KERNEL_DIR)/pmm.h $(KERNEL_DIR)/memory.h | dirs
+$(OBJ_DIR)/kernel.o: $(KERNEL_DIR)/kernel.c $(KERNEL_DIR)/pmm.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/scheduler.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/idt.o: $(KERNEL_DIR)/idt.c $(KERNEL_DIR)/idt.h $(KERNEL_DIR)/ports.h $(DRIVERS_DIR)/keyboard.h | dirs
+$(OBJ_DIR)/idt.o: $(KERNEL_DIR)/idt.c $(KERNEL_DIR)/idt.h $(KERNEL_DIR)/ports.h $(DRIVERS_DIR)/keyboard.h $(KERNEL_DIR)/scheduler.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/keyboard.o: $(DRIVERS_DIR)/keyboard.c $(DRIVERS_DIR)/keyboard.h $(KERNEL_DIR)/ports.h $(SHELL_DIR)/shell.h $(DRIVERS_DIR)/screen.h | dirs
@@ -113,6 +112,9 @@ $(OBJ_DIR)/pmm.o: $(KERNEL_DIR)/pmm.c $(KERNEL_DIR)/pmm.h $(DRIVERS_DIR)/termina
 $(OBJ_DIR)/process.o: $(KERNEL_DIR)/process.c $(KERNEL_DIR)/process.h $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/pmm.h $(DRIVERS_DIR)/terminal.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(OBJ_DIR)/scheduler.o: $(KERNEL_DIR)/scheduler.c $(KERNEL_DIR)/scheduler.h $(KERNEL_DIR)/process.h $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/gdt.h $(DRIVERS_DIR)/terminal.h | dirs
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(OBJ_DIR)/parse.o: $(SHELL_DIR)/parse.c $(SHELL_DIR)/parse.h $(KERNEL_DIR)/memory.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -131,7 +133,7 @@ $(OBJ_DIR)/images.o: $(EXEC_DIR)/images.c $(EXEC_DIR)/images.h $(EXEC_DIR)/exec.
 $(OBJ_DIR)/image_programs.o: $(EXEC_DIR)/image_programs.c $(DRIVERS_DIR)/terminal.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/elf_loader.o: $(EXEC_DIR)/elf_loader.c $(EXEC_DIR)/elf_loader.h $(KERNEL_DIR)/elf.h $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/process.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/pmm.h $(KERNEL_DIR)/ramdisk.h $(DRIVERS_DIR)/terminal.h $(DRIVERS_DIR)/keyboard.h | dirs
+$(OBJ_DIR)/elf_loader.o: $(EXEC_DIR)/elf_loader.c $(EXEC_DIR)/elf_loader.h $(KERNEL_DIR)/elf.h $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/process.h $(KERNEL_DIR)/scheduler.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/pmm.h $(KERNEL_DIR)/ramdisk.h $(DRIVERS_DIR)/terminal.h $(DRIVERS_DIR)/keyboard.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/syscall.o: $(KERNEL_DIR)/syscall.c $(KERNEL_DIR)/syscall.h $(DRIVERS_DIR)/terminal.h $(KERNEL_DIR)/timer.h $(KERNEL_DIR)/uapi_syscall.h $(DRIVERS_DIR)/keyboard.h | dirs
@@ -188,8 +190,6 @@ $(BIN_DIR)/boot.bin: $(BOOT_DIR)/boot.asm | dirs
 	$(ASM) -f bin $< -o $@
 
 $(IMG_DIR)/os-image.bin: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(BIN_DIR)/ramdisk.rd | dirs
-	@# Pad kernel.bin to a 512-byte sector boundary before concatenating,
-	@# so the ramdisk starts at a clean LBA that matches loader2's calculation.
 	@kernel_size=$$(wc -c < $(BIN_DIR)/kernel.bin); \
 	padded=$$(( ($$kernel_size + 511) & ~511 )); \
 	pad=$$(( $$padded - $$kernel_size )); \
