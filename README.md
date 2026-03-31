@@ -1,4 +1,4 @@
-# SimpleOS
+# SmallOS
 
 SimpleOS is a BIOS-based x86 hobby operating system built with:
 
