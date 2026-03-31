@@ -7,11 +7,11 @@
  * scheduler.h — Preemptive round-robin scheduler
  *
  * The scheduler maintains a fixed-size table of runnable process_t
- * pointers.  On every timer tick it checks whether a context switch is
+ * pointers. On every timer tick it checks whether a context switch is
  * due and, if so, calls the assembly helper sched_switch() to swap
  * kernel stacks and CR3.
  *
- * Scheduling policy: simple round-robin, one tick per quantum.
+ * Scheduling policy: simple round-robin.
  * SCHED_TICKS_PER_QUANTUM controls how many IRQ0 ticks a process
  * runs before being preempted.
  */
@@ -32,7 +32,17 @@ void sched_init(void);
  *
  * Add a process to the run queue.  Called by elf_run_image() just
  * before iret-ing into ring 3, and by kernel_main() for kernel tasks.
- * The process must have pd, kernel_stack_frame, and sched_esp populated.
+ *
+ * The process must have a valid page directory (pd) and kernel stack
+ * frame. sched_esp is initialised differently depending on the process
+ * type:
+ *
+ *   - Kernel tasks: sched_esp is set up by process_create_kernel_task()
+ *   - ELF processes: sched_esp is initially 0 and is populated on first
+ *     preemption
+ *
+ * The scheduler skips entries with sched_esp == 0 until they have been
+ * preempted at least once.
  *
  * Returns 1 on success, 0 if the table is full.
  */

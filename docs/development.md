@@ -113,11 +113,11 @@ Why:
 
 ## Scheduler Rules
 
-`sched_init()` must be called **after `idt_init()` and before `sti`**. It registers the shell as slot 0 and wires `tss_esp0_ptr`. If called after `sti`, the first timer tick may fire with a null slot pointer.
+`sched_init()` must be called **after `idt_init()` and before `sti`**. It initialises the scheduler table and wires `tss_esp0_ptr`. The shell is not registered here — it is created later in `kernel_main()` and added with `sched_enqueue()`. If called after `sti`, the first timer tick may fire with an uninitialised scheduler state.
 
 `sched_enqueue(proc)` — call after `proc->state = RUNNING`, before `iret`. If the table is full the process still runs but is not preempted.
 
-`sched_dequeue(proc)` — call before `paging_switch` and `process_destroy` in `elf_process_exit`. It resets `s_current_idx` to 0 so the next tick schedules the shell correctly.
+`sched_dequeue(proc)` — call before `paging_switch` and `process_destroy` in `elf_process_exit`. It removes the process from the run queue, compacts the table, and adjusts scheduler indices so round-robin execution can continue over the remaining runnable entries.
 
 **EOI ordering in `irq0_handler_main`**: EOI is sent **before** `sched_tick`. If `sched_switch` lands on a different context and `irq0_handler_main` never returns, EOI must already be sent. Do not move it after `sched_tick`.
 

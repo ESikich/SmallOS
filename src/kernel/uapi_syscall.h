@@ -22,7 +22,6 @@
  *
  * Notes:
  *   - This ABI is currently used by embedded ELF programs.
- *   - Programs currently still execute in ring 0.
  *   - Keep this file shared between kernel and ELF-side code.
  */
 

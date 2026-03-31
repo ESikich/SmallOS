@@ -143,7 +143,7 @@ User programs are compiled separately and packed into the ramdisk. No kernel reb
 ```text
 src/user/hello.c
 src/user/ticks.c
-src/user/args.c          (not yet in ramdisk)
+src/user/args.c
 ```
 
 All use `user_lib.h` and `user_syscall.h`. No libc, no runtime, no dynamic linking.
@@ -161,17 +161,17 @@ i686-elf-gcc -ffreestanding -m32 -fno-pie -fno-stack-protector \
 All user programs are linked at `USER_CODE_BASE` (0x400000):
 
 ```bash
-i686-elf-ld -m elf_i386 -Ttext 0x400000 -e _start \
+i686-elf-ld -m elf_i386 -Ttext-segment 0x400000 -e _start \
     build/obj/hello.o -o build/bin/hello.elf
 ```
 
 Key link options:
 
-* `-Ttext 0x400000` — virtual load address, must match `USER_CODE_BASE` in `paging.h`
+* `-Ttext-segment 0x400000` — virtual load address, must match `USER_CODE_BASE` in `paging.h`
 * `-e _start` — entry point symbol
 * no `-T linker.ld` — user programs use a simpler layout than the kernel
 
-Multiple programs sharing `-Ttext 0x400000` is safe because each `runelf` invocation creates its own page directory, mapping that virtual address to different physical frames.
+Multiple programs sharing `-Ttext-segment 0x400000` is safe because each `runelf` invocation creates its own page directory, mapping that virtual address to different physical frames.
 
 ## Properties
 
@@ -216,12 +216,12 @@ All offsets are byte offsets from the start of the archive. The kernel's `ramdis
 
 1. Create `src/user/myprog.c` with `void _start(int argc, char** argv)` ending in `sys_exit(0)`
 2. Add compile rule in Makefile
-3. Add link rule at `-Ttext 0x400000`
+3. Add link rule using `-Ttext-segment 0x400000`
 4. Add `myprog:$(BIN_DIR)/myprog.elf` to the `ramdisk.rd` rule
 5. `make clean && make`
 6. `runelf myprog`
 
-Multiple programs sharing `-Ttext 0x400000` is safe — each gets its own page directory.
+Multiple programs sharing `-Ttext-segment 0x400000` is safe — each gets its own page directory.
 
 ---
 

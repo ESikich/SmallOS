@@ -138,8 +138,6 @@ void irq0_handler_main(unsigned int esp) {
 
 **EOI ordering**: EOI is sent *before* `sched_tick`. If `sched_tick` calls `sched_switch` and the current invocation of `irq0_handler_main` never returns through the normal path, the PIC is already unmasked and future timer ticks fire correctly on the new context. Sending EOI after `sched_tick` would permanently mask IRQ0 for the incoming context.
 
-IRQ1 sends EOI before `keyboard_handle_irq` for consistency, not because the handler can suspend — it always returns.
-
 ## Keyboard (IRQ1)
 
 ```text
