@@ -29,9 +29,10 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * ELF loader — validates, loads segments, zeroes BSS, launches in ring 3
 * Per-process page directories — address space isolation per `runelf` invocation
 * Ring 3 user mode — hardware-enforced privilege separation
-* Syscall layer via `int 0x80` (DPL=3 gate): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`
+* Syscall layer via `int 0x80` (DPL=3 gate): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`, `SYS_READ`
 * `sys_exit()` returns cleanly to the shell via `setjmp`/`longjmp`
 * Per-process kernel stacks — dedicated PMM frame per process; TSS ESP0 set from it; freed on exit
+* `SYS_READ` — blocking keyboard input for user programs; keyboard IRQ routed to ring buffer while process is running
 
 ---
 
@@ -88,7 +89,7 @@ runimg <image>       descriptor-based execution
 runelf <n> [args]    load and run an ELF from the ramdisk
 ```
 
-Current ramdisk programs: `hello`, `ticks`
+Current ramdisk programs: `hello`, `ticks`, `args`, `readline`
 
 ---
 
@@ -217,7 +218,6 @@ int 0x80 gate: DPL=3 (callable from ring 3)
 
 Next steps:
 
-* `SYS_READ` + keyboard input buffer for user programs
 * Process abstraction — `process_t` struct with saved register state, kernel stack pointer, PD pointer
 * Preemptive scheduler — timer IRQ context switch
 * Filesystem-backed storage (FAT12 or custom FS via ATA PIO)
