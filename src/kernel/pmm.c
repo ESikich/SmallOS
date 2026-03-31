@@ -4,18 +4,17 @@
 /*
  * pmm.c — Physical Memory Manager
  *
- * Bitmap allocator covering PMM_BASE (0x200000) .. PMM_BASE + PMM_SIZE.
+ * Bitmap allocator covering PMM_BASE (0x200000) .. 0x7FFFFF.
  *
  * The bump allocator (kmalloc / kmalloc_page) owns 0x100000–0x1FFFFF.
- * The PMM owns 0x200000–0x7FFFFF.  The ranges never overlap, so there
+ * The PMM owns 0x200000–0x7FFFFF. The ranges never overlap, so there
  * is no ordering constraint between the two allocators.
  *
  * Bitmap: 1536 bits = 192 bytes, static in BSS (zeroed before kernel_main).
  * All frames start free (bit = 0).
  */
 
-/* Bitmap: 1536 bits = 192 bytes, static in BSS (zeroed before kernel_main). */
-/* 3840 bits = 480 bytes */
+ /* Bitmap: 1536 bits = 192 bytes, static in BSS (zeroed before kernel_main). */
 static unsigned char s_bitmap[PMM_NUM_FRAMES / 8];
 static u32           s_free_count = 0;
 static u32           s_next_free  = 0;

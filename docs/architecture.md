@@ -139,20 +139,21 @@ A round-robin preemptive scheduler runs on every timer tick (100 Hz, quantum = 1
 
 Fixed array of up to 8 `process_t*` entries stored in `s_table[SCHED_MAX_PROCS]`.
 
-There is **no reserved slot 0** and no static sentinel `process_t`. The scheduler uses the table as a plain dynamic array:
+There is **no reserved slot 0** and no static sentinel `process_t`. The scheduler
+treats the table as a simple dynamic array:
 
-- `sched_enqueue()` appends at index `s_count`
-- `sched_dequeue()` compacts the array
+- `sched_enqueue()` appends a process at index `s_count`
+- `sched_dequeue()` removes a process and compacts the array
 - `sched_start()` scans the table to locate the requested starting process
 
-The idea that “slot 0 is always the shell/idle context” is incorrect.
+All entries are treated uniformly — no index has special meaning.
 
-The `pd == 0` convention is real, but it is **not tied to any fixed slot**. It is handled dynamically when selecting CR3:
+The `pd == 0` convention still exists, but it is independent of table position:
 
 - If `proc->pd == 0`, the kernel page directory is used
 - Otherwise, the process page directory is used
 
-This is implemented in `sched_proc_cr3()` in `scheduler.c`.
+This is handled dynamically when selecting CR3 (see `sched_proc_cr3()` in `scheduler.c`).
 
 ## Context switch path
 
@@ -440,7 +441,7 @@ build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
 
 * ELF link address fixed at 0x400000 — no PIE/relocation support
 * No filesystem — programs must be in ramdisk at build time
-* No `sched_yield` syscall — voluntary preemption not yet possible
+* No `SYS_YIELD` syscall — voluntary preemption not yet possible
 
 ---
 

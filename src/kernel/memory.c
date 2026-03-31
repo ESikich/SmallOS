@@ -28,11 +28,11 @@ void* kmalloc(unsigned int size) {
  * kmalloc_page()
  *
  * Allocate one page-aligned 4096-byte block from the bump allocator.
- * Used for kernel-owned structures (process page directories, parse
- * buffers) that do not need to be freed.
+ * Used for kernel-owned, long-lived structures that do not need to be
+ * freed (for example, kernel tables or bookkeeping buffers).
  *
- * User-space page frames (ELF segments, user stack, user page tables)
- * are allocated from the PMM instead so they can be reclaimed on exit.
+ * Reclaimable page frames used for user-space mappings are allocated
+ * from the PMM instead so they can be freed later.
  */
 void* kmalloc_page(void) {
     /* round up to next page boundary */
@@ -48,9 +48,8 @@ void* kmalloc_page(void) {
 /*
  * memory_get_heap_top()
  *
- * Returns the current bump pointer.  Used by:
- *   - pmm_init() to determine which frames are already consumed
- *   - the meminfo shell command for reporting heap usage
+ * Returns the current bump pointer.
+ * Used by the meminfo shell command for reporting heap usage.
  */
 unsigned int memory_get_heap_top(void) {
     return heap_current;

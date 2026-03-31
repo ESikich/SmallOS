@@ -35,10 +35,10 @@ static int sys_putc_impl(unsigned int ch) {
  *
  * With ring-3 execution there is no longer a kernel call frame to return
  * through — elf_run_image() ended with an `iret` and has no stack frame
- * waiting.  Instead we:
+ * waiting. Instead we:
  *
  *   1. Restore the kernel page directory (so kernel data is writable again).
- *   2. Destroy the process page directory (stub — bump allocator).
+ *   2. Destroy the process page directory and free its PMM-backed frames.
  *   3. Long-jump back to the shell via the saved return context stored in
  *      elf_loader.c.
  *
