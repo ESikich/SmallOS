@@ -109,6 +109,20 @@ Why:
 * Repeated shell commands would otherwise increase `heap used` even when PMM accounting is correct
 * Zero-allocation parsing keeps shell memory usage stable and makes `meminfo` output trustworthy during repeated `runelf` tests
 
+### Shell parser rule
+
+...existing text...
+
+### Process Data Ownership Rules
+
+* Do not rely on shell input buffers for process data.
+* All user-process arguments must be copied into process-owned storage before execution.
+* Pointers passed into a process must remain valid for the entire lifetime of that process.
+
+Rationale:
+Shell input buffers are mutable and reused. Storing pointers into them leads to
+use-after-modification bugs once the shell continues execution.
+
 ---
 
 ## Scheduler Rules

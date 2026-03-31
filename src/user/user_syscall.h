@@ -85,4 +85,8 @@ static inline int sys_read(char* buf, uint32_t len) {
     return syscall2(SYS_READ, (uint32_t)buf, len);
 }
 
+static inline int sys_yield(void) {
+    return syscall0(SYS_YIELD);
+}
+
 #endif

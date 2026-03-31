@@ -1,15 +1,15 @@
 #include "elf_loader.h"
-#include "elf.h"
-#include "paging.h"
-#include "memory.h"
-#include "pmm.h"
-#include "process.h"
-#include "scheduler.h"
-#include "ramdisk.h"
-#include "terminal.h"
-#include "gdt.h"
-#include "keyboard.h"
-#include <setjmp.h>
+#include "../kernel/elf.h"
+#include "../kernel/paging.h"
+#include "../kernel/memory.h"
+#include "../kernel/pmm.h"
+#include "../kernel/process.h"
+#include "../kernel/scheduler.h"
+#include "../kernel/ramdisk.h"
+#include "../drivers/terminal.h"
+#include "../kernel/gdt.h"
+#include "../drivers/keyboard.h"
+#include "../kernel/setjmp.h"
 
 typedef unsigned char u8;
 
@@ -70,6 +70,65 @@ static void elf_enter_ring3(unsigned int entry,
         : "eax"
     );
     __builtin_unreachable();
+}
+
+
+static void elf_user_task_bootstrap(void) {
+    process_t* proc = sched_current();
+
+    if (!proc || proc->user_entry == 0) {
+        terminal_puts("elf: user task bootstrap failed\n");
+        for (;;) {
+            __asm__ __volatile__("cli; hlt");
+        }
+    }
+
+    keyboard_set_process_mode(1);
+    elf_enter_ring3(proc->user_entry,
+                    USER_STACK_TOP,
+                    proc->user_argc,
+                    proc->user_argv);
+}
+
+static int elf_seed_sched_context(process_t* proc,
+                                  unsigned int entry,
+                                  int argc,
+                                  char** argv)
+{
+    unsigned int used = 0;
+
+    if (!proc) return 0;
+    if (argc < 0 || argc > PROCESS_MAX_ARGS) {
+        terminal_puts("elf: too many args for bootstrap\n");
+        return 0;
+    }
+
+    for (int i = 0; i < argc; i++) {
+        int len = str_len(argv[i]) + 1;
+        if (used + (unsigned int)len > PROCESS_ARG_BYTES) {
+            terminal_puts("elf: args too large for bootstrap\n");
+            return 0;
+        }
+
+        proc->user_argv[i] = &proc->user_arg_data[used];
+        mem_copy((u8*)proc->user_argv[i], (const u8*)argv[i], (unsigned int)len);
+        used += (unsigned int)len;
+    }
+
+    proc->user_argc = argc;
+    proc->user_entry = entry;
+    if (argc < PROCESS_MAX_ARGS) {
+        proc->user_argv[argc] = 0;
+    }
+
+    {
+        unsigned int* stack_top = (unsigned int*)(proc->kernel_stack_frame + PAGE_SIZE);
+        stack_top--;
+        *stack_top = (unsigned int)elf_user_task_bootstrap;
+        proc->sched_esp = (unsigned int)stack_top;
+    }
+
+    return 1;
 }
 
 int elf_process_running(void) {
@@ -194,18 +253,22 @@ int elf_run_image(const unsigned char* image, int argc, char** argv) {
     }
     tss_set_kernel_stack(proc->kernel_stack_frame + PAGE_SIZE);
 
+    if (!elf_seed_sched_context(proc, eh->e_entry, argc, argv)) {
+        process_destroy(proc);
+        process_set_current(0);
+        return 0;
+    }
+
     process_set_current(proc);
     proc->state = PROCESS_STATE_RUNNING;
 
     /*
-     * Do not enqueue the ELF process yet.
+     * The process now has a valid first-entry scheduler context in
+     * proc->sched_esp, seeded to return into elf_user_task_bootstrap().
      *
-     * The shell is now a real kernel task, but this loader still enters
-     * ring 3 through the old foreground iret/longjmp path rather than
-     * through a scheduler-owned task bootstrap.  Enqueuing the process
-     * here lets IRQ0 think it can context-switch to/from a task whose
-     * scheduler state has not been initialised correctly, which corrupts
-     * control flow and currently reboots the system.
+     * We still do not enqueue it yet.  The command path remains the older
+     * foreground iret/longjmp model until launch and exit semantics are
+     * moved fully under scheduler ownership.
      */
 
     if (setjmp(proc->exit_ctx) != 0) {

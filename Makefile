@@ -53,7 +53,7 @@ KERNEL_OBJS=\
 	$(OBJ_DIR)/paging.o \
 	$(OBJ_DIR)/ramdisk.o
 
-USER_PROGS=hello ticks args runelf_test readline
+USER_PROGS=hello ticks args runelf_test readline yield_test
 
 USER_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_PROGS)))
 USER_OBJS=$(addprefix $(OBJ_DIR)/,$(addsuffix .o,$(USER_PROGS)))

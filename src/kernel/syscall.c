@@ -68,6 +68,19 @@ static unsigned int sys_get_ticks_impl(void) {
  * Safety: buf is a user virtual address — valid only because the process PD
  * is still active when this syscall runs (CR3 has not been switched yet).
  */
+static int sys_yield_impl(void) {
+    /*
+     * Transitional implementation.
+     *
+     * Kernel tasks are scheduler-owned, but runelf user processes still run
+     * through the older foreground iret/longjmp path and are not safely
+     * schedulable yet.  Until ELF processes become real scheduler-owned
+     * tasks, SYS_YIELD is accepted as a no-op so user test programs can be
+     * built and exercised without corrupting control flow.
+     */
+    return 0;
+}
+
 static int sys_read_impl(char* buf, unsigned int len) {
     if (buf == 0) return -1;
     if (len == 0) return 0;
@@ -119,6 +132,10 @@ void syscall_handler_main(syscall_regs_t* regs) {
         case SYS_READ:
             regs->eax = (unsigned int)sys_read_impl(
                             (char*)regs->ebx, regs->ecx);
+            break;
+
+        case SYS_YIELD:
+            regs->eax = (unsigned int)sys_yield_impl();
             break;
 
         default:

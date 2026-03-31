@@ -2,7 +2,7 @@
 #define PROCESS_H
 
 #include "paging.h"
-#include <setjmp.h>
+#include "setjmp.h"
 
 /* ------------------------------------------------------------------ */
 /* Process state                                                        */
@@ -40,6 +40,8 @@ typedef enum {
 /* ------------------------------------------------------------------ */
 
 #define PROCESS_NAME_MAX 32
+#define PROCESS_MAX_ARGS 16
+#define PROCESS_ARG_BYTES 256
 
 typedef struct {
     u32*            pd;
@@ -48,6 +50,10 @@ typedef struct {
     unsigned int    sched_esp;          /* scheduler: saved kernel ESP  */
     process_state_t state;
     void          (*kernel_entry)(void);
+    unsigned int    user_entry;         /* first ring-3 EIP for ELF tasks */
+    int             user_argc;
+    char*           user_argv[PROCESS_MAX_ARGS];
+    char            user_arg_data[PROCESS_ARG_BYTES];
     char            name[PROCESS_NAME_MAX];
 } process_t;
 

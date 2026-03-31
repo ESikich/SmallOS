@@ -1,4 +1,26 @@
-## [Current] — shell promoted to a real kernel task (transitional execution model)
+# Changelog
+
+## [Current]
+
+### Added
+
+* `elf_loader.c` / `process.h`
+  * Added scheduler-ready bootstrap state for ELF processes:
+    * `user_entry`, `user_argc`, `user_argv`, and in-process argv storage
+    * `elf_user_task_bootstrap()` for future scheduler-driven first entry
+  * Added `elf_seed_sched_context()` to prepare a process for scheduler-owned execution
+  * Arguments are now copied into `process_t` instead of relying on shell buffer pointers
+
+### Notes
+
+This is a preparatory step toward scheduler-owned ELF tasks.
+
+* ELF processes still execute through the foreground `setjmp`/`longjmp` path
+* The new scheduler bootstrap state is not yet used for execution
+
+---
+
+## [Previous] — shell promoted to a real kernel task (transitional execution model)
 
 ### Added
 
@@ -38,9 +60,7 @@ The next architectural step is to make `runelf` create real scheduler-owned user
 
 ---
 
-# Changelog
-
-## [Current] — zero-allocation shell command parsing
+## [Previous] — zero-allocation shell command parsing
 
 ### Changed
 
@@ -58,7 +78,7 @@ The next architectural step is to make `runelf` create real scheduler-owned user
 
 ---
 
-## [Current] — process-private page tables moved to PMM
+## [Previous] — process-private page tables moved to PMM
 
 ### Changed
 
@@ -77,7 +97,7 @@ The next architectural step is to make `runelf` create real scheduler-owned user
 
 ---
 
-## [Current] — Preemptive round-robin scheduler
+## [Previous] — Preemptive round-robin scheduler
 
 ### Added
 
