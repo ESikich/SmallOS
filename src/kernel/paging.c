@@ -23,10 +23,9 @@
  * private ELF region. Its page table is allocated from the PMM so that
  * process_pd_destroy() can free it and the frames it points to.
  *
- * The user stack lives at 0xBFFFF000 (PD index 767). Its page table comes
- * from kmalloc_page() (kernel-owned bookkeeping, not freed per-process).
- * The stack *frame* itself comes from the PMM and is freed by
- * process_pd_destroy() when it walks that page table's PTEs.
+ * The user stack lives at 0xBFFFF000 (PD index 767). Its page table is
+ * allocated from pmm_alloc_frame() so process_pd_destroy() can free it
+ * along with the stack frame it maps.
  *
  * User ELFs must be linked with -Ttext-segment 0x400000 (not -Ttext) so
  * that the PT_LOAD segment itself starts at 0x400000 (PD index 1). Using

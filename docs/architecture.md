@@ -127,7 +127,7 @@ typedef struct {
 } process_t;
 ```
 
-`sched_esp` is 0 until the process has been preempted at least once. The scheduler skips slots with `sched_esp == 0`.
+`sched_esp` is 0 until the process has been preempted at least once. The scheduler skips any slot where `state != RUNNING` or `sched_esp == 0`.
 
 ---
 
@@ -294,7 +294,7 @@ sys_exit() → int 0x80 → elf_process_exit()
 ## IDT entries
 
 ```text
-8    → ISR8 (double fault — VGA marker '8' in red + halt)
+8    → ISR8 (double fault — VGA marker '8' white-on-red at row 1 col 12 + halt)
 32   → IRQ0 (timer, DPL=0)
 33   → IRQ1 (keyboard, DPL=0)
 128  → syscall int 0x80 (DPL=3 — callable from ring 3)
@@ -322,7 +322,7 @@ irq0_stub: add esp 4, pop segments, popa, iretd
 irq1_stub: pusha, push segments
   ↓
 irq1_handler_main:
-  EOI (outb 0x20, 0x20)        ← before keyboard_handle_irq (may never return)
+  EOI (outb 0x20, 0x20)        ← sent before handler (consistent with IRQ0 pattern)
   keyboard_handle_irq()
   ↓
 irq1_stub: pop segments, popa, iretd

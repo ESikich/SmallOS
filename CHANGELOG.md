@@ -73,7 +73,7 @@ The next architectural step is to make `runelf` create real scheduler-owned user
 
 ### Documentation
 
-* Updated `README.md`, `architechture.md`, `memory.md`, `development.md`, and `execution.md` to describe the new paging ownership model and teardown behavior
+* Updated `README.md`, `architecture.md`, `memory.md`, `development.md`, and `execution.md` to describe the new paging ownership model and teardown behavior
 
 ---
 

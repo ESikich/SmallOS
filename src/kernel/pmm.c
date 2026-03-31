@@ -7,10 +7,10 @@
  * Bitmap allocator covering PMM_BASE (0x200000) .. PMM_BASE + PMM_SIZE.
  *
  * The bump allocator (kmalloc / kmalloc_page) owns 0x100000–0x1FFFFF.
- * The PMM owns 0x200000–0x10FFFFF.  The ranges never overlap, so there
+ * The PMM owns 0x200000–0x7FFFFF.  The ranges never overlap, so there
  * is no ordering constraint between the two allocators.
  *
- * Bitmap: 3840 bits = 480 bytes, static in BSS (zeroed before kernel_main).
+ * Bitmap: 1536 bits = 192 bytes, static in BSS (zeroed before kernel_main).
  * All frames start free (bit = 0).
  */
 
