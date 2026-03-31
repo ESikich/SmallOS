@@ -156,6 +156,24 @@ runelf hello
 
 Round-robin, preemptive, timer-driven at 100 Hz with a 10-tick (100 ms) quantum.
 
+The scheduler uses a fixed-capacity table:
+
+    s_table[SCHED_MAX_PROCS]
+
+This table is a **plain dynamic array**, not a structured layout:
+
+- There is **no special slot 0**
+- There is **no sentinel process_t**
+- Entries are appended by `sched_enqueue()` and compacted by `sched_dequeue()`
+- `sched_start()` searches for the requested process instead of assuming a fixed position
+
+The `pd == 0` rule still exists, but it is **not a table-layout concept**. It is interpreted at runtime:
+
+- `pd == 0` → use kernel page directory
+- otherwise → use process page directory
+
+This logic is implemented in `sched_proc_cr3()` and applies to any kernel task, regardless of its position in the scheduler table.
+
 Today, the scheduler owns kernel tasks such as the shell. User ELF programs are still in transition: they run through the older foreground launch/exit path and are not yet enqueued as scheduler-owned tasks.
 
 ```text
@@ -166,7 +184,7 @@ irq0_handler_main(esp)
   sched_tick(esp)
     [every 10 ticks]
     save cur->sched_esp = esp
-    pick next slot (skip sched_esp==0)
+    pick next runnable entry (skip sched_esp==0 or state!=RUNNING)
     sched_switch(&cur->sched_esp, nxt->sched_esp, next_cr3, next_esp0)
       load all args into registers
       *save_esp = current ESP

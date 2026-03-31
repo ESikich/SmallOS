@@ -14,8 +14,9 @@
  * All frames start free (bit = 0).
  */
 
+/* Bitmap: 1536 bits = 192 bytes, static in BSS (zeroed before kernel_main). */
 /* 3840 bits = 480 bytes */
-static unsigned char s_bitmap[PMM_NUM_FRAMES / 8];  // 192 bytes;
+static unsigned char s_bitmap[PMM_NUM_FRAMES / 8];
 static u32           s_free_count = 0;
 static u32           s_next_free  = 0;
 

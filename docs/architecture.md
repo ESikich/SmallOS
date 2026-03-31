@@ -72,7 +72,7 @@ _start:
     call kernel_main
 ```
 
-BSS zeroing is mandatory. The three paging structures live in `.bss` at `0x7000`–`0x9FFF`. The PMM bitmap also lives in `.bss`. Without zeroing, `paging_init()` triple-faults and the PMM bitmap would falsely show all frames as used.
+BSS zeroing is mandatory. The three paging structures and the PMM bitmap live in `.bss` (roughly in the low kernel image area after load, not at a hard-coded address guaranteed by the linker script). Without zeroing, `paging_init()` can triple-fault and the PMM bitmap would falsely show all frames as used.
 
 ---
 
@@ -137,7 +137,22 @@ A round-robin preemptive scheduler runs on every timer tick (100 Hz, quantum = 1
 
 ## Process table
 
-Fixed array of up to 8 `process_t*` slots. Slot 0 is always the shell/idle context — a static `process_t` with `pd = 0` as a sentinel meaning "use kernel PD".
+Fixed array of up to 8 `process_t*` entries stored in `s_table[SCHED_MAX_PROCS]`.
+
+There is **no reserved slot 0** and no static sentinel `process_t`. The scheduler uses the table as a plain dynamic array:
+
+- `sched_enqueue()` appends at index `s_count`
+- `sched_dequeue()` compacts the array
+- `sched_start()` scans the table to locate the requested starting process
+
+The idea that “slot 0 is always the shell/idle context” is incorrect.
+
+The `pd == 0` convention is real, but it is **not tied to any fixed slot**. It is handled dynamically when selecting CR3:
+
+- If `proc->pd == 0`, the kernel page directory is used
+- Otherwise, the process page directory is used
+
+This is implemented in `sched_proc_cr3()` in `scheduler.c`.
 
 ## Context switch path
 
@@ -154,14 +169,14 @@ irq0_handler_main(esp)
     [if quantum not expired] return
     ↓
     save esp → s_table[current]->sched_esp
-    pick next slot (skip if sched_esp == 0 or state != RUNNING)
+    pick next runnable entry (skip if sched_esp == 0 or state != RUNNING)
     sched_switch(&cur->sched_esp, nxt->sched_esp, next_cr3, next_esp0)
       load all args into registers
       *save_esp = current esp
       tss.esp0  = next_esp0
       cr3       = next_cr3
       esp       = next_esp
-      ret  ←  resumes incoming context here
+      ret  ← resumes incoming context here
     ↓
     [outgoing context resumes here when switched back to]
   ↓
@@ -177,11 +192,10 @@ irq0_stub — add esp 4, pop segments, popa, iretd → ring 3 resumes
 ```text
 runelf:
   process_create()
-  sched_enqueue(proc)      ← added to run queue before iret
+  [NOT enqueued in scheduler — runs via foreground path]
   setjmp / iret into ring 3
 
 sys_exit:
-  sched_dequeue(proc)      ← removed from run queue
   paging_switch(kernel_pd)
   tss_set_kernel_stack(0x90000)
   process_destroy(proc)
@@ -217,7 +231,7 @@ sys_exit:
 # Virtual Address Layout Per Process
 
 ```text
-0x000000 – 0x3FFFFF   kernel (shared, supervisor-only — inaccessible from ring 3)
+0x000000 – 0x3FFFFF   shared supervisor-only mappings (inaccessible from ring 3)
 0x400000 – 0x7FFFFF   user ELF segments (private, PAGE_USER | PAGE_WRITE)
 0xBFFFF000            user stack page (private, PAGE_USER | PAGE_WRITE)
 PD 2–1023 range       kernel heap etc. (shared, supervisor-only)
@@ -268,18 +282,19 @@ map user stack                  → pmm_alloc_frame(), PAGE_USER at 0xBFFFF000
 alloc kernel stack              → pmm_alloc_frame(), tss_set_kernel_stack(frame + PAGE_SIZE)
 process_set_current(proc)
 proc->state = RUNNING
-sched_enqueue(proc)             → added to scheduler run queue
+
+[NOT enqueued in scheduler — runs via foreground path]
+
 setjmp(proc->exit_ctx)          → save kernel context for sys_exit return
 keyboard_set_process_mode(1)
 paging_switch(proc->pd)
 iret → ring 3
   ↓
-[program runs at CPL=3; timer preempts it every ~100 ms]
+[program runs at CPL=3; timer still ticks but does not schedule this process]
   ↓
 sys_exit() → int 0x80 → elf_process_exit()
   proc->state = EXITED
   keyboard_set_process_mode(0)
-  sched_dequeue(proc)
   paging_switch(kernel_pd)
   tss_set_kernel_stack(0x90000)
   process_destroy(proc)

@@ -131,7 +131,7 @@ Therefore, C struct:
 
 ```c
 typedef struct syscall_regs {
-    unsigned int gs;   // pushed last → lowest address → first field
+    unsigned int gs;   // last pushed → lowest address (stack grows down)
     unsigned int fs;
     unsigned int es;
     unsigned int ds;
@@ -143,7 +143,7 @@ typedef struct syscall_regs {
     unsigned int ebx;
     unsigned int edx;
     unsigned int ecx;
-    unsigned int eax;  // pushed first by pusha → highest address → last field
+    unsigned int eax;  // first pushed by pusha → highest address
 } syscall_regs_t;
 ```
 
