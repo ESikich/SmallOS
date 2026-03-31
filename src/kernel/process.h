@@ -17,8 +17,9 @@ typedef enum {
 /* ------------------------------------------------------------------ */
 /* process_t                                                            */
 /*                                                                      */
-/* All per-process kernel state in one place.  One instance is          */
-/* allocated per runelf invocation and freed on exit.                   */
+/* All kernel-visible state for one schedulable context in one place.   */
+/* One instance is allocated for each ELF process or kernel task and    */
+/* is freed when that context is destroyed.                             */
 /*                                                                      */
 /* Fields:                                                              */
 /*   pd                 – physical/virtual address of the process page  */
@@ -29,7 +30,7 @@ typedef enum {
 /*                        ring 3; longjmp target for sys_exit           */
 /*   sched_esp          – kernel ESP saved by the scheduler when this   */
 /*                        process is preempted; restored on switch-in   */
-/*   state              – lifecycle flag                                 */
+/*   state              – lifecycle flag                                */
 /*   name               – null-terminated name (truncated to 31 chars)  */
 /*                                                                      */
 /* Kernel tasks reuse the same structure:                               */
