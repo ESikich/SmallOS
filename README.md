@@ -141,10 +141,9 @@ runelf hello
 0x00010000   ramdisk (permanent)
 0x00090000   kernel stack top (shell context)
 0x00100000   bump allocator — permanent kernel structures
-               kmalloc_page() — non-ELF page tables
 0x00200000   PMM — reclaimable frames
                process_t structs, process PDs, ELF frames,
-               user stack frames, ELF-region PTs, kernel stack frames
+               user stack frames, all process-private PTs, kernel stack frames
 0x00800000   PMM ceiling (= identity-map limit)
 0x00400000   USER_CODE_BASE (per-process ELF mapping)
 0xBFFFF000   user stack (per-process mapping)
@@ -181,7 +180,6 @@ irq0_handler_main(esp)
 * No filesystem — programs must be in ramdisk at build time
 * ELF programs linked at fixed address 0x400000 — no PIE/relocation
 * No `SYS_YIELD` — voluntary preemption not yet possible
-* Non-ELF page tables (stack PT at PD index 767) not freed per-process
 
 ---
 

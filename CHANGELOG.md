@@ -1,5 +1,24 @@
 # Changelog
 
+## [Current] — process-private page tables moved to PMM
+
+### Changed
+
+* `paging.c` / `paging.h`
+  * `paging_map_page()` now allocates process-private page tables from `pmm_alloc_frame()` instead of `kmalloc_page()`
+  * The kernel master page directory still keeps its long-lived kernel-owned mappings
+  * `process_pd_destroy()` now frees every process-private page table it encounters in the user PDE range, not just the ELF-region table
+
+### Fixed
+
+* **Per-process paging leak** — process-private page tables, including the user stack page table, are now PMM-backed and reclaimed on process exit instead of accumulating in the kernel bump allocator
+
+### Documentation
+
+* Updated `README.md`, `architechture.md`, `memory.md`, `development.md`, and `execution.md` to describe the new paging ownership model and teardown behavior
+
+---
+
 ## [Current] — Preemptive round-robin scheduler
 
 ### Added

@@ -199,11 +199,10 @@ sys_exit:
 0x00090000   kernel stack top (grows downward; shell context)
 0x00100000   bump allocator base — permanent kernel structures
                kmalloc()      — argv arrays, parse buffers
-               kmalloc_page() — page tables for non-ELF PDEs (e.g. stack PT)
 0x00200000   PMM base — reclaimable frames
                pmm_alloc_frame() — process_t structs, process PDs,
                                    ELF segment frames, user stack frames,
-                                   ELF-region page tables,
+                                   all process-private page tables,
                                    per-process kernel stack frames
 0x00800000   PMM ceiling (= identity-map limit)
 0x00400000   USER_CODE_BASE — user ELF virtual address (per-process mapping)
@@ -220,6 +219,18 @@ sys_exit:
 0xBFFFF000            user stack page (private, PAGE_USER | PAGE_WRITE)
 PD 2–1023 range       kernel heap etc. (shared, supervisor-only)
 ```
+
+## Process Paging Ownership
+
+User processes own their paging structures:
+
+* Page directory — PMM-allocated, freed on process exit
+* User-space page tables — PMM-allocated, freed on process exit
+* User-space frames (ELF, stack) — PMM-allocated, freed on process exit
+
+Kernel mappings remain shared from `kernel_page_directory` and are never reclaimed by per-process teardown.
+
+`process_pd_destroy()` walks the user PDE range, frees all mapped user frames, frees each private user page table, then frees the page directory frame itself.
 
 ---
 
@@ -409,7 +420,6 @@ build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
 
 # Known Limitations
 
-* Page tables for non-ELF PDEs (e.g. the stack's PD index 767) come from `kmalloc_page` and are not freed per-process
 * ELF link address fixed at 0x400000 — no PIE/relocation support
 * No filesystem — programs must be in ramdisk at build time
 * No `sched_yield` syscall — voluntary preemption not yet possible
@@ -420,7 +430,6 @@ build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
 
 1. Filesystem-backed ELF loading — FAT12 or custom FS via ATA PIO
 2. `SYS_YIELD` / `SYS_EXEC` syscalls
-3. Free non-ELF page tables — allocate stack PT from PMM
 
 ---
 

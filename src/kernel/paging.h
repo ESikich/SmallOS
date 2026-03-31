@@ -46,8 +46,10 @@ void paging_init(void);
  *   flags – PAGE_PRESENT | PAGE_WRITE | PAGE_USER as needed
  *
  * Page table allocation:
- *   PD index 1 (ELF region): from pmm_alloc_frame() — freed on exit
- *   All other indices:        from kmalloc_page()    — kernel-owned
+ *   Kernel mappings in the master kernel PD may still use kernel-owned
+ *   memory, but any page table created in a process page directory is
+ *   allocated from pmm_alloc_frame() so process_pd_destroy() can reclaim
+ *   it on exit.
  *
  * Panics on allocation failure.
  */
@@ -87,12 +89,11 @@ u32* process_pd_create(void);
  *
  *   1. For each private PDE (present and not shared from the kernel PD):
  *      a. pmm_free_frame() every present PTE frame (ELF pages, stack page)
- *      b. pmm_free_frame() the page table itself if it is PD index 1
- *         (the ELF region PT, which came from the PMM)
+ *      b. pmm_free_frame() the private page table itself
  *   2. pmm_free_frame() the page directory frame itself
  *
- * Page tables at other indices (e.g. index 767 for the stack) came from
- * kmalloc_page() and are not freed — those are kernel-owned bookkeeping.
+ * Because all process-private page tables are PMM-backed, no per-process
+ * page-table memory is leaked when a task exits.
  *
  * Safe to call with a null pointer (no-op).
  */

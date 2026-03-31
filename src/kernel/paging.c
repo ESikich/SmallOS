@@ -100,23 +100,12 @@ void paging_init(void) {
  *
  * Maps a single 4 KB page in the given page directory.
  *
- * Page table allocation policy:
- *
- *   PD index USER_PD_INDEX (1) — the private ELF region:
- *     Page table allocated from the PMM.  process_pd_destroy() can then
- *     free it and the frames it points to on process exit.
- *
- *   All other PD indices (e.g. index 767 for the stack at 0xBFFFF000):
- *     Page table allocated from kmalloc_page() — kernel-owned bookkeeping.
- *     The *frames* those PTEs point to still come from the PMM (allocated
- *     by the caller) and are freed by process_pd_destroy() when it walks
- *     those PTEs.
- *
- * Why not use (flags & PAGE_USER) to decide?
- *   The stack is also mapped PAGE_USER but lives at PD index 767.  If its
- *   page table came from the PMM, process_pd_destroy()'s index-1-only walk
- *   would never free it, leaving a dangling PMM allocation that gets handed
- *   out to the next process — instant corruption.
+ * Allocation policy:
+ *   - If the page table already exists, reuse it.
+ *   - If we are extending a process page directory, allocate the new page
+ *     table from the PMM so process_pd_destroy() can reclaim it later.
+ *   - If we are extending the master kernel page directory, allocate from
+ *     kmalloc_page() because kernel mappings are permanent in this design.
  */
 void paging_map_page(u32* pd, u32 virt, u32 phys, u32 flags) {
     u32 pd_index = virt >> 22;
@@ -129,15 +118,13 @@ void paging_map_page(u32* pd, u32 virt, u32 phys, u32 flags) {
     if (pd[pd_index] & PAGE_PRESENT) {
         pt = (u32*)(pd[pd_index] & ~0xFFFu);
     } else {
-        if (pd_index == USER_PD_INDEX) {
-            /* ELF region PT — from PMM so destroy() can free it */
+        if (pd == kernel_page_directory) {
+            pt = (u32*)kmalloc_page();
+            if (!pt) paging_panic();
+        } else {
             u32 frame = pmm_alloc_frame();
             if (!frame) paging_panic();
             pt = (u32*)frame;
-        } else {
-            /* All other PTs — kernel-owned, from bump allocator */
-            pt = (u32*)kmalloc_page();
-            if (!pt) paging_panic();
         }
         mem_zero_page(pt);
         pd[pd_index] = (u32)pt | PAGE_PRESENT | PAGE_WRITE | PAGE_USER;
@@ -196,10 +183,8 @@ u32* process_pd_create(void) {
  *   - Walk the page table and call pmm_free_frame() on every present PTE's
  *     physical frame.  These frames were allocated from the PMM by the ELF
  *     loader (ELF segment pages) or by elf_run_image (stack frame).
- *   - If the PDE is USER_PD_INDEX (1), the page table itself also came from
- *     the PMM — free it too.
- *   - For all other private PDEs (e.g. index 767 for the stack page table),
- *     the page table came from kmalloc_page() and cannot be freed yet.
+ *   - Free the page table itself. Any page table private to a process now
+ *     comes from the PMM.
  *
  * After walking all entries, the PD frame itself is freed.  It was
  * allocated from the PMM by process_pd_create(), so pmm_free_frame() is
@@ -226,14 +211,8 @@ void process_pd_destroy(u32* pd) {
             }
         }
 
-        /*
-         * Free the page table itself only if it came from the PMM.
-         * Only USER_PD_INDEX page tables are PMM-allocated; all others
-         * came from kmalloc_page() and cannot be freed.
-         */
-        if (i == USER_PD_INDEX) {
-            pmm_free_frame((u32)pt);
-        }
+        /* Every process-private page table is PMM-backed. */
+        pmm_free_frame((u32)pt);
 
         /* Clear the PDE so a stale CR3 can't reach freed memory. */
         pd[i] = 0;

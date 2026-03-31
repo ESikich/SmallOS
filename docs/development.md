@@ -66,12 +66,13 @@ Kernel must load its own GDT as the **first act** of `kernel_main()`. The GDT ha
 void paging_map_page(u32* pd, u32 virt, u32 phys, u32 flags);
 ```
 
-### Page table allocator split
+### Process page tables must be PMM-backed
 
-* **PD index 1** (ELF region): page table from `pmm_alloc_frame()` — freed on exit
-* **All other indices**: page table from `kmalloc_page()` — permanent
+* Process page directories come from `pmm_alloc_frame()`
+* Any process-private user page table comes from `pmm_alloc_frame()`
+* Kernel-shared page tables remain shared from `kernel_page_directory`
 
-Do not change this without updating `process_pd_destroy()`.
+Do not allocate process-owned paging structures with `kmalloc_page()`. The bump allocator has no free path and will leak across `runelf` invocations.
 
 ### Switching CR3
 
@@ -86,9 +87,9 @@ kmalloc / kmalloc_page   0x100000 – 0x1FFFFF   permanent (no free)
 pmm_alloc_frame          0x200000 – 0x7FFFFF   reclaimable on process exit
 ```
 
-`kmalloc_page` is for permanent kernel structures: page tables for non-ELF PDEs, argv buffers.
+`kmalloc` / `kmalloc_page` are for permanent kernel structures only, such as argv buffers and other bump-allocator data.
 
-`pmm_alloc_frame` is for everything reclaimed on exit: `process_t` structs, process page directories, ELF frames, stack frames, ELF-region page tables, kernel stack frames.
+`pmm_alloc_frame` is for everything reclaimed on exit: `process_t` structs, process page directories, ELF frames, stack frames, all process-private page tables, and kernel stack frames.
 
 **Verify after changes with `meminfo`:**
 
@@ -265,7 +266,6 @@ Useful signals:
 
 * Filesystem — FAT12 or custom FS via ATA PIO
 * `SYS_YIELD` / `SYS_EXEC` syscalls
-* Free non-ELF page tables (stack PT at PD index 767)
 
 ---
 

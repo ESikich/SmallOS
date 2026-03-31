@@ -17,13 +17,12 @@ This document describes the physical memory layout, allocators, and paging archi
 
 0x00100000   bump allocator base — permanent kernel structures
                kmalloc()      — argv arrays, command-line parse buffers
-               kmalloc_page() — page tables for non-ELF PDEs (e.g. stack PT)
              grows upward to 0x1FFFFF
 
 0x00200000   PMM base — reclaimable frames
                pmm_alloc_frame() — process_t structs, process page directories,
                                    ELF segment frames, user stack frames,
-                                   ELF-region page tables (PD index 1),
+                                   all process-private page tables,
                                    per-process kernel stack frames
              6 MB = 1536 frames; all reclaimed on process exit
 0x00800000   PMM ceiling (= identity-map limit)
@@ -43,9 +42,9 @@ kmalloc / kmalloc_page   0x100000 – 0x1FFFFF   bump, no free
 pmm_alloc_frame          0x200000 – 0x7FFFFF   bitmap, freed on process exit
 ```
 
-**`kmalloc_page` is for permanent kernel-owned structures** — page tables for non-ELF PDEs (e.g. the user stack page table at PD index 767), argv parse buffers. These are never freed.
+**`kmalloc` / `kmalloc_page` are for permanent kernel-owned structures** — command-line parse buffers and other bump-allocator data with kernel lifetime. These allocations are never freed.
 
-**`pmm_alloc_frame` is for everything reclaimed on exit** — `process_t` structs, process page directories, ELF segment frames, user stack frames, the ELF-region page table (PD index 1), and per-process kernel stack frames. All of these are freed by `process_destroy()`.
+**`pmm_alloc_frame` is for everything reclaimed on exit** — `process_t` structs, process page directories, ELF segment frames, user stack frames, all process-private page tables, and per-process kernel stack frames. All of these are freed by `process_destroy()`.
 
 **PMM ceiling = identity-map limit (0x800000).** Frames above this address are not identity-mapped. The kernel accesses all PMM frames as direct pointers (phys == virt). `PMM_BASE + PMM_SIZE` must not exceed `0x800000`.
 
@@ -62,7 +61,7 @@ void* kmalloc_page(void);               // allocate one 4096-byte page-aligned b
 unsigned int memory_get_heap_top(void); // current bump pointer (for meminfo)
 ```
 
-No free. Suitable for structures that live for the lifetime of the kernel: parse buffers, non-ELF page tables. `memory_get_heap_top()` is used by `meminfo` to report heap usage.
+No free. Suitable for structures that live for the lifetime of the kernel: parse buffers and other permanent kernel-owned data. `memory_get_heap_top()` is used by `meminfo` to report heap usage.
 
 ---
 
@@ -92,12 +91,12 @@ process_create()
 process_pd_create()
   → pmm_alloc_frame()           process page directory
 
-paging_map_page() for ELF segments (PD index 1):
-  → pmm_alloc_frame()           ELF-region page table
+paging_map_page() for ELF segments:
+  → pmm_alloc_frame()           process-private page table (first use only)
   → pmm_alloc_frame() × N       one frame per ELF page
 
-paging_map_page() for user stack (PD index 767):
-  → kmalloc_page()              stack page table (permanent, not freed)
+paging_map_page() for user stack:
+  → pmm_alloc_frame()           process-private page table (first use only)
   → pmm_alloc_frame()           stack frame
 
 elf_run_image():
@@ -109,7 +108,7 @@ process_destroy()
   → process_pd_destroy(pd)
       pmm_free_frame() × N      ELF segment frames
       pmm_free_frame()          stack frame  (walked via PD index 767 PTE)
-      pmm_free_frame()          ELF-region page table (PD index 1)
+      pmm_free_frame()          each process-private page table
       pmm_free_frame()          page directory itself
   → pmm_free_frame()            kernel stack frame
   → pmm_free_frame()            process_t frame
@@ -118,6 +117,32 @@ process_destroy()
 After a clean `runelf`, `pmm_free_count()` returns the same value as before the call.
 
 ---
+
+# Process Paging Allocation Model
+
+All paging structures associated with user processes are allocated from the Physical Memory Manager (PMM), not the bump allocator.
+
+## Rules
+
+* `kernel_page_directory` may still reference long-lived kernel-owned tables
+* Process page directories are allocated with `pmm_alloc_frame()`
+* Process-private user page tables are allocated with `pmm_alloc_frame()`
+* Process-private frames (ELF pages, user stack, kernel stack, `process_t`) are allocated with `pmm_alloc_frame()`
+
+## Rationale
+
+Previously, a process-private page table could come from `kmalloc_page()` and survive process teardown, creating a per-process leak in kernel heap pages. Using PMM for all process-owned paging structures makes allocation and reclamation symmetric.
+
+## Teardown
+
+`process_pd_destroy()` now:
+
+1. Walks the user PDE range
+2. Frees every mapped user frame referenced by present PTEs
+3. Frees every process-private page table frame
+4. Frees the page directory frame itself
+
+Kernel-shared mappings are left intact.
 
 # Paging Architecture
 
@@ -143,11 +168,10 @@ After `paging_init()`: virtual == physical for all addresses 0x000000–0x7FFFFF
 
 | PD index | Virtual range        | Page table source  | Freed on exit? |
 |----------|---------------------|--------------------|----------------|
-| 1        | 0x400000–0x7FFFFF   | `pmm_alloc_frame`  | yes            |
-| 767      | 0xBFFFF000 (stack)  | `kmalloc_page`     | no (permanent) |
-| others   | kernel-shared       | shared from kernel | n/a            |
+| user range | per-process mappings | `pmm_alloc_frame`  | yes            |
+| kernel range | shared from kernel | shared from kernel | n/a            |
 
-The physical **frames** pointed to by all PTEs are always PMM-allocated and freed by `process_pd_destroy()` regardless of which allocator provided the page table.
+The physical **frames** pointed to by user PTEs are PMM-allocated and freed by `process_pd_destroy()`. Process-private page tables are also PMM-allocated and freed there.
 
 ## Virtual address space per process
 
@@ -189,7 +213,6 @@ after kernel  ramdisk.rd
 * ELF programs linked at fixed address 0x400000 — no PIE/relocation
 * No filesystem — programs must be in ramdisk at build time
 * Bump allocator has no free — permanent kernel structures only
-* Stack page table (PD index 767) comes from `kmalloc_page` and is not freed per-process
 
 ---
 
@@ -199,7 +222,6 @@ Next steps:
 
 * Preemptive scheduler — timer IRQ context switch using per-process kernel stacks and `process_t`
 * Filesystem-backed storage (FAT12 or custom FS via ATA PIO)
-* Free non-ELF page tables — allocate stack PT from PMM to close the remaining per-process leak
 
 ---
 

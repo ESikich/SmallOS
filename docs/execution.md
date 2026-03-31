@@ -200,7 +200,7 @@ process PD (active during ring-3 execution):
 1. Sets `proc->state = EXITED` and restores keyboard to shell mode
 2. Switches CR3 back to the kernel page directory
 3. Saves a pointer to `proc->exit_ctx` (the jmp_buf is inside the process_t frame)
-4. Calls `process_destroy(proc)` — frees ELF frames, user stack frame, ELF-region page table, PD frame, kernel stack frame, and the process_t frame itself
+4. Calls `process_destroy(proc)` — frees ELF frames, user stack frame, all process-private page tables, the PD frame, the kernel stack frame, and the process_t frame itself
 5. Calls `longjmp` via the saved pointer — resumes `elf_run_image()` after the `setjmp` checkpoint
 6. `elf_run_image()` returns 1 to the shell command handler
 
@@ -211,7 +211,6 @@ The longjmp-after-free is safe because `longjmp` copies the jmp_buf contents to 
 # Design Constraints
 
 * No scheduler — shell blocks during execution
-* Page tables for non-ELF PDEs (e.g. stack PD index 767) are not freed — came from `kmalloc_page`
 * No dynamic linking — programs are statically linked at 0x400000
 * No filesystem access from user programs — I/O via syscalls only
 
