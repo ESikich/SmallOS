@@ -1,151 +1,174 @@
-# SimpleOS
+# Memory Model
 
-SimpleOS is a BIOS-based x86 hobby operating system built with:
-
-* `nasm`
-* `i686-elf-gcc`
-* `i686-elf-ld`
-* `QEMU`
-
-It boots from a raw disk image, switches to 32-bit protected mode, enables paging, loads a ramdisk from disk, and runs a C kernel with a terminal shell and ELF program execution in ring 3.
+This document describes the physical memory layout, allocators, and paging architecture.
 
 ---
 
-## Current Features
-
-* Two-stage BIOS bootloader (real mode → protected mode)
-* LBA extended disk reads (INT 0x13 AH=0x42) — no CHS track limit
-* Kernel-owned GDT with ring-3 user segments and TSS
-* x86 paging — identity-mapped first 8 MB
-* BSS zeroing in kernel entry before paging is enabled
-* IDT with PIT timer (IRQ0), keyboard (IRQ1), and syscalls (INT 0x80)
-* VGA text-mode display and terminal abstraction
-* Shell with line editing, history, and command parsing
-* Bump allocator (`kmalloc`) for kernel structures
-* Physical memory manager (`pmm`) — bitmap allocator for user page frames
-  * Manages `0x200000`–`0x7FFFFF` (6 MB, 1536 frames)
-  * Frames reclaimed on process exit — no leak after `runelf`
-* Ramdisk — flat ELF archive loaded from disk, no kernel rebuild to add programs
-* ELF loader — validates, loads segments, zeroes BSS, launches in ring 3
-* Per-process page directories — address space isolation per `runelf` invocation
-* Ring 3 user mode — hardware-enforced privilege separation
-* Syscall layer via `int 0x80` (DPL=3 gate): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`
-* `sys_exit()` returns cleanly to the shell via `setjmp`/`longjmp`
-
----
-
-## Project Structure
+# Physical Memory Map
 
 ```text
-.
-├── src/
-│   ├── boot/       boot.asm, loader2.asm, kernel_entry.asm
-│   ├── kernel/     kernel.c, gdt, idt, paging, memory, pmm, syscall, timer, system, setjmp
-│   ├── drivers/    keyboard, screen, terminal
-│   ├── shell/      shell, line_editor, parse, commands
-│   ├── exec/       elf_loader, exec, images, programs
-│   └── user/       hello.c, ticks.c, args.c, user_lib.h
-├── tools/
-│   └── mkramdisk.c
-├── build/
-├── Makefile
-├── linker.ld
-```
+0x00007C00   bootloader stage 1 (BIOS loads here)
+0x00008000   loader2 stage 2 (done after protected-mode jump)
+0x00001000   kernel image (loaded by loader2)
+0x00006000   kernel .bss start (page tables + PMM bitmap reside here)
+~0x0000A008  kernel .bss end
+0x00010000   ramdisk (permanent — loaded by loader2, never freed)
+0x00090000   kernel stack top (grows downward from here)
 
----
+0x00100000   bump allocator base — permanent kernel structures
+               kmalloc()      — argv arrays, command-line parse buffers
+               kmalloc_page() — page tables for non-ELF PDEs (e.g. stack PT)
+             grows upward to 0x1FFFFF
 
-## Build & Run
-
-```bash
-make clean && make
-```
-
-Run with QEMU:
-
-```bash
-qemu-system-i386 -drive format=raw,file=build/img/os-image.bin
-```
-
-**Important:** use `-drive format=raw` (hard disk mode). Do not use `-fda` (floppy). LBA extended reads are not supported on floppy drives.
-
----
-
-## Commands
-
-```
-help
-clear
-echo [args...]
-about
-halt
-reboot
-uptime
-meminfo
-
-run <builtin>        call a kernel-linked program directly
-runimg <image>       descriptor-based execution
-runelf <n> [args]    load and run an ELF from the ramdisk
-```
-
-Current ramdisk programs: `hello`, `ticks`
-
----
-
-## Architecture Overview
-
-```text
-BIOS
- → boot.asm              load loader2 (CHS, 4 sectors)
- → loader2.asm           load kernel (LBA) + ramdisk (LBA) → protected mode
- → kernel_entry.asm      zero BSS → kernel_main()
-
-kernel_main()
- → gdt_init()            install GDT: null, k-code, k-data, u-code, u-data, TSS
- → paging_init()         enable paging, identity-map 8 MB
- → memory_init()         bump allocator at 0x100000 (kernel structures)
- → pmm_init()            bitmap allocator at 0x200000 (user frames)
- → keyboard/timer/idt    drivers and interrupt table
- → sti
- → ramdisk_init()        validate ramdisk at 0x10000
- → shell_init()          interactive shell
-
-runelf hello
- → ramdisk_find()        locate ELF in archive
- → process_pd_create()   fresh page directory, kernel entries shared
- → map ELF segments      pmm_alloc_frame() per page, PAGE_USER at 0x400000
- → map user stack        pmm_alloc_frame(), PAGE_USER at 0xBFFFF000
- → setjmp()              save kernel context for sys_exit return
- → tss_set_kernel_stack  point TSS ESP0 at kernel stack
- → paging_switch(pd)     load process CR3
- → iret into ring 3      CS=0x1B, SS=0x23, EIP=e_entry
- → [program runs]
- → sys_exit() → int 0x80 → elf_process_exit()
- → paging_switch(kpd)    restore kernel CR3
- → process_pd_destroy()  free all PMM frames (ELF pages + stack)
- → longjmp()             return to shell
-```
-
----
-
-## Physical Memory Layout
-
-```text
-0x00007C00   bootloader stage 1
-0x00008000   loader2 stage 2 (done after jump to kernel)
-0x00001000   kernel image
-0x00006000   kernel .bss start (page tables here)
-0x0000A008   kernel .bss end (approx)
-0x00010000   ramdisk (permanent)
-0x00090000   kernel stack top (grows downward)
-0x00100000   bump allocator base — kernel structures
-               kmalloc()      — argv arrays, parse buffers
-               kmalloc_page() — process PDs, page tables
-0x00200000   PMM base — user page frames
-               pmm_alloc_frame() — ELF segment frames, user stack frames
+0x00200000   PMM base — reclaimable frames
+               pmm_alloc_frame() — process_t structs, process page directories,
+                                   ELF segment frames, user stack frames,
+                                   ELF-region page tables (PD index 1),
+                                   per-process kernel stack frames
+             6 MB = 1536 frames; all reclaimed on process exit
 0x00800000   PMM ceiling (= identity-map limit)
-0x00400000   USER_CODE_BASE — user ELF virtual address (per-process mapping)
+
+0x00400000   USER_CODE_BASE — ELF virtual address (per-process mapping)
 0xBFFFF000   user stack virtual address (per-process mapping)
 ```
+
+---
+
+# Two-Allocator Contract
+
+The system has two physical allocators with **disjoint, non-overlapping ranges**:
+
+```text
+kmalloc / kmalloc_page   0x100000 – 0x1FFFFF   bump, no free
+pmm_alloc_frame          0x200000 – 0x7FFFFF   bitmap, freed on process exit
+```
+
+**`kmalloc_page` is for permanent kernel-owned structures** — page tables for non-ELF PDEs (e.g. the user stack page table at PD index 767), argv parse buffers. These are never freed.
+
+**`pmm_alloc_frame` is for everything reclaimed on exit** — `process_t` structs, process page directories, ELF segment frames, user stack frames, the ELF-region page table (PD index 1), and per-process kernel stack frames. All of these are freed by `process_destroy()`.
+
+**PMM ceiling = identity-map limit (0x800000).** Frames above this address are not identity-mapped. The kernel accesses all PMM frames as direct pointers (phys == virt). `PMM_BASE + PMM_SIZE` must not exceed `0x800000`.
+
+**The two ranges are disjoint.** `pmm_alloc_frame()` and `kmalloc_page()` can never return the same address. If they overlapped, the PMM bitmap would hand out frames already claimed by the bump allocator, causing silent corruption.
+
+---
+
+# Bump Allocator (`kmalloc` / `kmalloc_page`)
+
+```c
+void  memory_init(unsigned int start);   // set base; called with 0x100000
+void* kmalloc(unsigned int size);        // allocate, 4-byte aligned
+void* kmalloc_page(void);               // allocate one 4096-byte page-aligned block
+unsigned int memory_get_heap_top(void); // current bump pointer (for meminfo)
+```
+
+No free. Suitable for structures that live for the lifetime of the kernel: parse buffers, non-ELF page tables. `memory_get_heap_top()` is used by `meminfo` to report heap usage.
+
+---
+
+# Physical Memory Manager (`pmm`)
+
+```c
+void pmm_init(void);             // initialise bitmap; all frames start free
+u32  pmm_alloc_frame(void);      // return a 4KB-aligned physical address, or 0
+void pmm_free_frame(u32 addr);   // reclaim a frame; warns on double-free
+u32  pmm_free_count(void);       // current free frame count (used by meminfo)
+```
+
+192-byte bitmap in `.bss` (zeroed at boot). Linear scan with a search hint for O(n) worst-case allocation. Detects and logs double-free attempts.
+
+Run `meminfo` before and after `runelf` to confirm the free count is unchanged.
+
+---
+
+# Process Memory Lifecycle
+
+Each `runelf` invocation allocates from the PMM and fully reclaims on exit:
+
+```text
+process_create()
+  → pmm_alloc_frame()           process_t struct (< PAGE_SIZE, fits in one frame)
+
+process_pd_create()
+  → pmm_alloc_frame()           process page directory
+
+paging_map_page() for ELF segments (PD index 1):
+  → pmm_alloc_frame()           ELF-region page table
+  → pmm_alloc_frame() × N       one frame per ELF page
+
+paging_map_page() for user stack (PD index 767):
+  → kmalloc_page()              stack page table (permanent, not freed)
+  → pmm_alloc_frame()           stack frame
+
+elf_run_image():
+  → pmm_alloc_frame()           per-process kernel stack (TSS ESP0)
+
+--- process runs ---
+
+process_destroy()
+  → process_pd_destroy(pd)
+      pmm_free_frame() × N      ELF segment frames
+      pmm_free_frame()          stack frame  (walked via PD index 767 PTE)
+      pmm_free_frame()          ELF-region page table (PD index 1)
+      pmm_free_frame()          page directory itself
+  → pmm_free_frame()            kernel stack frame
+  → pmm_free_frame()            process_t frame
+```
+
+After a clean `runelf`, `pmm_free_count()` returns the same value as before the call.
+
+---
+
+# Paging Architecture
+
+## Kernel page directory
+
+Three static arrays in `.bss`, zeroed at boot by `kernel_entry.asm`:
+
+```text
+kernel_page_directory[1024]   master PD (CR3 value during kernel execution)
+low_page_table_0[1024]        PD index 0 → 0x000000–0x3FFFFF (identity, supervisor)
+low_page_table_1[1024]        PD index 1 → 0x400000–0x7FFFFF (identity, supervisor)
+```
+
+After `paging_init()`: virtual == physical for all addresses 0x000000–0x7FFFFF.
+
+## Per-process page directories
+
+`process_pd_create()` allocates a fresh PD from the PMM and copies the kernel's entries (PD indices 0 and 2–1023) into it so kernel code, VGA, ramdisk, and heap remain accessible after CR3 switch. PD index 1 is left empty — each process gets its own private ELF mapping there.
+
+### Page table allocation policy
+
+`paging_map_page()` uses different allocators depending on the PD index:
+
+| PD index | Virtual range        | Page table source  | Freed on exit? |
+|----------|---------------------|--------------------|----------------|
+| 1        | 0x400000–0x7FFFFF   | `pmm_alloc_frame`  | yes            |
+| 767      | 0xBFFFF000 (stack)  | `kmalloc_page`     | no (permanent) |
+| others   | kernel-shared       | shared from kernel | n/a            |
+
+The physical **frames** pointed to by all PTEs are always PMM-allocated and freed by `process_pd_destroy()` regardless of which allocator provided the page table.
+
+## Virtual address space per process
+
+```text
+0x000000 – 0x3FFFFF   kernel (shared, supervisor-only — ring 3 cannot access)
+0x400000 – 0x7FFFFF   user ELF segments (private, PAGE_USER | PAGE_WRITE)
+0x800000 – 0xBFFEFFFF (unmapped)
+0xBFFFF000            user stack page (private, PAGE_USER | PAGE_WRITE)
+0xC0000000+           kernel heap region (shared, supervisor-only)
+```
+
+## CR3 transitions
+
+```text
+boot               → kernel_page_directory (CR3 set by paging_init)
+runelf launch      → process PD (paging_switch before iret)
+sys_exit           → kernel_page_directory (paging_switch in elf_process_exit,
+                     before process_destroy touches any kernel structures)
+```
+
+Always switch CR3 back to the kernel PD **before** freeing the process PD.
 
 ---
 
@@ -160,54 +183,13 @@ after kernel  ramdisk.rd
 
 ---
 
-## ELF Execution Model
-
-* ELF programs compiled and linked at `0x400000` (`USER_CODE_BASE`)
-* Stored in `ramdisk.rd` — packed at build time by `mkramdisk`
-* Each `runelf` creates a private page directory; the same virtual address maps to different physical frames per process
-* User frames allocated from PMM (`0x200000`–`0x7FFFFF`) — reclaimed on exit
-* argv strings copied into user stack memory before `iret` — ring-3 accessible
-* Programs exit via `sys_exit()` which longjmps back to the shell
-
-To add a program: add compile + link rules to Makefile, add `name:path` to the `ramdisk.rd` rule.
-
----
-
-## GDT Layout
-
-```text
-Index 0   0x00   null
-Index 1   0x08   kernel code   DPL=0
-Index 2   0x10   kernel data   DPL=0
-Index 3   0x1B   user code     DPL=3
-Index 4   0x23   user data     DPL=3
-Index 5   0x28   TSS           32-bit available
-```
-
----
-
-## Syscall ABI
-
-```text
-eax = syscall number
-ebx = arg1
-ecx = arg2
-edx = arg3
-return → eax
-
-int 0x80 gate: DPL=3 (callable from ring 3)
-```
-
----
-
 ## Current Limitations
 
-* No per-process kernel stacks — shared kernel stack at 0x90000 is not safe for preemptive multitasking
 * No scheduler — shell blocks during program execution
 * ELF programs linked at fixed address 0x400000 — no PIE/relocation
 * No filesystem — programs must be in ramdisk at build time
-* Heap is bump-only (no free) — suitable for kernel structures, not user allocations
-* `kmalloc_page`-allocated page tables (for non-ELF PDEs) are not freed per-process
+* Bump allocator has no free — permanent kernel structures only
+* Stack page table (PD index 767) comes from `kmalloc_page` and is not freed per-process
 
 ---
 
@@ -215,11 +197,9 @@ int 0x80 gate: DPL=3 (callable from ring 3)
 
 Next steps:
 
-* Per-process kernel stacks — allocate a kernel stack frame from PMM per process; store in process descriptor; point TSS ESP0 at it
-* Process abstraction — `process_t` struct with saved register state, kernel stack pointer, PD pointer
-* Preemptive scheduler — timer IRQ context switch
-* `SYS_READ` + keyboard input buffer for user programs
+* Preemptive scheduler — timer IRQ context switch using per-process kernel stacks and `process_t`
 * Filesystem-backed storage (FAT12 or custom FS via ATA PIO)
+* Free non-ELF page tables — allocate stack PT from PMM to close the remaining per-process leak
 
 ---
 

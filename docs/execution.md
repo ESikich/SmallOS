@@ -14,7 +14,7 @@ runimg   → descriptor-based image execution (ring 0)
 runelf   → ELF programs loaded from ramdisk into per-process address space (ring 3)
 ```
 
-`runelf` is the primary execution path. Programs run in ring 3 with hardware-enforced memory protection. The shell blocks for the duration of each program. Timer interrupts continue to fire during execution (tick counter advances), but keyboard input is not processed until the program returns.
+`runelf` is the primary execution path. Programs run in ring 3 with hardware-enforced memory protection. The shell blocks for the duration of each program. Timer interrupts continue to fire during execution (tick counter advances), but keyboard input is routed to the process input ring buffer rather than the shell while a process is running.
 
 ---
 
@@ -61,8 +61,10 @@ elf_run_image(data, argc, argv)
   ↓
 validate ELF magic (0x7F 'E' 'L' 'F')
   ↓
+process_create("elf")            → allocate process_t from PMM frame
+  ↓
 process_pd_create()
-  → kmalloc_page() → 4KB-aligned page directory
+  → pmm_alloc_frame() → 4KB-aligned page directory
   → copy kernel PD entries (indices 0, 2–1023) for shared kernel access
   → PD index 1 left empty (private user region)
   ↓
@@ -78,10 +80,15 @@ allocate + map user stack:
     stack_frame = pmm_alloc_frame()
     paging_map_page(pd, 0xBFFFF000, stack_frame, PAGE_USER | PAGE_WRITE)
   ↓
-setjmp(s_exit_ctx)               → save kernel stack context for sys_exit return
+proc->kernel_stack_frame = pmm_alloc_frame()
+tss_set_kernel_stack(kernel_stack_frame + PAGE_SIZE) → TSS ESP0 for ring-3 syscalls
   ↓
-tss_set_kernel_stack(esp_now + 64)  → point TSS ESP0 above current kernel frame
+process_set_current(proc)        → register as active process
+proc->state = RUNNING
   ↓
+setjmp(proc->exit_ctx)           → save kernel stack context for sys_exit return
+  ↓
+keyboard_set_process_mode(1)     → route keystrokes to ring buffer
 paging_switch(pd)                → load process CR3, flush TLB
   ↓
 elf_enter_ring3(entry, USER_STACK_TOP, argc, argv)
@@ -97,9 +104,15 @@ elf_enter_ring3(entry, USER_STACK_TOP, argc, argv)
 sys_exit(code) → int 0x80 → syscall_handler_main → elf_process_exit()
   ↓
 elf_process_exit():
+  proc->state = EXITED
+  keyboard_set_process_mode(0)
   paging_switch(kernel_pd)       → restore kernel CR3
-  process_pd_destroy(pd)         → frees all PMM frames (ELF pages + stack)
-  longjmp(s_exit_ctx, 1)         → resume in elf_run_image after setjmp
+  save &proc->exit_ctx           → copy pointer before freeing proc frame
+  process_destroy(proc)          → process_pd_destroy (frees ELF frames + PD)
+                                    pmm_free_frame(kernel_stack_frame)
+                                    pmm_free_frame(process_t frame)
+  process_set_current(0)
+  longjmp(exit_ctx, 1)           → resume in elf_run_image after setjmp
   ↓
 elf_run_image() returns 1        → shell prompt reappears
 ```
@@ -144,11 +157,11 @@ Stack layout built before iret (top of user stack, growing down):
 
 # Syscall Integration
 
-ELF programs interact with the kernel via `int 0x80`.
+ELF programs interact with the kernel via `int 0x80`. See `syscalls.md` for the full ABI.
 
 1. Ring-3 code executes `int 0x80`
 2. CPU checks IDT[128].DPL=3 — allowed from ring 3
-3. CPU loads SS0/ESP0 from TSS — switches to kernel stack
+3. CPU loads SS0/ESP0 from TSS — switches to the per-process kernel stack
 4. CPU pushes SS, ESP, EFLAGS, CS, EIP onto kernel stack
 5. `isr128_stub` saves registers, loads kernel segments (0x10), calls `syscall_handler_main`
 6. Handler executes, sets return value in `regs->eax`
@@ -156,24 +169,13 @@ ELF programs interact with the kernel via `int 0x80`.
 
 Kernel data remains accessible during syscalls because kernel PD entries are shared into every process directory (supervisor-only — ring-3 code itself cannot access them).
 
-### Register ABI
+---
 
-```text
-eax = syscall number
-ebx = arg1
-ecx = arg2
-edx = arg3
-return → eax
-```
+# Keyboard Input During Execution
 
-### Available syscalls
+When a process is running, `keyboard_set_process_mode(1)` redirects all ASCII keystrokes from the shell into a 256-byte ring buffer. `SYS_READ` (syscall 5) drains this buffer with a blocking STI+HLT loop. When the process exits, `keyboard_set_process_mode(0)` restores shell routing and clears the buffer.
 
-```text
-SYS_WRITE     (1)  write buffer to terminal
-SYS_EXIT      (2)  terminate process — restores kernel CR3, longjmps to shell
-SYS_GET_TICKS (3)  return PIT tick counter
-SYS_PUTC      (4)  write single character to terminal
-```
+The syscall gate is an interrupt gate — IF is cleared on entry. `sys_read_impl` re-enables interrupts with `sti` before the wait loop and restores `cli` before returning, so keyboard IRQs can fire and populate the buffer during blocking reads.
 
 ---
 
@@ -194,17 +196,22 @@ process PD (active during ring-3 execution):
 `sys_exit()` is the only valid way for a ring-3 program to terminate. The `_start` entry point should always call `sys_exit(0)` before returning; a bare `ret` from `_start` has no valid return address and will fault.
 
 `elf_process_exit()` runs in ring 0 (inside the syscall handler):
-1. Switches CR3 back to kernel page directory
-2. Calls `process_pd_destroy()` — walks all private PDEs, frees frames via PMM
-3. Calls `longjmp()` to resume `elf_run_image()` after the `setjmp` checkpoint
-4. `elf_run_image()` returns 1 to the shell command handler
+
+1. Sets `proc->state = EXITED` and restores keyboard to shell mode
+2. Switches CR3 back to the kernel page directory
+3. Saves a pointer to `proc->exit_ctx` (the jmp_buf is inside the process_t frame)
+4. Calls `process_destroy(proc)` — frees ELF frames, user stack frame, ELF-region page table, PD frame, kernel stack frame, and the process_t frame itself
+5. Calls `longjmp` via the saved pointer — resumes `elf_run_image()` after the `setjmp` checkpoint
+6. `elf_run_image()` returns 1 to the shell command handler
+
+The longjmp-after-free is safe because `longjmp` copies the jmp_buf contents to the stack before the frame is freed, and the PMM frame is not reused until the next `pmm_alloc_frame()` call — which cannot happen during the longjmp itself.
 
 ---
 
 # Design Constraints
 
 * No scheduler — shell blocks during execution
-* Page tables for non-ELF PDEs (e.g. stack PD index 767) are not freed — came from kmalloc_page
+* Page tables for non-ELF PDEs (e.g. stack PD index 767) are not freed — came from `kmalloc_page`
 * No dynamic linking — programs are statically linked at 0x400000
 * No filesystem access from user programs — I/O via syscalls only
 
@@ -212,17 +219,11 @@ process PD (active during ring-3 execution):
 
 # Future Execution Model
 
-## 1. Process Abstraction
+## Scheduler
 
-Save register state on yield/exit. Build a `process_t` struct (PD pointer, kernel stack
-frame, name, saved registers). Build a process table. Foundation for the scheduler.
+Preemptive: timer IRQ saves current process state into the active `process_t`, picks the next runnable process, and restores its state. `process_t` is already in place — the main work is adding a register save area and a process table.
 
-## 2. Scheduler
-
-Preemptive: timer IRQ saves current process state, picks next, restores its state.
-Requires per-process kernel stacks (already implemented) and `process_t`.
-
-## 3. Dynamic Link Addresses
+## Dynamic Link Addresses
 
 Position-independent ELF (`-pie`) removes the fixed `0x400000` requirement.
 
@@ -232,15 +233,19 @@ Position-independent ELF (`-pie`) removes the fixed `0x400000` requirement.
 
 ```text
 runelf  → ramdisk_find()
-        → process_pd_create()
+        → process_create()
+        → process_pd_create()       ← PD from PMM
         → map ELF frames at 0x400000 (PAGE_USER)
         → map stack at 0xBFFFF000 (PAGE_USER)
-        → setjmp (save kernel context)
-        → tss_set_kernel_stack (ESP0 for ring-3 syscalls)
+        → tss_set_kernel_stack      (ESP0 for ring-3 syscalls)
+        → process_set_current(proc)
+        → setjmp(proc->exit_ctx)    (save kernel context)
+        → keyboard_set_process_mode(1)
         → paging_switch(process_pd)
         → iret into ring 3
-        → [program runs, int 0x80 syscalls]
+        → [program runs, int 0x80 syscalls, SYS_READ blocks on keyboard]
         → sys_exit → elf_process_exit
         → paging_switch(kernel_pd)
+        → process_destroy(proc)     ← frees everything including PD + process_t
         → longjmp → return to shell
 ```

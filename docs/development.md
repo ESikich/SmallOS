@@ -111,9 +111,9 @@ kmalloc / kmalloc_page   0x100000 – 0x1FFFFF   kernel structures (no free)
 pmm_alloc_frame          0x200000 – 0x7FFFFF   user frames (freed on process exit)
 ```
 
-**Never use `kmalloc_page` for user ELF frames, user stack frames, or kernel stack frames.** Those must come from `pmm_alloc_frame()` so they can be reclaimed on exit.
+**`kmalloc_page` is for permanent kernel structures only** — page tables for non-ELF PDEs (e.g. the stack PT at index 767), argv parse buffers. These are never freed.
 
-**Never use `pmm_alloc_frame` for kernel structures** (PDs, PTs, argv buffers). Those are intentionally permanent.
+**`pmm_alloc_frame` is for everything that must be reclaimed on exit** — process_t structs, process page directories, ELF segment frames, user stack frames, ELF-region page tables, kernel stack frames. All of these are freed by `process_destroy()`.
 
 **PMM ceiling is the identity-map limit (0x800000 = 8 MB).** Frames above this address are not identity-mapped — the kernel cannot access them as pointers. `PMM_BASE + PMM_SIZE` must not exceed `0x800000`.
 
@@ -124,6 +124,18 @@ meminfo              ← note free frame count
 runelf hello
 meminfo              ← count must be unchanged (frames fully reclaimed)
 ```
+
+---
+
+## Process Rules
+
+`process_create(name)` allocates a `process_t` from the PMM. Fill `pd` and `kernel_stack_frame` before launching. Set `state = RUNNING` just before `iret`.
+
+`process_destroy(proc)` frees the PD (via `process_pd_destroy`), the kernel stack frame, and the process_t frame itself. After this call, `proc` is dangling — do not dereference it.
+
+`elf_process_exit()` must save a pointer to `proc->exit_ctx` **before** calling `process_destroy()`. The longjmp target lives inside the process_t frame, which destroy frees.
+
+`process_get_current()` returns the active process or 0. Use it instead of file-scope statics.
 
 ---
 
@@ -169,6 +181,10 @@ Checklist:
 
 Failure → `#GP → #DF → triple fault → reboot`.
 
+### IRQ1 EOI ordering
+
+IRQ1 sends EOI at the **top** of `irq1_handler_main`, before calling `keyboard_handle_irq`. This is intentional — when the Enter keypress that launches a process arrives via IRQ1, the handler never returns through the normal path (it ends in `iret`), so EOI must be sent first. Do not move the EOI below the `keyboard_handle_irq` call.
+
 ---
 
 ## Syscall Rules
@@ -211,7 +227,7 @@ Do not call `terminal_puts` from user programs — it is a kernel function in su
 meminfo
 ```
 
-Run before and after `runelf` to confirm frames are reclaimed. If the free count drops and doesn't recover, there is a leak in `process_pd_destroy()`, a missed `pmm_free_frame()` call, or a user ELF linked with `-Ttext` instead of `-Ttext-segment`.
+Run before and after `runelf` to confirm frames are reclaimed. If the free count drops and doesn't recover, there is a leak in `process_destroy()`, a missed `pmm_free_frame()` call, or a user ELF linked with `-Ttext` instead of `-Ttext-segment`.
 
 ### QEMU logging
 
@@ -276,7 +292,7 @@ If `runelf` worked before the PMM was added and now crashes: verify that `PMM_BA
 
 ### 10. "pmm: double free" warning
 
-`process_pd_destroy()` called twice on the same PD, or a frame was mapped into multiple PTEs. Check that `s_current_pd` is cleared to 0 after every call to `process_pd_destroy`.
+`process_destroy()` called twice on the same process, or a frame was mapped into multiple PTEs. Ensure `process_set_current(0)` is called immediately after `process_destroy()`.
 
 ### 11. PMM frame count leaks after runelf
 
@@ -324,10 +340,9 @@ All programs share `-Ttext-segment 0x400000` safely — each gets its own page d
 
 ## Next Steps (Recommended)
 
-* `SYS_READ` — keyboard input buffer in `keyboard.c`, blocking read syscall for user programs
-* Process abstraction (`process_t`) — saved register state, kernel stack pointer, PD pointer, name field
-* Preemptive scheduler — timer IRQ context switch using per-process kernel stacks
+* Preemptive scheduler — timer IRQ context switch using per-process kernel stacks and `process_t`
 * Filesystem — FAT12 or custom FS via ATA PIO
+* `SYS_SLEEP` / `SYS_EXEC` syscalls
 
 ---
 
