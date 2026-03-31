@@ -1,6 +1,66 @@
 # Changelog
 
-## [Current] — SYS_READ + keyboard input buffer
+## [Current] — process_t abstraction + PD heap leak closed
+
+### Added
+
+* `src/kernel/process.h` / `src/kernel/process.c` — process abstraction layer
+  * `process_t` struct consolidates all per-process kernel state:
+    * `pd`                  — PMM-allocated page directory pointer
+    * `kernel_stack_frame`  — PMM frame used as the ring-0 syscall stack
+    * `exit_ctx`            — `jmp_buf` for `setjmp`/`longjmp` exit path
+    * `state`               — `process_state_t` enum (`UNUSED`, `RUNNING`, `EXITED`)
+    * `name[32]`            — null-terminated process name (truncated to 31 chars)
+  * `process_create(name)` — allocates a `process_t` from the PMM (one 4 KB frame),
+    zeroes it, sets `state = UNUSED`, copies name; returns pointer or 0 on failure
+  * `process_destroy(proc)` — frees `pd` (via `process_pd_destroy`), `kernel_stack_frame`
+    (via `pmm_free_frame`), then the `process_t` frame itself; safe on null input
+  * `process_set_current(proc)` / `process_get_current()` — track the one running process;
+    returns 0 when the kernel is running outside any user process
+
+### Changed
+
+* `src/exec/elf_loader.c` — refactored to use `process_t`
+  * Replaced scattered file-scope statics (`s_exit_ctx`, `s_current_pd`,
+    `s_kernel_stack_frame`, `s_process_running`) with a single `process_t*` managed
+    via `process_get_current()` / `process_set_current()`
+  * `elf_run_image()` calls `process_create("elf")`, fills `pd` and
+    `kernel_stack_frame`, saves `setjmp` into `proc->exit_ctx`, then launches ring 3
+  * `elf_process_exit()` reads `proc->exit_ctx` address before calling
+    `process_destroy()` (which frees the containing frame), then `longjmp`s safely
+  * `elf_process_running()` now delegates to `process_get_current()` and checks `state`
+
+* `src/kernel/paging.c` — `process_pd_create()` switched from `kmalloc_page()` to
+  `pmm_alloc_frame()`
+  * The PD is now PMM-allocated and identity-mapped (phys == virt), matching all
+    other user-process frames
+  * `process_pd_destroy()` now frees the PD frame itself via `pmm_free_frame((u32)pd)`
+    as its final step, closing the 4 KB-per-`runelf` heap leak
+
+* `src/kernel/paging.h` — updated `process_pd_create()` and `process_pd_destroy()`
+  doc comments to reflect PMM allocation and full cleanup
+
+* `Makefile` — added `process.o` to `KERNEL_OBJS` with correct header dependencies;
+  updated `elf_loader.o` rule to declare `process.h` dependency
+
+### Fixed
+
+* **4 KB heap leak per `runelf` invocation** — the process page directory was
+  allocated from `kmalloc_page()` (bump allocator, no free) and was never reclaimed.
+  Moving PD allocation to the PMM and freeing it in `process_pd_destroy()` closes this.
+  `meminfo` should now show an identical free frame count before and after any number
+  of `runelf` calls (previously decreased by 1 per call).
+
+### Architecture note
+
+`process_t` is the foundation for the scheduler. When preemptive scheduling is
+added, the timer IRQ handler will save register state into the current `process_t`,
+pick the next runnable process, and restore its state. The `exit_ctx` field may be
+repurposed or supplemented by a full register save area at that point.
+
+---
+
+## [Previous] — SYS_READ + keyboard input buffer
 
 ### Added
 

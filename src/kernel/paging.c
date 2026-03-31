@@ -15,7 +15,7 @@
  *
  * Per-process page directories
  * ----------------------------
- * Each process gets a fresh page directory from kmalloc_page().
+ * Each process gets a fresh page directory from pmm_alloc_frame().
  * Kernel PD entries (indices 0 and 2–1023) are copied in so that kernel
  * code, VGA, ramdisk, heap, and stack remain accessible after CR3 switch.
  *
@@ -151,9 +151,21 @@ u32* paging_get_kernel_pd(void) {
     return kernel_page_directory;
 }
 
+/*
+ * process_pd_create()
+ *
+ * Allocates the page directory from the PMM (not the bump allocator) so
+ * that process_pd_destroy() can free it on exit, closing the 4 KB-per-
+ * runelf heap leak that existed when kmalloc_page() was used here.
+ *
+ * The PD frame is identity-mapped (phys == virt), so the returned pointer
+ * is valid for both CR3 loads and direct kernel writes.
+ */
 u32* process_pd_create(void) {
-    u32* pd = (u32*)kmalloc_page();
-    if (!pd) paging_panic();
+    u32 frame = pmm_alloc_frame();
+    if (!frame) paging_panic();
+
+    u32* pd = (u32*)frame;
     mem_zero_page(pd);
 
     /*
@@ -173,8 +185,8 @@ u32* process_pd_create(void) {
 /*
  * process_pd_destroy(pd)
  *
- * Frees all physical frames privately allocated for this process, and the
- * page tables that mapped them.
+ * Frees all physical frames privately allocated for this process, the
+ * page tables that mapped them, and the page directory itself.
  *
  * Strategy: walk every PD entry that is present AND differs from the kernel
  * PD entry at the same index.  Those are the entries the process owns
@@ -189,9 +201,11 @@ u32* process_pd_create(void) {
  *   - For all other private PDEs (e.g. index 767 for the stack page table),
  *     the page table came from kmalloc_page() and cannot be freed yet.
  *
- * Kernel PD entries (shared) are never touched.
+ * After walking all entries, the PD frame itself is freed.  It was
+ * allocated from the PMM by process_pd_create(), so pmm_free_frame() is
+ * the correct reclaim path.
  *
- * The PD itself came from kmalloc_page() and is not freed here.
+ * Kernel PD entries (shared) are never touched.
  */
 void process_pd_destroy(u32* pd) {
     if (!pd) return;
@@ -224,6 +238,9 @@ void process_pd_destroy(u32* pd) {
         /* Clear the PDE so a stale CR3 can't reach freed memory. */
         pd[i] = 0;
     }
+
+    /* Free the page directory frame itself — allocated from PMM. */
+    pmm_free_frame((u32)pd);
 }
 
 void paging_switch(u32* pd) {

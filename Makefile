@@ -44,6 +44,7 @@ KERNEL_OBJS=\
 	$(OBJ_DIR)/timer.o \
 	$(OBJ_DIR)/memory.o \
 	$(OBJ_DIR)/pmm.o \
+	$(OBJ_DIR)/process.o \
 	$(OBJ_DIR)/parse.o \
 	$(OBJ_DIR)/commands.o \
 	$(OBJ_DIR)/programs.o \
@@ -109,6 +110,9 @@ $(OBJ_DIR)/memory.o: $(KERNEL_DIR)/memory.c $(KERNEL_DIR)/memory.h | dirs
 $(OBJ_DIR)/pmm.o: $(KERNEL_DIR)/pmm.c $(KERNEL_DIR)/pmm.h $(DRIVERS_DIR)/terminal.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(OBJ_DIR)/process.o: $(KERNEL_DIR)/process.c $(KERNEL_DIR)/process.h $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/pmm.h $(DRIVERS_DIR)/terminal.h | dirs
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(OBJ_DIR)/parse.o: $(SHELL_DIR)/parse.c $(SHELL_DIR)/parse.h $(KERNEL_DIR)/memory.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -127,7 +131,7 @@ $(OBJ_DIR)/images.o: $(EXEC_DIR)/images.c $(EXEC_DIR)/images.h $(EXEC_DIR)/exec.
 $(OBJ_DIR)/image_programs.o: $(EXEC_DIR)/image_programs.c $(DRIVERS_DIR)/terminal.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/elf_loader.o: $(EXEC_DIR)/elf_loader.c $(EXEC_DIR)/elf_loader.h $(KERNEL_DIR)/elf.h $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/pmm.h $(KERNEL_DIR)/ramdisk.h $(DRIVERS_DIR)/terminal.h $(DRIVERS_DIR)/keyboard.h | dirs
+$(OBJ_DIR)/elf_loader.o: $(EXEC_DIR)/elf_loader.c $(EXEC_DIR)/elf_loader.h $(KERNEL_DIR)/elf.h $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/process.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/pmm.h $(KERNEL_DIR)/ramdisk.h $(DRIVERS_DIR)/terminal.h $(DRIVERS_DIR)/keyboard.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/syscall.o: $(KERNEL_DIR)/syscall.c $(KERNEL_DIR)/syscall.h $(DRIVERS_DIR)/terminal.h $(KERNEL_DIR)/timer.h $(KERNEL_DIR)/uapi_syscall.h $(DRIVERS_DIR)/keyboard.h | dirs
