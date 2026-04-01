@@ -7,7 +7,7 @@ SimpleOS is a BIOS-based x86 hobby operating system built with:
 * `i686-elf-ld`
 * `QEMU`
 
-It boots from a raw disk image, switches to 32-bit protected mode, enables paging, loads a ramdisk from disk, and runs a C kernel with a terminal shell, ring-3 ELF program execution, a preemptive round-robin scheduler, voluntary yielding, and inter-process exec.
+It boots from a raw disk image, switches to 32-bit protected mode, enables paging, loads a ramdisk from disk, and runs a C kernel with a terminal shell, ring-3 ELF program execution, a preemptive round-robin scheduler, voluntary yielding, inter-process exec, and ATA PIO disk access with a FAT16 partition.
 
 ---
 
@@ -26,19 +26,20 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Physical memory manager (`pmm`) — bitmap allocator for reclaimable frames
   * Manages `0x200000`–`0x7FFFFF` (6 MB, 1536 frames)
   * All process frames reclaimed on exit — no leak after `runelf`
-* Ramdisk — flat ELF archive loaded from disk, no kernel rebuild to add programs
+* Ramdisk — flat ELF archive loaded from disk (temporary — will be retired once FAT16 loading is wired in)
 * ELF loader — validates, loads segments, zeroes BSS, launches in ring 3
-* `process_t` abstraction — per-process struct (PD, kernel stack, exit context, scheduler state, name, argv storage); fully PMM-allocated and reclaimed on exit
+* `process_t` abstraction — per-process struct (PD, kernel stack, exit context, scheduler state, argv storage, name); fully PMM-allocated and reclaimed on exit
 * Per-process page directories — address space isolation; PD itself freed on exit
 * Ring 3 user mode — hardware-enforced privilege separation
-* Syscall layer via `int 0x80` (DPL=3 gate): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`, `SYS_READ`, `SYS_YIELD`, `SYS_EXEC`
-* `sys_exit()` returns cleanly to the parent caller (shell or user process) via `setjmp`/`longjmp`
-* Shell now runs as an explicit kernel task scheduled by `scheduler.c`
 * Per-process kernel stacks — dedicated PMM frame per process; TSS ESP0 set from it; freed on exit
-* `SYS_READ` — blocking keyboard input for user programs; keyboard IRQ routed to ring buffer while process is running
-* **Preemptive round-robin scheduler** — timer IRQ (100 Hz) context-switches between schedulable kernel contexts; 10-tick (100 ms) quantum
-* **`SYS_YIELD`** — voluntary preemption; process surrenders its remaining quantum and the scheduler immediately switches to the next runnable task
-* **`SYS_EXEC`** — a running user process can load and run a named child ELF from the ramdisk, block until it exits, and receive a return code; parent context (page directory, TSS ESP0, `process_t*`) is saved and fully restored
+* Syscall layer via `int 0x80` (DPL=3 gate): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`, `SYS_READ`, `SYS_YIELD`, `SYS_EXEC`
+* `sys_exit()` returns cleanly to the parent (shell or user process) via `setjmp`/`longjmp`
+* Shell now runs as an explicit kernel task scheduled by `scheduler.c`
+* **Preemptive round-robin scheduler** — timer IRQ (100 Hz) context-switches between kernel tasks; 10-tick (100 ms) quantum
+* **`SYS_YIELD`** — voluntary preemption; process surrenders its remaining quantum immediately
+* **`SYS_EXEC`** — user process spawns a named child ELF, blocks until it exits, receives return code; parent context fully saved and restored
+* **ATA PIO driver** — polls the primary IDE channel (`0x1F0`) to read 512-byte sectors from disk in 32-bit protected mode; no DMA or IRQ required
+* **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing all user ELFs; built by `tools/mkfat16.c` with no external dependencies; readable at runtime via ATA PIO
 
 ---
 
@@ -51,13 +52,14 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 │   ├── boot/       boot.asm, loader2.asm, kernel_entry.asm
 │   ├── kernel/     kernel.c, gdt, idt, paging, memory, pmm, process,
 │   │               scheduler, sched_switch.asm, syscall, timer, system, setjmp
-│   ├── drivers/    keyboard, screen, terminal
+│   ├── drivers/    keyboard, screen, terminal, ata
 │   ├── shell/      shell, line_editor, parse, commands
 │   ├── exec/       elf_loader, exec, images, programs
-│   └── user/       hello.c, ticks.c, args.c, readline.c, yield_test.c,
-│                   exec_test.c, user_lib.h, user_syscall.h
+│   └── user/       hello.c, ticks.c, args.c, readline.c, exec_test.c,
+│                   user_lib.h, user_syscall.h
 ├── tools/
-│   └── mkramdisk.c
+│   ├── mkramdisk.c
+│   └── mkfat16.c
 ├── build/
 ├── Makefile
 ├── linker.ld
@@ -87,13 +89,14 @@ halt
 reboot
 uptime
 meminfo
+ataread <lba>        dump first 32 bytes of a disk sector (ATA PIO)
 
 run <builtin>        call a kernel-linked program directly
 runimg <image>       descriptor-based execution
 runelf <n> [args]    load and run an ELF from the ramdisk
 ```
 
-Current ramdisk programs: `hello`, `ticks`, `args`, `readline`, `yield_test`, `exec_test`
+Current ramdisk programs: `hello`, `ticks`, `args`, `readline`, `exec_test`
 
 ---
 
@@ -112,6 +115,7 @@ kernel_main()
  → pmm_init()            bitmap allocator at 0x200000
  → keyboard/timer/idt    drivers and interrupt table
  → sched_init()          initialise runnable task table
+ → ata_init()            software reset ATA primary channel
  → ramdisk_init()        validate ramdisk at 0x10000
  → create shell task     explicit kernel task with its own stack
  → sti
@@ -129,16 +133,23 @@ runelf hello
  → [program runs in foreground; timer still ticks]
  → sys_exit() → elf_process_exit()
  → paging_switch(parent_pd or kernel_pd)
- → tss_set_kernel_stack(s_parent_esp0)
  → process_destroy()     free all PMM frames
- → process_set_current(s_parent_proc)
- → longjmp()             return to parent (shell or user process)
-
-sys_exec("hello", ...)   [from inside a running user process]
- → copy name to kernel buffer
- → elf_run_named()       full runelf path above, nested
- → child exits → longjmp → iretd → parent resumes in ring 3
+ → longjmp()             return to parent
 ```
+
+---
+
+## Disk Image Layout
+
+```text
+LBA 0         boot.bin              (512 bytes)
+LBA 1–4       loader2.bin           (2048 bytes)
+LBA 5+        kernel_padded.bin     (padded to 512-byte boundary)
+after kernel  ramdisk_padded.rd     (padded to 512-byte boundary, temporary)
+after ramdisk fat16.img             (16 MB FAT16 partition)
+```
+
+`FAT16_LBA` is computed at build time and written to `build/gen/fat16_lba.h` so the kernel can include it as a compile-time constant.
 
 ---
 
@@ -150,7 +161,7 @@ sys_exec("hello", ...)   [from inside a running user process]
 0x00001000   kernel image
 0x00006000   kernel .bss start (page tables + PMM bitmap)
 0x0000A008   kernel .bss end (approx)
-0x00010000   ramdisk (permanent)
+0x00010000   ramdisk (permanent, temporary)
 0x00090000   shell static kernel stack top
 0x00100000   bump allocator — permanent kernel structures
 0x00200000   PMM — reclaimable frames
@@ -183,11 +194,7 @@ The `pd == 0` rule still exists, but it is **not a table-layout concept**. It is
 - `pd == 0` → use kernel page directory
 - otherwise → use process page directory
 
-This logic is implemented in `sched_proc_cr3()` and applies to any kernel task, regardless of its position in the scheduler table.
-
-Today, the scheduler owns kernel tasks such as the shell. User ELF programs run through the foreground `setjmp`/`longjmp` path and are not yet enqueued as scheduler-owned tasks.
-
-`SYS_YIELD` integrates with the scheduler via `sched_yield_now(esp)`. The `isr128_stub` frame layout is identical to `irq0_stub`, so the yield resume point is treated exactly like a timer preemption by `sched_switch`.
+Today, the scheduler owns kernel tasks such as the shell. User ELF programs run through the foreground `setjmp`/`longjmp` path and are not yet scheduler-owned tasks.
 
 ```text
 irq0_stub       → pushes full register frame + ESP
@@ -211,9 +218,9 @@ irq0_handler_main(esp)
 
 ## Current Limitations
 
-* No filesystem — programs must be in ramdisk at build time
+* FAT16 partition present on disk and readable via ATA PIO — parser not yet implemented; ELF programs still loaded from ramdisk
 * ELF programs linked at fixed address 0x400000 — no PIE/relocation
-* `SYS_EXEC` is one-deep — `s_parent_proc` / `s_parent_esp0` are single statics; deeper nesting is not yet supported
+* `SYS_EXEC` is one-deep — `s_parent_proc`/`s_parent_esp0` are single statics
 * Kernel trusts user pointers in syscalls (no copy-from-user validation)
 * ELF processes are not yet scheduler-owned tasks
 
@@ -223,7 +230,9 @@ irq0_handler_main(esp)
 
 Next steps:
 
-* Filesystem-backed storage (FAT12 or custom FS via ATA PIO)
+* FAT16 parser — read BPB, walk root directory, follow cluster chains
+* Wire `elf_run_named` to load from FAT16 instead of ramdisk
+* Retire ramdisk once FAT16 loading is proven
 
 ---
 

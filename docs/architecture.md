@@ -25,6 +25,7 @@ kernel_main()
   pmm_init()        ← bitmap allocator at 0x200000–0x7FFFFF
   keyboard/timer/idt
   sched_init()      ← initialise runnable task table, wire tss_esp0_ptr
+  ata_init()        ← software reset ATA primary channel, verify ready
   ramdisk_init()
   create shell task ← explicit kernel task with dedicated stack
   sti
@@ -87,11 +88,12 @@ Inside `kernel_main()`:
 5. `pmm_init()` — bitmap allocator covers 0x200000–0x7FFFFF; all frames start free
 6. `keyboard_init()`, `timer_init(100)`, `idt_init()` — drivers and interrupt table
 7. `sched_init()` — initialise the scheduler data structures and wire the TSS ESP0 pointer for the switch helper
-8. `ramdisk_init(0x10000)` — validate ramdisk magic, store pointer
-9. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
-10. `sched_enqueue(shell_proc)` — make the shell runnable
-11. `sti` — enable interrupts
-12. `sched_start(shell_proc)` — switch from the boot stack into the shell task
+8. `ata_init()` — software reset ATA primary channel (`0x1F0`), poll until ready
+9. `ramdisk_init(0x10000)` — validate ramdisk magic, store pointer
+10. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
+11. `sched_enqueue(shell_proc)` — make the shell runnable
+12. `sti` — enable interrupts
+13. `sched_start(shell_proc)` — switch from the boot stack into the shell task
 
 `sched_init()` must still be called before `sti`, and `sched_start()` must happen only after the first runnable task has been created.
 
@@ -114,7 +116,7 @@ Selector values for ring-3 entries include RPL=3 in the low two bits (`0x18|3=0x
 
 # Process Abstraction
 
-Each `runelf` invocation creates a `process_t` struct allocated from a single PMM frame. The same structure is used for kernel tasks such as the shell:
+Each `runelf` invocation still creates a `process_t` struct allocated from a single PMM frame. The same structure is now also used for kernel tasks such as the shell:
 
 ```c
 typedef struct {
@@ -146,7 +148,8 @@ A round-robin preemptive scheduler runs on every timer tick (100 Hz, quantum = 1
 
 Fixed array of up to 8 `process_t*` entries stored in `s_table[SCHED_MAX_PROCS]`.
 
-There is **no reserved slot 0** and no static sentinel `process_t`. The scheduler treats the table as a simple dynamic array:
+There is **no reserved slot 0** and no static sentinel `process_t`. The scheduler
+treats the table as a simple dynamic array:
 
 - `sched_enqueue()` appends a process at index `s_count`
 - `sched_dequeue()` removes a process and compacts the array
@@ -225,7 +228,7 @@ sys_exit:
 0x00001000   kernel image
 0x00006000   kernel .bss start (page tables + PMM bitmap)
 ~0x0000A008  kernel .bss end
-0x00010000   ramdisk (permanent)
+0x00010000   ramdisk (permanent, temporary — will be retired once FAT16 loading is wired in)
 0x00090000   kernel stack top (grows downward; shell context)
 0x00100000   bump allocator base — permanent kernel structures
                kmalloc()      — long-lived kernel-owned data only
@@ -274,7 +277,56 @@ Built by `tools/mkramdisk` (C tool, compiled with host gcc).
 
 `ramdisk_find(name)` returns a pointer directly into the ramdisk image — no copy made.
 
-Current programs: `hello`, `ticks`, `args`, `readline`, `yield_test`, `exec_test` — all linked at `0x400000` with `-Ttext-segment`.
+Current programs: `hello`, `ticks`, `args`, `readline`, `exec_test` — all linked at `0x400000` with `-Ttext-segment`.
+
+**Temporary:** the ramdisk will be retired once FAT16 loading is wired into `elf_run_named`.
+
+---
+
+# FAT16 Partition
+
+A 16 MB FAT16 volume is appended to the disk image after the ramdisk. It contains all user ELFs in the root directory as 8.3-format filenames.
+
+Built by `tools/mkfat16.c` — a host C tool with no external dependencies (`mkfs.vfat` and `mtools` are not required). The tool writes the BPB, both FAT copies, the root directory, and all file data directly.
+
+Volume layout (within the partition image):
+
+```text
+Sector   0        Boot sector (BPB) — OEM "SIMPLEOS", FAT16 signature 0x55 0xAA
+Sectors  1–3      Reserved (4 reserved sectors total)
+Sectors  4–35     FAT 1  (32 sectors, 8192 FAT16 entries)
+Sectors 36–67     FAT 2  (mirror)
+Sectors 68–99     Root directory (512 entries × 32 bytes = 32 sectors)
+Sectors 100+      Data region  (cluster 2 = sectors 100–103, etc.)
+```
+
+`FAT16_LBA` — the absolute LBA of the partition start within `os-image.bin` — is computed at build time and written to `build/gen/fat16_lba.h` so the kernel can `#include` it as a compile-time constant. `-I$(GEN_DIR)` is added to `CFLAGS` so the header is findable.
+
+Verified at runtime: `ataread <FAT16_LBA>` shows `EB 58 90 SIMPLEOS` and `0x55 0xAA`; `ataread <FAT16_LBA + 100>` shows `7F 45 4C 46` (ELF magic at cluster 2).
+
+---
+
+# ATA PIO Driver
+
+`src/drivers/ata.c` provides 28-bit LBA sector reads from the primary ATA channel using port I/O polling. No DMA, no IRQ required. QEMU emulates the primary channel at `0x1F0`.
+
+```text
+ata_init()
+  outb(0x3F6, 0x04)    SRST = 1 (software reset)
+  400ns delay
+  outb(0x3F6, 0x00)    SRST = 0
+  poll BSY until clear
+
+ata_read_sectors(lba, count, buf)
+  poll BSY
+  write drive register: 0xE0 | (lba >> 24) & 0xF   (master, LBA mode)
+  write sector count, LBA0/1/2
+  outb(command, 0x20)   READ SECTORS
+  for each sector:
+    400ns delay
+    poll DRQ (abort on ERR/DF)
+    inw × 256           read 512 bytes via 16-bit data register
+```
 
 ---
 
@@ -319,8 +371,6 @@ sys_exit() → int 0x80 → elf_process_exit()
   longjmp(exit_ctx, 1)          → resume in elf_run_image → return to parent
 ```
 
-**CR3 rule on exit:** `elf_process_exit` switches to the parent's page directory, not the kernel PD, when the parent is a user process. After `longjmp` unwinds back through `isr128_stub`, the `iretd` jumps to the parent's ring-3 EIP at `0x400000` — only mapped in the parent's PD. Using the kernel PD would cause an immediate page fault.
-
 ---
 
 # SYS_EXEC
@@ -332,7 +382,6 @@ sys_exec("hello", argc, argv)   [ring-3 call via int 0x80]
   ↓
 sys_exec_impl()
   copy name from user address space to kernel stack buffer
-  (ramdisk_find runs after CR3 switches — original pointer would be unmapped)
   ↓
 elf_run_named(kname, argc, argv)
   ↓
@@ -349,8 +398,6 @@ child calls sys_exit() → elf_process_exit()
   longjmp(child->exit_ctx, 1)
   ↓
 setjmp returns → elf_run_image returns 1 → sys_exec_impl returns 0
-  ↓
-syscall_handler_main sets regs->eax = 0
   ↓
 isr128_stub iretd → parent resumes in ring 3
 ```
@@ -461,7 +508,7 @@ keyboard IRQ → keyboard_handle_irq()
     ↓
     [Enter] → parse_command() → commands_execute()
     ↓
-    run / runimg / runelf / meminfo / ... dispatch
+    run / runimg / runelf / ataread / meminfo / ... dispatch
 ```
 
 ---
@@ -478,7 +525,8 @@ All user programs must be linked at `USER_CODE_BASE` (0x400000) using `-Ttext-se
 
 I/O via syscalls. No libc, no runtime. Must call `sys_exit(0)` before returning.
 
-Current ramdisk programs: `hello`, `ticks`, `args`, `readline`, `yield_test`, `exec_test`.
+Current ramdisk programs: `hello`, `ticks`, `args`, `readline`, `exec_test`.
+Same programs also present in the FAT16 partition as 8.3 filenames (`HELLO.ELF`, etc.).
 
 ---
 
@@ -487,18 +535,25 @@ Current ramdisk programs: `hello`, `ticks`, `args`, `readline`, `yield_test`, `e
 ## Disk image layout
 
 ```text
-LBA 0         boot.bin         (1 sector)
-LBA 1–4       loader2.bin      (4 sectors)
-LBA 5+        kernel.bin       (padded to 512-byte boundary)
-after kernel  ramdisk.rd
+LBA 0         boot.bin              (512 bytes)
+LBA 1–4       loader2.bin           (2048 bytes)
+LBA 5+        kernel_padded.bin     (padded to 512-byte boundary)
+after kernel  ramdisk_padded.rd     (padded to 512-byte boundary, temporary)
+after ramdisk fat16.img             (16 MB FAT16 partition)
 ```
+
+Both `kernel.bin` and `ramdisk.rd` are padded to 512-byte sector boundaries before concatenation. Omitting the ramdisk padding causes the FAT16 LBA to be off by up to 511 bytes — the image looks correct but `ataread` returns all zeros at the expected LBA.
 
 ## Key generated artifacts
 
 ```text
 build/gen/loader2.gen.asm    KERNEL_SECTORS / RAMDISK_SECTORS / RAMDISK_LBA injected
+build/gen/fat16_lba.h        FAT16_LBA / FAT16_SECTORS as compile-time constants
 build/bin/kernel_padded.bin  kernel.bin padded to sector boundary
+build/bin/ramdisk_padded.rd  ramdisk.rd padded to sector boundary
+build/bin/fat16.img          16 MB FAT16 image built by build/tools/mkfat16
 build/bin/ramdisk.rd         packed by build/tools/mkramdisk
+build/tools/mkfat16          host tool (no external FS dependencies)
 build/obj/setjmp.o           assembled from src/kernel/setjmp.asm
 build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
 ```
@@ -507,9 +562,10 @@ build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
 
 # Known Limitations
 
+* FAT16 partition present on disk and readable via ATA PIO — parser not yet implemented
+* ELF programs still loaded from ramdisk (FAT16 loading not yet wired into `elf_run_named`)
 * ELF link address fixed at 0x400000 — no PIE/relocation support
-* No filesystem — programs must be in ramdisk at build time
-* `SYS_EXEC` is one-deep — `s_parent_proc` / `s_parent_esp0` are single statics
+* `SYS_EXEC` is one-deep — `s_parent_proc`/`s_parent_esp0` are single statics
 * Kernel trusts user pointers in syscalls (no copy-from-user validation)
 * ELF processes are not yet scheduler-owned tasks
 
@@ -517,7 +573,9 @@ build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
 
 # Future Architecture Direction
 
-1. Filesystem-backed ELF loading — FAT12 or custom FS via ATA PIO
+1. FAT16 parser — read BPB, walk root directory, follow cluster chains, return file data
+2. Wire `elf_run_named` to load from FAT16 instead of ramdisk
+3. Retire ramdisk once FAT16 loading is proven
 
 ---
 
@@ -530,6 +588,7 @@ build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
 | kernel             | terminal_puts                                           |
 | user process       | sys_write / sys_putc / sys_read                         |
 | memory accounting  | meminfo command                                         |
+| disk reads         | ataread <lba> command                                   |
 | crash analysis     | QEMU -d int,cpu_reset,guest_errors -D qemu.log          |
 
 ---
@@ -554,9 +613,12 @@ SYS_READ — blocking keyboard input for user programs
 SYS_YIELD — voluntary preemption via sched_yield_now()
 SYS_EXEC — nested foreground ELF execution with full parent context save/restore
 preemptive round-robin scheduler — timer IRQ context switch, 100 ms quantum
-interactive shell with meminfo command
+ATA PIO driver — 28-bit LBA polling reads from primary IDE channel (0x1F0)
+FAT16 partition — 16 MB volume on disk, verified readable via ataread
+interactive shell with meminfo / ataread commands
 ```
 
 Foundation for:
 
-* filesystem access
+* FAT16 parser and ELF loading from disk
+* Ramdisk retirement

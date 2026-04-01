@@ -12,7 +12,7 @@ This document describes the physical memory layout, allocators, and paging archi
 0x00001000   kernel image (loaded by loader2)
 0x00006000   kernel .bss start (page tables + PMM bitmap reside here)
 ~0x0000A008  kernel .bss end
-0x00010000   ramdisk (permanent — loaded by loader2, never freed)
+0x00010000   ramdisk (permanent — loaded by loader2, temporary until FAT16 loading wired in)
 0x00090000   kernel stack top (grows downward from here; shell context)
 
 0x00100000   bump allocator base — permanent kernel structures
@@ -63,7 +63,7 @@ unsigned int memory_get_heap_top(void); // current bump pointer (for meminfo)
 
 No free. Suitable for structures that live for the lifetime of the kernel: long-lived kernel-owned data and other permanent structures. `memory_get_heap_top()` is used by `meminfo` to report heap usage.
 
-Shell command parsing is intentionally **not** a bump-allocation use case. `parse_command()` tokenizes the mutable input buffer in place and stores pointers in a fixed-size `argv[MAX_ARGS]` array, so repeated shell commands do not grow `heap used`.
+Shell command parsing is intentionally **not** a bump-allocation use case anymore. `parse_command()` tokenizes the mutable input buffer in place and stores pointers in a fixed-size `argv[MAX_ARGS]` array, so repeated shell commands do not grow `heap used`.
 
 ---
 
@@ -195,28 +195,32 @@ sys_exit           → parent's PD if parent is a user process,
                      (paging_switch in elf_process_exit, before process_destroy)
 ```
 
-**Critical:** On `sys_exit`, CR3 must be switched to the **parent's page directory** before `longjmp` when the parent is a user process. After `longjmp` unwinds back to `isr128_stub`, the `iretd` instruction jumps to the parent's ring-3 EIP at `0x400000`. That address is only mapped in the parent's page directory — switching to the kernel PD instead would cause an immediate page fault.
+When the parent is a user process (SYS_EXEC path), CR3 must be switched to the parent's page directory before `longjmp`. After `longjmp` unwinds back to `isr128_stub`, the `iretd` jumps to the parent's ring-3 EIP at `0x400000` — only mapped in the parent's PD. Switching to the kernel PD first causes an immediate page fault.
 
-Always switch CR3 back before freeing the child's process PD.
+Always switch CR3 to the correct PD **before** freeing the child's PD.
 
 ---
 
 ## Disk Image Layout
 
 ```text
-LBA 0         boot.bin         (512 bytes)
-LBA 1–4       loader2.bin      (2048 bytes)
-LBA 5+        kernel.bin       (padded to 512-byte boundary)
-after kernel  ramdisk.rd
+LBA 0         boot.bin              (512 bytes)
+LBA 1–4       loader2.bin           (2048 bytes)
+LBA 5+        kernel_padded.bin     (padded to 512-byte boundary)
+after kernel  ramdisk_padded.rd     (padded to 512-byte boundary, temporary)
+after ramdisk fat16.img             (16 MB FAT16 partition)
 ```
+
+Both `kernel.bin` and `ramdisk.rd` are padded to sector boundaries before concatenation. `FAT16_LBA` is computed at build time and written to `build/gen/fat16_lba.h`.
+
+**Padding rule:** any binary blob concatenated into the image must be padded to a 512-byte sector boundary. Failing to pad `ramdisk.rd` caused the FAT16 LBA to be computed correctly but the data to land mid-sector, resulting in all-zero reads at the expected LBA.
 
 ---
 
 ## Current Limitations
 
 * ELF programs linked at fixed address 0x400000 — no PIE/relocation
-* No filesystem — programs must be in ramdisk at build time
-* `SYS_EXEC` is one-deep — `s_parent_proc` / `s_parent_esp0` are single statics
+* ELF programs still loaded from ramdisk — FAT16 parser not yet implemented
 * Bump allocator has no free — permanent kernel structures only
 
 ---
@@ -225,7 +229,9 @@ after kernel  ramdisk.rd
 
 Next steps:
 
-* Filesystem-backed storage (FAT12 or custom FS via ATA PIO)
+* FAT16 parser — read BPB, walk root directory, follow cluster chains
+* Wire `elf_run_named` to load from FAT16 instead of ramdisk
+* Retire ramdisk once FAT16 loading is proven
 
 ---
 

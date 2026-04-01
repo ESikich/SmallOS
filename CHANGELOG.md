@@ -1,6 +1,57 @@
 # Changelog
 
-## [Current] — SYS_YIELD + SYS_EXEC
+## [Current] — ATA PIO driver + FAT16 disk image
+
+### Added
+
+* **`src/drivers/ata.c` / `src/drivers/ata.h`** — ATA PIO driver (primary channel, master drive)
+  * `ata_init()` — software reset via device control register, polls BSY until ready
+  * `ata_read_sectors(lba, count, buf)` — 28-bit LBA polling read; loads task-file registers, issues `READ SECTORS (0x20)`, reads 256 16-bit words per sector via `inw`; returns 1 on success, 0 on ERR/DF/timeout
+  * No DMA, no IRQ — pure polling; QEMU IDE controller emulates the primary channel at `0x1F0`
+  * `inw` issued inline since `ports.h` only provides `inb`/`outb`
+
+* **`tools/mkfat16.c`** — host tool that builds a raw FAT16 disk image with no external dependencies (no `mkfs.vfat`, no `mtools`)
+  * Fixed 16 MB volume (32768 × 512-byte sectors)
+  * Layout: 4 reserved sectors, 2 × 32-sector FATs, 32-sector root directory (512 entries), data region from sector 100
+  * Writes BPB, both FAT copies, root directory entries, and file data entirely in C
+  * Filenames converted to 8.3 uppercase format
+  * Built by host `gcc` into `build/tools/mkfat16`
+
+* **`build/gen/fat16_lba.h`** — generated header with `FAT16_LBA` and `FAT16_SECTORS` as compile-time constants; written by the `os-image.bin` Makefile rule so kernel C code can `#include "fat16_lba.h"` without any runtime detection
+
+* **`ataread <lba>` shell command** — dumps the first 32 bytes of any sector as hex; also prints the boot signature bytes at offsets 510–511 when LBA 0 is requested. Used to verify ATA reads and FAT16 placement.
+
+### Changed
+
+* **Makefile**
+  * Added `$(OBJ_DIR)/ata.o` to `KERNEL_OBJS`
+  * Added `$(TOOLS_DIR)/mkfat16` host tool rule
+  * Added `$(BIN_DIR)/fat16.img` rule — calls `mkfat16` with all user ELFs
+  * `os-image.bin` rule now pads **both** `kernel.bin` and `ramdisk.rd` to 512-byte sector boundaries before `cat`; previously only the kernel was padded, which caused the FAT16 LBA calculation to be off by up to 511 bytes
+  * `os-image.bin` rule appends `fat16.img` after the padded ramdisk and writes `fat16_lba.h`
+  * Added `-I$(GEN_DIR)` to `CFLAGS` so generated headers are findable
+  * Added `exec_test` to `USER_PROGS`
+
+* **Disk image layout** — now includes FAT16 partition after the ramdisk:
+  ```text
+  LBA 0         boot.bin              (512 bytes)
+  LBA 1–4       loader2.bin           (2048 bytes)
+  LBA 5+        kernel_padded.bin     (sector-aligned)
+  after kernel  ramdisk_padded.rd     (sector-aligned, temporary)
+  after ramdisk fat16.img             (16 MB FAT16 volume)
+  ```
+
+### Key design notes
+
+**Ramdisk sector padding:** The ramdisk is a flat binary with no alignment guarantee. Before this fix, `cat` appended the FAT16 image starting mid-sector, so `FAT16_LBA` was computed correctly but the data on disk was offset by the ramdisk's fractional sector. Both binary blobs must be padded to sector boundaries before concatenation.
+
+**No external FS tools:** `mkfat16` writes the FAT16 BPB, FAT tables, and directory entries directly. The layout constants (`DATA_START = 100`, `ROOT_DIR_SECTORS = 32`, `FAT_SECTORS = 32`) are verified against the actual on-disk byte offsets — cluster 2 maps to sector 100, confirmed by finding ELF magic bytes at `ataread <FAT16_LBA + 100>`.
+
+**`FAT16_LBA` is a compile-time constant**, not detected at runtime. It is recomputed and the header regenerated on every `make` so it stays in sync with the actual image layout.
+
+---
+
+## [Previous] — SYS_YIELD + SYS_EXEC
 
 ### Added
 

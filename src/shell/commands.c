@@ -7,6 +7,7 @@
 #include "elf_loader.h"
 #include "memory.h"
 #include "pmm.h"
+#include "ata.h"
 
 static int str_eq(const char* a, const char* b) {
     int i = 0;
@@ -28,9 +29,10 @@ static void cmd_help(command_t* cmd) {
     terminal_puts("  reboot\n");
     terminal_puts("  uptime\n");
     terminal_puts("  meminfo\n");
-    terminal_puts("  run\n");
-    terminal_puts("  runimg\n");
-    terminal_puts("  runelf\n");
+    terminal_puts("  ataread <lba>    dump first 32 bytes of a sector\n");
+    terminal_puts("  run <builtin>\n");
+    terminal_puts("  runimg <image>\n");
+    terminal_puts("  runelf <name> [args]\n");
 }
 
 static void cmd_clear(command_t* cmd) {
@@ -41,46 +43,34 @@ static void cmd_clear(command_t* cmd) {
 static void cmd_echo(command_t* cmd) {
     for (int i = 1; i < cmd->argc; i++) {
         terminal_puts(cmd->argv[i]);
-        if (i != cmd->argc - 1) terminal_putc(' ');
+        if (i + 1 < cmd->argc) terminal_putc(' ');
     }
     terminal_putc('\n');
 }
 
 static void cmd_about(command_t* cmd) {
     (void)cmd;
-    terminal_puts("SimpleOS v0.1\n");
+    terminal_puts("SimpleOS — x86 hobby OS\n");
 }
 
 static void cmd_halt(command_t* cmd) {
     (void)cmd;
-    terminal_puts("System halted.\n");
-    system_halt();
+    terminal_puts("Halting.\n");
+    __asm__ __volatile__("cli; hlt");
 }
 
 static void cmd_reboot(command_t* cmd) {
     (void)cmd;
-    terminal_puts("Rebooting...\n");
     system_reboot();
 }
 
 static void cmd_uptime(command_t* cmd) {
     (void)cmd;
-    terminal_puts("Ticks: ");
+    terminal_puts("ticks: ");
     terminal_put_uint(timer_get_ticks());
-    terminal_putc('\n');
-    terminal_puts("Seconds: ");
-    terminal_put_uint(timer_get_seconds());
     terminal_putc('\n');
 }
 
-/*
- * cmd_meminfo — print heap and PMM frame allocator state.
- *
- * Example output:
- *   heap:   base 0x100000  top 0x104000  used 16 KB
- *   frames: 4080 free / 4096 total  (16320 KB / 16384 KB)
- *   used:   16 frames (64 KB)
- */
 static void cmd_meminfo(command_t* cmd) {
     (void)cmd;
 
@@ -115,6 +105,58 @@ static void cmd_meminfo(command_t* cmd) {
     terminal_puts(" frames (");
     terminal_put_uint(used_frames * 4);
     terminal_puts(" KB)\n");
+}
+
+/*
+ * ataread <lba>
+ *
+ * Reads one sector at the given LBA and dumps the first 32 bytes as hex.
+ * Used to verify the ATA PIO driver.  Sector 0 should end with 55 AA
+ * (the boot signature) at offsets 510–511.
+ */
+static void cmd_ataread(command_t* cmd) {
+    if (cmd->argc < 2) {
+        terminal_puts("usage: ataread <lba>\n");
+        return;
+    }
+
+    /* Parse decimal LBA from argv[1] */
+    unsigned int lba = 0;
+    const char* s = cmd->argv[1];
+    while (*s >= '0' && *s <= '9') {
+        lba = lba * 10 + (unsigned int)(*s - '0');
+        s++;
+    }
+
+    static unsigned char sector[512];
+    if (!ata_read_sectors(lba, 1, sector)) {
+        terminal_puts("ataread: read failed\n");
+        return;
+    }
+
+    terminal_puts("lba ");
+    terminal_put_uint(lba);
+    terminal_puts(" bytes 0-31:\n  ");
+
+    for (int i = 0; i < 32; i++) {
+        unsigned char b = sector[i];
+        /* print two hex digits */
+        static const char hex[] = "0123456789ABCDEF";
+        terminal_putc(hex[b >> 4]);
+        terminal_putc(hex[b & 0xF]);
+        terminal_putc(' ');
+        if (i == 15) terminal_puts("\n  ");
+    }
+    terminal_putc('\n');
+
+    /* Also show the boot signature bytes at 510-511 for sector 0 */
+    if (lba == 0) {
+        terminal_puts("sig: ");
+        terminal_put_hex(sector[510]);
+        terminal_putc(' ');
+        terminal_put_hex(sector[511]);
+        terminal_puts(" (expect 0x55 0xAA)\n");
+    }
 }
 
 static void cmd_run(command_t* cmd) {
@@ -152,6 +194,7 @@ static command_entry_t commands[] = {
     { "reboot",  cmd_reboot },
     { "uptime",  cmd_uptime },
     { "meminfo", cmd_meminfo },
+    { "ataread", cmd_ataread },
     { "run",     cmd_run },
     { "runimg",  cmd_runimg },
     { "runelf",  cmd_runelf },
