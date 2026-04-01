@@ -2,7 +2,7 @@
 [org 0x7C00]
 bits 16
 
-LOADER2_OFFSET  equ 0x8000
+LOADER2_OFFSET  equ 0xA000
 LOADER2_SECTORS equ 4
 
 start:

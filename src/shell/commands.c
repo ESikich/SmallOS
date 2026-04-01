@@ -8,6 +8,7 @@
 #include "memory.h"
 #include "pmm.h"
 #include "ata.h"
+#include "fat16.h"
 
 static int str_eq(const char* a, const char* b) {
     int i = 0;
@@ -29,10 +30,12 @@ static void cmd_help(command_t* cmd) {
     terminal_puts("  reboot\n");
     terminal_puts("  uptime\n");
     terminal_puts("  meminfo\n");
-    terminal_puts("  ataread <lba>    dump first 32 bytes of a sector\n");
+    terminal_puts("  ataread <lba>      dump first 32 bytes of a sector\n");
+    terminal_puts("  fsls               list FAT16 root directory\n");
+    terminal_puts("  fsread <n>         dump first 16 bytes of a FAT16 file\n");
     terminal_puts("  run <builtin>\n");
     terminal_puts("  runimg <image>\n");
-    terminal_puts("  runelf <name> [args]\n");
+    terminal_puts("  runelf <n> [args]\n");
 }
 
 static void cmd_clear(command_t* cmd) {
@@ -43,31 +46,35 @@ static void cmd_clear(command_t* cmd) {
 static void cmd_echo(command_t* cmd) {
     for (int i = 1; i < cmd->argc; i++) {
         terminal_puts(cmd->argv[i]);
-        if (i + 1 < cmd->argc) terminal_putc(' ');
+        if (i != cmd->argc - 1) terminal_putc(' ');
     }
     terminal_putc('\n');
 }
 
 static void cmd_about(command_t* cmd) {
     (void)cmd;
-    terminal_puts("SimpleOS — x86 hobby OS\n");
+    terminal_puts("SimpleOS v0.1\n");
 }
 
 static void cmd_halt(command_t* cmd) {
     (void)cmd;
-    terminal_puts("Halting.\n");
-    __asm__ __volatile__("cli; hlt");
+    terminal_puts("System halted.\n");
+    system_halt();
 }
 
 static void cmd_reboot(command_t* cmd) {
     (void)cmd;
+    terminal_puts("Rebooting...\n");
     system_reboot();
 }
 
 static void cmd_uptime(command_t* cmd) {
     (void)cmd;
-    terminal_puts("ticks: ");
+    terminal_puts("Ticks: ");
     terminal_put_uint(timer_get_ticks());
+    terminal_putc('\n');
+    terminal_puts("Seconds: ");
+    terminal_put_uint(timer_get_seconds());
     terminal_putc('\n');
 }
 
@@ -110,9 +117,8 @@ static void cmd_meminfo(command_t* cmd) {
 /*
  * ataread <lba>
  *
- * Reads one sector at the given LBA and dumps the first 32 bytes as hex.
- * Used to verify the ATA PIO driver.  Sector 0 should end with 55 AA
- * (the boot signature) at offsets 510–511.
+ * Reads one sector at the given decimal LBA and dumps the first 32 bytes
+ * as hex.  Prints boot signature at offsets 510-511 when LBA is 0.
  */
 static void cmd_ataread(command_t* cmd) {
     if (cmd->argc < 2) {
@@ -120,7 +126,6 @@ static void cmd_ataread(command_t* cmd) {
         return;
     }
 
-    /* Parse decimal LBA from argv[1] */
     unsigned int lba = 0;
     const char* s = cmd->argv[1];
     while (*s >= '0' && *s <= '9') {
@@ -138,10 +143,9 @@ static void cmd_ataread(command_t* cmd) {
     terminal_put_uint(lba);
     terminal_puts(" bytes 0-31:\n  ");
 
+    static const char hex[] = "0123456789ABCDEF";
     for (int i = 0; i < 32; i++) {
         unsigned char b = sector[i];
-        /* print two hex digits */
-        static const char hex[] = "0123456789ABCDEF";
         terminal_putc(hex[b >> 4]);
         terminal_putc(hex[b & 0xF]);
         terminal_putc(' ');
@@ -149,14 +153,61 @@ static void cmd_ataread(command_t* cmd) {
     }
     terminal_putc('\n');
 
-    /* Also show the boot signature bytes at 510-511 for sector 0 */
     if (lba == 0) {
         terminal_puts("sig: ");
         terminal_put_hex(sector[510]);
         terminal_putc(' ');
         terminal_put_hex(sector[511]);
         terminal_puts(" (expect 0x55 0xAA)\n");
+        terminal_puts("fat16_lba patch: ");
+        unsigned int patched_lba = sector[504]
+                                 | ((unsigned int)sector[505] << 8)
+                                 | ((unsigned int)sector[506] << 16)
+                                 | ((unsigned int)sector[507] << 24);
+        terminal_put_uint(patched_lba);
+        terminal_putc('\n');
     }
+}
+
+/*
+ * fsls — list FAT16 root directory
+ */
+static void cmd_fsls(command_t* cmd) {
+    (void)cmd;
+    fat16_ls();
+}
+
+/*
+ * fsread <n> — load a file from FAT16 and dump its first 16 bytes.
+ * Expected: 7F 45 4C 46 for any ELF file.
+ */
+static void cmd_fsread(command_t* cmd) {
+    if (cmd->argc < 2) {
+        terminal_puts("usage: fsread <n>\n");
+        return;
+    }
+
+    unsigned int size = 0;
+    const unsigned char* data = fat16_load(cmd->argv[1], &size);
+    if (!data) {
+        terminal_puts("fsread: load failed\n");
+        return;
+    }
+
+    terminal_puts("fsread: ");
+    terminal_puts(cmd->argv[1]);
+    terminal_puts("  ");
+    terminal_put_uint(size);
+    terminal_puts(" bytes\nfirst 16: ");
+
+    static const char hex[] = "0123456789ABCDEF";
+    unsigned int show = size < 16 ? size : 16;
+    for (unsigned int i = 0; i < show; i++) {
+        terminal_putc(hex[data[i] >> 4]);
+        terminal_putc(hex[data[i] & 0xF]);
+        terminal_putc(' ');
+    }
+    terminal_putc('\n');
 }
 
 static void cmd_run(command_t* cmd) {
@@ -195,6 +246,8 @@ static command_entry_t commands[] = {
     { "uptime",  cmd_uptime },
     { "meminfo", cmd_meminfo },
     { "ataread", cmd_ataread },
+    { "fsls",    cmd_fsls },
+    { "fsread",  cmd_fsread },
     { "run",     cmd_run },
     { "runimg",  cmd_runimg },
     { "runelf",  cmd_runelf },

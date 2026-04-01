@@ -1,17 +1,23 @@
 ; loader2.asm
 ;
 ; Stage 2 loader contract:
-;   - loaded by boot sector to physical 0x8000
+;   - loaded by boot sector to physical 0xA000
 ;   - occupies exactly 4 sectors (2048 bytes)
 ;   - kernel image begins at disk LBA 5 (0-based)
 ;   - kernel is loaded to physical 0x1000
-;   - ramdisk immediately follows kernel on disk
+;   - ramdisk immediately follows kernel on disk (sector-padded)
 ;   - ramdisk is loaded TEMPORARILY to physical 0x10000
 ;     (real mode cannot access above 1MB; kernel reads it from there)
 ;   - after loading, stage 2 enters 32-bit protected mode
 ;   - then jumps to kernel entry at 0x1000
+;
+; Safe kernel size:
+;   Loader2 is at 0xA000.  Kernel loads to 0x1000.
+;   Maximum safe kernel size before overwriting loader2:
+;     (0xA000 - 0x1000) / 512 = 0x9000 / 512 = 72 sectors = 36 KB
+;   This is well above the current kernel size (~30 KB).
 
-[org 0x8000]
+[org 0xA000]
 bits 16
 
 KERNEL_OFFSET        equ 0x1000

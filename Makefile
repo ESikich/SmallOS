@@ -19,8 +19,7 @@ IMG_DIR=$(BUILD_DIR)/img
 TOOLS_DIR=$(BUILD_DIR)/tools
 
 CFLAGS=-ffreestanding -m32 -fno-pie -fno-stack-protector -nostdlib -nostartfiles \
-	-I$(KERNEL_DIR) -I$(DRIVERS_DIR) -I$(SHELL_DIR) -I$(EXEC_DIR) -I$(USER_DIR) \
-	-I$(GEN_DIR)
+	-I$(KERNEL_DIR) -I$(DRIVERS_DIR) -I$(SHELL_DIR) -I$(EXEC_DIR) -I$(USER_DIR)
 HOST_CC=gcc
 LDFLAGS=-T linker.ld -m elf_i386
 
@@ -53,7 +52,8 @@ KERNEL_OBJS=\
 	$(OBJ_DIR)/gdt.o \
 	$(OBJ_DIR)/paging.o \
 	$(OBJ_DIR)/ramdisk.o \
-	$(OBJ_DIR)/ata.o
+	$(OBJ_DIR)/ata.o \
+	$(OBJ_DIR)/fat16.o
 
 USER_PROGS=hello ticks args runelf_test readline exec_test
 
@@ -78,7 +78,7 @@ $(OBJ_DIR)/kernel_entry.o: $(BOOT_DIR)/kernel_entry.asm | dirs
 $(OBJ_DIR)/interrupts.o: $(KERNEL_DIR)/interrupts.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
-$(OBJ_DIR)/kernel.o: $(KERNEL_DIR)/kernel.c $(KERNEL_DIR)/pmm.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/scheduler.h | dirs
+$(OBJ_DIR)/kernel.o: $(KERNEL_DIR)/kernel.c $(KERNEL_DIR)/pmm.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/scheduler.h $(DRIVERS_DIR)/ata.h $(DRIVERS_DIR)/fat16.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/idt.o: $(KERNEL_DIR)/idt.c $(KERNEL_DIR)/idt.h $(KERNEL_DIR)/ports.h $(DRIVERS_DIR)/keyboard.h $(KERNEL_DIR)/scheduler.h | dirs
@@ -120,7 +120,7 @@ $(OBJ_DIR)/scheduler.o: $(KERNEL_DIR)/scheduler.c $(KERNEL_DIR)/scheduler.h $(KE
 $(OBJ_DIR)/parse.o: $(SHELL_DIR)/parse.c $(SHELL_DIR)/parse.h $(KERNEL_DIR)/memory.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/commands.o: $(SHELL_DIR)/commands.c $(SHELL_DIR)/commands.h $(SHELL_DIR)/parse.h $(DRIVERS_DIR)/terminal.h $(KERNEL_DIR)/system.h $(KERNEL_DIR)/timer.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/pmm.h $(DRIVERS_DIR)/ata.h | dirs
+$(OBJ_DIR)/commands.o: $(SHELL_DIR)/commands.c $(SHELL_DIR)/commands.h $(SHELL_DIR)/parse.h $(DRIVERS_DIR)/terminal.h $(KERNEL_DIR)/system.h $(KERNEL_DIR)/timer.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/pmm.h $(DRIVERS_DIR)/ata.h $(DRIVERS_DIR)/fat16.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/programs.o: $(EXEC_DIR)/programs.c $(EXEC_DIR)/programs.h $(DRIVERS_DIR)/terminal.h | dirs
@@ -135,7 +135,7 @@ $(OBJ_DIR)/images.o: $(EXEC_DIR)/images.c $(EXEC_DIR)/images.h $(EXEC_DIR)/exec.
 $(OBJ_DIR)/image_programs.o: $(EXEC_DIR)/image_programs.c $(DRIVERS_DIR)/terminal.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/elf_loader.o: $(EXEC_DIR)/elf_loader.c $(EXEC_DIR)/elf_loader.h $(KERNEL_DIR)/elf.h $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/process.h $(KERNEL_DIR)/scheduler.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/pmm.h $(KERNEL_DIR)/ramdisk.h $(DRIVERS_DIR)/terminal.h $(DRIVERS_DIR)/keyboard.h | dirs
+$(OBJ_DIR)/elf_loader.o: $(EXEC_DIR)/elf_loader.c $(EXEC_DIR)/elf_loader.h $(KERNEL_DIR)/elf.h $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/process.h $(KERNEL_DIR)/scheduler.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/pmm.h $(DRIVERS_DIR)/fat16.h $(DRIVERS_DIR)/terminal.h $(DRIVERS_DIR)/keyboard.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/syscall.o: $(KERNEL_DIR)/syscall.c $(KERNEL_DIR)/syscall.h $(DRIVERS_DIR)/terminal.h $(KERNEL_DIR)/timer.h $(KERNEL_DIR)/uapi_syscall.h $(DRIVERS_DIR)/keyboard.h | dirs
@@ -151,6 +151,9 @@ $(OBJ_DIR)/ramdisk.o: $(KERNEL_DIR)/ramdisk.c $(KERNEL_DIR)/ramdisk.h $(DRIVERS_
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/ata.o: $(DRIVERS_DIR)/ata.c $(DRIVERS_DIR)/ata.h $(KERNEL_DIR)/ports.h $(DRIVERS_DIR)/terminal.h | dirs
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJ_DIR)/fat16.o: $(DRIVERS_DIR)/fat16.c $(DRIVERS_DIR)/fat16.h $(DRIVERS_DIR)/ata.h $(DRIVERS_DIR)/terminal.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BIN_DIR)/kernel.elf: $(KERNEL_OBJS) linker.ld | dirs
@@ -176,10 +179,6 @@ $(BIN_DIR)/ramdisk.rd: $(USER_ELFS) $(TOOLS_DIR)/mkramdisk | dirs
 
 #
 # FAT16 partition image (16 MB, no external dependencies)
-#
-# Contains all user ELFs in the root directory as 8.3 names.
-# mkfat16 writes a valid FAT16 BPB, FAT tables, root directory,
-# and file data — no mkfs.vfat or mtools required.
 #
 $(BIN_DIR)/fat16.img: $(USER_ELFS) $(TOOLS_DIR)/mkfat16 | dirs
 	$(TOOLS_DIR)/mkfat16 $@ $(USER_ELFS)
@@ -211,15 +210,15 @@ $(BIN_DIR)/boot.bin: $(BOOT_DIR)/boot.asm | dirs
 # Final disk image
 #
 # Layout:
-#   boot.bin             512 bytes
-#   loader2.bin          2048 bytes
-#   kernel_padded.bin    sector-aligned
-#   ramdisk.rd           (temporary — removed when FAT16 is primary)
-#   fat16.img            16 MB FAT16 partition
+#   boot.bin             (512 bytes)
+#   loader2.bin          (2048 bytes)
+#   kernel_padded.bin    (sector-aligned)
+#   ramdisk_padded.rd    (sector-aligned, temporary)
+#   fat16.img            (16 MB FAT16 partition)
 #
-# FAT16_LBA is the absolute LBA of the FAT16 partition start within
-# os-image.bin.  It is written to build/gen/fat16_lba.h so the kernel
-# can #include it as a compile-time constant.
+# The FAT16 partition start LBA is patched as a little-endian u32 into
+# byte offset 504 of the boot sector (sector 0) so the kernel can read
+# it at runtime without any compile-time dependency.
 #
 $(IMG_DIR)/os-image.bin: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(BIN_DIR)/ramdisk.rd $(BIN_DIR)/fat16.img | dirs
 	@kernel_size=$$(wc -c < $(BIN_DIR)/kernel.bin); \
@@ -236,10 +235,15 @@ $(IMG_DIR)/os-image.bin: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/k
 	ramdisk_sectors=$$(( $$ramdisk_padded / 512 )); \
 	fat16_lba=$$(( 5 + $$kernel_sectors + $$ramdisk_sectors )); \
 	echo "fat16:   32768 sectors (16 MB), LBA $$fat16_lba"; \
-	printf '#ifndef FAT16_LBA_H\n#define FAT16_LBA_H\n#define FAT16_LBA %u\n#define FAT16_SECTORS 32768u\n#endif\n' \
-		$$fat16_lba > $(GEN_DIR)/fat16_lba.h; \
 	cat $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel_padded.bin \
-		$(BIN_DIR)/ramdisk_padded.rd $(BIN_DIR)/fat16.img > $@
+		$(BIN_DIR)/ramdisk_padded.rd $(BIN_DIR)/fat16.img > $@; \
+	lba0=$$(( $$fat16_lba & 0xFF )); \
+	lba1=$$(( ($$fat16_lba >> 8) & 0xFF )); \
+	lba2=$$(( ($$fat16_lba >> 16) & 0xFF )); \
+	lba3=$$(( ($$fat16_lba >> 24) & 0xFF )); \
+	printf "$$(printf '\\%03o\\%03o\\%03o\\%03o' $$lba0 $$lba1 $$lba2 $$lba3)" | \
+		dd of=$@ bs=1 seek=504 count=4 conv=notrunc 2>/dev/null; \
+	echo "fat16:   LBA $$fat16_lba patched into sector 0 offset 504"
 
 clean:
 	rm -rf $(BUILD_DIR)
