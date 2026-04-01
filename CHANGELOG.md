@@ -1,6 +1,41 @@
 # Changelog
 
-## [Current]
+## [Current] — SYS_YIELD + SYS_EXEC
+
+### Added
+
+* **`SYS_YIELD` (syscall 6)** — voluntary preemption
+  * `uapi_syscall.h` — added `SYS_YIELD = 6`
+  * `user_syscall.h` — added `sys_yield()` inline wrapper using `syscall0`
+  * `scheduler.c` / `scheduler.h`
+    * Extracted shared switch core into `sched_do_switch(esp)` — used by both `sched_tick` and `sched_yield_now`
+    * Added `sched_yield_now(esp)`: resets `s_tick_count` to 0 and calls `sched_do_switch(esp)`, bypassing the quantum guard
+  * `syscall.c` — `sys_yield_impl(esp)` receives `(unsigned int)regs` and calls `sched_yield_now(esp)`; the `isr128_stub` frame is structurally identical to `irq0_stub` so the resume point is valid for `sched_switch`
+  * `yield_test.c` — new ramdisk program: calls `sys_yield()` in a counted loop, prints tick-stamped output before and after each yield
+
+* **`SYS_EXEC` (syscall 7)** — user process spawns a named child ELF
+  * `uapi_syscall.h` — added `SYS_EXEC = 7`
+  * `user_syscall.h` — added `sys_exec(name, argc, argv)` inline wrapper using `syscall3`
+  * `syscall.c` — added `sys_exec_impl(name, argc, argv)`: copies name from user address space to a kernel stack buffer (required because `ramdisk_find` runs after CR3 switches to child's PD), then calls `elf_run_named()`
+  * `elf_loader.c` — parent context save/restore:
+    * Added `s_parent_proc` and `s_parent_esp0` statics
+    * `elf_run_image()` saves `process_get_current()` and the parent's `kernel_stack_frame + PAGE_SIZE` (or `0x90000` for the shell) before installing the child
+    * `elf_process_exit()` switches CR3 to `s_parent_proc->pd` (not the kernel PD) before `longjmp` — required because the parent's ring-3 EIP at `0x400000` is only mapped in the parent's page directory; switching to the kernel PD first causes an immediate page fault on `iretd`
+    * `elf_process_exit()` restores TSS ESP0 to `s_parent_esp0` and calls `process_set_current(s_parent_proc)`
+    * `elf_enter_ring3()` now uses `proc->user_argc` / `proc->user_argv` (kernel-side copies) instead of the raw `argc`/`argv` — the raw pointers may be from user space and are invalid after CR3 switches
+  * `exec_test.c` — new ramdisk program: calls `sys_exec("hello", ...)`, verifies control returns, tests a nonexistent name returns -1, exits cleanly
+
+### Key design notes
+
+**SYS_YIELD frame compatibility:** The `int 0x80` gate builds the same register frame layout as `irq0_stub` (pusha + 4 segment pushes + esp push). Passing `regs` directly to `sched_yield_now` as the resume ESP is therefore safe — no special frame construction needed.
+
+**SYS_EXEC CR3 rule:** `elf_process_exit` must switch to the parent's page directory, not the kernel PD, before `longjmp`. The `longjmp` itself traverses kernel code (visible in all PDs), but the `iretd` at the bottom of `isr128_stub` jumps to the parent's ring-3 EIP at `0x400000` — only mapped in the parent's PD.
+
+**argv pre-copy:** All argv strings must be in `process_t.user_arg_data` before CR3 switches. `elf_enter_ring3` must use `proc->user_argv` (kernel-side pointers), not the original `argv` argument.
+
+---
+
+## [Previous]
 
 ### Added
 

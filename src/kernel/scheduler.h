@@ -72,6 +72,23 @@ void sched_dequeue(process_t* proc);
 void sched_tick(unsigned int esp);
 
 /*
+ * sched_yield_now(esp)
+ *
+ * Voluntarily yield the remainder of the current quantum and immediately
+ * switch to the next runnable process.
+ *
+ * Called from sys_yield_impl() via the SYS_YIELD syscall path.  esp is
+ * the kernel stack pointer of the isr128_stub frame — structurally
+ * identical to an irq0_stub frame, so sched_switch can resume it via
+ * iretd exactly as it would a timer-preempted context.
+ *
+ * Resets the tick counter so the next process gets a full quantum.
+ *
+ * Must be called with interrupts disabled (the int 0x80 gate clears IF).
+ */
+void sched_yield_now(unsigned int esp);
+
+/*
  * sched_current()
  *
  * Returns the process_t* currently running, or 0 before sched_start().

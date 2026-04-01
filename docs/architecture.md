@@ -114,20 +114,27 @@ Selector values for ring-3 entries include RPL=3 in the low two bits (`0x18|3=0x
 
 # Process Abstraction
 
-Each `runelf` invocation still creates a `process_t` struct allocated from a single PMM frame. The same structure is now also used for kernel tasks such as the shell:
+Each `runelf` invocation creates a `process_t` struct allocated from a single PMM frame. The same structure is used for kernel tasks such as the shell:
 
 ```c
 typedef struct {
-    u32*            pd;                     /* PMM-allocated page directory     */
-    u32             kernel_stack_frame;     /* PMM frame for ring-0 syscall stack */
-    jmp_buf         exit_ctx;               /* setjmp context for sys_exit return */
-    unsigned int    sched_esp;              /* kernel ESP saved on preemption    */
-    process_state_t state;                  /* UNUSED / RUNNING / EXITED        */
-    char            name[32];               /* null-terminated process name      */
+    u32*            pd;                     /* PMM-allocated page directory        */
+    u32             kernel_stack_frame;     /* PMM frame for ring-0 syscall stack  */
+    jmp_buf         exit_ctx;               /* setjmp context for sys_exit return  */
+    unsigned int    sched_esp;              /* kernel ESP saved on preemption      */
+    process_state_t state;                  /* UNUSED / RUNNING / EXITED          */
+    void          (*kernel_entry)(void);    /* kernel task entry point             */
+    unsigned int    user_entry;             /* first ring-3 EIP for ELF tasks      */
+    int             user_argc;              /* saved argc for bootstrap            */
+    char*           user_argv[16];          /* saved argv pointers                 */
+    char            user_arg_data[256];     /* argv string storage (kernel-side)   */
+    char            name[32];               /* null-terminated process name        */
 } process_t;
 ```
 
 `sched_esp` is 0 until the process has been preempted at least once. The scheduler skips any slot where `state != RUNNING` or `sched_esp == 0`.
+
+`user_arg_data` / `user_argv` hold copies of the argv strings inside the `process_t` PMM frame — independent of the shell input buffer and valid after CR3 switches.
 
 ---
 
@@ -139,8 +146,7 @@ A round-robin preemptive scheduler runs on every timer tick (100 Hz, quantum = 1
 
 Fixed array of up to 8 `process_t*` entries stored in `s_table[SCHED_MAX_PROCS]`.
 
-There is **no reserved slot 0** and no static sentinel `process_t`. The scheduler
-treats the table as a simple dynamic array:
+There is **no reserved slot 0** and no static sentinel `process_t`. The scheduler treats the table as a simple dynamic array:
 
 - `sched_enqueue()` appends a process at index `s_count`
 - `sched_dequeue()` removes a process and compacts the array
@@ -188,19 +194,25 @@ irq0_stub — add esp 4, pop segments, popa, iretd → ring 3 resumes
 
 **EOI ordering**: EOI is sent before `sched_tick`. If `sched_switch` lands on a different context and the outgoing `irq0_handler_main` never returns through the normal path, the PIC is already unmasked and future timer ticks fire correctly on the new context. Sending EOI after `sched_tick` would permanently mask IRQ0 for the incoming context.
 
+## SYS_YIELD integration
+
+`sched_yield_now(esp)` is called from `sys_yield_impl` inside the syscall handler. It bypasses the quantum counter, resets `s_tick_count`, and calls the same `sched_do_switch(esp)` core used by `sched_tick`. The `esp` argument is `(unsigned int)regs` — a pointer to the `isr128_stub` register frame, which is structurally identical to an `irq0_stub` frame (same push order). `sched_switch` therefore resumes the yielding process via `iretd` exactly as it would a timer-preempted context.
+
 ## Lifecycle
 
 ```text
 runelf:
   process_create()
   [NOT enqueued in scheduler — runs via foreground path]
+  save s_parent_proc / s_parent_esp0
   setjmp / iret into ring 3
 
 sys_exit:
-  paging_switch(kernel_pd)
-  tss_set_kernel_stack(0x90000)
+  paging_switch(s_parent_proc->pd or kernel_pd)
+  tss_set_kernel_stack(s_parent_esp0)
   process_destroy(proc)
-  longjmp → shell
+  process_set_current(s_parent_proc)
+  longjmp → parent (shell or user process)
 ```
 
 ---
@@ -262,7 +274,7 @@ Built by `tools/mkramdisk` (C tool, compiled with host gcc).
 
 `ramdisk_find(name)` returns a pointer directly into the ramdisk image — no copy made.
 
-Current programs: `hello`, `ticks`, `args`, `readline` — all linked at `0x400000` with `-Ttext-segment`.
+Current programs: `hello`, `ticks`, `args`, `readline`, `yield_test`, `exec_test` — all linked at `0x400000` with `-Ttext-segment`.
 
 ---
 
@@ -281,6 +293,9 @@ process_pd_create()             → fresh PD (pmm_alloc_frame), kernel entries s
 map ELF segments                → pmm_alloc_frame() per page, PAGE_USER at 0x400000
 map user stack                  → pmm_alloc_frame(), PAGE_USER at 0xBFFFF000
 alloc kernel stack              → pmm_alloc_frame(), tss_set_kernel_stack(frame + PAGE_SIZE)
+elf_seed_sched_context()        → copy argv into process_t.user_arg_data
+save parent context             → s_parent_proc = process_get_current()
+                                   s_parent_esp0 = parent ? parent->ksf+PAGE_SIZE : 0x90000
 process_set_current(proc)
 proc->state = RUNNING
 
@@ -296,11 +311,48 @@ iret → ring 3
 sys_exit() → int 0x80 → elf_process_exit()
   proc->state = EXITED
   keyboard_set_process_mode(0)
-  paging_switch(kernel_pd)
-  tss_set_kernel_stack(0x90000)
+  paging_switch(s_parent_proc->pd or kernel_pd)   ← parent's PD if user process
+  tss_set_kernel_stack(s_parent_esp0)
   process_destroy(proc)
-  process_set_current(0)
-  longjmp(exit_ctx, 1)          → resume in elf_run_image → return to shell
+  process_set_current(s_parent_proc)
+  sti
+  longjmp(exit_ctx, 1)          → resume in elf_run_image → return to parent
+```
+
+**CR3 rule on exit:** `elf_process_exit` switches to the parent's page directory, not the kernel PD, when the parent is a user process. After `longjmp` unwinds back through `isr128_stub`, the `iretd` jumps to the parent's ring-3 EIP at `0x400000` — only mapped in the parent's PD. Using the kernel PD would cause an immediate page fault.
+
+---
+
+# SYS_EXEC
+
+A running user process can spawn a named child:
+
+```text
+sys_exec("hello", argc, argv)   [ring-3 call via int 0x80]
+  ↓
+sys_exec_impl()
+  copy name from user address space to kernel stack buffer
+  (ramdisk_find runs after CR3 switches — original pointer would be unmapped)
+  ↓
+elf_run_named(kname, argc, argv)
+  ↓
+elf_run_image()                 [full launch path above]
+  ↓
+[child runs; parent suspended at setjmp in elf_run_image on parent's kernel stack]
+  ↓
+child calls sys_exit() → elf_process_exit()
+  paging_switch(parent->pd)
+  tss_set_kernel_stack(parent->kernel_stack_frame + PAGE_SIZE)
+  process_destroy(child)
+  process_set_current(parent)
+  sti
+  longjmp(child->exit_ctx, 1)
+  ↓
+setjmp returns → elf_run_image returns 1 → sys_exec_impl returns 0
+  ↓
+syscall_handler_main sets regs->eax = 0
+  ↓
+isr128_stub iretd → parent resumes in ring 3
 ```
 
 ---
@@ -359,6 +411,8 @@ regs->eax = result
 pop segments, popa, iretd → ring 3 resumes
 ```
 
+The `isr128_stub` frame (pusha + 4 segment pushes + esp) is structurally identical to the `irq0_stub` frame. This means `regs` (the pointer passed to `syscall_handler_main`) can be passed directly to `sched_yield_now()` as a valid scheduler resume ESP.
+
 ---
 
 # Syscall Architecture
@@ -371,6 +425,18 @@ ebx = arg1
 ecx = arg2
 edx = arg3
 return → eax
+```
+
+## Syscall table
+
+```text
+1   SYS_WRITE       write bytes to terminal
+2   SYS_EXIT        terminate process, return to parent
+3   SYS_GET_TICKS   read PIT tick counter
+4   SYS_PUTC        write single character
+5   SYS_READ        blocking keyboard input
+6   SYS_YIELD       voluntarily surrender scheduler quantum
+7   SYS_EXEC        load and run a named child ELF, block until it exits
 ```
 
 ---
@@ -387,7 +453,9 @@ VGA text mode (`0xB8000`). Provides `terminal_putc`, `terminal_puts`, `terminal_
 keyboard IRQ → keyboard_handle_irq()
   ↓
   if kb_process_mode: push to ring buffer (for SYS_READ)
-  else: shell_input_char()
+  else: queue shell event
+    ↓
+    shell_task_main() drains queue via shell_poll()
     ↓
     line_editor (insert, delete, cursor, history)
     ↓
@@ -410,7 +478,7 @@ All user programs must be linked at `USER_CODE_BASE` (0x400000) using `-Ttext-se
 
 I/O via syscalls. No libc, no runtime. Must call `sys_exit(0)` before returning.
 
-Current ramdisk programs: `hello`, `ticks`, `args`, `readline`.
+Current ramdisk programs: `hello`, `ticks`, `args`, `readline`, `yield_test`, `exec_test`.
 
 ---
 
@@ -441,14 +509,15 @@ build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
 
 * ELF link address fixed at 0x400000 — no PIE/relocation support
 * No filesystem — programs must be in ramdisk at build time
-* No `SYS_YIELD` syscall — voluntary preemption not yet possible
+* `SYS_EXEC` is one-deep — `s_parent_proc` / `s_parent_esp0` are single statics
+* Kernel trusts user pointers in syscalls (no copy-from-user validation)
+* ELF processes are not yet scheduler-owned tasks
 
 ---
 
 # Future Architecture Direction
 
 1. Filesystem-backed ELF loading — FAT12 or custom FS via ATA PIO
-2. `SYS_YIELD` / `SYS_EXEC` syscalls
 
 ---
 
@@ -473,15 +542,17 @@ SimpleOS is currently:
 two-stage bootloader (CHS + LBA)
 paging enabled (identity-mapped 8 MB)
 GDT with ring-3 user segments and TSS
-process_t abstraction — per-process struct (PD, kernel stack, exit ctx, sched_esp, name)
+process_t abstraction — per-process struct (PD, kernel stack, exit ctx, sched_esp, argv storage, name)
 per-process page directories — address space isolation, fully reclaimed on exit
 ring-3 ELF execution (hardware privilege enforcement)
 int 0x80 syscall interface (DPL=3 gate, TSS stack switch)
-argv copied into user-accessible stack memory
-clean process exit via setjmp/longjmp
+argv copied into process_t kernel storage before CR3 switches
+clean process exit via setjmp/longjmp with parent context restore
 physical memory manager (bitmap, all frames reclaimed on exit — no leak)
 per-process kernel stacks (PMM frame per process, freed on exit)
 SYS_READ — blocking keyboard input for user programs
+SYS_YIELD — voluntary preemption via sched_yield_now()
+SYS_EXEC — nested foreground ELF execution with full parent context save/restore
 preemptive round-robin scheduler — timer IRQ context switch, 100 ms quantum
 interactive shell with meminfo command
 ```
@@ -489,4 +560,3 @@ interactive shell with meminfo command
 Foundation for:
 
 * filesystem access
-* SYS_YIELD / SYS_EXEC

@@ -33,7 +33,8 @@ enum {
     SYS_GET_TICKS = 3,
     SYS_PUTC      = 4,
     SYS_READ      = 5,
-    SYS_YIELD     = 6
+    SYS_YIELD     = 6,
+    SYS_EXEC      = 7
 };
 
 #endif

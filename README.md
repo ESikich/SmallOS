@@ -1,13 +1,13 @@
-# SmallOS
+# SimpleOS
 
-SmallOS is a BIOS-based x86 hobby operating system built with:
+SimpleOS is a BIOS-based x86 hobby operating system built with:
 
 * `nasm`
 * `i686-elf-gcc`
 * `i686-elf-ld`
 * `QEMU`
 
-It boots from a raw disk image, switches to 32-bit protected mode, enables paging, loads a ramdisk from disk, and runs a C kernel with a terminal shell, ring-3 ELF program execution, and a preemptive round-robin scheduler. The current tree is in a transitional state: the shell now runs as a real kernel task, while `runelf` still uses the older foreground `setjmp`/`longjmp` exit path.
+It boots from a raw disk image, switches to 32-bit protected mode, enables paging, loads a ramdisk from disk, and runs a C kernel with a terminal shell, ring-3 ELF program execution, a preemptive round-robin scheduler, voluntary yielding, and inter-process exec.
 
 ---
 
@@ -28,15 +28,17 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
   * All process frames reclaimed on exit — no leak after `runelf`
 * Ramdisk — flat ELF archive loaded from disk, no kernel rebuild to add programs
 * ELF loader — validates, loads segments, zeroes BSS, launches in ring 3
-* `process_t` abstraction — per-process struct (PD, kernel stack, exit context, scheduler state, name); fully PMM-allocated and reclaimed on exit
+* `process_t` abstraction — per-process struct (PD, kernel stack, exit context, scheduler state, name, argv storage); fully PMM-allocated and reclaimed on exit
 * Per-process page directories — address space isolation; PD itself freed on exit
 * Ring 3 user mode — hardware-enforced privilege separation
-* Syscall layer via `int 0x80` (DPL=3 gate): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`, `SYS_READ`
-* `sys_exit()` returns cleanly to the shell via `setjmp`/`longjmp`
+* Syscall layer via `int 0x80` (DPL=3 gate): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`, `SYS_READ`, `SYS_YIELD`, `SYS_EXEC`
+* `sys_exit()` returns cleanly to the parent caller (shell or user process) via `setjmp`/`longjmp`
 * Shell now runs as an explicit kernel task scheduled by `scheduler.c`
 * Per-process kernel stacks — dedicated PMM frame per process; TSS ESP0 set from it; freed on exit
 * `SYS_READ` — blocking keyboard input for user programs; keyboard IRQ routed to ring buffer while process is running
-* **Preemptive round-robin scheduler** — timer IRQ (100 Hz) context-switches between schedulable kernel contexts; current code boots into an explicit shell task and keeps `runelf` on a foreground path until user processes are converted to full scheduler-owned tasks
+* **Preemptive round-robin scheduler** — timer IRQ (100 Hz) context-switches between schedulable kernel contexts; 10-tick (100 ms) quantum
+* **`SYS_YIELD`** — voluntary preemption; process surrenders its remaining quantum and the scheduler immediately switches to the next runnable task
+* **`SYS_EXEC`** — a running user process can load and run a named child ELF from the ramdisk, block until it exits, and receive a return code; parent context (page directory, TSS ESP0, `process_t*`) is saved and fully restored
 
 ---
 
@@ -52,7 +54,8 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 │   ├── drivers/    keyboard, screen, terminal
 │   ├── shell/      shell, line_editor, parse, commands
 │   ├── exec/       elf_loader, exec, images, programs
-│   └── user/       hello.c, ticks.c, args.c, readline.c, user_lib.h
+│   └── user/       hello.c, ticks.c, args.c, readline.c, yield_test.c,
+│                   exec_test.c, user_lib.h, user_syscall.h
 ├── tools/
 │   └── mkramdisk.c
 ├── build/
@@ -90,7 +93,7 @@ runimg <image>       descriptor-based execution
 runelf <n> [args]    load and run an ELF from the ramdisk
 ```
 
-Current ramdisk programs: `hello`, `ticks`, `args`, `readline`
+Current ramdisk programs: `hello`, `ticks`, `args`, `readline`, `yield_test`, `exec_test`
 
 ---
 
@@ -119,14 +122,22 @@ runelf hello
  → process_pd_create()   fresh page directory (PMM), kernel entries shared
  → map ELF + stack       pmm_alloc_frame() per page
  → alloc kernel stack    tss_set_kernel_stack(frame + PAGE_SIZE)
+ → save parent context   s_parent_proc / s_parent_esp0
  → setjmp()              save kernel context for sys_exit return
  → paging_switch(pd)     load process CR3
  → iret into ring 3
  → [program runs in foreground; timer still ticks]
  → sys_exit() → elf_process_exit()
- → paging_switch(kpd)
+ → paging_switch(parent_pd or kernel_pd)
+ → tss_set_kernel_stack(s_parent_esp0)
  → process_destroy()     free all PMM frames
- → longjmp()             return to shell
+ → process_set_current(s_parent_proc)
+ → longjmp()             return to parent (shell or user process)
+
+sys_exec("hello", ...)   [from inside a running user process]
+ → copy name to kernel buffer
+ → elf_run_named()       full runelf path above, nested
+ → child exits → longjmp → iretd → parent resumes in ring 3
 ```
 
 ---
@@ -140,7 +151,7 @@ runelf hello
 0x00006000   kernel .bss start (page tables + PMM bitmap)
 0x0000A008   kernel .bss end (approx)
 0x00010000   ramdisk (permanent)
-0x00090000   legacy static kernel stack top used by foreground runelf exit path
+0x00090000   shell static kernel stack top
 0x00100000   bump allocator — permanent kernel structures
 0x00200000   PMM — reclaimable frames
                process_t structs, process PDs, ELF frames,
@@ -174,7 +185,9 @@ The `pd == 0` rule still exists, but it is **not a table-layout concept**. It is
 
 This logic is implemented in `sched_proc_cr3()` and applies to any kernel task, regardless of its position in the scheduler table.
 
-Today, the scheduler owns kernel tasks such as the shell. User ELF programs are still in transition: they run through the older foreground launch/exit path and are not yet enqueued as scheduler-owned tasks.
+Today, the scheduler owns kernel tasks such as the shell. User ELF programs run through the foreground `setjmp`/`longjmp` path and are not yet enqueued as scheduler-owned tasks.
+
+`SYS_YIELD` integrates with the scheduler via `sched_yield_now(esp)`. The `isr128_stub` frame layout is identical to `irq0_stub`, so the yield resume point is treated exactly like a timer preemption by `sched_switch`.
 
 ```text
 irq0_stub       → pushes full register frame + ESP
@@ -200,7 +213,9 @@ irq0_handler_main(esp)
 
 * No filesystem — programs must be in ramdisk at build time
 * ELF programs linked at fixed address 0x400000 — no PIE/relocation
-* No `SYS_YIELD` — voluntary preemption not yet possible
+* `SYS_EXEC` is one-deep — `s_parent_proc` / `s_parent_esp0` are single statics; deeper nesting is not yet supported
+* Kernel trusts user pointers in syscalls (no copy-from-user validation)
+* ELF processes are not yet scheduler-owned tasks
 
 ---
 
@@ -209,7 +224,6 @@ irq0_handler_main(esp)
 Next steps:
 
 * Filesystem-backed storage (FAT12 or custom FS via ATA PIO)
-* `SYS_YIELD` / `SYS_EXEC` syscalls
 
 ---
 

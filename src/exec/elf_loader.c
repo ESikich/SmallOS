@@ -27,6 +27,26 @@ static int str_len(const char* s) {
     return n;
 }
 
+/* ------------------------------------------------------------------ */
+/* Saved parent context — one-deep stack for nested exec               */
+/*                                                                      */
+/* Before launching a child, elf_run_image() saves the currently       */
+/* running process pointer and its TSS ESP0 value here.  When the      */
+/* child calls sys_exit(), elf_process_exit() restores them so the     */
+/* parent resumes with the correct page directory, kernel stack, and   */
+/* current-process pointer.                                             */
+/*                                                                      */
+/* Shell launch path (no parent process): stores 0 / kernel PD /      */
+/* 0x90000, preserving the original behaviour.                         */
+/* ------------------------------------------------------------------ */
+
+static process_t*   s_parent_proc = 0;
+static unsigned int s_parent_esp0 = 0x90000u;
+
+/* ------------------------------------------------------------------ */
+/* Ring-3 entry                                                         */
+/* ------------------------------------------------------------------ */
+
 static void elf_enter_ring3(unsigned int entry,
                              unsigned int user_esp,
                              int          argc,
@@ -71,7 +91,6 @@ static void elf_enter_ring3(unsigned int entry,
     );
     __builtin_unreachable();
 }
-
 
 static void elf_user_task_bootstrap(void) {
     process_t* proc = sched_current();
@@ -144,30 +163,37 @@ void elf_process_exit(void) {
     keyboard_set_process_mode(0);
 
     /*
-     * ELF processes still use the foreground setjmp/longjmp exit path.
-     * The shell runs as a kernel task, but user ELF processes are not yet
-     * scheduler-owned tasks, so there is nothing to dequeue here.
+     * Switch CR3 to the parent's page directory before longjmp.
+     *
+     * When the shell launched the child, s_parent_proc is 0 (or a kernel
+     * task with pd == 0), so we switch to the kernel PD — identical to the
+     * original behaviour.
+     *
+     * When a user process launched the child via SYS_EXEC, s_parent_proc
+     * is that process's process_t and s_parent_proc->pd is its page
+     * directory.  iretd in isr128_stub will jump back to the parent's
+     * ring-3 EIP at 0x400000, which is only mapped in the parent's PD —
+     * so we must switch to it before longjmp fires, not after.
      */
+    if (s_parent_proc && s_parent_proc->pd) {
+        paging_switch(s_parent_proc->pd);
+    } else {
+        paging_switch(paging_get_kernel_pd());
+    }
 
-    /* Restore kernel CR3 before destroying the process PD. */
-    paging_switch(paging_get_kernel_pd());
-
-    /* Restore TSS ESP0 to the static kernel stack (shell context). */
-    tss_set_kernel_stack(0x90000);
+    tss_set_kernel_stack(s_parent_esp0);
 
     /* Save exit context pointer before process_destroy frees the frame. */
     jmp_buf* ctx = &proc->exit_ctx;
 
     process_destroy(proc);
-    process_set_current(0);
+    process_set_current(s_parent_proc);
 
     /*
-     * sys_exit reaches us through the syscall interrupt gate, which
-     * clears IF on entry.  We return to the shell with longjmp()
-     * instead of unwinding back through iretd, so EFLAGS is not
-     * restored automatically.  Re-enable interrupts explicitly before
-     * resuming the shell, otherwise keyboard IRQs remain masked off
-     * and the shell appears dead after the program exits.
+     * sys_exit reaches us through the syscall interrupt gate, which clears
+     * IF on entry.  We return via longjmp rather than iretd, so EFLAGS is
+     * not restored automatically.  Re-enable interrupts so the parent (or
+     * shell) receives keyboard and timer IRQs correctly.
      */
     __asm__ __volatile__("sti");
 
@@ -251,7 +277,6 @@ int elf_run_image(const unsigned char* image, int argc, char** argv) {
         process_set_current(0);
         return 0;
     }
-    tss_set_kernel_stack(proc->kernel_stack_frame + PAGE_SIZE);
 
     if (!elf_seed_sched_context(proc, eh->e_entry, argc, argv)) {
         process_destroy(proc);
@@ -259,17 +284,24 @@ int elf_run_image(const unsigned char* image, int argc, char** argv) {
         return 0;
     }
 
+    /*
+     * Save parent context before installing the child.
+     *
+     * Shell path:      parent == 0 or parent->pd == 0
+     *                  → s_parent_esp0 = 0x90000 (shell static stack)
+     *
+     * SYS_EXEC path:   parent is the calling user process
+     *                  → s_parent_esp0 = parent kernel stack top
+     *                  → s_parent_proc->pd used to restore CR3 on exit
+     */
+    process_t* parent = process_get_current();
+    s_parent_proc = parent;
+    s_parent_esp0 = parent ? (parent->kernel_stack_frame + PAGE_SIZE)
+                           : 0x90000u;
+
+    tss_set_kernel_stack(proc->kernel_stack_frame + PAGE_SIZE);
     process_set_current(proc);
     proc->state = PROCESS_STATE_RUNNING;
-
-    /*
-     * The process now has a valid first-entry scheduler context in
-     * proc->sched_esp, seeded to return into elf_user_task_bootstrap().
-     *
-     * We still do not enqueue it yet.  The command path remains the older
-     * foreground iret/longjmp model until launch and exit semantics are
-     * moved fully under scheduler ownership.
-     */
 
     if (setjmp(proc->exit_ctx) != 0) {
         return 1;
@@ -277,7 +309,8 @@ int elf_run_image(const unsigned char* image, int argc, char** argv) {
 
     keyboard_set_process_mode(1);
     paging_switch(proc->pd);
-    elf_enter_ring3(eh->e_entry, USER_STACK_TOP, argc, argv);
+    elf_enter_ring3(eh->e_entry, USER_STACK_TOP,
+                    proc->user_argc, proc->user_argv);
 
     return 1;
 }

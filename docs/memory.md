@@ -13,7 +13,7 @@ This document describes the physical memory layout, allocators, and paging archi
 0x00006000   kernel .bss start (page tables + PMM bitmap reside here)
 ~0x0000A008  kernel .bss end
 0x00010000   ramdisk (permanent — loaded by loader2, never freed)
-0x00090000   kernel stack top (grows downward from here)
+0x00090000   kernel stack top (grows downward from here; shell context)
 
 0x00100000   bump allocator base — permanent kernel structures
                kmalloc()      — long-lived kernel-owned data only
@@ -63,7 +63,7 @@ unsigned int memory_get_heap_top(void); // current bump pointer (for meminfo)
 
 No free. Suitable for structures that live for the lifetime of the kernel: long-lived kernel-owned data and other permanent structures. `memory_get_heap_top()` is used by `meminfo` to report heap usage.
 
-Shell command parsing is intentionally **not** a bump-allocation use case anymore. `parse_command()` tokenizes the mutable input buffer in place and stores pointers in a fixed-size `argv[MAX_ARGS]` array, so repeated shell commands do not grow `heap used`.
+Shell command parsing is intentionally **not** a bump-allocation use case. `parse_command()` tokenizes the mutable input buffer in place and stores pointers in a fixed-size `argv[MAX_ARGS]` array, so repeated shell commands do not grow `heap used`.
 
 ---
 
@@ -78,7 +78,7 @@ u32  pmm_free_count(void);       // current free frame count (used by meminfo)
 
 192-byte bitmap in `.bss` (zeroed at boot). Linear scan with a search hint for O(n) worst-case allocation. Detects and logs double-free attempts.
 
-Run `meminfo` before and after `runelf` to confirm the free count is unchanged.
+Run `meminfo` before and after `runelf` and `exec_test` to confirm the free count is unchanged.
 
 ---
 
@@ -116,7 +116,7 @@ process_destroy()
   → pmm_free_frame()            process_t frame
 ```
 
-After a clean `runelf`, `pmm_free_count()` returns the same value as before the call.
+After a clean `runelf`, `pmm_free_count()` returns the same value as before the call. This holds for nested exec via `SYS_EXEC` as well — the child's frames are fully reclaimed before the parent resumes.
 
 ---
 
@@ -190,11 +190,14 @@ The physical **frames** pointed to by user PTEs are PMM-allocated and freed by `
 ```text
 boot               → kernel_page_directory (CR3 set by paging_init)
 runelf launch      → process PD (paging_switch before iret)
-sys_exit           → kernel_page_directory (paging_switch in elf_process_exit,
-                     before process_destroy touches any kernel structures)
+sys_exit           → parent's PD if parent is a user process,
+                     kernel_page_directory if parent is the shell
+                     (paging_switch in elf_process_exit, before process_destroy)
 ```
 
-Always switch CR3 back to the kernel PD **before** freeing the process PD.
+**Critical:** On `sys_exit`, CR3 must be switched to the **parent's page directory** before `longjmp` when the parent is a user process. After `longjmp` unwinds back to `isr128_stub`, the `iretd` instruction jumps to the parent's ring-3 EIP at `0x400000`. That address is only mapped in the parent's page directory — switching to the kernel PD instead would cause an immediate page fault.
+
+Always switch CR3 back before freeing the child's process PD.
 
 ---
 
@@ -213,7 +216,7 @@ after kernel  ramdisk.rd
 
 * ELF programs linked at fixed address 0x400000 — no PIE/relocation
 * No filesystem — programs must be in ramdisk at build time
-* No `SYS_YIELD` / `SYS_EXEC` yet
+* `SYS_EXEC` is one-deep — `s_parent_proc` / `s_parent_esp0` are single statics
 * Bump allocator has no free — permanent kernel structures only
 
 ---
@@ -223,7 +226,6 @@ after kernel  ramdisk.rd
 Next steps:
 
 * Filesystem-backed storage (FAT12 or custom FS via ATA PIO)
-* `SYS_YIELD` / `SYS_EXEC` syscall work on top of the existing scheduler
 
 ---
 

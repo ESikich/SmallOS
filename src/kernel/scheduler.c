@@ -47,6 +47,70 @@ static unsigned int sched_proc_esp0(process_t* proc) {
     return proc->kernel_stack_frame + 4096u;
 }
 
+/*
+ * sched_do_switch(esp)
+ *
+ * Shared core used by both sched_tick() and sched_yield_now().
+ * Saves esp into the current slot, picks the next eligible process,
+ * and calls sched_switch() if one is found.
+ *
+ * Caller is responsible for resetting s_tick_count before calling.
+ */
+static void sched_do_switch(unsigned int esp) {
+    if (s_count <= 1 || s_current_idx < 0) return;
+
+    s_table[s_current_idx]->sched_esp = esp;
+
+    int next = (s_current_idx + 1) % s_count;
+    int tries = 0;
+    while (tries < s_count) {
+        process_t* candidate = s_table[next];
+
+        /*
+         * A runnable task must have a valid saved kernel ESP.  Newly
+         * created kernel tasks are seeded with one by process.c; user
+         * processes get theirs the first time they enter the scheduler.
+         */
+        if (candidate->state == PROCESS_STATE_RUNNING &&
+            candidate->sched_esp != 0) {
+            break;
+        }
+        next = (next + 1) % s_count;
+        tries++;
+    }
+
+    if (next == s_current_idx) return;   /* no eligible next process */
+
+    int prev = s_current_idx;
+    s_current_idx = next;
+
+    process_t* cur = s_table[prev];
+    process_t* nxt = s_table[next];
+
+    /*
+     * sched_switch(&cur->sched_esp, nxt->sched_esp, next_cr3, next_esp0)
+     *
+     * When called from sched_tick (irq0 path):
+     *   sched_switch ret -> sched_tick ret -> irq0_handler_main ret
+     *   -> irq0_stub iretd
+     *
+     * When called from sched_yield_now (int 0x80 path):
+     *   sched_switch ret -> sched_yield_now ret -> sys_yield_impl ret
+     *   -> syscall_handler_main ret -> isr128_stub iretd
+     *
+     * Both stubs build the same frame layout, so sched_switch resumes
+     * either path correctly.
+     */
+    sched_switch(&cur->sched_esp,
+                 nxt->sched_esp,
+                 sched_proc_cr3(nxt),
+                 sched_proc_esp0(nxt));
+
+    /*
+     * Execution resumes here when this context is switched back to.
+     */
+}
+
 /* ------------------------------------------------------------------ */
 /* Public API                                                           */
 /* ------------------------------------------------------------------ */
@@ -134,60 +198,18 @@ void sched_tick(unsigned int esp) {
     if (s_tick_count < SCHED_TICKS_PER_QUANTUM) return;
     s_tick_count = 0;
 
-    if (s_count <= 1 || s_current_idx < 0) return;
+    sched_do_switch(esp);
+}
 
+void sched_yield_now(unsigned int esp) {
     /*
-     * Save the current ESP so this task can resume at exactly the point
-     * where IRQ0 interrupted it.
+     * Bypass the quantum counter — the process is voluntarily giving up
+     * the rest of its slice.  Reset the counter so the next process gets
+     * a full quantum rather than inheriting whatever ticks remain.
      */
-    s_table[s_current_idx]->sched_esp = esp;
+    s_tick_count = 0;
 
-    int next = (s_current_idx + 1) % s_count;
-    int tries = 0;
-    while (tries < s_count) {
-        process_t* candidate = s_table[next];
-
-        /*
-         * A runnable task must have a valid saved kernel ESP.  Newly
-         * created kernel tasks are seeded with one by process.c; user
-         * processes get theirs the first time they enter the scheduler.
-         */
-        if (candidate->state == PROCESS_STATE_RUNNING &&
-            candidate->sched_esp != 0) {
-            break;
-        }
-        next = (next + 1) % s_count;
-        tries++;
-    }
-
-    if (next == s_current_idx) return;   /* no eligible next process */
-
-    int prev = s_current_idx;
-    s_current_idx = next;
-
-    process_t* cur = s_table[prev];
-    process_t* nxt = s_table[next];
-
-    /*
-     * sched_switch(&cur->sched_esp, nxt->sched_esp, next_cr3, next_esp0)
-     *
-     * sched_switch overwrites cur->sched_esp with the ESP at the call
-     * site inside sched_switch, which is on the path:
-     *   sched_switch ret -> sched_tick ret -> irq0_handler_main ret
-     *   -> irq0_stub iretd
-     *
-     * That is the correct resume point for this context next time it
-     * is switched back to.
-     */
-    sched_switch(&cur->sched_esp,
-                 nxt->sched_esp,
-                 sched_proc_cr3(nxt),
-                 sched_proc_esp0(nxt));
-
-    /*
-     * Execution resumes here when this context is switched back to.
-     * Return normally to irq0_handler_main -> irq0_stub -> iretd.
-     */
+    sched_do_switch(esp);
 }
 
 process_t* sched_current(void) {

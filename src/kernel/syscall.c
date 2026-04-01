@@ -4,6 +4,7 @@
 #include "paging.h"
 #include "elf_loader.h"
 #include "keyboard.h"
+#include "scheduler.h"
 
 #define SYSCALL_ERR_INVALID  ((unsigned int)-1)
 #define SYSCALL_MAX_WRITE_LEN 4096u
@@ -28,23 +29,6 @@ static int sys_putc_impl(unsigned int ch) {
     return 1;
 }
 
-/*
- * sys_exit_impl()
- *
- * Terminate the current ring-3 process and return to the shell.
- *
- * With ring-3 execution there is no longer a kernel call frame to return
- * through — elf_run_image() ended with an `iret` and has no stack frame
- * waiting. Instead we:
- *
- *   1. Restore the kernel page directory (so kernel data is writable again).
- *   2. Destroy the process page directory and free its PMM-backed frames.
- *   3. Long-jump back to the shell via the saved return context stored in
- *      elf_loader.c.
- *
- * elf_process_exit() (declared in elf_loader.h) performs steps 1–3 and
- * does not return — it longjmps to the context saved before the iret.
- */
 static void sys_exit_impl(int code) {
     (void)code;
     elf_process_exit();
@@ -55,29 +39,8 @@ static unsigned int sys_get_ticks_impl(void) {
     return timer_get_ticks();
 }
 
-/*
- * sys_read_impl(buf, len)
- *
- * Reads up to `len` bytes of keyboard input into `buf`.
- * Spins (HLT-waiting) until `len` bytes have been received.
- * Input is echoed to the terminal so the user can see what they typed.
- * A newline ('\n') terminates early — it is included in the returned data.
- *
- * Returns the number of bytes read, or -1 on error.
- *
- * Safety: buf is a user virtual address — valid only because the process PD
- * is still active when this syscall runs (CR3 has not been switched yet).
- */
-static int sys_yield_impl(void) {
-    /*
-     * Transitional implementation.
-     *
-     * Kernel tasks are scheduler-owned, but runelf user processes still run
-     * through the older foreground iret/longjmp path and are not safely
-     * schedulable yet.  Until ELF processes become real scheduler-owned
-     * tasks, SYS_YIELD is accepted as a no-op so user test programs can be
-     * built and exercised without corrupting control flow.
-     */
+static int sys_yield_impl(unsigned int esp) {
+    sched_yield_now(esp);
     return 0;
 }
 
@@ -105,6 +68,47 @@ static int sys_read_impl(char* buf, unsigned int len) {
 
     __asm__ volatile ("cli");
     return (int)n;
+}
+
+/*
+ * sys_exec_impl(name, argc, argv)
+ *
+ * Load and run a named ELF from the ramdisk as a nested foreground process.
+ * The caller is suspended while the child runs, exactly as the shell is
+ * suspended during `runelf`.  Returns when the child calls sys_exit().
+ *
+ * name and argv are user virtual addresses — valid here because the caller's
+ * CR3 is still active when the syscall fires (same reason SYS_WRITE and
+ * SYS_READ can accept user pointers directly).
+ *
+ * name is copied into a small kernel-side buffer before calling
+ * elf_run_named(), because elf_run_named() calls ramdisk_find() after
+ * paging_switch() has changed CR3 to the child's page directory — at that
+ * point the original user-space name pointer would no longer be mapped.
+ *
+ * argv strings are copied inside elf_enter_ring3() onto the child's user
+ * stack while the child's PD is active, so they need no pre-copy here.
+ *
+ * Returns 0 on success, -1 if the program was not found or failed to load.
+ */
+#define EXEC_NAME_MAX 32
+
+static int sys_exec_impl(const char* name, int argc, char** argv) {
+    if (name == 0) return -1;
+
+    /* Copy name out of user space while caller's CR3 is still active. */
+    char kname[EXEC_NAME_MAX];
+    unsigned int i = 0;
+    while (i < EXEC_NAME_MAX - 1 && name[i] != '\0') {
+        kname[i] = name[i];
+        i++;
+    }
+    kname[i] = '\0';
+
+    if (i == 0) return -1;
+
+    int ok = elf_run_named(kname, argc, argv);
+    return ok ? 0 : -1;
 }
 
 void syscall_handler_main(syscall_regs_t* regs) {
@@ -135,7 +139,19 @@ void syscall_handler_main(syscall_regs_t* regs) {
             break;
 
         case SYS_YIELD:
-            regs->eax = (unsigned int)sys_yield_impl();
+            /*
+             * Pass regs as the esp argument — regs IS the kernel stack
+             * pointer of the saved isr128_stub frame.  sched_yield_now
+             * saves this as the resume point for this process.
+             */
+            regs->eax = (unsigned int)sys_yield_impl((unsigned int)regs);
+            break;
+
+        case SYS_EXEC:
+            regs->eax = (unsigned int)sys_exec_impl(
+                            (const char*)regs->ebx,
+                            (int)regs->ecx,
+                            (char**)regs->edx);
             break;
 
         default:

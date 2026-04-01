@@ -89,4 +89,20 @@ static inline int sys_yield(void) {
     return syscall0(SYS_YIELD);
 }
 
+/*
+ * sys_exec(name, argc, argv)
+ *
+ * Load and run the named ELF from the ramdisk as a child process.
+ * Blocks until the child exits, then returns the child's exit code.
+ *
+ * name and argv point into the caller's user address space — the kernel
+ * reads them while the caller's CR3 is still active.
+ *
+ * Returns the child's exit code on success, -1 if the program was not
+ * found or could not be loaded.
+ */
+static inline int sys_exec(const char* name, int argc, char** argv) {
+    return syscall3(SYS_EXEC, (uint32_t)name, (uint32_t)argc, (uint32_t)argv);
+}
+
 #endif
