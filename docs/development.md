@@ -37,8 +37,21 @@ If you see `implicit declaration of function` — you forgot a header.
 
 * `boot.asm` must be **exactly 512 bytes**, ending with `dw 0xAA55`
 * `loader2.asm` must be **exactly 2048 bytes**
-* `kernel.bin` must be padded to a 512-byte sector boundary in the image (Makefile handles this)
+* `kernel.bin` and `ramdisk.rd` must both be padded to 512-byte sector boundaries before concatenation into the disk image (Makefile handles this)
 * `RAMDISK_LBA` is computed as `5 + kernel_sectors` — if padding is skipped, the ramdisk will not load
+
+### Loader2 address invariant
+
+Loader2 is currently at `0xA000`. The kernel loads to `0x1000`. The kernel must not grow large enough to overwrite loader2 during the INT 0x13 read:
+
+```text
+safe kernel size = (loader2_address - 0x1000) / 512 sectors
+                 = (0xA000 - 0x1000) / 512 = 72 sectors = 36 KB
+```
+
+Current kernel is ~58 sectors. If the kernel exceeds 72 sectors, move loader2 to `0xB000` and update `LOADER2_OFFSET` in `boot.asm` and `[org]` in `loader2.asm`.
+
+**Symptom of violation**: BIOS INT 0x13 hangs silently mid-transfer at `Loading...` with no error message printed.
 
 ---
 
@@ -50,9 +63,7 @@ Kernel must load its own GDT as the **first act** of `kernel_main()`. The GDT ha
 
 ## TSS Rules
 
-`tss_set_kernel_stack(esp0)` must be called before `setjmp` and before every `iret` into ring 3. The value must be `kernel_stack_frame + PAGE_SIZE` for user processes.
-
-`elf_process_exit()` restores TSS ESP0 to `s_parent_esp0` — the saved value of whoever called `elf_run_image()`. For a direct `runelf` from the shell this is `0x90000`. For a `SYS_EXEC` call from a user process it is that process's `kernel_stack_frame + PAGE_SIZE`. Never hardcode `0x90000` in `elf_process_exit` — use the saved value.
+`tss_set_kernel_stack(esp0)` must be called before `setjmp` and before every `iret` into ring 3. The value must be `kernel_stack_frame + PAGE_SIZE`. On process exit, `elf_process_exit` restores it to the parent process's kernel stack (or `0x90000` for the shell).
 
 `tss_get_esp0_ptr()` returns `&tss.esp0` and is used by the scheduler to update TSS directly during context switches. Do not remove this function.
 
@@ -78,11 +89,7 @@ Do not allocate process-owned paging structures with `kmalloc_page()`. The bump 
 
 ### Switching CR3
 
-`paging_switch(pd)` flushes the TLB. After switching to a process PD, only memory mapped in that directory is accessible.
-
-**Critical rule for SYS_EXEC exit:** `elf_process_exit()` must switch to the **parent's page directory** (not the kernel PD) before `longjmp` when the parent is a user process. After `longjmp` unwinds through the kernel call chain back to `isr128_stub`, the `iretd` instruction jumps to the parent's ring-3 EIP at `0x400000`. That address is only mapped in the parent's page directory — switching to the kernel PD first causes an immediate page fault on `iretd`.
-
-Always switch CR3 back to the correct PD **before** freeing the child's PD.
+`paging_switch(pd)` flushes the TLB. After switching to a process PD, only memory mapped in that directory is accessible. Always switch back to the kernel PD before touching kernel data structures.
 
 ---
 
@@ -93,39 +100,33 @@ kmalloc / kmalloc_page   0x100000 – 0x1FFFFF   permanent (no free)
 pmm_alloc_frame          0x200000 – 0x7FFFFF   reclaimable on process exit
 ```
 
-`kmalloc` / `kmalloc_page` are for permanent kernel structures only. Do not use them for short-lived shell parsing state or other per-command allocations.
+`kmalloc` / `kmalloc_page` are for permanent kernel structures only. Do not use them for transient buffers — the bump allocator has no free path and heap used will grow permanently with each call.
 
 `pmm_alloc_frame` is for everything reclaimed on exit: `process_t` structs, process page directories, ELF frames, stack frames, all process-private page tables, and kernel stack frames.
+
+### FAT16 load buffer rule
+
+`fat16_load()` uses a static BSS buffer (`s_load_buf[256 KB]`), not `kmalloc`. Do not change this to `kmalloc` — each `runelf` call would permanently consume heap.
 
 **Verify after changes with `meminfo`:**
 
 ```
-meminfo              ← note free frame count
+meminfo              ← note heap top and free frame count
 runelf hello
-meminfo              ← count must be unchanged
-runelf exec_test
-meminfo              ← count must still be unchanged (tests nested exec)
+meminfo              ← heap top and frame count must be identical
+runelf hello
+meminfo              ← still identical after second run
 ```
 
 ### Shell parser rule
 
 `parse_command()` must not allocate from the bump heap. It tokenizes the mutable shell input buffer in place, stores pointers in a fixed-size `argv[MAX_ARGS]` array, and must not call `kmalloc()`.
 
-Why:
-
-* Per-command `kmalloc()` use leaks permanently because the bump allocator has no free path
-* Repeated shell commands would otherwise increase `heap used` even when PMM accounting is correct
-* Zero-allocation parsing keeps shell memory usage stable and makes `meminfo` output trustworthy during repeated `runelf` tests
-
 ### Process Data Ownership Rules
 
-* Do not rely on shell input buffers for process data
-* All user-process arguments must be copied into process-owned storage before execution
-* Pointers passed into a process must remain valid for the entire lifetime of that process
-
-Rationale: Shell input buffers are mutable and reused. Storing pointers into them leads to use-after-modification bugs once the shell continues execution.
-
-For `SYS_EXEC`, `sys_exec_impl` copies the child name from user space into a kernel stack buffer before calling `elf_run_named()`. This is required because `ramdisk_find()` runs after CR3 switches to the child's page directory, at which point the original user-space pointer is no longer mapped.
+* Do not rely on shell input buffers for process data.
+* All user-process arguments must be copied into process-owned storage before execution.
+* Pointers passed into a process must remain valid for the entire lifetime of that process.
 
 ---
 
@@ -136,8 +137,6 @@ For `SYS_EXEC`, `sys_exec_impl` copies the child name from user space into a ker
 `sched_enqueue(proc)` — call after `proc->state = RUNNING`, before `iret`. If the table is full the process still runs but is not preempted.
 
 `sched_dequeue(proc)` — call before `paging_switch` and `process_destroy` in `elf_process_exit`. It removes the process from the run queue, compacts the table, and adjusts scheduler indices so round-robin execution can continue over the remaining runnable entries.
-
-`sched_yield_now(esp)` — called from `sys_yield_impl`. Resets `s_tick_count` to 0, then calls `sched_do_switch(esp)` — the same core used by `sched_tick`. Pass `(unsigned int)regs` as `esp`; the `isr128_stub` frame is structurally identical to an `irq0_stub` frame, so `sched_switch` can resume the yielding process via `iretd` without special handling.
 
 **EOI ordering in `irq0_handler_main`**: EOI is sent **before** `sched_tick`. If `sched_switch` lands on a different context and `irq0_handler_main` never returns, EOI must already be sent. Do not move it after `sched_tick`.
 
@@ -164,9 +163,17 @@ For `SYS_EXEC`, `sys_exec_impl` copies the child name from user space into a ker
 * Link user ELFs with `-Ttext-segment 0x400000`, not `-Ttext`
 * User frames from `pmm_alloc_frame()` only
 * `tss_set_kernel_stack()` before `setjmp()` before `paging_switch()` before `iret`
-* Save parent context (`s_parent_proc`, `s_parent_esp0`) before overwriting `process_set_current()` and TSS
-* In `elf_process_exit()`, switch CR3 to `s_parent_proc->pd` when parent is a user process; kernel PD when parent is the shell
-* `elf_enter_ring3()` must use `proc->user_argc` / `proc->user_argv` (kernel-side copies from `elf_seed_sched_context`), not the raw `argv` pointer — the raw pointer may be from user space and will be invalid after CR3 switches
+* `sched_enqueue()` after `proc->state = RUNNING`, before `iret`
+* `sched_dequeue()` as the first action in `elf_process_exit()`
+
+---
+
+## ATA / FAT16 Rules
+
+* `ata_init()` must be called before `fat16_init()` and before any `ata_read_sectors()` call
+* `fat16_init(lba)` must be called before `fat16_load()` or `fat16_ls()`
+* `fat16_load()` returns a pointer into the static `s_load_buf` buffer — the caller must not hold this pointer across another `fat16_load()` call
+* `elf_run_image()` copies all ELF segment data into PMM frames before returning, so the buffer is safe to reuse immediately after `elf_run_named()` returns
 
 ---
 
@@ -193,8 +200,6 @@ Both `irq0_handler_main` and `irq1_handler_main` send EOI as their first meaning
 
 If you touch `isr128_stub`, you MUST update `syscall_regs_t` to match. The struct field order is determined by the assembly push order. See `syscalls.md`.
 
-The `isr128_stub` frame layout is structurally identical to `irq0_stub` (pusha + 4 segment pushes + esp push). This means `regs` (the pointer passed to `syscall_handler_main`) is a valid scheduler resume ESP and can be passed directly to `sched_yield_now()`.
-
 ---
 
 ## Debugging Strategy
@@ -211,7 +216,6 @@ mov byte [0xB8001], 0x4F
 ```c
 terminal_puts("debug\n");
 terminal_put_uint(value);
-terminal_put_hex(value);
 ```
 
 ### Inside ring 3
@@ -223,7 +227,7 @@ sys_write("debug\n", 6);
 ### Memory accounting
 
 ```
-meminfo   ← before and after runelf / exec_test
+meminfo   ← before and after runelf (heap and frames must be stable)
 ```
 
 ### QEMU logging
@@ -255,29 +259,30 @@ Useful signals:
 | 4 | Red '8' on screen | Double fault — bad TSS ESP0 or corrupt stack |
 | 5 | Crash after iret | TSS not loaded; wrong TSS ESP0; bad user GDT entries; DPL=0 on int 0x80 gate |
 | 6 | argv garbage in ring 3 | Strings not copied to user stack before iret |
-| 7 | Parent doesn't return after child exits | longjmp context corrupted, or wrong CR3 on exit |
+| 7 | Shell doesn't return | sys_exit not called, or longjmp context corrupted |
 | 8 | Syscalls silently broken | syscall_regs_t mismatch |
 | 9 | PMM leak after runelf | ELF linked with `-Ttext` not `-Ttext-segment` |
-| 10 | "pmm: double free" | process_destroy called twice; call process_set_current(0) after destroy |
+| 10 | "pmm: double free" | process_destroy called twice |
 | 11 | Crash on first context switch | sched_esp==0 guard missing; or sched_init not called before sti |
 | 12 | Timer fires but no preemption | EOI sent after sched_tick; or irq0_stub not passing ESP |
 | 13 | System freezes after context switch | EOI not sent before sched_switch; IRQ0 permanently masked |
-| 14 | exec_test hangs after child exits | elf_process_exit switched to kernel PD instead of parent->pd; parent ring-3 code at 0x400000 unmapped; iretd faults |
-| 15 | exec_test double fault on return | s_parent_esp0 wrong; TSS ESP0 pointing at freed child stack on next syscall |
-| 16 | argv[0] garbage in child after SYS_EXEC | elf_enter_ring3 using raw argv (user pointers) instead of proc->user_argv (kernel copies) |
+| 14 | Hangs at "Loading..." | Kernel too large — overwrites loader2 during INT 0x13 read; move loader2 higher |
+| 15 | "fat16: LBA not patched" | dd patch in Makefile os-image.bin rule failed; check printf octal escape |
+| 16 | Heap grows across runelf | fat16_load is using kmalloc instead of static buffer |
+| 17 | "fat16: not found" | Filename not matching 8.3 uppercase format; check mkfat16 output |
 
 ---
 
 ## Safe Development Order
 
-1. Build — fix compile errors
-2. Boot — confirm shell appears
-3. Verify timer — run `uptime`, confirm ticks advance
-4. Test `runelf hello` — confirm exit is clean
-5. Run `meminfo` before and after — confirm frame count unchanged
-6. Test `runelf yield_test` — confirm SYS_YIELD works
-7. Test `runelf exec_test` — confirm SYS_EXEC works and parent resumes cleanly
-8. Run `meminfo` again — frame count must still be unchanged
+1. `make clean && make` — fix compile errors
+2. Boot — confirm shell appears and `fat16: ok` prints
+3. `ataread 0` — confirm `sig: 0x55 0xAA` and correct `fat16_lba patch` value
+4. `fsls` — confirm FAT16 root directory lists correctly
+5. `fsread hello.elf` — confirm `7F 45 4C 46` (ELF magic)
+6. `runelf hello` — confirm ELF loads from FAT16 and exits cleanly
+7. `meminfo` before and after — heap top and frame count must be identical
+8. Run a second `runelf hello` — confirm static buffer reuse is safe
 9. Then expand
 
 ---
@@ -286,7 +291,7 @@ Useful signals:
 
 1. Create `src/user/myprog.c` with `void _start(int argc, char** argv)`
 2. End with `sys_exit(0)`
-3. Add `myprog` to `USER_PROGS` in Makefile
+3. Add `myprog` to `USER_PROGS` in Makefile — it is automatically included in both the ramdisk and the FAT16 image
 4. `make clean && make`
 5. `runelf myprog`
 
@@ -303,7 +308,8 @@ Useful signals:
 
 ## Next Steps (Recommended)
 
-* Filesystem — FAT12 or custom FS via ATA PIO
+* Remove ramdisk — loader2 no longer needs to load it; `ramdisk.c` is dead code
+* Enqueue ELF processes into the scheduler as full tasks
 
 ---
 
