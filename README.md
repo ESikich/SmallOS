@@ -54,11 +54,10 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 │   │               scheduler, sched_switch.asm, syscall, timer, system, setjmp
 │   ├── drivers/    keyboard, screen, terminal, ata
 │   ├── shell/      shell, line_editor, parse, commands
-│   ├── exec/       elf_loader, exec, images, programs
+│   ├── exec/       elf_loader
 │   └── user/       hello.c, ticks.c, args.c, readline.c, exec_test.c,
 │                   user_lib.h, user_syscall.h
 ├── tools/
-│   ├── mkramdisk.c
 │   └── mkfat16.c
 ├── build/
 ├── Makefile
@@ -91,8 +90,6 @@ uptime
 meminfo
 ataread <lba>        dump first 32 bytes of a disk sector (ATA PIO)
 
-run <builtin>        call a kernel-linked program directly
-runimg <image>       descriptor-based execution
 runelf <n> [args]    load and run an ELF from the ramdisk
 ```
 
@@ -105,7 +102,7 @@ Current ramdisk programs: `hello`, `ticks`, `args`, `readline`, `exec_test`
 ```text
 BIOS
  → boot.asm              load loader2 (CHS, 4 sectors)
- → loader2.asm           load kernel (LBA) + ramdisk (LBA) → protected mode
+ → loader2.asm           load kernel (LBA) → protected mode
  → kernel_entry.asm      zero BSS → kernel_main()
 
 kernel_main()
@@ -115,8 +112,8 @@ kernel_main()
  → pmm_init()            bitmap allocator at 0x200000
  → keyboard/timer/idt    drivers and interrupt table
  → sched_init()          initialise runnable task table
- → ata_init()            software reset ATA primary channel
- → ramdisk_init()        validate ramdisk at 0x10000
+ → ata_init()            initialise ATA primary channel
+ → fat16_init()          read BPB, validate FAT16 volume
  → create shell task     explicit kernel task with its own stack
  → sti
  → sched_start(shell)    switch from boot stack into shell task
@@ -144,12 +141,11 @@ runelf hello
 ```text
 LBA 0         boot.bin              (512 bytes)
 LBA 1–4       loader2.bin           (2048 bytes)
-LBA 5+        kernel_padded.bin     (padded to 512-byte boundary)
-after kernel  ramdisk_padded.rd     (padded to 512-byte boundary, temporary)
-after ramdisk fat16.img             (16 MB FAT16 partition)
+LBA 5+        kernel_padded.bin     (sector-aligned)
+LBA 5+ks      fat16.img             (16 MB FAT16 partition)
 ```
 
-`FAT16_LBA` is computed at build time and written to `build/gen/fat16_lba.h` so the kernel can include it as a compile-time constant.
+FAT16_LBA is patched into boot sector offset 504 after image assembly.
 
 ---
 
@@ -218,7 +214,6 @@ irq0_handler_main(esp)
 
 ## Current Limitations
 
-* FAT16 partition present on disk and readable via ATA PIO — parser not yet implemented; ELF programs still loaded from ramdisk
 * ELF programs linked at fixed address 0x400000 — no PIE/relocation
 * `SYS_EXEC` is one-deep — `s_parent_proc`/`s_parent_esp0` are single statics
 * Kernel trusts user pointers in syscalls (no copy-from-user validation)
@@ -230,9 +225,7 @@ irq0_handler_main(esp)
 
 Next steps:
 
-* FAT16 parser — read BPB, walk root directory, follow cluster chains
-* Wire `elf_run_named` to load from FAT16 instead of ramdisk
-* Retire ramdisk once FAT16 loading is proven
+* Enqueue ELF processes into the scheduler as full tasks
 
 ---
 

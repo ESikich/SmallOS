@@ -43,10 +43,6 @@ KERNEL_OBJS=\
 	$(OBJ_DIR)/scheduler.o \
 	$(OBJ_DIR)/parse.o \
 	$(OBJ_DIR)/commands.o \
-	$(OBJ_DIR)/programs.o \
-	$(OBJ_DIR)/exec.o \
-	$(OBJ_DIR)/images.o \
-	$(OBJ_DIR)/image_programs.o \
 	$(OBJ_DIR)/elf_loader.o \
 	$(OBJ_DIR)/syscall.o \
 	$(OBJ_DIR)/gdt.o \
@@ -119,18 +115,6 @@ $(OBJ_DIR)/parse.o: $(SHELL_DIR)/parse.c $(SHELL_DIR)/parse.h $(KERNEL_DIR)/memo
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/commands.o: $(SHELL_DIR)/commands.c $(SHELL_DIR)/commands.h $(SHELL_DIR)/parse.h $(DRIVERS_DIR)/terminal.h $(KERNEL_DIR)/system.h $(KERNEL_DIR)/timer.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/pmm.h $(DRIVERS_DIR)/ata.h $(DRIVERS_DIR)/fat16.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/programs.o: $(EXEC_DIR)/programs.c $(EXEC_DIR)/programs.h $(DRIVERS_DIR)/terminal.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/exec.o: $(EXEC_DIR)/exec.c $(EXEC_DIR)/exec.h $(KERNEL_DIR)/memory.h $(DRIVERS_DIR)/terminal.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/images.o: $(EXEC_DIR)/images.c $(EXEC_DIR)/images.h $(EXEC_DIR)/exec.h $(DRIVERS_DIR)/terminal.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/image_programs.o: $(EXEC_DIR)/image_programs.c $(DRIVERS_DIR)/terminal.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/elf_loader.o: $(EXEC_DIR)/elf_loader.c $(EXEC_DIR)/elf_loader.h $(KERNEL_DIR)/elf.h $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/process.h $(KERNEL_DIR)/scheduler.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/pmm.h $(DRIVERS_DIR)/fat16.h $(DRIVERS_DIR)/terminal.h $(DRIVERS_DIR)/keyboard.h | dirs

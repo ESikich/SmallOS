@@ -2,8 +2,6 @@
 #include "terminal.h"
 #include "system.h"
 #include "timer.h"
-#include "programs.h"
-#include "images.h"
 #include "elf_loader.h"
 #include "memory.h"
 #include "pmm.h"
@@ -33,8 +31,6 @@ static void cmd_help(command_t* cmd) {
     terminal_puts("  ataread <lba>      dump first 32 bytes of a sector\n");
     terminal_puts("  fsls               list FAT16 root directory\n");
     terminal_puts("  fsread <n>         dump first 16 bytes of a FAT16 file\n");
-    terminal_puts("  run <builtin>\n");
-    terminal_puts("  runimg <image>\n");
     terminal_puts("  runelf <n> [args]\n");
 }
 
@@ -210,22 +206,6 @@ static void cmd_fsread(command_t* cmd) {
     terminal_putc('\n');
 }
 
-static void cmd_run(command_t* cmd) {
-    if (cmd->argc < 2) {
-        terminal_puts("Usage: run <program> [args...]\n");
-        return;
-    }
-    programs_run(cmd->argv[1], cmd->argc - 1, &cmd->argv[1]);
-}
-
-static void cmd_runimg(command_t* cmd) {
-    if (cmd->argc < 2) {
-        terminal_puts("Usage: runimg <image> [args...]\n");
-        return;
-    }
-    images_run(cmd->argv[1], cmd->argc - 1, &cmd->argv[1]);
-}
-
 static void cmd_runelf(command_t* cmd) {
     if (cmd->argc < 2) {
         terminal_puts("Usage: runelf <n>\n");
@@ -248,8 +228,6 @@ static command_entry_t commands[] = {
     { "ataread", cmd_ataread },
     { "fsls",    cmd_fsls },
     { "fsread",  cmd_fsread },
-    { "run",     cmd_run },
-    { "runimg",  cmd_runimg },
     { "runelf",  cmd_runelf },
 };
 
