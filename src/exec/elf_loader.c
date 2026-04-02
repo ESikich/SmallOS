@@ -13,6 +13,9 @@
 
 typedef unsigned char u8;
 
+static process_t*   s_parent_proc = 0;
+static unsigned int s_parent_esp0 = 0;
+
 static void mem_copy(u8* dst, const u8* src, unsigned int n) {
     for (unsigned int i = 0; i < n; i++) dst[i] = src[i];
 }
@@ -27,51 +30,64 @@ static int str_len(const char* s) {
     return n;
 }
 
+static void jmp_buf_copy(jmp_buf dst, jmp_buf src) {
+    for (int i = 0; i < 6; i++) {
+        dst[i] = src[i];
+    }
+}
+
 static void elf_enter_ring3(unsigned int entry,
-                             unsigned int user_esp,
-                             int          argc,
-                             char**       argv)
+                            unsigned int user_esp,
+                            int          argc,
+                            char**       argv)
 {
     char* sp = (char*)user_esp;
     char* user_argv_ptrs[32];
+
     for (int i = argc - 1; i >= 0; i--) {
         int len = str_len(argv[i]) + 1;
         sp -= len;
         mem_copy((u8*)sp, (const u8*)argv[i], len);
         user_argv_ptrs[i] = sp;
     }
+
     sp = (char*)((unsigned int)sp & ~3u);
+
     sp -= (argc + 1) * 4;
     unsigned int* user_argv = (unsigned int*)sp;
-    for (int i = 0; i < argc; i++)
+    for (int i = 0; i < argc; i++) {
         user_argv[i] = (unsigned int)user_argv_ptrs[i];
+    }
     user_argv[argc] = 0;
+
     unsigned int* frame = (unsigned int*)sp;
     frame[-1] = (unsigned int)user_argv;
     frame[-2] = (unsigned int)argc;
-    frame[-3] = 0;
+    frame[-3] = 0;   /* fake return address */
+
     unsigned int final_esp = (unsigned int)frame - 12;
-    unsigned int user_cs = SEG_USER_CODE;
-    unsigned int user_ds = SEG_USER_DATA;
+    unsigned int user_cs   = SEG_USER_CODE;
+    unsigned int user_ds   = SEG_USER_DATA;
+
     __asm__ __volatile__ (
         "mov  %3, %%eax     \n"
         "mov  %%ax, %%ds    \n"
         "mov  %%ax, %%es    \n"
         "mov  %%ax, %%fs    \n"
         "mov  %%ax, %%gs    \n"
-        "push %3            \n"
-        "push %1            \n"
-        "pushf              \n"
-        "push %2            \n"
-        "push %0            \n"
+        "push %3            \n" /* SS */
+        "push %1            \n" /* ESP */
+        "pushf              \n" /* EFLAGS */
+        "push %2            \n" /* CS */
+        "push %0            \n" /* EIP */
         "iret               \n"
         :
         : "r"(entry), "r"(final_esp), "r"(user_cs), "r"(user_ds)
         : "eax"
     );
+
     __builtin_unreachable();
 }
-
 
 static void elf_user_task_bootstrap(void) {
     process_t* proc = sched_current();
@@ -83,7 +99,10 @@ static void elf_user_task_bootstrap(void) {
         }
     }
 
+    tss_set_kernel_stack(proc->kernel_stack_frame + PAGE_SIZE);
+    paging_switch(proc->pd);
     keyboard_set_process_mode(1);
+
     elf_enter_ring3(proc->user_entry,
                     USER_STACK_TOP,
                     proc->user_argc,
@@ -115,7 +134,7 @@ static int elf_seed_sched_context(process_t* proc,
         used += (unsigned int)len;
     }
 
-    proc->user_argc = argc;
+    proc->user_argc  = argc;
     proc->user_entry = entry;
     if (argc < PROCESS_MAX_ARGS) {
         proc->user_argv[argc] = 0;
@@ -138,40 +157,40 @@ int elf_process_running(void) {
 
 void elf_process_exit(void) {
     process_t* proc = process_get_current();
+    jmp_buf    exit_ctx;
+
     if (!proc) return;
 
     proc->state = PROCESS_STATE_EXITED;
     keyboard_set_process_mode(0);
 
     /*
-     * ELF processes still use the foreground setjmp/longjmp exit path.
-     * The shell runs as a kernel task, but user ELF processes are not yet
-     * scheduler-owned tasks, so there is nothing to dequeue here.
+     * Copy the jump target out of process_t before destroying it.
+     * process_destroy() frees the frame that contains proc->exit_ctx.
      */
-
-    /* Restore kernel CR3 before destroying the process PD. */
-    paging_switch(paging_get_kernel_pd());
-
-    /* Restore TSS ESP0 to the static kernel stack (shell context). */
-    tss_set_kernel_stack(0x90000);
-
-    /* Save exit context pointer before process_destroy frees the frame. */
-    jmp_buf* ctx = &proc->exit_ctx;
-
-    process_destroy(proc);
-    process_set_current(0);
+    jmp_buf_copy(exit_ctx, proc->exit_ctx);
 
     /*
-     * sys_exit reaches us through the syscall interrupt gate, which
-     * clears IF on entry.  We return to the shell with longjmp()
-     * instead of unwinding back through iretd, so EFLAGS is not
-     * restored automatically.  Re-enable interrupts explicitly before
-     * resuming the shell, otherwise keyboard IRQs remain masked off
-     * and the shell appears dead after the program exits.
+     * Restore the parent address space before longjmp.  If the parent is
+     * a user process, its ring-3 return EIP lives in that parent's PD.
+     * If there is no parent user process, fall back to the kernel PD.
+     */
+    if (s_parent_proc && s_parent_proc->pd) {
+        paging_switch(s_parent_proc->pd);
+    } else {
+        paging_switch(paging_get_kernel_pd());
+    }
+
+    tss_set_kernel_stack(s_parent_esp0);
+    process_destroy(proc);
+    process_set_current(s_parent_proc);
+
+    /*
+     * The syscall gate cleared IF on entry.  Re-enable interrupts before
+     * returning to the parent so keyboard IRQs and timer IRQs continue.
      */
     __asm__ __volatile__("sti");
-
-    longjmp(*ctx, 1);
+    longjmp(exit_ctx, 1);
 }
 
 int elf_run_image(const unsigned char* image, int argc, char** argv) {
@@ -186,6 +205,10 @@ int elf_run_image(const unsigned char* image, int argc, char** argv) {
     if (!proc) return 0;
 
     proc->pd = process_pd_create();
+    if (!proc->pd) {
+        process_destroy(proc);
+        return 0;
+    }
 
     const Elf32_Phdr* ph = (const Elf32_Phdr*)(image + eh->e_phoff);
 
@@ -205,9 +228,9 @@ int elf_run_image(const unsigned char* image, int argc, char** argv) {
             if (!frame_phys) {
                 terminal_puts("elf: out of frames\n");
                 process_destroy(proc);
-                process_set_current(0);
                 return 0;
             }
+
             mem_zero((u8*)frame_phys, PAGE_SIZE);
             paging_map_page(proc->pd, page_virt, frame_phys,
                             PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
@@ -217,46 +240,64 @@ int elf_run_image(const unsigned char* image, int argc, char** argv) {
             u32 filesz    = ph[i].p_filesz;
             const u8* src = image + ph[i].p_offset;
             u32 copied    = 0;
+
             while (copied < filesz) {
                 u32 va       = seg_start + copied;
                 u32 pd_idx   = va >> 22;
                 u32 pt_idx   = (va >> 12) & 0x3FF;
                 u32 page_off = va & 0xFFFu;
-                u32* pt = (u32*)(proc->pd[pd_idx] & ~0xFFFu);
-                u8*  dst_frame = (u8*)(pt[pt_idx] & ~0xFFFu);
+                u32* pt      = (u32*)(proc->pd[pd_idx] & ~0xFFFu);
+                u8*  dst     = (u8*)(pt[pt_idx] & ~0xFFFu);
+
                 u32 chunk = PAGE_SIZE - page_off;
-                if (copied + chunk > filesz) chunk = filesz - copied;
-                mem_copy(dst_frame + page_off, src + copied, chunk);
+                if (copied + chunk > filesz) {
+                    chunk = filesz - copied;
+                }
+
+                mem_copy(dst + page_off, src + copied, chunk);
                 copied += chunk;
             }
         }
     }
 
-    u32 stack_virt       = USER_STACK_TOP - USER_STACK_SIZE;
-    u32 stack_frame_phys = pmm_alloc_frame();
-    if (!stack_frame_phys) {
-        terminal_puts("elf: out of frames (stack)\n");
-        process_destroy(proc);
-        process_set_current(0);
-        return 0;
+    {
+        u32 stack_virt       = USER_STACK_TOP - USER_STACK_SIZE;
+        u32 stack_frame_phys = pmm_alloc_frame();
+        if (!stack_frame_phys) {
+            terminal_puts("elf: out of frames (stack)\n");
+            process_destroy(proc);
+            return 0;
+        }
+
+        mem_zero((u8*)stack_frame_phys, PAGE_SIZE);
+        paging_map_page(proc->pd, stack_virt, stack_frame_phys,
+                        PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
     }
-    mem_zero((u8*)stack_frame_phys, PAGE_SIZE);
-    paging_map_page(proc->pd, stack_virt, stack_frame_phys,
-                    PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
 
     proc->kernel_stack_frame = pmm_alloc_frame();
     if (!proc->kernel_stack_frame) {
         terminal_puts("elf: out of frames (kernel stack)\n");
         process_destroy(proc);
-        process_set_current(0);
         return 0;
     }
+
     tss_set_kernel_stack(proc->kernel_stack_frame + PAGE_SIZE);
 
     if (!elf_seed_sched_context(proc, eh->e_entry, argc, argv)) {
         process_destroy(proc);
-        process_set_current(0);
         return 0;
+    }
+
+    /*
+     * Save the parent foreground context for sys_exit/sys_exec return.
+     * Shell / top-level launch has no parent process_t, so use the
+     * static kernel stack top expected by the shell path.
+     */
+    s_parent_proc = process_get_current();
+    if (s_parent_proc) {
+        s_parent_esp0 = s_parent_proc->kernel_stack_frame + PAGE_SIZE;
+    } else {
+        s_parent_esp0 = 0x90000u;
     }
 
     process_set_current(proc);
@@ -270,14 +311,21 @@ int elf_run_image(const unsigned char* image, int argc, char** argv) {
      * foreground iret/longjmp model until launch and exit semantics are
      * moved fully under scheduler ownership.
      */
-
     if (setjmp(proc->exit_ctx) != 0) {
         return 1;
     }
 
     keyboard_set_process_mode(1);
     paging_switch(proc->pd);
-    elf_enter_ring3(eh->e_entry, USER_STACK_TOP, argc, argv);
+
+    /*
+     * Use the kernel-side argv copy.  This is required for SYS_EXEC:
+     * the raw argv pointers may live in the caller's user address space.
+     */
+    elf_enter_ring3(eh->e_entry,
+                    USER_STACK_TOP,
+                    proc->user_argc,
+                    proc->user_argv);
 
     return 1;
 }
@@ -291,5 +339,6 @@ int elf_run_named(const char* name, int argc, char** argv) {
         terminal_putc('\n');
         return 0;
     }
+
     return elf_run_image(data, argc, argv);
 }

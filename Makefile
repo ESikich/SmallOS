@@ -51,7 +51,6 @@ KERNEL_OBJS=\
 	$(OBJ_DIR)/syscall.o \
 	$(OBJ_DIR)/gdt.o \
 	$(OBJ_DIR)/paging.o \
-	$(OBJ_DIR)/ramdisk.o \
 	$(OBJ_DIR)/ata.o \
 	$(OBJ_DIR)/fat16.o
 
@@ -59,7 +58,6 @@ USER_PROGS=hello ticks args runelf_test readline exec_test
 
 USER_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_PROGS)))
 USER_OBJS=$(addprefix $(OBJ_DIR)/,$(addsuffix .o,$(USER_PROGS)))
-RAMDISK_ENTRIES=$(foreach p,$(USER_PROGS),$(p):$(BIN_DIR)/$(p).elf)
 
 all: $(IMG_DIR)/os-image.bin
 
@@ -147,9 +145,6 @@ $(OBJ_DIR)/gdt.o: $(KERNEL_DIR)/gdt.c $(KERNEL_DIR)/gdt.h | dirs
 $(OBJ_DIR)/paging.o: $(KERNEL_DIR)/paging.c $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/pmm.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/ramdisk.o: $(KERNEL_DIR)/ramdisk.c $(KERNEL_DIR)/ramdisk.h $(DRIVERS_DIR)/terminal.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
 $(OBJ_DIR)/ata.o: $(DRIVERS_DIR)/ata.c $(DRIVERS_DIR)/ata.h $(KERNEL_DIR)/ports.h $(DRIVERS_DIR)/terminal.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -168,14 +163,9 @@ $(OBJ_DIR)/%.o: $(USER_DIR)/%.c $(USER_DIR)/user_lib.h $(USER_DIR)/user_syscall.
 $(BIN_DIR)/%.elf: $(OBJ_DIR)/%.o | dirs
 	$(LD) -m elf_i386 -Ttext-segment 0x400000 -e _start $< -o $@
 
-$(TOOLS_DIR)/mkramdisk: tools/mkramdisk.c | dirs
-	$(HOST_CC) -o $@ $<
-
 $(TOOLS_DIR)/mkfat16: tools/mkfat16.c | dirs
 	$(HOST_CC) -o $@ $<
 
-$(BIN_DIR)/ramdisk.rd: $(USER_ELFS) $(TOOLS_DIR)/mkramdisk | dirs
-	$(TOOLS_DIR)/mkramdisk $@ $(RAMDISK_ENTRIES)
 
 #
 # FAT16 partition image (16 MB, no external dependencies)
@@ -183,16 +173,11 @@ $(BIN_DIR)/ramdisk.rd: $(USER_ELFS) $(TOOLS_DIR)/mkramdisk | dirs
 $(BIN_DIR)/fat16.img: $(USER_ELFS) $(TOOLS_DIR)/mkfat16 | dirs
 	$(TOOLS_DIR)/mkfat16 $@ $(USER_ELFS)
 
-$(GEN_DIR)/loader2.gen.asm: $(BOOT_DIR)/loader2.asm $(BIN_DIR)/kernel.bin $(BIN_DIR)/ramdisk.rd | dirs
+$(GEN_DIR)/loader2.gen.asm: $(BOOT_DIR)/loader2.asm $(BIN_DIR)/kernel.bin | dirs
 	@kernel_sectors=$$(( ($$(wc -c < $(BIN_DIR)/kernel.bin) + 511) / 512 )); \
-	ramdisk_sectors=$$(( ($$(wc -c < $(BIN_DIR)/ramdisk.rd) + 511) / 512 )); \
-	ramdisk_lba=$$(( 5 + $$kernel_sectors )); \
 	echo "kernel:  $$(wc -c < $(BIN_DIR)/kernel.bin) bytes ($$kernel_sectors sectors, LBA 5)"; \
-	echo "ramdisk: $$(wc -c < $(BIN_DIR)/ramdisk.rd) bytes ($$ramdisk_sectors sectors, LBA $$ramdisk_lba)"; \
 	sed \
 		-e "s/__KERNEL_SECTORS__/$$kernel_sectors/" \
-		-e "s/__RAMDISK_SECTORS__/$$ramdisk_sectors/" \
-		-e "s/__RAMDISK_LBA__/$$ramdisk_lba/" \
 		$< > $@
 
 $(BIN_DIR)/loader2.bin: $(GEN_DIR)/loader2.gen.asm | dirs
@@ -210,33 +195,27 @@ $(BIN_DIR)/boot.bin: $(BOOT_DIR)/boot.asm | dirs
 # Final disk image
 #
 # Layout:
-#   boot.bin             (512 bytes)
-#   loader2.bin          (2048 bytes)
-#   kernel_padded.bin    (sector-aligned)
-#   ramdisk_padded.rd    (sector-aligned, temporary)
-#   fat16.img            (16 MB FAT16 partition)
+#   boot.bin             (512 bytes,   LBA 0)
+#   loader2.bin          (2048 bytes,  LBA 1-4)
+#   kernel_padded.bin    (sector-aligned, LBA 5+)
+#   fat16.img            (16 MB FAT16 partition, LBA 5+kernel_sectors)
 #
 # The FAT16 partition start LBA is patched as a little-endian u32 into
 # byte offset 504 of the boot sector (sector 0) so the kernel can read
 # it at runtime without any compile-time dependency.
 #
-$(IMG_DIR)/os-image.bin: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(BIN_DIR)/ramdisk.rd $(BIN_DIR)/fat16.img | dirs
+$(IMG_DIR)/os-image.bin: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(BIN_DIR)/fat16.img | dirs
 	@kernel_size=$$(wc -c < $(BIN_DIR)/kernel.bin); \
 	padded=$$(( ($$kernel_size + 511) & ~511 )); \
 	pad=$$(( $$padded - $$kernel_size )); \
 	cp $(BIN_DIR)/kernel.bin $(BIN_DIR)/kernel_padded.bin; \
 	dd if=/dev/zero bs=1 count=$$pad >> $(BIN_DIR)/kernel_padded.bin 2>/dev/null; \
 	kernel_sectors=$$(( $$padded / 512 )); \
-	ramdisk_size=$$(wc -c < $(BIN_DIR)/ramdisk.rd); \
-	ramdisk_padded=$$(( ($$ramdisk_size + 511) & ~511 )); \
-	ramdisk_pad=$$(( $$ramdisk_padded - $$ramdisk_size )); \
-	cp $(BIN_DIR)/ramdisk.rd $(BIN_DIR)/ramdisk_padded.rd; \
-	dd if=/dev/zero bs=1 count=$$ramdisk_pad >> $(BIN_DIR)/ramdisk_padded.rd 2>/dev/null; \
-	ramdisk_sectors=$$(( $$ramdisk_padded / 512 )); \
-	fat16_lba=$$(( 5 + $$kernel_sectors + $$ramdisk_sectors )); \
+	fat16_lba=$$(( 5 + $$kernel_sectors )); \
+	echo "kernel:  $$kernel_size bytes ($$kernel_sectors sectors, LBA 5)"; \
 	echo "fat16:   32768 sectors (16 MB), LBA $$fat16_lba"; \
 	cat $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel_padded.bin \
-		$(BIN_DIR)/ramdisk_padded.rd $(BIN_DIR)/fat16.img > $@; \
+		$(BIN_DIR)/fat16.img > $@; \
 	lba0=$$(( $$fat16_lba & 0xFF )); \
 	lba1=$$(( ($$fat16_lba >> 8) & 0xFF )); \
 	lba2=$$(( ($$fat16_lba >> 16) & 0xFF )); \

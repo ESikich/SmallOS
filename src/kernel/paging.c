@@ -17,7 +17,7 @@
  * ----------------------------
  * Each process gets a fresh page directory from pmm_alloc_frame().
  * Kernel PD entries (indices 0 and 2–1023) are copied in so that kernel
- * code, VGA, ramdisk, heap, and stack remain accessible after CR3 switch.
+ * code, VGA, heap, and stack remain accessible after CR3 switch.
  *
  * PD index 1 (virtual 0x400000–0x7FFFFF) is left empty — this is the
  * private ELF region. Its page table is allocated from the PMM so that
@@ -156,7 +156,7 @@ u32* process_pd_create(void) {
 
     /*
      * Copy kernel PD entries into the process directory so that kernel
-     * code, VGA, ramdisk, heap, and stack remain accessible after CR3
+     * code, VGA, heap, and stack remain accessible after CR3
      * switch. We skip PD index USER_PD_INDEX (1) — that's the private
      * ELF region and each process gets its own mapping there.
      */

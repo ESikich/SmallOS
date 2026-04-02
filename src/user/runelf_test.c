@@ -43,6 +43,10 @@ static int str_eq(const char* a, const char* b) {
     return a[i] == '\0' && b[i] == '\0';
 }
 
+static int argv0_is_runelf_test(const char* s) {
+    return str_eq(s, "runelf_test") || str_eq(s, "runelf_test.elf");
+}
+
 static void check_true(const char* name, int cond) {
     g_checks++;
     u_puts("[");
@@ -111,7 +115,8 @@ static void check_argv(int argc, char** argv) {
     check_true("argc >= 1", argc >= 1);
 
     if (argc >= 1) {
-        check_true("argv[0] == runelf_test", str_eq(argv[0], "runelf_test"));
+        check_true("argv[0] == runelf_test[/ .elf]",
+                   argv0_is_runelf_test(argv[0]));
     }
 
     if (argc >= 2) {
@@ -174,7 +179,7 @@ void _start(int argc, char** argv) {
     u_put_uint((u32)g_checks);
     u_puts(", failures = ");
     u_put_uint((u32)g_failures);
-    u_puts("\n");
+    u_putc('\n');
 
     if (g_failures == 0) {
         u_puts("=== runelf test PASS ===\n");
@@ -183,10 +188,4 @@ void _start(int argc, char** argv) {
         u_puts("=== runelf test FAIL ===\n");
         sys_exit(1);
     }
-
-    /*
-    * sys_exit() should not return. If it does, treat that as a failure path.
-    */
-    u_puts("runelf test: ERROR returned from sys_exit\n");
-    for (;; ) { }
 }

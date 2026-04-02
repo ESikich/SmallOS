@@ -1,23 +1,11 @@
 #include "user_lib.h"
 
 /*
- * exec_test — diagnostic SYS_EXEC test.
+ * exec_test — diagnostic SYS_EXEC test for spawn-style semantics.
  *
- * Prints a numbered marker before and after every significant event so
- * it is immediately obvious exactly where execution stops.
- *
- * Expected output:
- *
- *   [1] exec_test alive
- *   [2] calling sys_exec hello
- *   hello from elf via int 0x80
- *   argc = 1
- *   argv[0] = "hello"
- *   ticks = ...
- *   [3] sys_exec returned 0
- *   [4] calling sys_exec with bad name
- *   [5] bad name returned -1
- *   [6] exec_test done
+ * sys_exec("hello", ...) now enqueues a new runnable task and returns
+ * immediately.  The parent and child may therefore interleave depending
+ * on the scheduler, so the exact output order is no longer strict.
  */
 
 void _start(int argc, char** argv) {

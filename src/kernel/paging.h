@@ -29,7 +29,7 @@ typedef unsigned int u32;
  *
  * Builds the kernel page directory and enables paging.
  * Identity-maps the first 8 MB (physical == virtual for all current
- * kernel, ramdisk, heap, and stack addresses).
+ * kernel, heap, and stack addresses).
  *
  * Must be called after gdt_init() and before any user process is loaded.
  */
@@ -72,7 +72,7 @@ u32* paging_get_kernel_pd(void);
  * free the directory itself on exit (no heap leak per runelf).
  *
  * The kernel's identity-mapped entries (PD indices 0 and 2–1023) are
- * copied in so that kernel code, ramdisk, heap, and VGA remain accessible
+ * copied in so that kernel code, heap, and VGA remain accessible
  * after switching CR3. PD index 1 (0x400000–0x7FFFFF) is left empty so
  * the process gets a private mapping there for its ELF.
  *

@@ -16,7 +16,7 @@
  * runs before being preempted.
  */
 
-#define SCHED_MAX_PROCS        8
+#define SCHED_MAX_PROCS         8
 #define SCHED_TICKS_PER_QUANTUM 10  /* ~100 ms at 100 Hz */
 
 /*
@@ -30,19 +30,13 @@ void sched_init(void);
 /*
  * sched_enqueue(proc)
  *
- * Add a process to the run queue.  Called by elf_run_image() just
- * before iret-ing into ring 3, and by kernel_main() for kernel tasks.
+ * Add a process to the run queue.
  *
- * The process must have a valid page directory (pd) and kernel stack
- * frame. sched_esp is initialised differently depending on the process
- * type:
+ * The process must have a valid first-entry or resume scheduler stack in
+ * sched_esp before it is eligible to run:
  *
- *   - Kernel tasks: sched_esp is set up by process_create_kernel_task()
- *   - ELF processes: sched_esp is initially 0 and is populated on first
- *     preemption
- *
- * The scheduler skips entries with sched_esp == 0 until they have been
- * preempted at least once.
+ *   - Kernel tasks: process_create_kernel_task() seeds sched_esp
+ *   - ELF tasks:    elf_seed_sched_context() seeds sched_esp
  *
  * Returns 1 on success, 0 if the table is full.
  */
@@ -51,8 +45,7 @@ int sched_enqueue(process_t* proc);
 /*
  * sched_dequeue(proc)
  *
- * Remove a process from the run queue.  Called by elf_process_exit()
- * after the process has exited and its resources have been freed.
+ * Remove a process from the run queue.
  */
 void sched_dequeue(process_t* proc);
 
@@ -87,6 +80,19 @@ void sched_tick(unsigned int esp);
  * Must be called with interrupts disabled (the int 0x80 gate clears IF).
  */
 void sched_yield_now(unsigned int esp);
+
+/*
+ * sched_exit_current(esp)
+ *
+ * Terminate the current task without returning to it.
+ *
+ * Used by elf_process_exit() while executing on the exiting task's
+ * kernel stack.  The scheduler removes the task from the run queue,
+ * marks it for deferred destruction, and switches directly to the next
+ * runnable task.  The actual process_destroy() happens later on a safe
+ * stack inside the scheduler.
+ */
+void sched_exit_current(unsigned int esp);
 
 /*
  * sched_current()

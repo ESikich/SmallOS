@@ -5,17 +5,14 @@
 ;   - occupies exactly 4 sectors (2048 bytes)
 ;   - kernel image begins at disk LBA 5 (0-based)
 ;   - kernel is loaded to physical 0x1000
-;   - ramdisk immediately follows kernel on disk (sector-padded)
-;   - ramdisk is loaded TEMPORARILY to physical 0x10000
-;     (real mode cannot access above 1MB; kernel reads it from there)
 ;   - after loading, stage 2 enters 32-bit protected mode
 ;   - then jumps to kernel entry at 0x1000
 ;
 ; Safe kernel size:
 ;   Loader2 is at 0xA000.  Kernel loads to 0x1000.
 ;   Maximum safe kernel size before overwriting loader2:
-;     (0xA000 - 0x1000) / 512 = 0x9000 / 512 = 72 sectors = 36 KB
-;   This is well above the current kernel size (~30 KB).
+;     (0xA000 - 0x1000) / 512 = 72 sectors = 36 KB
+;   If the kernel exceeds this, move loader2 to 0xB000.
 
 [org 0xA000]
 bits 16
@@ -23,12 +20,6 @@ bits 16
 KERNEL_OFFSET        equ 0x1000
 KERNEL_LBA           equ 5
 KERNEL_SECTORS       equ __KERNEL_SECTORS__
-
-RAMDISK_SECTORS      equ __RAMDISK_SECTORS__
-RAMDISK_LBA          equ __RAMDISK_LBA__
-
-RAMDISK_TMP_SEG      equ 0x1000
-RAMDISK_TMP_OFF      equ 0x0000
 
 start:
     mov [BOOT_DRIVE], dl
@@ -66,34 +57,6 @@ start:
     mov si, kernel_loaded_msg
     call print_string
 
-    call load_ramdisk
-
-    mov si, ramdisk_loaded_msg
-    call print_string
-
-    ; --- DEBUG: print first byte of ramdisk at 0x10000 ---
-    mov ax, 0x1000
-    mov es, ax
-    mov al, [es:0x0000]     ; first byte should be 0x49 ('I' from 'RDSI')
-    mov ah, 0x0E
-    int 0x10                ; print it as a character
-    xor ax, ax
-    mov es, ax
-    ; print second byte too (should be 0x53 = 'S')
-    mov ax, 0x1000
-    mov es, ax
-    mov al, [es:0x0001]
-    mov ah, 0x0E
-    int 0x10
-    xor ax, ax
-    mov es, ax
-    ; newline
-    mov ah, 0x0E
-    mov al, 0x0D
-    int 0x10
-    mov al, 0x0A
-    int 0x10
-
     call switch_to_pm
 
 hang:
@@ -130,17 +93,6 @@ load_kernel:
     mov word  [dap_off],   KERNEL_OFFSET
     mov word  [dap_seg],   0x0000
     mov dword [dap_lba],   KERNEL_LBA
-    mov dword [dap_lba+4], 0
-    call lba_read
-    popa
-    ret
-
-load_ramdisk:
-    pusha
-    mov word  [dap_count], RAMDISK_SECTORS
-    mov word  [dap_off],   RAMDISK_TMP_OFF
-    mov word  [dap_seg],   RAMDISK_TMP_SEG
-    mov dword [dap_lba],   RAMDISK_LBA
     mov dword [dap_lba+4], 0
     call lba_read
     popa
@@ -215,8 +167,7 @@ BOOT_DRIVE           db 0
 ext_ok_msg           db "LBA ok ", 0
 no_ext_msg           db "NO LBA!", 0
 loader_msg           db "Loading...", 0
-kernel_loaded_msg    db "K ", 0
-ramdisk_loaded_msg   db "R ", 0
+kernel_loaded_msg    db "K", 13, 10, 0
 disk_msg             db "Disk err!", 0
 
 times 2048-($-$$) db 0

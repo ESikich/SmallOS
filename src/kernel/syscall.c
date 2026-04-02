@@ -73,30 +73,26 @@ static int sys_read_impl(char* buf, unsigned int len) {
 /*
  * sys_exec_impl(name, argc, argv)
  *
- * Load and run a named ELF from the ramdisk as a nested foreground process.
- * The caller is suspended while the child runs, exactly as the shell is
- * suspended during `runelf`.  Returns when the child calls sys_exit().
+ * Create a new runnable ELF task and return immediately to the caller.
+ * This is now spawn-style semantics rather than the older nested
+ * foreground run-and-wait model.
  *
- * name and argv are user virtual addresses — valid here because the caller's
- * CR3 is still active when the syscall fires (same reason SYS_WRITE and
- * SYS_READ can accept user pointers directly).
+ * name and argv are user virtual addresses — valid here because the
+ * caller's CR3 is still active when the syscall fires.
  *
  * name is copied into a small kernel-side buffer before calling
- * elf_run_named(), because elf_run_named() calls ramdisk_find() after
- * paging_switch() has changed CR3 to the child's page directory — at that
- * point the original user-space name pointer would no longer be mapped.
+ * elf_run_named(), because the loader later switches to the child's page
+ * directory during first entry and must not depend on the caller's user
+ * pointer remaining valid.
  *
- * argv strings are copied inside elf_enter_ring3() onto the child's user
- * stack while the child's PD is active, so they need no pre-copy here.
- *
- * Returns 0 on success, -1 if the program was not found or failed to load.
+ * Returns 0 on success, -1 if the program was not found or failed to
+ * load / enqueue.
  */
 #define EXEC_NAME_MAX 32
 
 static int sys_exec_impl(const char* name, int argc, char** argv) {
     if (name == 0) return -1;
 
-    /* Copy name out of user space while caller's CR3 is still active. */
     char kname[EXEC_NAME_MAX];
     unsigned int i = 0;
     while (i < EXEC_NAME_MAX - 1 && name[i] != '\0') {

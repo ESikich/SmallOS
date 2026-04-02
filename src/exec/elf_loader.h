@@ -4,7 +4,7 @@
 /*
  * elf_run_named(name, argc, argv)
  *
- * Look up `name` in the ramdisk, load it into a per-process address space,
+ * Look up `name` in the FAT16 partition, load it into a per-process address space,
  * and execute it in ring 3. Does not return until the process calls
  * sys_exit(). Returns 1 on success, 0 on failure.
  */

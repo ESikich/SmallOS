@@ -1,6 +1,51 @@
 # Changelog
 
-## [Current] — ATA PIO driver + FAT16 disk image
+## [Current] — FAT16 parser, ELF loading from disk, loader2 relocation
+
+### Added
+
+* **`src/drivers/fat16.c` / `src/drivers/fat16.h`** — read-only FAT16 filesystem driver
+  * `fat16_init(lba)` — reads the FAT16 boot sector at the given absolute LBA, validates the BPB geometry against compile-time constants
+  * `fat16_ls()` — prints all non-empty root directory entries (name, size, cluster)
+  * `fat16_load(name, out_size)` — finds a file by case-insensitive 8.3 name, follows the FAT16 cluster chain, loads the full file into a static buffer, returns a pointer
+  * No `kmalloc` — uses static BSS buffers (`s_load_buf[256 KB]`, `s_cluster_buf[2 KB]`, `s_sector[512]`) so heap stays flat across all calls
+  * `fat16_load` is safe to call repeatedly — `elf_run_image` copies data into PMM frames before returning, so the static buffer is reused cleanly
+
+* **`fsls` shell command** — calls `fat16_ls()`, lists FAT16 root directory
+* **`fsread <n>` shell command** — calls `fat16_load()`, dumps first 16 bytes; used to verify ELF magic (`7F 45 4C 46`) before trusting FAT16 loading
+
+### Changed
+
+* **`src/exec/elf_loader.c`** — `elf_run_named()` now calls `fat16_load()` instead of `ramdisk_find()`. ELF programs are loaded from the FAT16 partition on disk. Ramdisk is no longer used for ELF execution (still loaded by loader2 but now dead code pending removal).
+
+* **`src/boot/boot.asm`** — loader2 load address changed from `0x8000` to `0xA000`
+
+* **`src/boot/loader2.asm`** — origin changed from `0x8000` to `0xA000`
+
+  **Root cause:** kernel grew beyond 56 sectors (~29 KB), causing the kernel LBA read (physical `0x1000`) to overwrite loader2 at `0x8000` while the BIOS INT 0x13 transfer was still in progress. The read hung silently mid-transfer.
+
+  Safe kernel ceiling with loader2 at `0xA000`: `(0xA000 - 0x1000) / 512 = 72 sectors = 36 KB`. If the kernel exceeds this, move loader2 to `0xB000`.
+
+* **`kernel.c`** — `fat16_init(FAT16_LBA)` called after `ata_init()`, before shell task creation
+
+* **`Makefile`**
+  * `fat16_lba.h` generated as a standalone rule from `kernel.bin` and `ramdisk.rd` sizes; only `kernel.c` includes it — `fat16.c` has no generated-header dependency
+  * FAT16 LBA patched into boot sector offset 504 as a little-endian u32 using `dd conv=notrunc` after image assembly
+  * `elf_loader.o` dependency updated from `ramdisk.h` to `fat16.h`
+  * `fat16.o` dependency on `memory.h` removed
+  * `boot.asm` and `loader2.asm` updated for new loader2 address
+
+### Key design notes
+
+**Static load buffer:** `fat16_load` writes into `s_load_buf[FAT16_MAX_FILE_BYTES]` (256 KB BSS). ELF programs run sequentially in the foreground so the buffer is never aliased. `elf_run_image` copies all segment data into PMM frames during loading, so the buffer is safe to reuse. Heap stays flat across all `runelf` calls.
+
+**Loader2 relocation invariant:** `loader2_address - 0x1000 > kernel_sectors * 512`. At `0xA000` this permits kernels up to 72 sectors.
+
+**FAT16 LBA delivery:** `fat16_init(lba)` takes the LBA as a parameter passed from `kernel_main()`. `fat16.c` has no generated-header dependency.
+
+---
+
+## [Previous] — ATA PIO driver + FAT16 disk image
 
 ### Added
 

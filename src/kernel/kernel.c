@@ -7,13 +7,10 @@
 #include "memory.h"
 #include "pmm.h"
 #include "paging.h"
-#include "ramdisk.h"
 #include "scheduler.h"
 #include "process.h"
 #include "ata.h"
 #include "fat16.h"
-
-#define RAMDISK_BASE 0x10000u
 
 void kernel_main(void) {
     terminal_init();
@@ -36,8 +33,6 @@ void kernel_main(void) {
      * Must be called before fat16_init() and before sti.
      */
     ata_init();
-
-    ramdisk_init(RAMDISK_BASE);
 
     /*
      * FAT16 filesystem — reads FAT16_LBA from sector 0 offset 504

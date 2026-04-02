@@ -9,9 +9,8 @@ This document explains how SimpleOS boots from BIOS to kernel, including disk la
 ```text
 BIOS
  → boot.asm        (stage 1, 512 bytes, CHS read of loader2)
- → loader2.asm     (stage 2, 2048 bytes, LBA reads of kernel + ramdisk)
+ → loader2.asm     (stage 2, 2048 bytes, LBA read of kernel only)
  → kernel.bin      (loaded to 0x1000)
- → ramdisk.rd      (loaded to 0x10000)
  → protected mode
  → kernel_entry.asm  (zeros BSS, calls kernel_main)
  → kernel_main()
@@ -26,17 +25,20 @@ The OS image (`os-image.bin`) is structured as:
 ```text
 LBA 0         → boot.bin              (512 bytes, exactly)
 LBA 1–4       → loader2.bin           (2048 bytes, exactly)
-LBA 5+        → kernel.bin            (padded to 512-byte boundary)
-after kernel  → ramdisk.rd
+LBA 5+        → kernel_padded.bin     (sector-aligned)
+LBA 5+ks      → fat16.img             (16 MB FAT16 partition)
 ```
+
+where `ks = ceil(kernel.bin / 512)`.
 
 Constraints:
 
 * `boot.bin` must be **exactly 512 bytes**
 * `loader2.bin` must be **exactly 2048 bytes (4 sectors)**
-* kernel begins at **LBA 5** (0-based), the same physical location as the old "sector 6" (1-based)
-* `kernel.bin` must be **padded to a 512-byte sector boundary** in the image so the ramdisk starts at a clean LBA
-* `ramdisk.rd` immediately follows the padded kernel; its LBA is computed at build time as `5 + kernel_sectors`
+* kernel begins at **LBA 5** (0-based)
+* `kernel.bin` must be **padded to a 512-byte sector boundary** in the image so the FAT16 partition starts at a clean LBA
+* FAT16 partition starts at `5 + kernel_sectors`
+* FAT16 LBA is patched as a little-endian u32 into byte offset 504 of the boot sector after image assembly; the kernel reads it via ATA at boot
 
 ---
 
@@ -44,23 +46,18 @@ Constraints:
 
 ## Location
 
-Loaded by BIOS at:
-
-```text
-0x0000:0x7C00
-```
+Loaded by BIOS at `0x0000:0x7C00`.
 
 ## Responsibilities
 
-* Initialize segment registers
-* Setup stack at `0x9000`
+* Initialize segment registers and stack at `0x9000`
 * Print debug messages via BIOS `int 0x10`
-* Load stage 2 from disk to `0x8000`
+* Load stage 2 from disk to `0xA000`
 * Transfer control to stage 2
 
 ## BIOS Disk Read
 
-Stage 1 uses the old CHS interface for loader2 only. Loader2 is only 4 sectors, so CHS works fine here.
+Stage 1 uses the CHS interface for loader2 only. Loader2 is 4 sectors and fits within the first track.
 
 ```asm
 int 0x13
@@ -82,28 +79,35 @@ Must fit in 512 bytes. No room for LBA logic, extension checks, or complex error
 
 ## Location
 
-Loaded to:
-
-```text
-0x0000:0x8000
-```
+Loaded to `0x0000:0xA000`.
 
 ## Responsibilities
 
 * Check INT 0x13 LBA extension support — halt with message if unsupported
 * Load kernel from disk (LBA 5) to physical `0x1000`
-* Load ramdisk from disk to physical `0x10000`
 * Setup temporary GDT
 * Switch to 32-bit protected mode
 * Jump to kernel entry at `0x1000`
+
+## Safe Kernel Size
+
+Loader2 sits at `0xA000`. The kernel loads to `0x1000`. The kernel must not grow large enough to overwrite loader2 during the INT 0x13 read:
+
+```text
+safe kernel size = (0xA000 - 0x1000) / 512 = 72 sectors = 36 KB
+```
+
+Current kernel is ~58 sectors. If the kernel exceeds 72 sectors, move loader2 to `0xB000` and update `LOADER2_OFFSET` in `boot.asm` and `[org]` in `loader2.asm`.
+
+**Symptom of violation:** BIOS INT 0x13 hangs silently mid-transfer. The screen shows `Loading...` but never advances. No error is printed because the hang occurs inside the BIOS call.
 
 ---
 
 ## Why LBA Extended Reads
 
-Stage 2 uses **INT 0x13 AH=0x42** (LBA extended read) for all disk reads. The old `AH=0x02` CHS interface was abandoned because:
+Stage 2 uses **INT 0x13 AH=0x42** (LBA extended read) for all disk reads. CHS was abandoned because:
 
-* A standard floppy geometry has 18 sectors per track. The kernel is currently 34 sectors, and the ramdisk starts at LBA 39 — both exceed one track.
+* The kernel is currently 58 sectors and the FAT16 partition starts at LBA ~63 — both exceed one CHS track (18 sectors on a standard floppy geometry).
 * CHS reads beyond sector 18 on track 0 either fail or silently read wrong data.
 * LBA addressing has no track geometry limit.
 
@@ -123,7 +127,7 @@ int 0x13
 jc .no_ext          ; carry set = not supported
 ```
 
-If not supported, loader2 prints "NO LBA!" and halts. This is a hard requirement — the system cannot boot without LBA support.
+If not supported, loader2 prints "NO LBA!" and halts.
 
 ---
 
@@ -161,31 +165,16 @@ LBA 5, KERNEL_SECTORS sectors
 ES:BX = 0x0000:0x1000  →  physical 0x1000
 ```
 
-`KERNEL_SECTORS` is injected by the Makefile at build time.
-
----
-
-## Ramdisk Loading
-
-```text
-LBA RAMDISK_LBA, RAMDISK_SECTORS sectors
-ES:BX = 0x1000:0x0000  →  physical 0x10000
-```
-
-Both `RAMDISK_SECTORS` and `RAMDISK_LBA` are injected by the Makefile.
-
-**Why 0x10000?** Real mode can only address memory below 1 MB (`0xFFFFF`). The ramdisk's permanent runtime address of `0x400000` is 4 MB — completely unreachable by BIOS. Loading to `0x10000` (64 KB) keeps it within the real-mode window while staying clear of all other structures. The kernel reads the ramdisk directly from `0x10000` after paging is enabled.
+`KERNEL_SECTORS` is injected by the Makefile at build time. It is the only placeholder in `loader2.asm`.
 
 ---
 
 ## Injected Values
 
-The Makefile generates `build/gen/loader2.gen.asm` by replacing three placeholders in `loader2.asm`:
+The Makefile generates `build/gen/loader2.gen.asm` by replacing one placeholder in `loader2.asm`:
 
 ```text
 __KERNEL_SECTORS__      ceil(kernel.bin / 512)
-__RAMDISK_SECTORS__     ceil(ramdisk.rd / 512)
-__RAMDISK_LBA__         5 + KERNEL_SECTORS
 ```
 
 ---
@@ -233,13 +222,13 @@ The loader2 GDT is temporary. The kernel installs its own GDT as the very first 
 
 ## Loader2 Size Constraint
 
-Loader2 must be exactly 2048 bytes. This is enforced in the assembly source:
+Loader2 must be exactly 2048 bytes:
 
 ```asm
 times 2048-($-$$) db 0
 ```
 
-If the code exceeds 2048 bytes, NASM will error at assembly time. This limits how much logic and how many message strings can fit in stage 2.
+If the code exceeds 2048 bytes, NASM will error at assembly time.
 
 ---
 
@@ -253,12 +242,11 @@ extern bss_start
 extern bss_end
 
 _start:
-    ; Zero BSS — page tables live here; must be clean before paging_init()
     mov edi, bss_start
     mov ecx, bss_end
     sub ecx, edi
     xor eax, eax
-    rep stosb
+    rep stosb            ; zero BSS — page tables live here
 
     call kernel_main
 
@@ -268,21 +256,18 @@ hang:
     jmp hang
 ```
 
-BSS zeroing is the first thing that happens in protected mode. The kernel's three paging structures (`kernel_page_directory`, `low_page_table_0`, `low_page_table_1`) are static arrays in `.bss` at addresses `0x7000`–`0x9FFF`. Without zeroing, they contain whatever was in memory before — typically garbage — and `paging_init()` immediately triple-faults when it tries to walk the corrupt page directory.
+BSS zeroing is the first thing that happens in protected mode. The kernel's three paging structures (`kernel_page_directory`, `low_page_table_0`, `low_page_table_1`) are static arrays in `.bss`. Without zeroing they contain garbage and `paging_init()` immediately triple-faults.
 
-`bss_start` and `bss_end` are linker symbols exported by `linker.ld`. Both must be declared `extern` in the asm file or NASM will error at assembly time.
-
-The kernel is a raw flat binary — there is no ELF loader to zero `.bss` at load time. This zeroing step replaces what a normal ELF runtime would do.
+`bss_start` and `bss_end` are linker symbols from `linker.ld`. Both must be declared `extern` in the asm file.
 
 ---
 
 # Memory Map During Boot
 
 ```text
-0x00007C00   stage 1 (boot.asm) — done after jump to 0x8000
-0x00008000   stage 2 (loader2.asm) — done after jump to 0x1000
+0x00007C00   stage 1 (boot.asm) — done after jump to 0xA000
+0x0000A000   stage 2 (loader2.asm) — done after jump to 0x1000
 0x00001000   kernel entry point (_start in kernel_entry.asm)
-0x00010000   ramdisk (loaded by loader2, stays here permanently)
 0x00090000   stack top (set up by loader2's init_pm)
 ```
 
@@ -290,12 +275,12 @@ The kernel is a raw flat binary — there is no ELF loader to zero `.bss` at loa
 
 # Why Two Stages Exist
 
-Stage 1 cannot fit LBA logic, protected mode setup, or dual disk reads in 512 bytes. Stage 2 carries all of that complexity.
+Stage 1 cannot fit LBA logic, protected mode setup, or disk reads in 512 bytes. Stage 2 carries all of that complexity.
 
-| Stage   | Purpose                                              |
-| ------- | ---------------------------------------------------- |
-| Stage 1 | load stage 2 via CHS (4 sectors, simple)             |
-| Stage 2 | LBA reads, kernel + ramdisk load, protected mode     |
+| Stage   | Purpose                                          |
+| ------- | ------------------------------------------------ |
+| Stage 1 | load stage 2 via CHS (4 sectors, simple)         |
+| Stage 2 | LBA extension check, kernel load, protected mode |
 
 ---
 
@@ -308,10 +293,22 @@ kernel_size=$(wc -c < kernel.bin)
 padded=$(( (kernel_size + 511) & ~511 ))
 pad=$(( padded - kernel_size ))
 dd if=/dev/zero bs=1 count=$pad >> kernel_padded.bin
-cat boot.bin loader2.bin kernel_padded.bin ramdisk.rd > os-image.bin
+cat boot.bin loader2.bin kernel_padded.bin fat16.img > os-image.bin
 ```
 
-Without this padding, the ramdisk does not start on a clean 512-byte boundary in the image. The Makefile calculates `RAMDISK_LBA = 5 + kernel_sectors`, which assumes the ramdisk begins exactly `kernel_sectors` sectors after LBA 5. If `kernel.bin` is e.g. 17264 bytes (not a multiple of 512), the ramdisk actually starts 368 bytes into the LBA the loader expects — loader2 reads from the wrong offset, loads zeros, and `ramdisk_init()` sees bad magic.
+Without this padding, the FAT16 partition does not start on a clean 512-byte boundary. The Makefile calculates `FAT16_LBA = 5 + kernel_sectors`, which assumes the FAT16 image begins exactly `kernel_sectors` sectors after LBA 5. An unpadded kernel causes FAT16 reads to land mid-sector and return all zeros.
+
+---
+
+# FAT16 LBA Delivery
+
+The FAT16 partition start LBA cannot be a compile-time constant in `fat16.c` without a chicken-and-egg dependency (kernel compilation needs it, but it depends on kernel size). Instead:
+
+1. The Makefile computes `fat16_lba = 5 + kernel_sectors` after building `kernel.bin`
+2. It patches the value as a little-endian u32 into byte offset 504 of `boot.bin` in the assembled image using `dd conv=notrunc`
+3. At runtime, `fat16_init()` reads ATA sector 0 and extracts the value from offset 504
+
+Byte offset 504 of the boot sector is in the zero-padded area between the bootloader code and the `0x55AA` signature at bytes 510–511. It is safe to overwrite.
 
 ---
 
@@ -322,11 +319,12 @@ The following must always hold:
 * kernel starts at LBA 5 in the disk image
 * kernel is loaded to physical `0x1000`
 * `kernel.bin` is padded to a 512-byte boundary in the image
-* ramdisk starts at `5 + kernel_sectors` (LBA)
-* ramdisk is loaded to physical `0x10000`
-* loader2 GDT is temporary — kernel installs its own GDT first thing
+* FAT16 partition starts at `5 + kernel_sectors` (LBA)
+* FAT16 LBA is patched into boot sector offset 504 after image assembly
+* loader2 GDT is temporary — kernel installs its own GDT first
 * segment registers correctly initialized before protected mode entry
 * `bss_start` / `bss_end` correctly defined and BSS zeroed before `paging_init()`
+* loader2 address + 2048 ≥ kernel load end (currently: `0xA000 > 0x1000 + 58*512 = 0x8440` ✓)
 
 Violation of any of these results in an immediate crash or silent corruption.
 
@@ -334,28 +332,28 @@ Violation of any of these results in an immediate crash or silent corruption.
 
 # Failure Modes
 
+## Hangs at "Loading..." with no error
+
+The kernel load overwrote loader2 mid-transfer. The kernel has grown beyond `(loader2_address - 0x1000) / 512` sectors. Move loader2 to a higher address.
+
 ## "Disk read error!" on screen
 
-`INT 0x13 AH=0x42` returned with carry set. Causes:
+`INT 0x13 AH=0x42` returned carry set. Causes:
 
 * Drive not presented as hard disk — use `-drive format=raw,file=...` not `-fda`
-* LBA address out of range — disk image too small or ramdisk not appended
+* LBA address out of range — disk image too small or fat16.img not appended
 
 ## "NO LBA!" on screen
 
-BIOS does not support INT 0x13 extensions. Should not occur with QEMU IDE. If seen, ensure QEMU is not in floppy mode.
+BIOS does not support INT 0x13 extensions. Ensure QEMU is not in floppy mode.
 
-## "ramdisk: bad magic" in kernel
+## "fat16: bad boot signature" or "fat16: LBA not patched"
 
-The ramdisk bytes at `0x10000` are wrong (zeros or garbage). Root causes:
-
-* `kernel.bin` not padded to sector boundary → RAMDISK_LBA is off → loader reads from wrong offset
-* `ramdisk.rd` not appended to image (check `cat` command in Makefile image rule)
-* LBA value exceeds disk image size
+The sector-0 patch failed or the FAT16 image was not appended. Check the `dd conv=notrunc` step in the Makefile `os-image.bin` rule.
 
 ## Triple fault immediately after kernel loads
 
-BSS not zeroed before `paging_init()`. Page tables contain garbage. Confirm:
+BSS not zeroed before `paging_init()`. Confirm:
 
 * `kernel_entry.asm` contains the `rep stosb` BSS zeroing loop
 * `extern bss_start` / `extern bss_end` declared in `kernel_entry.asm`
@@ -363,11 +361,7 @@ BSS not zeroed before `paging_init()`. Page tables contain garbage. Confirm:
 
 ## Reboot loop
 
-Typical causes:
-
-* invalid kernel GDT (must call `gdt_init()` before `sti`)
-* invalid IDT
-* broken interrupt handler
+Typical causes: invalid kernel GDT (must call `gdt_init()` before `sti`), invalid IDT, broken interrupt handler.
 
 ## Loader2 assembly error: binary too large
 
@@ -377,7 +371,7 @@ NASM rejects `times 2048-($-$$) db 0` because the code exceeds 2048 bytes. Short
 
 # Debugging Techniques
 
-## BIOS print (stage 1 & 2, real mode)
+## BIOS print (real mode)
 
 ```asm
 mov ah, 0x0E
@@ -391,16 +385,12 @@ int 0x10
 jmp $
 ```
 
-Freezes execution at a known point. Useful for isolating which stage crashes.
-
-## VGA direct write (protected mode, before terminal is up)
+## VGA direct write (protected mode, before terminal)
 
 ```asm
 mov byte [0xB8000], 'X'
 mov byte [0xB8001], 0x4F   ; red background, white text
 ```
-
-Works immediately after `init_pm` since VGA is within the identity-mapped region.
 
 ## QEMU logging
 
@@ -411,8 +401,6 @@ qemu-system-i386 -drive format=raw,file=build/img/os-image.bin \
     -D qemu.log
 ```
 
-Repeated `INT 0x08` in the log indicates a double fault loop (triple fault). `CR3=00000000` means paging was never enabled. `CR0` bit 31 clear means paging failed or was never reached.
-
 ---
 
 # Design Decisions
@@ -420,48 +408,44 @@ Repeated `INT 0x08` in the log indicates a double fault loop (triple fault). `CR
 ## Fixed Disk Layout
 
 Pros: simple, predictable, no partition table required.
-Cons: inflexible, requires rebuild and careful LBA calculation when sizes change.
+Cons: inflexible, requires careful LBA calculation when sizes change.
 
 ## Fixed Load Address (0x1000)
 
 Pros: easy to reason about, matches linker script directly.
-Cons: no relocation support, no memory protection, kernel and BIOS structures share low memory.
+Cons: no relocation support.
 
-## Ramdisk at 0x10000
+## FAT16 LBA via Boot Sector Patch
 
-Pros: below 1MB real-mode limit so BIOS can write there; identity-mapped so kernel can read it without special handling; clear of all other structures.
-Cons: occupies a fixed region that cannot be reclaimed. Future per-process memory management will need to account for it.
+Pros: no compile-time dependency, no chicken-and-egg; the correct value is always in the image regardless of kernel size changes.
+Cons: slightly unusual; the patch must not corrupt the boot signature at offset 510–511.
 
-## No Filesystem
+## No Ramdisk
 
-Programs are stored in a flat archive rather than a filesystem. Pros: no filesystem driver needed, deterministic layout. Cons: programs must be packed at build time, no runtime file access.
+Programs are loaded from the FAT16 partition at runtime via ATA PIO. The ramdisk was a temporary program store used while the FAT16 driver was being developed; it has been removed.
 
 ---
 
 # Summary
 
-Boot process responsibilities:
-
 ```text
-Stage 1  →  load stage 2 (CHS, 4 sectors)
+Stage 1  →  load stage 2 (CHS, 4 sectors, to 0xA000)
 Stage 2  →  LBA extension check
-         →  load kernel (LBA 5 → 0x1000)
-         →  load ramdisk (RAMDISK_LBA → 0x10000)
+         →  load kernel (LBA 5 → 0x1000, KERNEL_SECTORS sectors)
          →  protected mode entry
 Kernel   →  zero BSS
-         →  gdt_init, paging_init, memory_init
-         →  drivers, interrupts
-         →  ramdisk_init(0x10000)
-         →  shell
+         →  gdt_init, paging_init, memory_init, pmm_init
+         →  keyboard, timer, idt, sched_init
+         →  ata_init, fat16_init
+         →  create shell task, sti, sched_start
 ```
 
-Boot code is the most fragile part of the system. Failures here are often silent and catastrophic — no terminal, no debug output, just a reboot loop or a hung screen.
+Boot code is the most fragile part of the system. Failures here are often silent — no terminal, no debug output, just a reboot loop or a hung screen.
 
 ---
 
 # Future Work
 
 * Replace fixed disk layout with a partition table or boot protocol
-* Support kernels larger than ~127 KB if needed (LBA has no such limit now)
-* Filesystem-backed program loading
+* Support kernels larger than 72 sectors (move loader2 to `0xB000`)
 * Multiboot-style boot protocol for GRUB compatibility

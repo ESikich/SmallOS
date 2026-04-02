@@ -37,8 +37,8 @@ If you see `implicit declaration of function` — you forgot a header.
 
 * `boot.asm` must be **exactly 512 bytes**, ending with `dw 0xAA55`
 * `loader2.asm` must be **exactly 2048 bytes**
-* `kernel.bin` and `ramdisk.rd` must both be padded to 512-byte sector boundaries before concatenation into the disk image (Makefile handles this)
-* `RAMDISK_LBA` is computed as `5 + kernel_sectors` — if padding is skipped, the ramdisk will not load
+* `kernel.bin` must be padded to a 512-byte sector boundary before concatenation into the disk image (Makefile handles this)
+* `FAT16_LBA` is computed as `5 + kernel_sectors` and patched into boot sector offset 504 — if padding is skipped, FAT16 reads will return zeros
 
 ### Loader2 address invariant
 
@@ -255,7 +255,7 @@ Useful signals:
 |---|---|---|
 | 1 | Reboot loop | Bad GDT or IDT |
 | 2 | Triple fault on boot | BSS not zeroed |
-| 3 | "ramdisk: bad magic" | kernel.bin not sector-padded, or `-fda` mode |
+| 3 | "fat16: bad boot signature" | kernel.bin not sector-padded, FAT16 image missing, or `-fda` mode |
 | 4 | Red '8' on screen | Double fault — bad TSS ESP0 or corrupt stack |
 | 5 | Crash after iret | TSS not loaded; wrong TSS ESP0; bad user GDT entries; DPL=0 on int 0x80 gate |
 | 6 | argv garbage in ring 3 | Strings not copied to user stack before iret |
@@ -291,7 +291,7 @@ Useful signals:
 
 1. Create `src/user/myprog.c` with `void _start(int argc, char** argv)`
 2. End with `sys_exit(0)`
-3. Add `myprog` to `USER_PROGS` in Makefile — it is automatically included in both the ramdisk and the FAT16 image
+3. Add `myprog` to `USER_PROGS` in Makefile — automatically included in the FAT16 image
 4. `make clean && make`
 5. `runelf myprog`
 
@@ -308,7 +308,6 @@ Useful signals:
 
 ## Next Steps (Recommended)
 
-* Remove ramdisk — loader2 no longer needs to load it; `ramdisk.c` is dead code
 * Enqueue ELF processes into the scheduler as full tasks
 
 ---

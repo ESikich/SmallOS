@@ -92,7 +92,7 @@ static inline int sys_yield(void) {
 /*
  * sys_exec(name, argc, argv)
  *
- * Load and run the named ELF from the ramdisk as a child process.
+ * Load and run the named ELF from the FAT16 partition as a child process.
  * Blocks until the child exits, then returns the child's exit code.
  *
  * name and argv point into the caller's user address space — the kernel
