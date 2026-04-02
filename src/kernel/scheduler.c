@@ -5,13 +5,7 @@
 #include "terminal.h"
 
 /* ------------------------------------------------------------------ */
-/* tss_esp0_ptr — exported to sched_switch.asm                         */
-/* ------------------------------------------------------------------ */
-
-unsigned int* tss_esp0_ptr = 0;
-
-/* ------------------------------------------------------------------ */
-/* Assembly helper                                                      */
+/* Assembly helper                                                    */
 /* ------------------------------------------------------------------ */
 
 extern void sched_switch(unsigned int* save_esp,
@@ -20,7 +14,7 @@ extern void sched_switch(unsigned int* save_esp,
                          unsigned int  next_esp0);
 
 /* ------------------------------------------------------------------ */
-/* Process table                                                        */
+/* Process table                                                      */
 /* ------------------------------------------------------------------ */
 
 static process_t*   s_table[SCHED_MAX_PROCS];
@@ -31,7 +25,7 @@ static unsigned int s_boot_esp    = 0;
 static process_t*   s_reap_pending = 0;
 
 /* ------------------------------------------------------------------ */
-/* Internal helpers                                                     */
+/* Internal helpers                                                   */
 /* ------------------------------------------------------------------ */
 
 static unsigned int sched_proc_cr3(process_t* proc) {
@@ -106,7 +100,7 @@ static void sched_do_switch(unsigned int esp) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Public API                                                           */
+/* Public API                                                         */
 /* ------------------------------------------------------------------ */
 
 void sched_init(void) {
@@ -119,8 +113,6 @@ void sched_init(void) {
     s_tick_count = 0;
     s_boot_esp = 0;
     s_reap_pending = 0;
-
-    tss_esp0_ptr = tss_get_esp0_ptr();
 }
 
 int sched_enqueue(process_t* proc) {

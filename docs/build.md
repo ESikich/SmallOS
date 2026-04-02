@@ -17,8 +17,8 @@ This image contains:
 ```text
 boot.bin         stage 1 bootloader   (512 bytes, exactly)
 loader2.bin      stage 2 loader       (2048 bytes, exactly)
-kernel.bin       kernel               (padded to 512-byte sector boundary)
-ramdisk.rd       ELF program archive  (built by tools/mkramdisk)
+kernel.bin       kernel               (padded to 512-byte sector boundary in image)
+fat16.img        FAT16 partition      (16 MB, appended after the kernel)
 ```
 
 ---
@@ -30,7 +30,7 @@ nasm             → assembly (boot stages, interrupt stubs, kernel entry)
 i686-elf-gcc     → C compilation (freestanding, 32-bit, no stdlib)
 i686-elf-ld      → linking
 i686-elf-objcopy → strip ELF metadata → flat binary
-gcc              → host tool compilation (mkramdisk)
+gcc              → host tool compilation (mkfat16)
 ```
 
 ---
@@ -40,11 +40,12 @@ gcc              → host tool compilation (mkramdisk)
 ```text
 build/
 ├── bin/   → final binaries (kernel.elf, kernel.bin, kernel_padded.bin,
-│             hello.elf, ticks.elf, ramdisk.rd, boot.bin, loader2.bin)
+│             hello.elf, ticks.elf, args.elf, runelf_test.elf,
+│             readline.elf, exec_test.elf, fat16.img, boot.bin, loader2.bin)
 ├── obj/   → object files (.o)
 ├── gen/   → generated source (loader2.gen.asm)
 ├── img/   → final disk image (os-image.bin)
-└── tools/ → host tools (mkramdisk)
+└── tools/ → host tools (mkfat16)
 ```
 
 ---
@@ -56,17 +57,19 @@ source files (.c, .asm)
   ↓
 object files (.o)
   ↓
-kernel.elf          hello.elf   ticks.elf
+kernel.elf          hello.elf   ticks.elf   ...
   ↓                      ↓
-kernel.bin            ramdisk.rd  ← packed by build/tools/mkramdisk
+kernel.bin         user program ELFs
   ↓
 kernel_padded.bin   ← padded to 512-byte sector boundary
   ↓
-loader2.gen.asm     ← KERNEL_SECTORS / RAMDISK_SECTORS / RAMDISK_LBA injected
+loader2.gen.asm     ← KERNEL_SECTORS injected
   ↓
 loader2.bin
   ↓
-os-image.bin = boot.bin + loader2.bin + kernel_padded.bin + ramdisk.rd
+fat16.img           ← built by build/tools/mkfat16 from all user ELFs
+  ↓
+os-image.bin = boot.bin + loader2.bin + kernel_padded.bin + fat16.img
 ```
 
 ---
@@ -136,7 +139,7 @@ Strips all ELF metadata. The result is a flat binary. The `.bss` section has no 
 
 # User Programs (ELF)
 
-User programs are compiled separately and packed into the ramdisk. No kernel rebuild is needed to add or change programs.
+User programs are compiled separately and packed into the FAT16 image. No kernel rebuild is needed to add or change programs.
 
 ## Source files
 
@@ -183,71 +186,55 @@ Multiple programs sharing `-Ttext-segment 0x400000` is safe because each `runelf
 
 ---
 
-# Ramdisk
+# FAT16 Image
 
 ## Tool
 
-`tools/mkramdisk.c` is a host C program compiled by the Makefile:
+`tools/mkfat16.c` is a host C program compiled by the Makefile:
 
 ```makefile
-$(TOOLS_DIR)/mkramdisk: tools/mkramdisk.c | dirs
+$(TOOLS_DIR)/mkfat16: tools/mkfat16.c | dirs
     $(HOST_CC) -o $@ $<
 ```
 
 ## Building
 
 ```bash
-build/tools/mkramdisk build/bin/ramdisk.rd \
-    hello:build/bin/hello.elf \
-    ticks:build/bin/ticks.elf
+build/tools/mkfat16 build/bin/fat16.img \
+    build/bin/hello.elf \
+    build/bin/ticks.elf \
+    build/bin/args.elf \
+    build/bin/runelf_test.elf \
+    build/bin/readline.elf \
+    build/bin/exec_test.elf
 ```
 
-`mkramdisk` produces a flat binary archive:
+`mkfat16` produces a raw FAT16 volume containing the user ELFs in the root directory.
 
-```text
-[rd_header_t]          4-byte magic (0x52445349 'RDSI') + 4-byte file count
-[rd_entry_t × count]   32-byte name + 4-byte offset + 4-byte size, per file
-[file data]            raw ELF bytes, concatenated
-```
+## Properties
 
-All offsets are byte offsets from the start of the archive. The kernel's `ramdisk_find()` returns a pointer directly into this in-memory structure — no copies are made when looking up programs.
-
-## Adding a program
-
-1. Create `src/user/myprog.c` with `void _start(int argc, char** argv)` ending in `sys_exit(0)`
-2. Add compile rule in Makefile
-3. Add link rule using `-Ttext-segment 0x400000`
-4. Add `myprog:$(BIN_DIR)/myprog.elf` to the `ramdisk.rd` rule
-5. `make clean && make`
-6. `runelf myprog`
-
-Multiple programs sharing `-Ttext-segment 0x400000` is safe — each gets its own page directory.
-
----
+* fixed 16 MB volume
+* root directory contains all shipped user ELFs
+* filenames are converted to uppercase 8.3 names
+* no external filesystem tools are required
 
 # Loader2 Generation
 
-`loader2.asm` contains three placeholder values that must be filled in at build time:
+`loader2.asm` contains one placeholder value that must be filled in at build time:
 
 ```asm
 KERNEL_SECTORS      equ __KERNEL_SECTORS__
-RAMDISK_SECTORS     equ __RAMDISK_SECTORS__
-RAMDISK_LBA         equ __RAMDISK_LBA__
 ```
 
 The Makefile computes these and generates `build/gen/loader2.gen.asm` via `sed`:
 
 ```makefile
 kernel_sectors=$(( ($(wc -c < kernel.bin) + 511) / 512 ))
-ramdisk_sectors=$(( ($(wc -c < ramdisk.rd) + 511) / 512 ))
-ramdisk_lba=$(( 5 + kernel_sectors ))
 sed -e "s/__KERNEL_SECTORS__/$kernel_sectors/" \
-    -e "s/__RAMDISK_SECTORS__/$ramdisk_sectors/" \
-    -e "s/__RAMDISK_LBA__/$ramdisk_lba/" \
     loader2.asm > loader2.gen.asm
 ```
 
-`RAMDISK_LBA` = `5 + kernel_sectors` because the kernel starts at LBA 5 and occupies `kernel_sectors` sectors. This calculation is only valid if `kernel.bin` is sector-aligned in the image — see Kernel Padding below.
+The FAT16 partition begins at `5 + kernel_sectors` because the kernel starts at LBA 5 and occupies `kernel_sectors` sectors. This calculation is only valid if `kernel.bin` is sector-aligned in the image — see Kernel Padding below.
 
 NASM then assembles the generated file:
 
@@ -271,7 +258,7 @@ cp build/bin/kernel.bin build/bin/kernel_padded.bin
 dd if=/dev/zero bs=1 count=$pad >> build/bin/kernel_padded.bin
 ```
 
-**Why this is required:** The Makefile calculates `RAMDISK_LBA = 5 + kernel_sectors`. `kernel_sectors` is `ceil(kernel.bin / 512)`. If `kernel.bin` is not a multiple of 512 bytes, the ramdisk will start mid-sector in the image but loader2 will try to read from the start of the next complete LBA — missing the beginning of the ramdisk archive including its magic bytes. The result is `ramdisk_init()` seeing zeros and printing "ramdisk: bad magic".
+**Why this is required:** The Makefile calculates `FAT16_LBA = 5 + kernel_sectors`. `kernel_sectors` is `ceil(kernel.bin / 512)`. If `kernel.bin` is not a multiple of 512 bytes, the FAT16 partition will start mid-sector in the image while the kernel will look for it at the next full LBA, causing FAT16 reads to return incorrect data.
 
 The padded file `kernel_padded.bin` is used only in the final `cat` — not for linking or any other step.
 
@@ -280,7 +267,7 @@ The padded file `kernel_padded.bin` is used only in the final `cat` — not for 
 # Disk Image Construction
 
 ```bash
-cat boot.bin loader2.bin kernel_padded.bin ramdisk.rd > os-image.bin
+cat boot.bin loader2.bin kernel_padded.bin fat16.img > os-image.bin
 ```
 
 ## Layout
@@ -289,10 +276,10 @@ cat boot.bin loader2.bin kernel_padded.bin ramdisk.rd > os-image.bin
 LBA 0         boot.bin              (512 bytes = 1 sector)
 LBA 1–4       loader2.bin           (2048 bytes = 4 sectors)
 LBA 5–N       kernel_padded.bin     (ceil(kernel.bin/512) sectors)
-LBA N+1+      ramdisk.rd
+LBA N+1+      fat16.img
 ```
 
-Loader2 hardcodes the kernel LBA (5). The ramdisk LBA is injected at build time.
+Loader2 hardcodes the kernel LBA (5). FAT16_LBA is computed at build time and patched into the boot sector.
 
 ---
 
@@ -321,9 +308,9 @@ qemu-system-i386 -drive format=raw,file=build/img/os-image.bin
 
 # Common Build Failures
 
-## ramdisk: bad magic (runtime)
+## fat16: bad boot signature (runtime)
 
-Cause: `kernel.bin` not padded to sector boundary → RAMDISK_LBA points to wrong offset in image → loader2 reads zeros instead of the ramdisk archive.
+Cause: `kernel.bin` not padded to sector boundary, FAT16 image missing from the disk image, or launching in floppy mode. The kernel reads the wrong LBA or invalid data instead of a FAT16 boot sector.
 
 Fix: the `kernel_padded.bin` step in the Makefile image rule handles this automatically. If the image is assembled manually, ensure padding is applied.
 
@@ -360,7 +347,7 @@ Cause: kernel `.bss` not zeroed. Page tables and PMM bitmap contain garbage. Ver
 `INT 0x13 AH=0x42` returned carry set. Causes:
 
 * Launched as floppy (`-fda`) instead of hard disk — use `-drive format=raw`
-* Disk image too small — ramdisk.rd not appended to image
+* Disk image too small — fat16.img not appended to image
 * LBA out of range for the disk image size
 
 ## NO LBA! (runtime, loader screen)
@@ -381,11 +368,12 @@ Cause: simple linker script does not separate read-only and executable sections.
 
 ```text
 hello.elf ──────────────────────────────┐
-ticks.elf ──────────────────────────────┤→ ramdisk.rd ──────────────────────┐
-                                         │                                   │
-kernel.bin ─────────────────────────────┤→ kernel_padded.bin ───────────────┤
-                                         │                                   │
-kernel.bin + ramdisk.rd ────────────────┘→ loader2.gen.asm → loader2.bin ──┤
+ticks.elf ──────────────────────────────┤
+args.elf / runelf_test.elf / ... ──────┤→ fat16.img ───────────────────────┐
+                                        │                                    │
+kernel.bin ────────────────────────────┤→ kernel_padded.bin ───────────────┤
+                                        │                                    │
+kernel.bin ────────────────────────────┘→ loader2.gen.asm → loader2.bin ──┤
                                                                              │
 boot.bin ────────────────────────────────────────────────────────────────── ┤
                                                                              ↓
@@ -418,27 +406,21 @@ All user ELFs are linked at the same virtual address. This is safe because each 
 Pros: simple linking, no need for unique link addresses per program.
 Cons: no PIE, no dynamic linking, programs cannot be run concurrently (no scheduler yet anyway).
 
-## Ramdisk Instead of Embedded Programs
+## FAT16 Image Instead of Embedded Programs
 
-Old approach: ELF binaries embedded in `kernel.bin` via `incbin`. Required kernel rebuild for any program change. Increased kernel binary size.
+Current approach: ELF binaries are stored in a separate `fat16.img` partition. Kernel rebuild is not required to add or update programs. Kernel binary size is unaffected by program count.
 
-New approach: ELF binaries packed into a separate `ramdisk.rd` archive. Kernel rebuild not required to add or update programs. Kernel binary size unaffected by program count.
+## Generated Loader2
 
-## Generated Assembly for Loader2
-
-The Makefile generates `loader2.gen.asm` by text substitution into `loader2.asm`. This allows build-time injection of `KERNEL_SECTORS`, `RAMDISK_SECTORS`, and `RAMDISK_LBA` without hardcoding them.
+The Makefile generates `loader2.gen.asm` by text substitution into `loader2.asm`. This allows build-time injection of `KERNEL_SECTORS` without hardcoding it.
 
 ## LBA Extended Reads
 
-Replaces CHS `AH=0x02`. Removes the 18-sector-per-track limit. Required because the kernel is 34+ sectors and the ramdisk starts beyond track 0.
-
-Cons: requires hard disk mode in QEMU. Floppy mode unsupported.
+Replaces CHS `AH=0x02`. Removes the 18-sector-per-track limit. Required because the kernel and FAT16 partition both live beyond what simple CHS assumptions can safely handle.
 
 ---
 
 # Future Improvements
 
-* Filesystem-backed program loading (load ELF from FAT12 or custom FS instead of ramdisk)
-* Dynamic ramdisk — reload or append without reboot
-* Split debug / release builds with different optimization levels
-* Multiboot protocol support (GRUB compatibility)
+* Better filesystem-backed program loading ergonomics
+* Eventually make user ELFs scheduler-owned tasks

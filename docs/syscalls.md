@@ -189,6 +189,7 @@ u_readline(...)    sys_read + null-terminate + strip newline
 * Kernel trusts user pointers (no copy-from-user validation yet)
 * `SYS_YIELD` and `SYS_EXEC` use the same `isr128_stub` frame as the timer path — the frame pointer is a valid scheduler resume ESP
 * EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`
+* The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.
 
 ---
 

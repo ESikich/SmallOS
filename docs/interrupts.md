@@ -215,7 +215,16 @@ typedef struct syscall_regs {
 
 `irq0_stub` was extended to pass ESP to C specifically to support the scheduler. The kernel ESP at that point is the address of the register frame sitting on the current context's kernel stack. The scheduler records this as `sched_esp` and passes it to `sched_switch` as `next_esp` when resuming the context.
 
-See `scheduler.h` / `sched_switch.asm` for the full context-switch mechanism.
+The low-level switch interface is:
+
+```c
+void sched_switch(unsigned int* save_esp,
+                  unsigned int  next_esp,
+                  unsigned int  next_cr3,
+                  unsigned int  next_esp0);
+```
+
+`sched_switch` saves the outgoing kernel ESP, updates TSS.ESP0 for the incoming context via `tss_set_kernel_stack(next_esp0)`, switches CR3, switches kernel stacks, and resumes the incoming context. The scheduler does not cache or expose a pointer into the packed TSS.
 
 ---
 
@@ -257,19 +266,3 @@ Any gap in this list causes `#GP → #DF → triple fault → reboot`.
 | Syscalls silently broken | `syscall_regs_t` mismatch with `isr128_stub` push order |
 | Timer fires but process never preempted | `sched_tick` not called; EOI sent after `sched_switch` |
 | Crash on first context switch | `sched_esp == 0` guard missing; switching to process with no saved stack |
-
----
-
-# Summary
-
-```text
-interrupt
-  → IDT lookup
-  → assembly stub (saves frame, loads kernel DS)
-    IRQ0: also pushes ESP → passes to C for scheduler
-  → C handler
-    IRQ0: timer_handle_irq(), EOI, sched_tick(esp)
-    IRQ1: EOI, keyboard_handle_irq()
-    int 0x80: syscall_handler_main(regs)
-  → return (iretd) or context switch via sched_switch
-```

@@ -8,12 +8,11 @@ This document describes the physical memory layout, allocators, and paging archi
 
 ```text
 0x00007C00   bootloader stage 1 (BIOS loads here)
-0x00008000   loader2 stage 2 (done after protected-mode jump)
+0x0000A000   loader2 stage 2 (used before protected-mode jump)
 0x00001000   kernel image (loaded by loader2)
 0x00006000   kernel .bss start (page tables + PMM bitmap reside here)
 ~0x0000A008  kernel .bss end
-0x00010000   ramdisk (permanent — loaded by loader2, temporary until FAT16 loading wired in)
-0x00090000   kernel stack top (grows downward from here; shell context)
+0x00090000   kernel stack top (grows downward from here; shell/default context)
 
 0x00100000   bump allocator base — permanent kernel structures
                kmalloc()      — long-lived kernel-owned data only
@@ -146,6 +145,8 @@ Previously, a process-private page table could come from `kmalloc_page()` and su
 
 Kernel-shared mappings are left intact.
 
+---
+
 # Paging Architecture
 
 ## Kernel page directory
@@ -158,20 +159,15 @@ low_page_table_0[1024]        PD index 0 → 0x000000–0x3FFFFF (identity, supe
 low_page_table_1[1024]        PD index 1 → 0x400000–0x7FFFFF (identity, supervisor)
 ```
 
-After `paging_init()`: virtual == physical for all addresses 0x000000–0x7FFFFF.
+After `paging_init()`: virtual == physical for all addresses `0x000000–0x7FFFFF`.
 
 ## Per-process page directories
 
-`process_pd_create()` allocates a fresh PD from the PMM and copies the kernel's entries (PD indices 0 and 2–1023) into it so kernel code, VGA, ramdisk, and heap remain accessible after CR3 switch. PD index 1 is left empty — each process gets its own private ELF mapping there.
+`process_pd_create()` allocates a fresh PD from the PMM and copies the kernel's entries (PD indices 0 and 2–1023) into it so kernel code, VGA, ATA/FAT16 buffers, and heap remain accessible after CR3 switch. PD index 1 is left empty — each process gets its own private ELF mapping there.
 
 ### Page table allocation policy
 
-`paging_map_page()` uses different allocators depending on the PD index:
-
-| PD index | Virtual range        | Page table source  | Freed on exit? |
-|----------|---------------------|--------------------|----------------|
-| user range | per-process mappings | `pmm_alloc_frame`  | yes            |
-| kernel range | shared from kernel | shared from kernel | n/a            |
+`paging_map_page()` uses PMM-backed page tables for process-private user mappings. Kernel-shared mappings remain shared from the kernel page directory.
 
 The physical **frames** pointed to by user PTEs are PMM-allocated and freed by `process_pd_destroy()`. Process-private page tables are also PMM-allocated and freed there.
 
@@ -195,7 +191,7 @@ sys_exit           → parent's PD if parent is a user process,
                      (paging_switch in elf_process_exit, before process_destroy)
 ```
 
-When the parent is a user process (SYS_EXEC path), CR3 must be switched to the parent's page directory before `longjmp`. After `longjmp` unwinds back to `isr128_stub`, the `iretd` jumps to the parent's ring-3 EIP at `0x400000` — only mapped in the parent's PD. Switching to the kernel PD first causes an immediate page fault.
+When the parent is a user process (`SYS_EXEC` path), CR3 must be switched to the parent's page directory before `longjmp`. After `longjmp` unwinds back to `isr128_stub`, the `iretd` jumps to the parent's ring-3 EIP at `0x400000` — only mapped in the parent's PD. Switching to the kernel PD first causes an immediate page fault.
 
 Always switch CR3 to the correct PD **before** freeing the child's PD.
 
@@ -206,22 +202,19 @@ Always switch CR3 to the correct PD **before** freeing the child's PD.
 ```text
 LBA 0         boot.bin              (512 bytes)
 LBA 1–4       loader2.bin           (2048 bytes)
-LBA 5+        kernel_padded.bin     (padded to 512-byte boundary)
-after kernel  ramdisk_padded.rd     (padded to 512-byte boundary, temporary)
-after ramdisk fat16.img             (16 MB FAT16 partition)
+LBA 5+ks      fat16.img             (16 MB FAT16 partition)
 ```
 
-Both `kernel.bin` and `ramdisk.rd` are padded to sector boundaries before concatenation. `FAT16_LBA` is computed at build time and written to `build/gen/fat16_lba.h`.
-
-**Padding rule:** any binary blob concatenated into the image must be padded to a 512-byte sector boundary. Failing to pad `ramdisk.rd` caused the FAT16 LBA to be computed correctly but the data to land mid-sector, resulting in all-zero reads at the expected LBA.
+`kernel.bin` is padded to a sector boundary before concatenation. `FAT16_LBA` is computed at build time and written to `build/gen/fat16_lba.h`.
 
 ---
 
 ## Current Limitations
 
-* ELF programs linked at fixed address 0x400000 — no PIE/relocation
-* ELF programs still loaded from ramdisk — FAT16 parser not yet implemented
+* ELF programs linked at fixed address `0x400000` — no PIE/relocation
+* Kernel trusts user pointers in syscalls
 * Bump allocator has no free — permanent kernel structures only
+* ELF programs still run through the foreground `setjmp`/`longjmp` path instead of as full scheduler-owned tasks
 
 ---
 
@@ -229,12 +222,6 @@ Both `kernel.bin` and `ramdisk.rd` are padded to sector boundaries before concat
 
 Next steps:
 
-* FAT16 parser — read BPB, walk root directory, follow cluster chains
-* Wire `elf_run_named` to load from FAT16 instead of ramdisk
-* Retire ramdisk once FAT16 loading is proven
-
----
-
-## License
-
-Personal / educational project.
+* Make `runelf` create scheduler-owned user tasks
+* Remove the remaining foreground `setjmp`/`longjmp` execution path
+* Keep allocator ownership clean: PMM for process-owned state, bump allocator for permanent kernel state

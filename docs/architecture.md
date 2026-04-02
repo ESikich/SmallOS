@@ -23,7 +23,7 @@ kernel_main()
   memory_init()     ← bump allocator base at 0x100000
   pmm_init()        ← bitmap allocator at 0x200000–0x7FFFFF
   keyboard/timer/idt
-  sched_init()      ← initialise runnable task table, wire tss_esp0_ptr
+  sched_init()      ← initialise runnable task table
   ata_init()        ← software reset ATA primary channel, verify ready
   fat16_init()      ← read BPB, validate FAT16 volume geometry
   create shell task ← explicit kernel task with dedicated stack
@@ -85,7 +85,7 @@ Inside `kernel_main()`:
 4. `memory_init(0x100000)` — bump allocator starts at 1 MB
 5. `pmm_init()` — bitmap allocator covers 0x200000–0x7FFFFF; all frames start free
 6. `keyboard_init()`, `timer_init(100)`, `idt_init()` — drivers and interrupt table
-7. `sched_init()` — initialise the scheduler data structures and wire the TSS ESP0 pointer for the switch helper
+7. `sched_init()` — initialise the scheduler data structures
 8. `ata_init()` — software reset ATA primary channel (`0x1F0`), poll until ready
 9. `fat16_init()` — read FAT16 BPB at `FAT16_LBA` (from sector 0 offset 504), validate volume
 10. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
@@ -181,7 +181,7 @@ irq0_handler_main(esp)
     sched_switch(&cur->sched_esp, nxt->sched_esp, next_cr3, next_esp0)
       load all args into registers
       *save_esp = current esp
-      tss.esp0  = next_esp0
+      tss_set_kernel_stack(next_esp0)
       cr3       = next_cr3
       esp       = next_esp
       ret  ← resumes incoming context here
@@ -215,6 +215,101 @@ sys_exit:
   process_set_current(s_parent_proc)
   longjmp → parent (shell or user process)
 ```
+
+---
+
+# Interrupt Architecture
+
+## IDT entries
+
+```text
+8    → ISR8 (double fault — VGA marker '8' white-on-red at row 1 col 12 + halt)
+32   → IRQ0 (timer, DPL=0)
+33   → IRQ1 (keyboard, DPL=0)
+128  → syscall int 0x80 (DPL=3 — callable from ring 3)
+```
+
+## IRQ0 flow (with scheduler)
+
+```text
+timer fires
+  ↓
+irq0_stub: pusha, push segments, push esp, call irq0_handler_main(esp)
+  ↓
+irq0_handler_main:
+  timer_handle_irq()
+  EOI (outb 0x20, 0x20)        ← before sched_tick
+  sched_tick(esp)
+    [may call sched_switch and not return to this invocation]
+  ↓
+irq0_stub: add esp 4, pop segments, popa, iretd
+```
+
+## IRQ1 flow
+
+```text
+irq1_stub: pusha, push segments
+  ↓
+irq1_handler_main:
+  EOI (outb 0x20, 0x20)        ← sent before handler (consistent with IRQ0 pattern)
+  keyboard_handle_irq()
+  ↓
+irq1_stub: pop segments, popa, iretd
+```
+
+## Syscall flow (ring 3 → ring 0 → ring 3)
+
+```text
+int 0x80 (CPL=3)
+  ↓
+CPU: load SS0/ESP0 from TSS — switch to per-process kernel stack
+CPU: push SS, ESP, EFLAGS, CS, EIP
+  ↓
+isr128_stub: pusha, push segments, push esp, call syscall_handler_main(regs)
+  ↓
+regs->eax = result
+  ↓
+pop segments, popa, iretd → ring 3 resumes
+```
+
+The `isr128_stub` frame (pusha + 4 segment pushes + esp) is structurally identical to the `irq0_stub` frame. This means `regs` (the pointer passed to `syscall_handler_main`) can be passed directly to `sched_yield_now()` as a valid scheduler resume ESP.
+
+---
+
+# Terminal + Shell
+
+## Terminal
+
+VGA text mode (`0xB8000`). Provides `terminal_putc`, `terminal_puts`, `terminal_put_uint`, `terminal_put_hex`, cursor control, scrolling.
+
+## Shell
+
+```text
+keyboard IRQ → keyboard_handle_irq()
+  ↓
+  if kb_process_mode: push to ring buffer (for SYS_READ)
+  else: queue shell event
+    ↓
+    shell_task_main() drains queue via shell_poll()
+    ↓
+    line_editor (insert, delete, cursor, history)
+    ↓
+    [Enter] → parse_command() → commands_execute()
+    ↓
+    runelf / fsls / fsread / ataread / meminfo / ... dispatch
+```
+
+---
+
+# User Programs
+
+Entry point convention:
+
+```c
+void _start(int argc, char** argv)
+```
+
+Programs are linked at fixed virtual address `0x400000`, loaded into private user mappings, and entered through `iret` into CPL=3. They use the `int 0x80` syscall ABI for kernel services.
 
 ---
 
@@ -386,132 +481,6 @@ isr128_stub iretd → parent resumes in ring 3
 
 ---
 
-# Interrupt Architecture
-
-## IDT entries
-
-```text
-8    → ISR8 (double fault — VGA marker '8' white-on-red at row 1 col 12 + halt)
-32   → IRQ0 (timer, DPL=0)
-33   → IRQ1 (keyboard, DPL=0)
-128  → syscall int 0x80 (DPL=3 — callable from ring 3)
-```
-
-## IRQ0 flow (with scheduler)
-
-```text
-timer fires
-  ↓
-irq0_stub: pusha, push segments, push esp, call irq0_handler_main(esp)
-  ↓
-irq0_handler_main:
-  timer_handle_irq()
-  EOI (outb 0x20, 0x20)        ← before sched_tick
-  sched_tick(esp)
-    [may call sched_switch and not return to this invocation]
-  ↓
-irq0_stub: add esp 4, pop segments, popa, iretd
-```
-
-## IRQ1 flow
-
-```text
-irq1_stub: pusha, push segments
-  ↓
-irq1_handler_main:
-  EOI (outb 0x20, 0x20)        ← sent before handler (consistent with IRQ0 pattern)
-  keyboard_handle_irq()
-  ↓
-irq1_stub: pop segments, popa, iretd
-```
-
-## Syscall flow (ring 3 → ring 0 → ring 3)
-
-```text
-int 0x80 (CPL=3)
-  ↓
-CPU: load SS0/ESP0 from TSS — switch to per-process kernel stack
-CPU: push SS, ESP, EFLAGS, CS, EIP
-  ↓
-isr128_stub: pusha, push segments, push esp, call syscall_handler_main(regs)
-  ↓
-regs->eax = result
-  ↓
-pop segments, popa, iretd → ring 3 resumes
-```
-
-The `isr128_stub` frame (pusha + 4 segment pushes + esp) is structurally identical to the `irq0_stub` frame. This means `regs` (the pointer passed to `syscall_handler_main`) can be passed directly to `sched_yield_now()` as a valid scheduler resume ESP.
-
----
-
-# Syscall Architecture
-
-## Register ABI
-
-```text
-eax = syscall number
-ebx = arg1
-ecx = arg2
-edx = arg3
-return → eax
-```
-
-## Syscall table
-
-```text
-1   SYS_WRITE       write bytes to terminal
-2   SYS_EXIT        terminate process, return to parent
-3   SYS_GET_TICKS   read PIT tick counter
-4   SYS_PUTC        write single character
-5   SYS_READ        blocking keyboard input
-6   SYS_YIELD       voluntarily surrender scheduler quantum
-7   SYS_EXEC        load and run a named child ELF, block until it exits
-```
-
----
-
-# Terminal + Shell
-
-## Terminal
-
-VGA text mode (`0xB8000`). Provides `terminal_putc`, `terminal_puts`, `terminal_put_uint`, `terminal_put_hex`, cursor control, scrolling.
-
-## Shell
-
-```text
-keyboard IRQ → keyboard_handle_irq()
-  ↓
-  if kb_process_mode: push to ring buffer (for SYS_READ)
-  else: queue shell event
-    ↓
-    shell_task_main() drains queue via shell_poll()
-    ↓
-    line_editor (insert, delete, cursor, history)
-    ↓
-    [Enter] → parse_command() → commands_execute()
-    ↓
-    runelf / fsls / fsread / ataread / meminfo / ... dispatch
-```
-
----
-
-# User Programs
-
-Entry point convention:
-
-```c
-void _start(int argc, char** argv)
-```
-
-All user programs must be linked at `USER_CODE_BASE` (0x400000) using `-Ttext-segment`.
-
-I/O via syscalls. No libc, no runtime. Must call `sys_exit(0)` before returning.
-
-Current programs: `hello`, `ticks`, `args`, `readline`, `exec_test`.
-All loaded from the FAT16 partition as 8.3 filenames (`HELLO.ELF`, etc.).
-
----
-
 # Build System
 
 ## Disk image layout
@@ -596,3 +565,5 @@ interactive shell with meminfo / ataread / fsls / fsread / runelf commands
 Foundation for:
 
 * ELF processes as scheduler-owned tasks
+* richer filesystem-backed program loading
+* cleaner separation between kernel tasks and user tasks

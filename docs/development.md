@@ -63,9 +63,11 @@ Kernel must load its own GDT as the **first act** of `kernel_main()`. The GDT ha
 
 ## TSS Rules
 
-`tss_set_kernel_stack(esp0)` must be called before `setjmp` and before every `iret` into ring 3. The value must be `kernel_stack_frame + PAGE_SIZE`. On process exit, `elf_process_exit` restores it to the parent process's kernel stack (or `0x90000` for the shell).
+`tss_set_kernel_stack(esp0)` is the supported interface for updating TSS.ESP0.
 
-`tss_get_esp0_ptr()` returns `&tss.esp0` and is used by the scheduler to update TSS directly during context switches. Do not remove this function.
+It must be called before every `iret` into ring 3. For a process-owned kernel stack, the value must be `kernel_stack_frame + PAGE_SIZE`. On process exit, `elf_process_exit` restores it to the parent process's kernel stack (or `0x90000` for the shell). During scheduler-driven context switches, the incoming process's `next_esp0` is passed through `sched_switch` and applied there via `tss_set_kernel_stack()`.
+
+Do not reintroduce `tss_get_esp0_ptr()` or any pointer-based access into the packed TSS structure.
 
 ---
 
@@ -110,7 +112,7 @@ pmm_alloc_frame          0x200000 – 0x7FFFFF   reclaimable on process exit
 
 **Verify after changes with `meminfo`:**
 
-```
+```text
 meminfo              ← note heap top and free frame count
 runelf hello
 meminfo              ← heap top and frame count must be identical
@@ -132,7 +134,7 @@ meminfo              ← still identical after second run
 
 ## Scheduler Rules
 
-`sched_init()` must be called **after `idt_init()` and before `sti`**. It initialises the scheduler table and wires `tss_esp0_ptr`. The shell is not registered here — it is created later in `kernel_main()` and added with `sched_enqueue()`. If called after `sti`, the first timer tick may fire with an uninitialised scheduler state.
+`sched_init()` must be called **after `idt_init()` and before `sti`**. It initialises the scheduler table. The shell is not registered here — it is created later in `kernel_main()` and added with `sched_enqueue()`. If called after `sti`, the first timer tick may fire with an uninitialised scheduler state.
 
 `sched_enqueue(proc)` — call after `proc->state = RUNNING`, before `iret`. If the table is full the process still runs but is not preempted.
 
@@ -163,8 +165,8 @@ meminfo              ← still identical after second run
 * Link user ELFs with `-Ttext-segment 0x400000`, not `-Ttext`
 * User frames from `pmm_alloc_frame()` only
 * `tss_set_kernel_stack()` before `setjmp()` before `paging_switch()` before `iret`
-* `sched_enqueue()` after `proc->state = RUNNING`, before `iret`
-* `sched_dequeue()` as the first action in `elf_process_exit()`
+* Do not enqueue foreground ELF launches into the scheduler in the current hybrid model
+* Do not call `sched_dequeue()` from `elf_process_exit()` for foreground-only ELF processes
 
 ---
 
@@ -226,7 +228,7 @@ sys_write("debug\n", 6);
 
 ### Memory accounting
 
-```
+```text
 meminfo   ← before and after runelf (heap and frames must be stable)
 ```
 
@@ -240,6 +242,7 @@ qemu-system-i386 -drive format=raw,file=build/img/os-image.bin \
 ```
 
 Useful signals:
+
 * `v=0e` at `cpl=3` — page fault from ring 3
 * `v=0d` — general protection fault
 * `v=08` — double fault
@@ -266,7 +269,7 @@ Useful signals:
 | 11 | Crash on first context switch | sched_esp==0 guard missing; or sched_init not called before sti |
 | 12 | Timer fires but no preemption | EOI sent after sched_tick; or irq0_stub not passing ESP |
 | 13 | System freezes after context switch | EOI not sent before sched_switch; IRQ0 permanently masked |
-| 14 | Hangs at "Loading..." | Kernel too large — overwrites loader2 during INT 0x13 read; move loader2 higher |
+| 14 | Hangs at "Loading." | Kernel too large — overwrites loader2 during INT 0x13 read; move loader2 higher |
 | 15 | "fat16: LBA not patched" | dd patch in Makefile os-image.bin rule failed; check printf octal escape |
 | 16 | Heap grows across runelf | fat16_load is using kmalloc instead of static buffer |
 | 17 | "fat16: not found" | Filename not matching 8.3 uppercase format; check mkfat16 output |

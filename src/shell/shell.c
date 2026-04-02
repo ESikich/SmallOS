@@ -156,7 +156,16 @@ static void shell_set_editor_text(const char* s) {
 }
 
 static void shell_execute(const char* input) {
-    command_t cmd = parse_command(input);
+    char buf[LINE_EDITOR_MAX];
+    int i = 0;
+
+    while (input[i] != '\0' && i < LINE_EDITOR_MAX - 1) {
+        buf[i] = input[i];
+        i++;
+    }
+    buf[i] = '\0';
+
+    command_t cmd = parse_command(buf);
     commands_execute(&cmd);
 }
 

@@ -22,24 +22,28 @@
 void gdt_init(void);
 
 /*
- * tss_set_kernel_stack(esp0)
+ * tss_set_kernel_stack()
  *
- * Update the TSS ESP0 field to point at the top of the kernel stack.
- * Must be called before iret-ing into ring 3 so that the CPU knows
- * where to switch the stack on the next int 0x80.
+ * Update the TSS ESP0 field with the kernel stack pointer that should
+ * be loaded on the next privilege transition into ring 0.
+ *
+ * This is the supported interface for changing ESP0. We no longer
+ * expose a pointer to tss.esp0, because it is a field inside a packed
+ * TSS structure and taking its address can trigger
+ * -Waddress-of-packed-member warnings and encourages writes through an
+ * unaligned pointer.
  */
 void tss_set_kernel_stack(unsigned int esp0);
 
 /*
- * tss_get_esp0_ptr()
+ * tss_get_kernel_stack()
  *
- * Return a pointer to the tss.esp0 field.  Used by the scheduler to
- * update TSS ESP0 directly during a context switch without calling
- * tss_set_kernel_stack() (which would add a function-call overhead
- * inside the hot IRQ path).
+ * Return the current value of the TSS ESP0 field.
  *
- * The returned pointer remains valid for the lifetime of the kernel.
+ * This accessor is intended for inspection and debugging. Callers
+ * should use tss_set_kernel_stack() to update ESP0 rather than writing
+ * through a pointer into the packed TSS structure.
  */
-unsigned int* tss_get_esp0_ptr(void);
+unsigned int tss_get_kernel_stack(void);
 
 #endif /* GDT_H */

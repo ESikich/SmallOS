@@ -7,7 +7,7 @@ SmallOS is a BIOS-based x86 hobby operating system built with:
 * `i686-elf-ld`
 * `QEMU`
 
-It boots from a raw disk image, switches to 32-bit protected mode, enables paging, loads a ramdisk from disk, and runs a C kernel with a terminal shell, ring-3 ELF program execution, a preemptive round-robin scheduler, voluntary yielding, inter-process exec, and ATA PIO disk access with a FAT16 partition.
+It boots from a raw disk image, switches to 32-bit protected mode, enables paging, loads user programs from a FAT16 partition on disk, and runs a C kernel with a terminal shell, ring-3 ELF program execution, a preemptive round-robin scheduler, voluntary yielding, inter-process exec, and ATA PIO disk access.
 
 ---
 
@@ -26,7 +26,6 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Physical memory manager (`pmm`) — bitmap allocator for reclaimable frames
   * Manages `0x200000`–`0x7FFFFF` (6 MB, 1536 frames)
   * All process frames reclaimed on exit — no leak after `runelf`
-* Ramdisk — flat ELF archive loaded from disk (temporary — will be retired once FAT16 loading is wired in)
 * ELF loader — validates, loads segments, zeroes BSS, launches in ring 3
 * `process_t` abstraction — per-process struct (PD, kernel stack, exit context, scheduler state, argv storage, name); fully PMM-allocated and reclaimed on exit
 * Per-process page directories — address space isolation; PD itself freed on exit
@@ -52,7 +51,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 │   ├── boot/       boot.asm, loader2.asm, kernel_entry.asm
 │   ├── kernel/     kernel.c, gdt, idt, paging, memory, pmm, process,
 │   │               scheduler, sched_switch.asm, syscall, timer, system, setjmp
-│   ├── drivers/    keyboard, screen, terminal, ata
+│   ├── drivers/    keyboard, screen, terminal, ata, fat16
 │   ├── shell/      shell, line_editor, parse, commands
 │   ├── exec/       elf_loader
 │   └── user/       hello.c, ticks.c, args.c, readline.c, exec_test.c,
@@ -79,7 +78,7 @@ Use `-drive format=raw` (hard disk mode). Do not use `-fda` (floppy).
 
 ## Commands
 
-```
+```text
 help
 clear
 echo [args...]
@@ -90,10 +89,10 @@ uptime
 meminfo
 ataread <lba>        dump first 32 bytes of a disk sector (ATA PIO)
 
-runelf <n> [args]    load and run an ELF from the ramdisk
+runelf <name> [args] load and run an ELF from the FAT16 partition
 ```
 
-Current ramdisk programs: `hello`, `ticks`, `args`, `readline`, `exec_test`
+Current FAT16 programs: `hello`, `ticks`, `args`, `runelf_test`, `readline`, `exec_test`
 
 ---
 
@@ -153,11 +152,10 @@ FAT16_LBA is patched into boot sector offset 504 after image assembly.
 
 ```text
 0x00007C00   bootloader stage 1
-0x00008000   loader2 stage 2
+0x0000A000   loader2 stage 2
 0x00001000   kernel image
 0x00006000   kernel .bss start (page tables + PMM bitmap)
 0x0000A008   kernel .bss end (approx)
-0x00010000   ramdisk (permanent, temporary)
 0x00090000   shell static kernel stack top
 0x00100000   bump allocator — permanent kernel structures
 0x00200000   PMM — reclaimable frames
@@ -192,43 +190,48 @@ The `pd == 0` rule still exists, but it is **not a table-layout concept**. It is
 
 Today, the scheduler owns kernel tasks such as the shell. User ELF programs run through the foreground `setjmp`/`longjmp` path and are not yet scheduler-owned tasks.
 
+---
+
+## Context Switch Path
+
 ```text
-irq0_stub       → pushes full register frame + ESP
+timer interrupt
+  ↓
+irq0_stub
+  ↓
 irq0_handler_main(esp)
-  timer_handle_irq()
-  EOI             ← before sched_tick (critical ordering)
-  sched_tick(esp)
-    [every 10 ticks]
-    save cur->sched_esp = esp
-    pick next runnable entry (skip sched_esp==0 or state!=RUNNING)
-    sched_switch(&cur->sched_esp, nxt->sched_esp, next_cr3, next_esp0)
-      load all args into registers
-      *save_esp = current ESP
-      tss.esp0  = next_esp0
-      CR3       = next_cr3
-      ESP       = next_esp
-      ret       → resumes incoming context
+  ↓
+sched_tick(esp)
+  ↓
+sched_switch(&cur->sched_esp, nxt->sched_esp, next_cr3, next_esp0)
+  ↓
+tss_set_kernel_stack(next_esp0)
+  ↓
+CR3 switch
+  ↓
+ESP switch
+  ↓
+ret → resumed context
 ```
 
----
-
-## Current Limitations
-
-* ELF programs linked at fixed address 0x400000 — no PIE/relocation
-* `SYS_EXEC` is one-deep — `s_parent_proc`/`s_parent_esp0` are single statics
-* Kernel trusts user pointers in syscalls (no copy-from-user validation)
-* ELF processes are not yet scheduler-owned tasks
+This path no longer relies on a cached pointer into the packed TSS structure.
 
 ---
 
-## Direction
+## Notes
 
-Next steps:
-
-* Enqueue ELF processes into the scheduler as full tasks
+* Launch as a hard disk, not a floppy
+* User programs are linked at `0x400000`
+* `fat16_load()` uses a static load buffer, so repeated `runelf` calls do not grow the heap
+* The scheduler switch path updates TSS.ESP0 through `tss_set_kernel_stack()`, not by caching a pointer into the TSS
 
 ---
 
-## License
+## Current Direction
 
-Personal / educational project.
+The system is in a deliberate hybrid stage:
+
+* the **shell** is scheduler-owned
+* **ELF user programs** are still foreground-only
+
+The next architectural step is to make `runelf` create full scheduler-owned user tasks.
