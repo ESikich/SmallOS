@@ -151,7 +151,7 @@ void irq1_handler_main(void) {
 }
 ```
 
-EOI is sent first for the same reason: when the Enter keypress launches a process, `keyboard_handle_irq` → `shell_execute` → `elf_run_image` → `iret` never returns, so EOI must already be sent.
+EOI is sent first because the IRQ path can trigger work that may not return through the original straight-line handler path. In the current code, `keyboard_handle_irq()` feeds shell/process input, and shell command execution later enters the foreground ELF launch path. Keeping EOI first preserves the same safety rule as IRQ0: if control flow does not unwind normally, the PIC has already been unmasked.
 
 ---
 
@@ -179,9 +179,11 @@ CPU pushes SS, ESP, EFLAGS, CS, EIP
 isr128_stub: saves full register frame, loads kernel DS=0x10
   push esp → call syscall_handler_main(regs)
   ↓
-handler sets regs->eax = return value
+handler typically sets regs->eax = return value
   ↓
 pop frame, iretd → ring 3 resumes
+
+Exception: `SYS_EXIT` does not return through `iretd`; it unwinds through `elf_process_exit()` → `longjmp()` after restoring the parent context.
 ```
 
 ---

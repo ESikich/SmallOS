@@ -49,7 +49,7 @@ safe kernel size = (loader2_address - 0x1000) / 512 sectors
                  = (0xA000 - 0x1000) / 512 = 72 sectors = 36 KB
 ```
 
-Current kernel is ~58 sectors. If the kernel exceeds 72 sectors, move loader2 to `0xB000` and update `LOADER2_OFFSET` in `boot.asm` and `[org]` in `loader2.asm`.
+The required invariant is `0x1000 + kernel_sectors * 512 < loader2 load address`. If the kernel exceeds 72 sectors with loader2 at `0xA000`, move loader2 to `0xB000` and update `LOADER2_OFFSET` in `boot.asm` and `[org]` in `loader2.asm`.
 
 **Symptom of violation**: BIOS INT 0x13 hangs silently mid-transfer at `Loading...` with no error message printed.
 
@@ -91,7 +91,7 @@ Do not allocate process-owned paging structures with `kmalloc_page()`. The bump 
 
 ### Switching CR3
 
-`paging_switch(pd)` flushes the TLB. After switching to a process PD, only memory mapped in that directory is accessible. Always switch back to the kernel PD before touching kernel data structures.
+`paging_switch(pd)` flushes the TLB. After switching to a process PD, only memory mapped in that directory is accessible. In the current design, process page directories copy the kernel mappings (all kernel PDEs except the private ELF region at PD index 1), so kernel code/data, VGA, heap, and stack remain accessible after the switch. Switch back to the kernel PD only when you specifically need the master kernel address space rather than the process-owned one.
 
 ---
 
@@ -136,9 +136,9 @@ meminfo              ← still identical after second run
 
 `sched_init()` must be called **after `idt_init()` and before `sti`**. It initialises the scheduler table. The shell is not registered here — it is created later in `kernel_main()` and added with `sched_enqueue()`. If called after `sti`, the first timer tick may fire with an uninitialised scheduler state.
 
-`sched_enqueue(proc)` — call after `proc->state = RUNNING`, before `iret`. If the table is full the process still runs but is not preempted.
+`sched_enqueue(proc)` — call after `proc->state = RUNNING` when handing a task to the scheduler. The shell task follows this path in `kernel_main()`. Foreground ELF launches currently do **not**: they still enter ring 3 through the older `setjmp`/`longjmp` path.
 
-`sched_dequeue(proc)` — call before `paging_switch` and `process_destroy` in `elf_process_exit`. It removes the process from the run queue, compacts the table, and adjusts scheduler indices so round-robin execution can continue over the remaining runnable entries.
+`sched_dequeue(proc)` is for scheduler-owned tasks. In the current tree it is used from `sched_exit_current()`, not from `elf_process_exit()`. It removes the process from the run queue, compacts the table, and adjusts scheduler indices so round-robin execution can continue over the remaining runnable entries.
 
 **EOI ordering in `irq0_handler_main`**: EOI is sent **before** `sched_tick`. If `sched_switch` lands on a different context and `irq0_handler_main` never returns, EOI must already be sent. Do not move it after `sched_tick`.
 
@@ -156,7 +156,7 @@ meminfo              ← still identical after second run
 
 `process_destroy(proc)` frees PD, kernel stack frame, and the process_t frame. After this call `proc` is dangling.
 
-`elf_process_exit()` must save `&proc->exit_ctx` before calling `process_destroy()`.
+`elf_process_exit()` must copy `proc->exit_ctx` out of `process_t` before calling `process_destroy()`. Taking `&proc->exit_ctx` and then freeing `proc` would leave a dangling pointer.
 
 ---
 
@@ -164,7 +164,7 @@ meminfo              ← still identical after second run
 
 * Link user ELFs with `-Ttext-segment 0x400000`, not `-Ttext`
 * User frames from `pmm_alloc_frame()` only
-* `tss_set_kernel_stack()` before `setjmp()` before `paging_switch()` before `iret`
+* In the current foreground ELF path, `tss_set_kernel_stack()` happens before `setjmp()`, and `paging_switch(proc->pd)` happens immediately before entering ring 3 with `iret`
 * Do not enqueue foreground ELF launches into the scheduler in the current hybrid model
 * Do not call `sched_dequeue()` from `elf_process_exit()` for foreground-only ELF processes
 
@@ -173,7 +173,7 @@ meminfo              ← still identical after second run
 ## ATA / FAT16 Rules
 
 * `ata_init()` must be called before `fat16_init()` and before any `ata_read_sectors()` call
-* `fat16_init(lba)` must be called before `fat16_load()` or `fat16_ls()`
+* `fat16_init()` must be called before `fat16_load()` or `fat16_ls()`
 * `fat16_load()` returns a pointer into the static `s_load_buf` buffer — the caller must not hold this pointer across another `fat16_load()` call
 * `elf_run_image()` copies all ELF segment data into PMM frames before returning, so the buffer is safe to reuse immediately after `elf_run_named()` returns
 

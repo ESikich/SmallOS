@@ -11,7 +11,7 @@ This document describes the physical memory layout, allocators, and paging archi
 0x0000A000   loader2 stage 2 (used before protected-mode jump)
 0x00001000   kernel image (loaded by loader2)
 0x00006000   kernel .bss start (page tables + PMM bitmap reside here)
-~0x0000A008  kernel .bss end
+~0x0000A000  kernel .bss / early static region end (approx.; depends on build)
 0x00090000   kernel stack top (grows downward from here; shell/default context)
 
 0x00100000   bump allocator base — permanent kernel structures
@@ -175,23 +175,23 @@ The physical **frames** pointed to by user PTEs are PMM-allocated and freed by `
 
 ```text
 0x000000 – 0x3FFFFF   kernel (shared, supervisor-only — ring 3 cannot access)
-0x400000 – 0x7FFFFF   user ELF segments (private, PAGE_USER | PAGE_WRITE)
-0x800000 – 0xBFFEFFFF (unmapped)
-0xBFFFF000            user stack page (private, PAGE_USER | PAGE_WRITE)
-0xC0000000+           kernel heap region (shared, supervisor-only)
+0x400000 – 0x7FFFFF   user ELF region (private mappings within PD index 1)
+0x800000 – 0xBFFEFFFF   unmapped
+0xBFFFF000 – 0xBFFFFFFF user stack page (private, PAGE_USER | PAGE_WRITE)
+0xC0000000            USER_STACK_TOP (top of user virtual space, not a mapped heap base)
 ```
 
 ## CR3 transitions
 
 ```text
 boot               → kernel_page_directory (CR3 set by paging_init)
-runelf launch      → process PD (paging_switch before iret)
+runelf / exec      → process PD (paging_switch before entering ring 3)
 sys_exit           → parent's PD if parent is a user process,
                      kernel_page_directory if parent is the shell
                      (paging_switch in elf_process_exit, before process_destroy)
 ```
 
-When the parent is a user process (`SYS_EXEC` path), CR3 must be switched to the parent's page directory before `longjmp`. After `longjmp` unwinds back to `isr128_stub`, the `iretd` jumps to the parent's ring-3 EIP at `0x400000` — only mapped in the parent's PD. Switching to the kernel PD first causes an immediate page fault.
+When the parent is a user process (`SYS_EXEC` path), CR3 must be switched to the parent's page directory before `longjmp`. After `longjmp` unwinds back to `isr128_stub`, the final `iretd` returns to the parent's ring-3 EIP in that parent's address space. Switching to the kernel PD first causes an immediate page fault when execution resumes in user mode.
 
 Always switch CR3 to the correct PD **before** freeing the child's PD.
 
@@ -202,10 +202,11 @@ Always switch CR3 to the correct PD **before** freeing the child's PD.
 ```text
 LBA 0         boot.bin              (512 bytes)
 LBA 1–4       loader2.bin           (2048 bytes)
+LBA 5+        kernel_padded.bin     (sector-aligned)
 LBA 5+ks      fat16.img             (16 MB FAT16 partition)
 ```
 
-`kernel.bin` is padded to a sector boundary before concatenation. `FAT16_LBA` is computed at build time and written to `build/gen/fat16_lba.h`.
+`kernel.bin` is padded to a sector boundary before concatenation. `fat16_lba = 5 + kernel_sectors` is computed at build time, then patched as a little-endian u32 into sector 0 byte offset 504 after image assembly. At runtime, `fat16_init()` reads sector 0 via ATA and extracts the patched value.
 
 ---
 
@@ -215,6 +216,7 @@ LBA 5+ks      fat16.img             (16 MB FAT16 partition)
 * Kernel trusts user pointers in syscalls
 * Bump allocator has no free — permanent kernel structures only
 * ELF programs still run through the foreground `setjmp`/`longjmp` path instead of as full scheduler-owned tasks
+* User argument pointers are only safe while the caller's CR3 is active; long-lived exec state must copy what it needs before switching away
 
 ---
 

@@ -1,24 +1,40 @@
 # Execution Model
 
-This document defines how programs are invoked, loaded, scheduled, and executed in the system.
+This document describes how commands are dispatched, how ELF programs are loaded, and how the current scheduler / syscall model actually behaves.
+
+It reflects the current code in:
+
+- `src/shell/shell.c`
+- `src/shell/commands.c`
+- `src/exec/elf_loader.c`
+- `src/kernel/process.c`
+- `src/kernel/scheduler.c`
+- `src/kernel/syscall.c`
 
 ---
 
 # Overview
 
-Programs can be executed through three paths:
+There is currently **one real external program path**:
 
 ```text
-run      → built-in C functions (kernel-linked, direct call, ring 0)
-runimg   → descriptor-based image execution (ring 0)
-runelf   → ELF programs loaded from FAT16 disk partition into per-process address space (ring 3)
+shell command
+  → runelf <name> [args]
+  → fat16_load()
+  → elf_run_image()
+  → ring-3 entry via iret
+  → syscalls via int 0x80
+  → sys_exit() → elf_process_exit()
+  → return to parent context via longjmp
 ```
 
-`runelf` is the primary user-program path. The execution model is currently transitional:
+Important current-state facts:
 
-* the **shell** runs as a real kernel task created at boot and entered through `sched_start()`
-* **keyboard IRQ1** no longer mutates shell/editor state directly; it queues shell events which the shell task drains in normal task context
-* **ELF user programs** still run through the foreground `setjmp`/`longjmp` path and are **not yet** scheduler-owned tasks
+- the **shell** is a scheduler-owned kernel task created at boot
+- **keyboard IRQ1** does not mutate shell/editor state directly; it queues events that the shell task drains later
+- **ELF user programs** are loaded into their own page directory and do execute in ring 3
+- **ELF launch/exit still uses the older foreground `setjmp` / `longjmp` path**
+- the scheduler exists and supports kernel tasks plus voluntary / timer-driven switching, but ELF launch is **not yet fully scheduler-owned**
 
 ---
 
@@ -35,253 +51,422 @@ shell_task_main()
   ↓
 shell_poll()
   ↓
-line_editor (insert, delete, cursor movement, history)
+line_editor
   ↓
 [Enter pressed]
   ↓
-parse_command()     tokenizes input in place into fixed argv[MAX_ARGS] entries
+parse_command()
   ↓
-commands_execute()  linear search of command table
+commands_execute()
   ↓
-dispatch to handler
+cmd_runelf()
+  ↓
+elf_run_named()
 ```
+
+The shell task itself is created in `kernel_main()` with `process_create_kernel_task("shell", shell_task_main)`, enqueued with `sched_enqueue()`, then entered with `sched_start()`.
 
 ---
 
-# Execution Types
+# Supported Program Paths
 
-## 1. Built-in Programs (`run`)
+## 1. Built-in shell commands
 
-Direct function pointer call. No page directory change. Runs in ring 0 in the kernel's address space.
+Commands like `help`, `clear`, `meminfo`, `fsls`, and `fsread` are normal kernel C functions dispatched by `commands_execute()`.
 
-## 2. Image Programs (`runimg`)
+They:
 
-Descriptor table of function pointers. Transitional — largely superseded by ELF execution.
+- run in ring 0
+- run in the kernel address space
+- do not switch page directories
+- do not create a new `process_t`
 
-## 3. ELF Programs (`runelf`)
+## 2. ELF programs (`runelf`)
 
-The current launch path:
+`runelf` is the current external-user-program path.
+
+Command handler:
+
+```c
+if (!elf_run_named(cmd->argv[1], cmd->argc - 1, &cmd->argv[1])) {
+    terminal_puts("runelf: failed\n");
+}
+```
+
+That means `argv[0]` inside the ELF process is the program name passed to `runelf`, and the rest of the shell tokens follow as normal argv entries.
+
+There is **no active `runimg` command path** in the current shell command table.
+
+---
+
+# ELF Load Path
+
+## Name lookup and file read
+
+`elf_run_named(name, argc, argv)` does:
 
 ```text
-elf_run_named(name, argc, argv)
-  ↓
 fat16_load(name, &size)
-  → search FAT16 root directory (case-insensitive 8.3 match)
-  → follow FAT16 cluster chain via ATA PIO reads
-  → write file into static s_load_buf[256 KB] buffer
+  → case-insensitive FAT16 root-directory lookup
+  → follow cluster chain with ATA PIO reads
+  → copy file into static FAT16 load buffer
   → return pointer to buffer
-  ↓
-elf_run_image(data, argc, argv)
-  ↓
-validate ELF magic (0x7F 'E' 'L' 'F')
-  ↓
-process_create("elf")            → allocate process_t from PMM frame
-  ↓
-process_pd_create()
-  → pmm_alloc_frame() → 4KB-aligned page directory
-  → copy kernel PD entries (indices 0, 2–1023) for shared kernel access
-  → PD index 1 left empty (private user region)
-  ↓
-for each PT_LOAD segment:
-    pages = ceil(p_memsz / 4096)
-    for each page:
-        frame = pmm_alloc_frame()
-        mem_zero(frame, 4096)
-        paging_map_page(pd, p_vaddr + p*4096, frame, PAGE_USER | PAGE_WRITE)
-    copy p_filesz bytes from s_load_buf into frames via physical addresses
-    [s_load_buf is now safe to reuse — data is in PMM frames]
-  ↓
-allocate + map user stack:
-    stack_frame = pmm_alloc_frame()
-    paging_map_page(pd, 0xBFFFF000, stack_frame, PAGE_USER | PAGE_WRITE)
-  ↓
-proc->kernel_stack_frame = pmm_alloc_frame()
-tss_set_kernel_stack(kernel_stack_frame + PAGE_SIZE)
-  ↓
-save parent context:
-    s_parent_proc = process_get_current()
-    s_parent_esp0 = parent ? parent->ksf+PAGE_SIZE : 0x90000
-  ↓
-process_set_current(proc)
-proc->state = RUNNING
-  ↓
-setjmp(proc->exit_ctx)           → save kernel context for sys_exit return
-  ↓
-keyboard_set_process_mode(1)
-paging_switch(pd)
-  ↓
-elf_enter_ring3(entry, USER_STACK_TOP, argc, argv)
-  → copy argv strings onto user stack (ring-3 accessible)
-  → build argv pointer array on user stack
-  → build cdecl call frame: [ret=0, argc, argv]
-  → load DS/ES/FS/GS = SEG_USER_DATA (0x23)
-  → push iret frame: SS=0x23, ESP, EFLAGS, CS=0x1B, EIP=e_entry
-  → iret  → CPU switches to ring 3
 ```
+
+Important invariant:
+
+- `fat16_load()` returns a pointer into a **static internal buffer**
+- callers must copy what they need before another FAT16 load reuses that buffer
+
+`elf_run_named()` then passes that image pointer to `elf_run_image()`.
+
+## ELF validation and process creation
+
+`elf_run_image()`:
+
+- validates ELF magic
+- allocates a fresh `process_t` with `process_create("elf")`
+- allocates a fresh page directory with `process_pd_create()`
+- maps each `PT_LOAD` segment into user memory using PMM frames
+- copies file-backed bytes from the FAT16 load buffer into those frames
+- allocates and maps one user stack page
+- allocates one kernel stack frame for privilege transitions
+
+## Address-space layout
+
+Current user process setup:
+
+- ELF segments are mapped at their link/load virtual addresses
+- user stack is mapped at `USER_STACK_TOP - USER_STACK_SIZE`
+- kernel mappings remain present in the process page directory through copied kernel PD entries
+- ring-3 code can only access pages marked `PAGE_USER`
+
+The process page directory is therefore a **hybrid** layout:
+
+- private user region for the process
+- shared kernel mappings for syscall / interrupt entry and kernel code
 
 ---
 
-# SYS_EXEC — Nested ELF Execution
+# Ring-3 Entry
 
-A running user process can spawn a named child via `SYS_EXEC`:
+After mappings are created, `elf_run_image()` prepares for ring-3 entry.
 
-```text
-sys_exec("hello", argc, argv)      [ring-3 int 0x80]
-  ↓
-sys_exec_impl()
-  copy name to kernel stack buffer before disk/file lookup
-  ↓
-elf_run_named(kname, argc, argv)   [same path as runelf above]
-  ↓
-[child runs; parent suspended at setjmp in elf_run_image on parent's kernel stack]
-  ↓
-child calls sys_exit() → elf_process_exit()
-  paging_switch(s_parent_proc->pd)   ← parent's PD, NOT kernel PD
-  tss_set_kernel_stack(s_parent_esp0)
-  process_destroy(child)
-  process_set_current(s_parent_proc)
-  sti
-  longjmp(child->exit_ctx, 1)
-  ↓
-setjmp returns in elf_run_image → returns 1
-sys_exec_impl returns 0 → iretd → parent resumes in ring 3
-```
+The code currently does all of the following:
 
-**CR3 rule**: `elf_process_exit` must switch to the parent's page directory before `longjmp`. After `longjmp` the `iretd` in `isr128_stub` jumps to the parent's ring-3 EIP at `0x400000` — only mapped in the parent's PD.
+1. allocate the process kernel stack
+2. call `tss_set_kernel_stack(proc->kernel_stack_frame + PAGE_SIZE)`
+3. copy argv strings into `proc->user_arg_data`
+4. save the parent foreground context in `s_parent_proc` / `s_parent_esp0`
+5. set `process_set_current(proc)`
+6. save a return point with `setjmp(proc->exit_ctx)`
+7. switch to the process page directory
+8. call `elf_enter_ring3()`
 
-**One-deep only**: `s_parent_proc` and `s_parent_esp0` are single statics.
+`elf_enter_ring3()` then:
+
+- copies argv strings onto the user stack
+- builds the `argv[]` pointer array on that same user stack
+- pushes a fake return address, `argc`, and `argv`
+- loads user data segments
+- pushes an `iret` frame
+- executes `iret`
+
+That transitions the CPU from CPL 0 to CPL 3 and begins execution at `e_entry`.
 
 ---
 
-# Scheduler Interaction
+# Parent / Child Tracking
 
-The scheduler is timer-driven and preemptive:
+Foreground ELF execution currently uses two file-static globals in `elf_loader.c`:
 
-```text
-irq0_stub
-  ↓
-irq0_handler_main(esp)
-  timer_handle_irq()
-  send EOI to PIC
-  sched_tick(esp)
-```
+- `s_parent_proc`
+- `s_parent_esp0`
 
-Boot sequence:
+These track the context that must be restored when the foreground ELF exits.
 
-```text
-kernel_main()
-  sched_init()
-  ata_init()
-  fat16_init(FAT16_LBA)
-  process_create_kernel_task("shell", shell_task_main)
-  sched_enqueue(shell_proc)
-  sti
-  sched_start(shell_proc)
-```
+Current behavior:
+
+- top-level `runelf` from the shell usually has a scheduler-owned kernel-task parent
+- nested `SYS_EXEC` from a user process can have a ring-3 parent
+- only a **single parent chain** is tracked explicitly by these globals
+
+This is why nested process behavior remains part of the transitional design.
 
 ---
 
-# Ring 3 Privilege Model
+# SYS_EXEC Current Reality
 
-ELF programs execute at CPL=3:
+`SYS_EXEC` is in transition.
 
-* Kernel pages (no `PAGE_USER`) are inaccessible to ring-3 code
-* User pages (`PAGE_USER | PAGE_WRITE`) at `0x400000+` and `0xBFFFF000` are readable and writable
-* `int 0x80` is reachable from ring 3 (IDT gate DPL=3)
-* On `int 0x80`, CPU reads TSS.SS0/ESP0 and switches to the process's kernel stack
+## What the syscall layer says
 
----
+`sys_exec_impl()` in `src/kernel/syscall.c` is documented as **spawn-style**:
 
-# Argument Passing
+- copy program name into a kernel buffer
+- call `elf_run_named()`
+- return `0` on success, `-1` on failure
 
-```text
-runelf hello arg1 arg2
+## What the core ELF path still does
 
-Stack layout before iret (top of user stack, growing down):
-  "hello\0"          string data
-  "arg1\0"
-  "arg2\0"
-  [padding to 4B]
-  user_argv[0]       → "hello"
-  user_argv[1]       → "arg1"
-  user_argv[2]       → "arg2"
-  user_argv[3]       → 0
-  argv ptr           → user_argv
-  argc = 3
-  return addr = 0    ← ESP after iret
-```
+`elf_run_named()` still enters the child through the older foreground path in `elf_run_image()`:
+
+- save parent return point with `setjmp(proc->exit_ctx)`
+- enter child with `iret`
+- child exits through `elf_process_exit()`
+- return to the saved parent context with `longjmp`
+
+So the accurate current statement is:
+
+- **the syscall API is being moved toward spawn-style semantics**
+- **the actual launch / exit machinery still uses the foreground `setjmp` / `longjmp` model**
+
+Until the ELF path is fully scheduler-owned, documentation should describe `SYS_EXEC` as transitional rather than fully converted.
 
 ---
 
-# Return Path
+# Exit Path
 
-After `sys_exit`:
+A user ELF exits through:
 
 ```text
-ring 3 user program
+sys_exit()
   ↓
 int 0x80
   ↓
 syscall_handler_main()
   ↓
+sys_exit_impl()
+  ↓
 elf_process_exit()
-  proc->state = EXITED
-  keyboard_set_process_mode(0)
-  paging_switch(parent_pd or kernel_pd)
-  tss_set_kernel_stack(parent_esp0)
-  process_destroy(proc)
-  process_set_current(parent)
-  sti
-  longjmp(exit_ctx, 1)
-  ↓
-setjmp returns in parent context
-  ↓
-paging_switch(parent_pd or kernel_pd already active)
-  ↓
-shell or parent user process resumes
 ```
 
-The child process never returns through the interrupted `iretd` path. `elf_process_exit` leaves via `longjmp`, so it must restore the correct parent state before jumping.
+`elf_process_exit()` currently does this:
+
+1. get the current foreground process via `process_get_current()`
+2. mark it `PROCESS_STATE_EXITED`
+3. disable process keyboard mode with `keyboard_set_process_mode(0)`
+4. copy `proc->exit_ctx` into a local stack buffer
+5. switch CR3 back to the parent PD if there is one, otherwise the kernel PD
+6. restore the parent kernel stack in the TSS with `tss_set_kernel_stack(s_parent_esp0)`
+7. destroy the child process with `process_destroy(proc)`
+8. restore `process_set_current(s_parent_proc)`
+9. execute `sti`
+10. `longjmp(exit_ctx, 1)` back to the saved parent context
+
+Important invariant:
+
+- the jump target must be copied out of `process_t` **before** `process_destroy()` because destroying the process frees the frame containing `exit_ctx`
+
+Important CR3 rule:
+
+- if the parent is a user process, `elf_process_exit()` must restore the **parent's** page directory before the `longjmp`
+- the parent's ring-3 return address is only valid in that address space
+- switching to the kernel PD first would make the resumed user return path invalid
 
 ---
 
-# Current Hybrid Model
+# Scheduler Interaction
 
-The current design intentionally mixes two models:
+The scheduler is real and preemptive, but ELF launch is still not fully under scheduler ownership.
 
-## Scheduler-owned kernel task
+## Timer path
 
-* shell task created with `process_create_kernel_task()`
-* entered through `sched_start()`
-* preempted by timer IRQ
-* resumed through `sched_switch()`
+```text
+irq0_stub
+  ↓
+irq0_handler_main(esp)
+  ↓
+timer_handle_irq()
+  ↓
+PIC EOI
+  ↓
+sched_tick(esp)
+```
 
-## Foreground ELF process
+## Boot path
 
-* loaded and entered directly by `elf_run_image()`
-* not enqueued into the scheduler
-* returns through `elf_process_exit()` → `longjmp()`
+```text
+kernel_main()
+  gdt_init()
+  paging_init()
+  memory_init()
+  pmm_init()
+  keyboard_init()
+  timer_init(100)
+  idt_init()
+  sched_init()
+  ata_init()
+  fat16_init()
+  create shell kernel task
+  sched_enqueue(shell_proc)
+  sti
+  sched_start(shell_proc)
+```
 
-This hybrid arrangement works, but it is transitional.
+## What the scheduler owns today
+
+The scheduler directly owns:
+
+- kernel tasks created with `process_create_kernel_task()`
+- voluntary yields via `SYS_YIELD` → `sched_yield_now()`
+- timer-driven preemption via `sched_tick()`
+
+## What it does not fully own yet
+
+The foreground ELF launch path in `elf_run_image()` still:
+
+- saves its return point with `setjmp`
+- switches into the child directly with `iret`
+- returns via `elf_process_exit()` → `longjmp`
+
+There is code in `elf_loader.c` that seeds a scheduler context for user ELF entry (`elf_seed_sched_context()` and `elf_user_task_bootstrap()`), but the current launch path explicitly notes that it **does not enqueue the process yet**.
+
+So the accurate statement is:
+
+- **scheduler support for future scheduler-owned ELF tasks is partially in place**
+- **foreground ELF launch/exit still uses the older direct path**
 
 ---
 
-# Constraints / Invariants
+# Process Ownership Rules
 
-* `fat16_load()` returns a pointer into a static load buffer — callers must copy ELF segment contents before another FAT16 load
-* process-owned frames come from PMM and are reclaimed on exit
-* `tss_set_kernel_stack()` must always match the currently active ring-3 process's kernel stack
-* the shell resumes with interrupts enabled because `elf_process_exit()` executes `sti` before `longjmp`
-* `SYS_EXEC` is one-deep only
+There are currently two notions of “current process” in the hybrid model.
+
+`process_get_current()` works like this:
+
+- if `process_set_current()` has installed a foreground ELF process, return that
+- otherwise return `sched_current()`
+
+That means:
+
+- during normal shell execution, the current process is the scheduler-owned shell task
+- while a foreground ELF is active, it overrides the scheduler-owned current task for code paths that ask for `process_get_current()`
+
+This is a deliberate transitional rule used by syscalls, exit handling, and keyboard process mode.
+
+---
+
+# Ring-3 Privilege Model
+
+ELF processes run at CPL 3.
+
+Properties of the current setup:
+
+- user pages are mapped with `PAGE_USER`
+- kernel pages are present but not user-accessible unless explicitly marked user
+- `int 0x80` is callable from ring 3
+- on syscall / interrupt entry from ring 3, the CPU switches to the kernel stack pointed to by the TSS
+- `tss_set_kernel_stack()` must always match the active ring-3 process before ring-3 entry resumes
+
+---
+
+# Argument Passing
+
+When `runelf hello a b` is invoked, the ELF sees:
+
+- `argc = 3`
+- `argv[0] = "hello"`
+- `argv[1] = "a"`
+- `argv[2] = "b"`
+
+The user stack is constructed manually by `elf_enter_ring3()`.
+
+High-level layout just before `iret`:
+
+```text
+[string data]
+[4-byte alignment]
+argv pointer array
+fake return address = 0
+argc
+argv
+```
+
+The entry point receives a normal C-style `(int argc, char** argv)` call frame.
+
+---
+
+# Invariants
+
+The following must remain true:
+
+- `fat16_init()` must run after `ata_init()` and before any FAT16 file load
+- `fat16_load()` results must be copied before another FAT16 load reuses the static buffer
+- every user process must have a valid kernel stack frame before ring-3 entry
+- `tss_set_kernel_stack()` must match the process that will next return from ring 3 into the kernel
+- `elf_process_exit()` must restore the correct parent CR3 before `longjmp`
+- `process_destroy()` must not run until any needed `exit_ctx` has been copied out
+- `process_get_current()` returning the foreground ELF during its active window is required by the current hybrid design
+
+---
+
+# Failure Modes
+
+## `runelf: failed`
+
+Likely causes:
+
+- FAT16 file not found
+- FAT16 load failed
+- ELF magic invalid
+- PMM frame allocation failure during segment or stack setup
+
+## Returns to the wrong process or faults on exit
+
+Likely causes:
+
+- wrong parent CR3 restored before `longjmp`
+- wrong TSS ESP0 restored before resumed ring-3 activity
+- `exit_ctx` used after destroying the child process object
+
+## User process starts but syscalls behave oddly
+
+Likely causes:
+
+- kernel stack in TSS does not match the active user process
+- `process_get_current()` points at the wrong process in the hybrid path
+
+## Shell input behaves incorrectly after process exit
+
+Likely causes:
+
+- `keyboard_set_process_mode(0)` not restored on exit
+- interrupts not re-enabled before returning to the parent context
+
+---
+
+# Transitional Status
+
+The execution model is intentionally mid-migration.
+
+Already true:
+
+- scheduler-owned shell task
+- timer-driven preemption exists
+- `SYS_YIELD` exists
+- ELF processes have real per-process page directories
+- user tasks already have seeded scheduler entry stacks available
+
+Not finished yet:
+
+- ELF launch through `sched_enqueue()` as the primary path
+- ELF exit through scheduler-owned task teardown rather than foreground `longjmp`
+- fully consistent `SYS_EXEC` semantics across syscall docs, headers, and implementation comments
 
 ---
 
 # Future Direction
 
-The next architectural step is:
+The intended next step is:
 
 ```text
-runelf → create process → enqueue in scheduler → remove foreground setjmp/longjmp path
+runelf / sys_exec
+  → create process
+  → seed user bootstrap context
+  → sched_enqueue(proc)
+  → scheduler owns first entry, preemption, and exit lifecycle
+  → remove foreground setjmp/longjmp path
 ```
 
-That will unify the shell and user-program execution model.
+That would unify shell tasks and user ELF tasks under one execution model and eliminate the remaining parent-context special cases.

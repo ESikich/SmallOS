@@ -52,8 +52,8 @@ static u8 s_sector[SECTOR_SIZE];
  * risk.  The caller (elf_run_image) copies all data into PMM frames
  * before returning, so the buffer is safe to reuse on the next call.
  *
- * Also holds the per-cluster read scratch area at the end to avoid a
- * 2048-byte allocation on the kernel stack inside fat16_load().
+ * A separate static cluster scratch buffer is used to avoid a 2048-byte
+ * allocation on the kernel stack inside fat16_load().
  */
 static u8 s_load_buf[FAT16_MAX_FILE_BYTES];
 static u8 s_cluster_buf[CLUSTER_BYTES];

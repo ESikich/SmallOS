@@ -274,6 +274,8 @@ pop segments, popa, iretd → ring 3 resumes
 
 The `isr128_stub` frame (pusha + 4 segment pushes + esp) is structurally identical to the `irq0_stub` frame. This means `regs` (the pointer passed to `syscall_handler_main`) can be passed directly to `sched_yield_now()` as a valid scheduler resume ESP.
 
+Normal syscalls return through this saved interrupt frame. `SYS_EXIT` is the exception: it tears down the current foreground process and returns to the saved parent context via `longjmp()` instead of unwinding through the original `iretd` path.
+
 ---
 
 # Terminal + Shell
@@ -320,7 +322,7 @@ Programs are linked at fixed virtual address `0x400000`, loaded into private use
 0x0000A000   loader2 stage 2 (done after protected-mode jump)
 0x00001000   kernel image
 0x00006000   kernel .bss start (page tables + PMM bitmap)
-~0x0000A008  kernel .bss end
+~0x0000A000  kernel .bss end
 0x00090000   kernel stack top (grows downward; shell context)
 0x00100000   bump allocator base — permanent kernel structures
                kmalloc()      — long-lived kernel-owned data only
@@ -339,10 +341,10 @@ Programs are linked at fixed virtual address `0x400000`, loaded into private use
 # Virtual Address Layout Per Process
 
 ```text
-0x000000 – 0x3FFFFF   shared supervisor-only mappings (inaccessible from ring 3)
-0x400000 – 0x7FFFFF   user ELF segments (private, PAGE_USER | PAGE_WRITE)
-0xBFFFF000            user stack page (private, PAGE_USER | PAGE_WRITE)
-PD 2–1023 range       kernel heap etc. (shared, supervisor-only)
+0x00000000 – 0x003FFFFF   shared supervisor-only mappings (inaccessible from ring 3)
+0x00400000 – 0x007FFFFF   user ELF segments (private, PAGE_USER | PAGE_WRITE)
+0xBFFFF000                user stack page (private, PAGE_USER | PAGE_WRITE)
+0xC0000000 – 0xFFFFFFFF   shared kernel mappings (supervisor-only)
 ```
 
 ## Process Paging Ownership
@@ -452,7 +454,7 @@ sys_exit() → int 0x80 → elf_process_exit()
 
 # SYS_EXEC
 
-A running user process can spawn a named child:
+A running user process can invoke a named child through the same blocking foreground path:
 
 ```text
 sys_exec("hello", argc, argv)   [ring-3 call via int 0x80]
@@ -464,7 +466,7 @@ elf_run_named(kname, argc, argv)
   ↓
 elf_run_image()                 [full launch path above]
   ↓
-[child runs; parent suspended at setjmp in elf_run_image on parent's kernel stack]
+[parent remains suspended until child exit]
   ↓
 child calls sys_exit() → elf_process_exit()
   paging_switch(parent->pd)
@@ -474,10 +476,12 @@ child calls sys_exit() → elf_process_exit()
   sti
   longjmp(child->exit_ctx, 1)
   ↓
-setjmp returns → elf_run_image returns 1 → sys_exec_impl returns 0
+setjmp returns → elf_run_image returns → sys_exec_impl returns to parent
   ↓
 isr128_stub iretd → parent resumes in ring 3
 ```
+
+This is still blocking foreground execution, not spawn-style scheduler-owned process creation.
 
 ---
 

@@ -25,13 +25,13 @@ int elf_run_image(const unsigned char* image, int argc, char** argv);
 /*
  * elf_process_exit()
  *
- * Called by sys_exit() from inside the syscall handler while the process
- * page directory is still active (CR3 still points at process PD).
+ * Called by sys_exit() from inside the syscall handler while the current
+ * process page directory is still active.
  *
- * Restores the kernel page directory, destroys the process page directory,
- * and longjmps back to the point in elf_run_image() just after the iret —
- * effectively returning control to the shell without unwinding through
- * ring-3 frames.
+ * Restores the parent address space when one exists, otherwise falls back
+ * to the kernel page directory; then destroys the exiting process and
+ * longjmps back to the saved exit context in elf_run_image() without
+ * unwinding through ring-3 frames.
  *
  * Does not return to its caller.
  */
@@ -40,9 +40,12 @@ void elf_process_exit(void);
 /*
  * elf_process_running()
  *
- * Returns 1 while a ring-3 ELF process is active (between iret and
- * elf_process_exit), 0 otherwise.  Used by the keyboard driver to decide
- * whether keystrokes go to the shell or to the process input buffer.
+ * Returns 1 when the current process exists and is in PROCESS_STATE_RUNNING,
+ * 0 otherwise.
+ *
+ * Note: this reflects the current process state returned by
+ * process_get_current(); it is not limited strictly to a foreground ring-3
+ * ELF process.
  */
 int elf_process_running(void);
 

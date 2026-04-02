@@ -21,7 +21,7 @@
  *   -1 is the current generic error return
  *
  * Notes:
- *   - This ABI is currently used by embedded ELF programs.
+ *   - This ABI is currently used by user-space ELF programs.
  *   - Keep this file shared between kernel and ELF-side code.
  */
 

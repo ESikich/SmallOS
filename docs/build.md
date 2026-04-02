@@ -139,7 +139,7 @@ Strips all ELF metadata. The result is a flat binary. The `.bss` section has no 
 
 # User Programs (ELF)
 
-User programs are compiled separately and packed into the FAT16 image. No kernel rebuild is needed to add or change programs.
+User programs are compiled separately and packed into the FAT16 image. Adding or changing a program rebuilds the FAT16 image and final disk image, but does not require relinking `kernel.elf` or regenerating `kernel.bin` unless kernel sources also changed.
 
 ## Source files
 
@@ -147,6 +147,9 @@ User programs are compiled separately and packed into the FAT16 image. No kernel
 src/user/hello.c
 src/user/ticks.c
 src/user/args.c
+src/user/runelf_test.c
+src/user/readline.c
+src/user/exec_test.c
 ```
 
 All use `user_lib.h` and `user_syscall.h`. No libc, no runtime, no dynamic linking.
@@ -404,7 +407,7 @@ Cons: no relocation, no metadata, BSS must be zeroed manually.
 All user ELFs are linked at the same virtual address. This is safe because each `runelf` creates a new page directory with its own private mapping at PD index 1. The same virtual address maps to different physical frames for different processes.
 
 Pros: simple linking, no need for unique link addresses per program.
-Cons: no PIE, no dynamic linking, programs cannot be run concurrently (no scheduler yet anyway).
+Cons: no PIE, no dynamic linking, and all programs must currently fit the fixed loader / exec model even though a scheduler now exists.
 
 ## FAT16 Image Instead of Embedded Programs
 

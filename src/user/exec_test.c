@@ -1,11 +1,11 @@
 #include "user_lib.h"
 
 /*
- * exec_test — diagnostic SYS_EXEC test for spawn-style semantics.
+ * exec_test — diagnostic SYS_EXEC test for current blocking semantics.
  *
- * sys_exec("hello", ...) now enqueues a new runnable task and returns
- * immediately.  The parent and child may therefore interleave depending
- * on the scheduler, so the exact output order is no longer strict.
+ * sys_exec("hello", ...) runs the child through the foreground
+ * run-and-wait path. The parent resumes only after the child exits, so
+ * this test expects ordered output around the call.
  */
 
 void _start(int argc, char** argv) {

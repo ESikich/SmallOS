@@ -38,7 +38,7 @@ Constraints:
 * kernel begins at **LBA 5** (0-based)
 * `kernel.bin` must be **padded to a 512-byte sector boundary** in the image so the FAT16 partition starts at a clean LBA
 * FAT16 partition starts at `5 + kernel_sectors`
-* FAT16 LBA is patched as a little-endian u32 into byte offset 504 of the boot sector after image assembly; the kernel reads it via ATA at boot
+* FAT16 LBA is patched as a little-endian u32 into byte offset 504 of sector 0 after image assembly; the kernel reads it during `fat16_init()`
 
 ---
 
@@ -97,7 +97,7 @@ Loader2 sits at `0xA000`. The kernel loads to `0x1000`. The kernel must not grow
 safe kernel size = (0xA000 - 0x1000) / 512 = 72 sectors = 36 KB
 ```
 
-Current kernel is ~58 sectors. If the kernel exceeds 72 sectors, move loader2 to `0xB000` and update `LOADER2_OFFSET` in `boot.asm` and `[org]` in `loader2.asm`.
+If the kernel exceeds 72 sectors, move loader2 to `0xB000` and update `LOADER2_OFFSET` in `boot.asm` and `[org]` in `loader2.asm`.
 
 **Symptom of violation:** BIOS INT 0x13 hangs silently mid-transfer. The screen shows `Loading...` but never advances. No error is printed because the hang occurs inside the BIOS call.
 
@@ -107,7 +107,7 @@ Current kernel is ~58 sectors. If the kernel exceeds 72 sectors, move loader2 to
 
 Stage 2 uses **INT 0x13 AH=0x42** (LBA extended read) for all disk reads. CHS was abandoned because:
 
-* The kernel is currently 58 sectors and the FAT16 partition starts at LBA ~63 — both exceed one CHS track (18 sectors on a standard floppy geometry).
+* The kernel and FAT16 partition can easily extend beyond one CHS track (18 sectors on a standard floppy geometry).
 * CHS reads beyond sector 18 on track 0 either fail or silently read wrong data.
 * LBA addressing has no track geometry limit.
 
@@ -324,7 +324,7 @@ The following must always hold:
 * loader2 GDT is temporary — kernel installs its own GDT first
 * segment registers correctly initialized before protected mode entry
 * `bss_start` / `bss_end` correctly defined and BSS zeroed before `paging_init()`
-* loader2 address + 2048 ≥ kernel load end (currently: `0xA000 > 0x1000 + 58*512 = 0x8440` ✓)
+* `0x1000 + kernel_sectors * 512 < loader2 load address` (currently `0xA000`)
 
 Violation of any of these results in an immediate crash or silent corruption.
 

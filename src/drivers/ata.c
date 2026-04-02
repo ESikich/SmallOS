@@ -93,8 +93,9 @@ static void ata_400ns_delay(void) {
 void ata_init(void) {
     /*
      * Software reset: set SRST bit in device control, then clear it.
-     * nIEN (bit 1) stays 0 so interrupts remain masked at the drive
-     * level — we use polling.
+     * nIEN (bit 1) stays 0, so device interrupts are not disabled at
+     * the drive level.  This driver still uses polling and does not rely
+     * on ATA IRQ delivery.
      */
     outb(ATA_CTRL, 0x04);   /* SRST = 1 */
     ata_400ns_delay();

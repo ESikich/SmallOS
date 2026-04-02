@@ -9,11 +9,13 @@
  * Physical memory split:
  *
  *   0x100000 – 0x1FFFFF   bump allocator (kmalloc / kmalloc_page)
- *                          kernel structures: process PDs, page tables,
- *                          parse buffers, argv.  1 MB headroom.
+ *                          kernel-owned permanent allocations such as
+ *                          heap objects and kernel page tables.
  *
  *   0x200000 – 0x7FFFFF   PMM (this file)
- *                          user ELF frames, user stack frames.
+ *                          reclaimable per-process allocations such as
+ *                          user ELF frames, user stack frames, process
+ *                          page directories, and private page tables.
  *                          6 MB = 1536 frames = 192 bytes of bitmap.
  *                          Ceiling matches the 8 MB identity-map limit,
  *                          so all PMM frames are directly accessible as

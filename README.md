@@ -36,7 +36,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Shell now runs as an explicit kernel task scheduled by `scheduler.c`
 * **Preemptive round-robin scheduler** — timer IRQ (100 Hz) context-switches between kernel tasks; 10-tick (100 ms) quantum
 * **`SYS_YIELD`** — voluntary preemption; process surrenders its remaining quantum immediately
-* **`SYS_EXEC`** — user process spawns a named child ELF, blocks until it exits, receives return code; parent context fully saved and restored
+* **`SYS_EXEC`** — user process launches a named child ELF through the current foreground path, blocks until it exits, and returns `0` on success / `-1` on failure; parent context is fully saved and restored
 * **ATA PIO driver** — polls the primary IDE channel (`0x1F0`) to read 512-byte sectors from disk in 32-bit protected mode; no DMA or IRQ required
 * **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing all user ELFs; built by `tools/mkfat16.c` with no external dependencies; readable at runtime via ATA PIO
 
@@ -89,6 +89,8 @@ uptime
 meminfo
 ataread <lba>        dump first 32 bytes of a disk sector (ATA PIO)
 
+fsls               list FAT16 root directory
+fsread <name>      dump first 16 bytes of a FAT16 file
 runelf <name> [args] load and run an ELF from the FAT16 partition
 ```
 
@@ -155,8 +157,8 @@ FAT16_LBA is patched into boot sector offset 504 after image assembly.
 0x0000A000   loader2 stage 2
 0x00001000   kernel image
 0x00006000   kernel .bss start (page tables + PMM bitmap)
-0x0000A008   kernel .bss end (approx)
-0x00090000   shell static kernel stack top
+~0x0000A000  kernel .bss end (approx)
+0x00090000   kernel stack top (boot / shell context)
 0x00100000   bump allocator — permanent kernel structures
 0x00200000   PMM — reclaimable frames
                process_t structs, process PDs, ELF frames,
@@ -188,7 +190,7 @@ The `pd == 0` rule still exists, but it is **not a table-layout concept**. It is
 - `pd == 0` → use kernel page directory
 - otherwise → use process page directory
 
-Today, the scheduler owns kernel tasks such as the shell. User ELF programs run through the foreground `setjmp`/`longjmp` path and are not yet scheduler-owned tasks.
+Today, the scheduler owns kernel tasks such as the shell. User ELF programs still run through the special foreground `setjmp`/`longjmp` path and are not yet scheduler-owned tasks.
 
 ---
 

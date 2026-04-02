@@ -55,11 +55,12 @@ void fat16_ls(void);
  * fat16_load(name, out_size)
  *
  * Find a file by name in the root directory (case-insensitive 8.3),
- * load its entire contents into a kmalloc'd buffer, and return a pointer
- * to that buffer.  Sets *out_size to the file size in bytes.
+ * load its entire contents into a static kernel buffer, and return a
+ * pointer to that buffer.  Sets *out_size to the file size in bytes.
  *
- * Returns 0 on failure (not found, too large, ATA error, OOM).
- * The caller must not free the returned buffer (bump allocator).
+ * Returns 0 on failure (not found, too large, ATA error).
+ * The caller must not free the returned buffer; it is reused across
+ * fat16_load() calls.
  */
 const u8* fat16_load(const char* name, u32* out_size);
 

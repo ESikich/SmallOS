@@ -73,20 +73,22 @@ static int sys_read_impl(char* buf, unsigned int len) {
 /*
  * sys_exec_impl(name, argc, argv)
  *
- * Create a new runnable ELF task and return immediately to the caller.
- * This is now spawn-style semantics rather than the older nested
- * foreground run-and-wait model.
+ * Load and run a named ELF program through the current foreground
+ * run-and-wait path.
+ *
+ * This is still blocking semantics: the caller is suspended until the
+ * child exits through SYS_EXIT and control returns via
+ * elf_process_exit() -> longjmp().
  *
  * name and argv are user virtual addresses — valid here because the
  * caller's CR3 is still active when the syscall fires.
  *
  * name is copied into a small kernel-side buffer before calling
- * elf_run_named(), because the loader later switches to the child's page
- * directory during first entry and must not depend on the caller's user
- * pointer remaining valid.
+ * elf_run_named(), because the loader later switches page directories
+ * and must not depend on the caller's user pointer remaining valid.
  *
  * Returns 0 on success, -1 if the program was not found or failed to
- * load / enqueue.
+ * load.
  */
 #define EXEC_NAME_MAX 32
 

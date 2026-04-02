@@ -92,14 +92,17 @@ static inline int sys_yield(void) {
 /*
  * sys_exec(name, argc, argv)
  *
- * Load and run the named ELF from the FAT16 partition as a child process.
- * Blocks until the child exits, then returns the child's exit code.
+ * Load and run the named ELF from the FAT16 partition through the
+ * current foreground run-and-wait path.
+ *
+ * This is still blocking semantics: the call does not return until the
+ * child exits.
  *
  * name and argv point into the caller's user address space — the kernel
  * reads them while the caller's CR3 is still active.
  *
- * Returns the child's exit code on success, -1 if the program was not
- * found or could not be loaded.
+ * Returns 0 on success, -1 if the program was not found or could not be
+ * loaded.
  */
 static inline int sys_exec(const char* name, int argc, char** argv) {
     return syscall3(SYS_EXEC, (uint32_t)name, (uint32_t)argc, (uint32_t)argv);

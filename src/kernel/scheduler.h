@@ -84,20 +84,20 @@ void sched_yield_now(unsigned int esp);
 /*
  * sched_exit_current(esp)
  *
- * Terminate the current task without returning to it.
+ * Terminate the current scheduled task without returning to it.
  *
- * Used by elf_process_exit() while executing on the exiting task's
- * kernel stack.  The scheduler removes the task from the run queue,
- * marks it for deferred destruction, and switches directly to the next
- * runnable task.  The actual process_destroy() happens later on a safe
- * stack inside the scheduler.
+ * The scheduler removes the task from the run queue, marks it for
+ * deferred destruction, and switches directly to the next runnable
+ * task.  The actual process_destroy() happens later on a safe stack
+ * inside the scheduler.
  */
 void sched_exit_current(unsigned int esp);
 
 /*
  * sched_current()
  *
- * Returns the process_t* currently running, or 0 before sched_start().
+ * Returns the process_t* in the scheduler's current slot, or 0 when no
+ * current slot has been selected.
  */
 process_t* sched_current(void);
 

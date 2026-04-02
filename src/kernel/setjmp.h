@@ -4,7 +4,7 @@
 /*
  * Minimal setjmp/longjmp for the i686 freestanding kernel.
  *
- * jmp_buf layout (7 x 32-bit slots):
+ * jmp_buf layout (6 x 32-bit slots):
  *
  *   [0]  ebx
  *   [1]  esi
