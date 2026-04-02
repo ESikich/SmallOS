@@ -1,6 +1,59 @@
 # Changelog
 
-## [Current] — FAT16 parser, ELF loading from disk, loader2 relocation
+## [Current] — Remove run/runimg/exec infrastructure
+
+### Removed
+
+* **`src/exec/programs.c` / `src/exec/programs.h`** — kernel-linked builtin programs. Superseded by ELF execution.
+* **`src/exec/images.c` / `src/exec/images.h`** — descriptor-based image execution. Superseded by ELF execution.
+* **`src/exec/image_programs.c`** — image implementations (`img_hello_main`, `img_args_main`).
+* **`src/exec/exec.c` / `src/exec/exec.h`** — `exec_run_entry()` wrapper. No longer called.
+* **`run` shell command** — called `programs_run()`.
+* **`runimg` shell command** — called `images_run()`.
+
+### Changed
+
+* **`src/shell/commands.c`** — removed `#include "programs.h"`, `#include "images.h"`, `cmd_run()`, `cmd_runimg()`, their command table entries, and their help text lines.
+* **`Makefile`** — removed `programs.o`, `exec.o`, `images.o`, `image_programs.o` from `KERNEL_OBJS` and their build rules.
+
+`runelf` is now the only program execution path. `src/exec/` contains only `elf_loader.c/h`.
+
+---
+
+## [Previous] — Ramdisk removal
+
+### Removed
+
+* **`src/kernel/ramdisk.c` / `src/kernel/ramdisk.h`** — deleted entirely. `ramdisk_find()` was the only consumer and has been replaced by `fat16_load()`.
+* **`tools/mkramdisk.c`** — deleted. The ramdisk is no longer built.
+* **Ramdisk loading from `loader2.asm`** — `load_ramdisk`, `RAMDISK_SECTORS`, `RAMDISK_LBA`, `RAMDISK_TMP_SEG/OFF`, ramdisk debug print, and `ramdisk_loaded_msg` all removed. Loader2 now loads only the kernel.
+* **Ramdisk from `kernel.c`** — `#include "ramdisk.h"` and `ramdisk_init()` removed.
+* **Ramdisk from Makefile** — `ramdisk.o` from `KERNEL_OBJS`, `RAMDISK_ENTRIES` variable, `mkramdisk` tool rule, `ramdisk.rd` build rule, ramdisk padding logic in `os-image.bin`, and the ramdisk term from the FAT16 LBA calculation all removed.
+
+### Changed
+
+* **`loader2.asm`** — now only loads the kernel. `__KERNEL_SECTORS__` is the only injected placeholder. Boot sequence prints `LBA ok Loading...K` then enters protected mode.
+
+* **`Makefile` `loader2.gen.asm` rule** — simplified; only injects `__KERNEL_SECTORS__`.
+
+* **`Makefile` `os-image.bin` rule** — disk image is now `boot + loader2 + kernel_padded + fat16.img`. FAT16 LBA = `5 + kernel_sectors` (no ramdisk term).
+
+* **Disk image layout** (final):
+  ```text
+  LBA 0         boot.bin              (512 bytes)
+  LBA 1–4       loader2.bin           (2048 bytes)
+  LBA 5+        kernel_padded.bin     (sector-aligned)
+  LBA 5+ks      fat16.img             (16 MB FAT16 partition)
+  ```
+  where `ks = ceil(kernel.bin / 512)`.
+
+### Key design note
+
+The ramdisk served as a temporary program store while the FAT16 driver was being built. With `fat16_load()` proven and `elf_run_named()` using it, the ramdisk was entirely redundant. Removing it simplifies the boot path, shrinks the disk image by ~13 KB, and eliminates the loader2 overlap risk from the ramdisk padding calculation.
+
+---
+
+## [Previous] — FAT16 parser, ELF loading from disk, loader2 relocation
 
 ### Added
 
