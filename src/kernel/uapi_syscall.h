@@ -2,7 +2,7 @@
 #define UAPI_SYSCALL_H
 
 /*
- * SimpleOS syscall ABI v1
+ * SmallOS syscall ABI v1
  *
  * Invocation:
  *   int 0x80

@@ -49,7 +49,7 @@ static void cmd_echo(command_t* cmd) {
 
 static void cmd_about(command_t* cmd) {
     (void)cmd;
-    terminal_puts("SimpleOS v0.1\n");
+    terminal_puts("SmallOS v0.1\n");
 }
 
 static void cmd_halt(command_t* cmd) {

@@ -14,7 +14,7 @@
 
 void kernel_main(void) {
     terminal_init();
-    terminal_puts("SimpleOS\n");
+    terminal_puts("SmallOS\n");
 
     gdt_init();
     paging_init();

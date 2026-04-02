@@ -6,7 +6,7 @@
 typedef unsigned int uint32_t;
 
 /*
- * Raw syscall helpers for SimpleOS syscall ABI v1.
+ * Raw syscall helpers for SmallOS syscall ABI v1.
  *
  * Register convention:
  *   eax = syscall number
