@@ -76,30 +76,29 @@ typedef enum {
 
 typedef struct {
     keycode_t key;
-    int pressed;      // 1 = key down, 0 = key up
+    int pressed;
     int shift;
     int ctrl;
     int alt;
     int caps_lock;
     int num_lock;
     int scroll_lock;
-    char ascii;       // 0 if non-printing
+    char ascii;
 } key_event_t;
 
 void keyboard_init(void);
 void keyboard_handle_irq(void);
 
 /*
- * Input buffer — used by SYS_READ when a user process is running.
+ * Input buffer used by SYS_READ for the foreground user process.
  *
- * keyboard_set_process_mode(1) redirects ASCII keystrokes into the ring
- * buffer instead of the shell.  Call with 0 to restore shell routing.
+ * Routing is driven first by process_get_foreground(), and falls back to
+ * the currently scheduled task when no foreground owner is set:
  *
- * keyboard_buf_available() returns the number of bytes ready to read.
- * keyboard_buf_pop()       removes and returns one byte (call only when
- *                          available() > 0).
+ *   - foreground user task present      -> route ASCII to process buffer
+ *   - otherwise current task with pd!=0 -> route ASCII to process buffer
+ *   - otherwise                         -> route to shell/editor
  */
-void keyboard_set_process_mode(int on);
 int  keyboard_buf_available(void);
 char keyboard_buf_pop(void);
 

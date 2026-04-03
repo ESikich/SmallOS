@@ -15,17 +15,27 @@ It reflects the current code in:
 
 # Overview
 
-There is currently **one real external program path**:
+There are currently **two external program paths**:
 
 ```text
 shell command
   → runelf <name> [args]
   → fat16_load()
   → elf_run_image()
+  → sched_enqueue(proc)
+  → process_wait(proc)
+  → scheduler enters child via elf_user_task_bootstrap()
   → ring-3 entry via iret
   → syscalls via int 0x80
-  → sys_exit() → elf_process_exit()
-  → return to parent context via longjmp
+  → sys_exit() → sched_exit_current()
+  → child becomes ZOMBIE, waiter destroys it
+
+shell command
+  → runelf_nowait <name> [args]
+  → fat16_load()
+  → elf_run_image()
+  → sched_enqueue(proc)
+  → return immediately
 ```
 
 Important current-state facts:
@@ -33,8 +43,8 @@ Important current-state facts:
 - the **shell** is a scheduler-owned kernel task created at boot
 - **keyboard IRQ1** does not mutate shell/editor state directly; it queues events that the shell task drains later
 - **ELF user programs** are loaded into their own page directory and do execute in ring 3
-- **ELF launch/exit still uses the older foreground `setjmp` / `longjmp` path**
-- the scheduler exists and supports kernel tasks plus voluntary / timer-driven switching; the foreground ELF path still uses `setjmp` / `longjmp`, but `elf_run_image()` already seeds a valid scheduler entry context for the process with `elf_seed_sched_context()`
+- ELF launch and exit are now scheduler-owned: `elf_run_image()` seeds a bootstrap context, enqueues the task, and returns `process_t*`
+- the scheduler supports kernel tasks, ELF tasks, voluntary yielding, and timer-driven switching; `runelf` blocks with `process_wait()`, while `runelf_nowait` returns immediately
 
 ---
 
@@ -155,14 +165,12 @@ After mappings are created, `elf_run_image()` prepares for ring-3 entry.
 The code currently does all of the following:
 
 1. allocate the process kernel stack
-2. call `tss_set_kernel_stack(proc->kernel_stack_frame + PAGE_SIZE)`
-3. call `elf_seed_sched_context(proc, eh->e_entry, argc, argv)`
-4. save the parent foreground context in `s_parent_proc` / `s_parent_esp0`
-5. set `process_set_current(proc)`
-6. mark the process `PROCESS_STATE_RUNNING`
-7. save a return point with `setjmp(proc->exit_ctx)`
-8. switch to the process page directory
-9. call `elf_enter_ring3()` using the kernel-side argv copy in `proc->user_argv`
+2. seed `proc->sched_esp` so the first scheduled kernel context returns into `elf_user_task_bootstrap()`
+3. mark the process `PROCESS_STATE_RUNNING`
+4. enqueue it with `sched_enqueue(proc)`
+5. return the `process_t*` to the caller
+
+For `runelf`, the shell then calls `process_wait(proc)` and blocks until the child reaches `PROCESS_STATE_ZOMBIE`. For `runelf_nowait`, the shell returns immediately after enqueue.
 
 `elf_enter_ring3()` then:
 
@@ -171,28 +179,21 @@ The code currently does all of the following:
 - pushes a fake return address, `argc`, and `argv`
 - loads user data segments
 - pushes an `iret` frame
+- sets IF in the pushed EFLAGS
 - executes `iret`
 
-That transitions the CPU from CPL 0 to CPL 3 and begins execution at `e_entry`.
+That transitions the CPU from CPL 0 to CPL 3 and begins execution at `e_entry` with interrupts enabled.
 
 ---
 
 # Parent / Child Tracking
 
-Foreground ELF execution currently uses two file-static globals in `elf_loader.c`:
+The old explicit parent-tracking statics are gone. The current design relies on scheduler ownership plus an optional foreground input owner:
 
-- `s_parent_proc`
-- `s_parent_esp0`
-
-These track the context that must be restored when the foreground ELF exits.
-
-Current behavior:
-
-- top-level `runelf` from the shell usually has a scheduler-owned kernel-task parent
-- nested `SYS_EXEC` from a user process can have a ring-3 parent
-- only a **single parent chain** is tracked explicitly by these globals
-
-This is why nested process behavior remains part of the transitional design.
+- `runelf` launches the child, then waits with `process_wait(proc)`
+- `runelf_nowait` launches the child and returns immediately
+- interactive foreground input is tracked with `process_set_foreground(proc)` / `process_get_foreground()`
+- process destruction is deferred until a waiter observes `PROCESS_STATE_ZOMBIE`
 
 ---
 
@@ -200,29 +201,13 @@ This is why nested process behavior remains part of the transitional design.
 
 `SYS_EXEC` is in transition.
 
-## What the syscall layer says
-
-`sys_exec_impl()` in `src/kernel/syscall.c` is documented as **spawn-style**:
+`sys_exec_impl()` in `src/kernel/syscall.c` is now fully **spawn-style**:
 
 - copy program name into a kernel buffer
 - call `elf_run_named()`
 - return `0` on success, `-1` on failure
 
-## What the core ELF path still does
-
-`elf_run_named()` still enters the child through the older foreground path in `elf_run_image()`:
-
-- save parent return point with `setjmp(proc->exit_ctx)`
-- enter child with `iret`
-- child exits through `elf_process_exit()`
-- return to the saved parent context with `longjmp`
-
-So the accurate current statement is:
-
-- **the syscall API is being moved toward spawn-style semantics**
-- **the actual launch / exit machinery still uses the foreground `setjmp` / `longjmp` model**
-
-Until the ELF path is fully scheduler-owned, documentation should describe `SYS_EXEC` as transitional rather than fully converted.
+`elf_run_named()` follows the same scheduler-owned ELF launch path as shell commands: create the process, seed its bootstrap context, enqueue it, and return immediately.
 
 ---
 
@@ -239,31 +224,21 @@ syscall_handler_main()
   ↓
 sys_exit_impl()
   ↓
-elf_process_exit()
+sched_exit_current((unsigned int)regs)
 ```
 
-`elf_process_exit()` currently does this:
+`sys_exit_impl()` currently does this:
 
-1. get the current foreground process via `process_get_current()`
-2. mark it `PROCESS_STATE_EXITED`
-3. disable process keyboard mode with `keyboard_set_process_mode(0)`
-4. copy `proc->exit_ctx` into a local stack buffer
-5. switch CR3 back to the parent PD if there is one, otherwise the kernel PD
-6. restore the parent kernel stack in the TSS with `tss_set_kernel_stack(s_parent_esp0)`
-7. destroy the child process with `process_destroy(proc)`
-8. restore `process_set_current(s_parent_proc)`
-9. execute `sti`
-10. `longjmp(exit_ctx, 1)` back to the saved parent context
+1. switch CR3 to the kernel page directory
+2. call `sched_exit_current((unsigned int)regs)`
+3. mark the current task `PROCESS_STATE_ZOMBIE`
+4. dequeue it from the run queue
+5. switch to the next runnable task
 
 Important invariant:
 
-- the jump target must be copied out of `process_t` **before** `process_destroy()` because destroying the process frees the frame containing `exit_ctx`
-
-Important CR3 rule:
-
-- if the parent is a user process, `elf_process_exit()` must restore the **parent's** page directory before the `longjmp`
-- the parent's ring-3 return address is only valid in that address space
-- switching to the kernel PD first would make the resumed user return path invalid
+- `sched_exit_current()` must **not** destroy the task immediately because the kernel is still running on that task's kernel stack
+- destruction is deferred until a waiter such as `process_wait()` observes `PROCESS_STATE_ZOMBIE` and calls `process_destroy()` from a safe stack
 
 ---
 
@@ -316,36 +291,29 @@ The scheduler directly owns:
 
 ## What it does not fully own yet
 
-The foreground ELF launch path in `elf_run_image()` still:
+ELF launch is now fully scheduler-owned.
 
-- saves its return point with `setjmp`
-- switches into the child directly with `iret`
-- returns via `elf_process_exit()` → `longjmp`
+`elf_loader.c` copies argv into `process_t` storage, builds a valid `sched_esp` on the process kernel stack, seeds first scheduler entry through `elf_user_task_bootstrap()`, and enqueues the process.
 
-`elf_loader.c` already seeds a scheduler context for user ELF entry via `elf_seed_sched_context()`. That code copies argv into `process_t` storage, builds a valid `sched_esp` on the process kernel stack, and seeds first scheduler re-entry through `elf_user_task_bootstrap()`.
+The active execution path is now:
 
-The current launch path still does **not enqueue the process yet**, so the active execution path remains:
-
-- **foreground ELF launch/exit still uses the direct `setjmp` / `iret` / `longjmp` path**
-- **scheduler entry support for user ELFs is already present and valid, but not yet the primary launch path**
+- **ELF launch uses `sched_enqueue(proc)`**
+- **foreground `runelf` waits with `process_wait()`**
+- **`runelf_nowait` returns immediately after enqueue**
 
 ---
 
 # Process Ownership Rules
 
-There are currently two notions of “current process” in the hybrid model.
+There are currently two related ownership concepts.
 
-`process_get_current()` works like this:
-
-- if `process_set_current()` has installed a foreground ELF process, return that
-- otherwise return `sched_current()`
+`process_get_current()` follows the scheduler-owned current task. Interactive input routing uses foreground ownership via `process_set_foreground()` / `process_get_foreground()`.
 
 That means:
 
 - during normal shell execution, the current process is the scheduler-owned shell task
-- while a foreground ELF is active, it overrides the scheduler-owned current task for code paths that ask for `process_get_current()`
-
-This is a deliberate transitional rule used by syscalls, exit handling, and keyboard process mode.
+- while the shell is waiting on a foreground ELF, keyboard routing still follows the foreground owner first
+- otherwise keyboard routing falls back to `sched_current()`
 
 ---
 
@@ -397,9 +365,9 @@ The following must remain true:
 - `fat16_load()` results must be copied before another FAT16 load reuses the static buffer
 - every user process must have a valid kernel stack frame before ring-3 entry
 - `tss_set_kernel_stack()` must match the process that will next return from ring 3 into the kernel
-- `elf_process_exit()` must restore the correct parent CR3 before `longjmp`
-- `process_destroy()` must not run until any needed `exit_ctx` has been copied out
-- `process_get_current()` returning the foreground ELF during its active window is required by the current hybrid design
+- timer IRQ and syscall-yield paths must pass the scheduler the true resume-frame base, `esp - 8`, not raw `esp`
+- the scheduler must preserve that real saved resume ESP instead of letting `sched_switch()` overwrite it with the scheduler's own C call-frame ESP
+- `process_destroy()` must not run until a safe stack is active and the task is already `PROCESS_STATE_ZOMBIE`
 
 ---
 
@@ -418,9 +386,9 @@ Likely causes:
 
 Likely causes:
 
-- wrong parent CR3 restored before `longjmp`
-- wrong TSS ESP0 restored before resumed ring-3 activity
-- `exit_ctx` used after destroying the child process object
+- wrong resume ESP passed to the scheduler instead of `esp - 8`
+- scheduler save slot allowed to overwrite the real interrupt/syscall resume ESP
+- task destroyed before switching off its own kernel stack
 
 ## User process starts but syscalls behave oddly
 
@@ -433,8 +401,8 @@ Likely causes:
 
 Likely causes:
 
-- `keyboard_set_process_mode(0)` not restored on exit
-- interrupts not re-enabled before returning to the parent context
+- foreground owner not set/cleared correctly around interactive runs
+- keyboard routing not falling back from foreground owner to `sched_current()` correctly
 
 ---
 
@@ -455,8 +423,8 @@ Already true:
 Not finished yet:
 
 - ELF launch through `sched_enqueue()` as the primary path
-- ELF exit through scheduler-owned task teardown rather than foreground `longjmp`
-- fully consistent `SYS_EXEC` semantics across syscall docs, headers, and implementation comments
+- background-child reaping for async children
+- continued consistency around the scheduler-owned ELF/task model in docs and comments
 
 ---
 
@@ -470,7 +438,6 @@ runelf / sys_exec
   → seed user bootstrap context (`elf_seed_sched_context()`)
   → sched_enqueue(proc)
   → scheduler owns first entry, preemption, and exit lifecycle
-  → remove foreground setjmp/longjmp path
 ```
 
 That would unify shell tasks and user ELF tasks under one execution model and eliminate the remaining parent-context special cases.

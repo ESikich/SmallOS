@@ -186,14 +186,13 @@ The physical **frames** pointed to by user PTEs are PMM-allocated and freed by `
 ```text
 boot               → kernel_page_directory (CR3 set by paging_init)
 runelf / exec      → process PD (paging_switch before entering ring 3)
-sys_exit           → parent's PD if parent is a user process,
-                     kernel_page_directory if parent is the shell
-                     (paging_switch in elf_process_exit, before process_destroy)
+sys_exit           → kernel_page_directory
+                     (paging_switch in sys_exit_impl, before sched_exit_current)
 ```
 
-When the parent is a user process (`SYS_EXEC` path), CR3 must be switched to the parent's page directory before `longjmp`. After `longjmp` unwinds back to `isr128_stub`, the final `iretd` returns to the parent's ring-3 EIP in that parent's address space. Switching to the kernel PD first causes an immediate page fault when execution resumes in user mode.
+On exit, CR3 is switched back to the kernel page directory before the task becomes `PROCESS_STATE_ZOMBIE`. The task is not destroyed there; destruction happens later from a safe waiter stack.
 
-Always switch CR3 to the correct PD **before** freeing the child's PD.
+Always switch CR3 away from the dying task's page directory **before** freeing that page directory.
 
 ---
 
@@ -215,7 +214,7 @@ LBA 5+ks      fat16.img             (16 MB FAT16 partition)
 * ELF programs linked at fixed address `0x400000` — no PIE/relocation
 * Kernel trusts user pointers in syscalls
 * Bump allocator has no free — permanent kernel structures only
-* ELF programs still launch and exit through the foreground `setjmp`/`longjmp` path instead of as fully scheduler-enqueued tasks, even though `elf_run_image()` already seeds valid scheduler entry state for them
+* ELF programs now launch as scheduler-enqueued tasks with per-process kernel stacks, and foreground runs are reclaimed later through `process_wait()` after the task reaches `PROCESS_STATE_ZOMBIE`
 * User argument pointers are only safe while the caller's CR3 is active; long-lived exec state must copy what it needs before switching away
 
 ---
@@ -225,5 +224,4 @@ LBA 5+ks      fat16.img             (16 MB FAT16 partition)
 Next steps:
 
 * Make `runelf` create scheduler-owned user tasks
-* Remove the remaining foreground `setjmp`/`longjmp` execution path
 * Keep allocator ownership clean: PMM for process-owned state, bump allocator for permanent kernel state

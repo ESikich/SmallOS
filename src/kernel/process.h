@@ -2,20 +2,20 @@
 #define PROCESS_H
 
 #include "paging.h"
-#include "setjmp.h"
 
 /* ------------------------------------------------------------------ */
-/* Process state                                                        */
+/* Process state                                                      */
 /* ------------------------------------------------------------------ */
 
 typedef enum {
     PROCESS_STATE_UNUSED  = 0,
     PROCESS_STATE_RUNNING = 1,
-    PROCESS_STATE_EXITED  = 2
+    PROCESS_STATE_EXITED  = 2,
+    PROCESS_STATE_ZOMBIE  = 3
 } process_state_t;
 
 /* ------------------------------------------------------------------ */
-/* process_t                                                            */
+/* process_t                                                          */
 /* ------------------------------------------------------------------ */
 
 #define PROCESS_NAME_MAX  32
@@ -25,7 +25,6 @@ typedef enum {
 typedef struct {
     u32*            pd;
     u32             kernel_stack_frame;
-    jmp_buf         exit_ctx;
     unsigned int    sched_esp;
     process_state_t state;
     void          (*kernel_entry)(void);
@@ -37,21 +36,29 @@ typedef struct {
 } process_t;
 
 /* ------------------------------------------------------------------ */
-/* API                                                                  */
+/* API                                                                */
 /* ------------------------------------------------------------------ */
 
 process_t* process_create(const char* name);
 process_t* process_create_kernel_task(const char* name, void (*entry)(void));
 void       process_destroy(process_t* proc);
 
-/*
- * Explicit foreground process tracking for the current hybrid model.
- *
- * While a foreground ELF is running through the older setjmp/longjmp
- * path, process_get_current() must return that process rather than the
- * scheduler-owned shell task.
- */
-void       process_set_current(process_t* proc);
 process_t* process_get_current(void);
+
+/*
+ * Foreground terminal/input owner.
+ *
+ * When non-null, keyboard input should be routed to this process even if
+ * the scheduler happens to be running some other task (for example the
+ * shell blocked in process_wait()).
+ */
+void       process_set_foreground(process_t* proc);
+process_t* process_get_foreground(void);
+
+/*
+ * Wait for a process to reach ZOMBIE, then destroy it from the current
+ * safe stack and return.
+ */
+void       process_wait(process_t* proc);
 
 #endif /* PROCESS_H */

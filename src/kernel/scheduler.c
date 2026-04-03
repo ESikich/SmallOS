@@ -4,29 +4,16 @@
 #include "gdt.h"
 #include "terminal.h"
 
-/* ------------------------------------------------------------------ */
-/* Assembly helper                                                    */
-/* ------------------------------------------------------------------ */
-
 extern void sched_switch(unsigned int* save_esp,
                          unsigned int  next_esp,
                          unsigned int  next_cr3,
                          unsigned int  next_esp0);
-
-/* ------------------------------------------------------------------ */
-/* Process table                                                      */
-/* ------------------------------------------------------------------ */
 
 static process_t*   s_table[SCHED_MAX_PROCS];
 static int          s_count       = 0;
 static int          s_current_idx = -1;
 static unsigned int s_tick_count  = 0;
 static unsigned int s_boot_esp    = 0;
-static process_t*   s_reap_pending = 0;
-
-/* ------------------------------------------------------------------ */
-/* Internal helpers                                                   */
-/* ------------------------------------------------------------------ */
 
 static unsigned int sched_proc_cr3(process_t* proc) {
     if (!proc || proc->pd == 0) {
@@ -40,14 +27,6 @@ static unsigned int sched_proc_esp0(process_t* proc) {
         return 0x90000u;
     }
     return proc->kernel_stack_frame + 4096u;
-}
-
-static void sched_reap_if_needed(void) {
-    process_t* reap = s_reap_pending;
-    if (!reap) return;
-
-    s_reap_pending = 0;
-    process_destroy(reap);
 }
 
 static int sched_find_next_runnable_from(int start_idx) {
@@ -71,16 +50,16 @@ static int sched_find_next_runnable_from(int start_idx) {
 }
 
 /*
- * sched_do_switch(esp)
- *
- * Shared core used by both sched_tick() and sched_yield_now().
- * Saves esp into the current slot, picks the next eligible process,
- * and calls sched_switch() if one is found.
+ * Save the current task's real resume ESP, as supplied by the IRQ/syscall
+ * path.  Do NOT let sched_switch() overwrite that field with its own C
+ * call-frame ESP; use a throwaway local for the assembly save slot.
  */
 static void sched_do_switch(unsigned int esp) {
-    if (s_count <= 1 || s_current_idx < 0) return;
+    if (s_current_idx < 0 || s_current_idx >= s_count) return;
 
     s_table[s_current_idx]->sched_esp = esp;
+
+    if (s_count <= 1) return;
 
     int next = sched_find_next_runnable_from((s_current_idx + 1) % s_count);
     if (next < 0 || next == s_current_idx) return;
@@ -90,18 +69,17 @@ static void sched_do_switch(unsigned int esp) {
 
     process_t* cur = s_table[prev];
     process_t* nxt = s_table[next];
+    unsigned int ignored_save_esp = 0;
 
-    sched_switch(&cur->sched_esp,
+    (void)cur; /* cur->sched_esp already saved above */
+
+    sched_switch(&ignored_save_esp,
                  nxt->sched_esp,
                  sched_proc_cr3(nxt),
                  sched_proc_esp0(nxt));
 
-    /* Execution resumes here when this context is switched back to. */
+    /* Execution resumes here only when this task is switched back to. */
 }
-
-/* ------------------------------------------------------------------ */
-/* Public API                                                         */
-/* ------------------------------------------------------------------ */
 
 void sched_init(void) {
     for (int i = 0; i < SCHED_MAX_PROCS; i++) {
@@ -112,7 +90,6 @@ void sched_init(void) {
     s_current_idx = -1;
     s_tick_count = 0;
     s_boot_esp = 0;
-    s_reap_pending = 0;
 }
 
 int sched_enqueue(process_t* proc) {
@@ -182,9 +159,13 @@ void sched_start(process_t* first_proc) {
 }
 
 void sched_tick(unsigned int esp) {
-    sched_reap_if_needed();
-
     s_tick_count++;
+
+    /* Always refresh the current task's saved resume point. */
+    if (s_current_idx >= 0 && s_current_idx < s_count) {
+        s_table[s_current_idx]->sched_esp = esp;
+    }
+
     if (s_tick_count < SCHED_TICKS_PER_QUANTUM) return;
     s_tick_count = 0;
 
@@ -192,15 +173,7 @@ void sched_tick(unsigned int esp) {
 }
 
 void sched_yield_now(unsigned int esp) {
-    sched_reap_if_needed();
-
-    /*
-     * Bypass the quantum counter — the process is voluntarily giving up
-     * the rest of its slice.  Reset the counter so the next process gets
-     * a full quantum rather than inheriting whatever ticks remain.
-     */
     s_tick_count = 0;
-
     sched_do_switch(esp);
 }
 
@@ -221,13 +194,7 @@ void sched_exit_current(unsigned int esp) {
     }
 
     cur->sched_esp = esp;
-
-    /*
-     * Freeing the current task immediately would free the kernel stack
-     * we are actively executing on.  Defer process_destroy() until the
-     * scheduler next runs on a safe stack.
-     */
-    s_reap_pending = cur;
+    cur->state = PROCESS_STATE_ZOMBIE;
     sched_dequeue(cur);
 
     if (s_count <= 0 || s_current_idx < 0) {
@@ -248,9 +215,9 @@ void sched_exit_current(unsigned int esp) {
     s_current_idx = next;
 
     process_t* nxt = s_table[next];
-    unsigned int dead_esp = esp;
+    unsigned int dead_ignored_save_esp = 0;
 
-    sched_switch(&dead_esp,
+    sched_switch(&dead_ignored_save_esp,
                  nxt->sched_esp,
                  sched_proc_cr3(nxt),
                  sched_proc_esp0(nxt));

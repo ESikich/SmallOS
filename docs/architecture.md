@@ -121,7 +121,6 @@ Each `runelf` invocation still creates a `process_t` struct allocated from a sin
 typedef struct {
     u32*            pd;                     /* PMM-allocated page directory        */
     u32             kernel_stack_frame;     /* PMM frame for ring-0 syscall stack  */
-    jmp_buf         exit_ctx;               /* setjmp context for sys_exit return  */
     unsigned int    sched_esp;              /* kernel ESP saved on preemption      */
     process_state_t state;                  /* UNUSED / RUNNING / EXITED          */
     void          (*kernel_entry)(void);    /* kernel task entry point             */
@@ -205,17 +204,16 @@ irq0_stub — add esp 4, pop segments, popa, iretd → ring 3 resumes
 ```text
 runelf:
   process_create()
-  elf_seed_sched_context()      → build valid proc->sched_esp for elf_user_task_bootstrap()
-  [NOT enqueued in scheduler — still runs via foreground path]
-  save s_parent_proc / s_parent_esp0
-  setjmp / iret into ring 3
+  seed proc->sched_esp         → first entry via elf_user_task_bootstrap()
+  sched_enqueue(proc)
+  process_wait(proc)           → shell waits until child is ZOMBIE
 
 sys_exit:
-  paging_switch(s_parent_proc->pd or kernel_pd)
-  tss_set_kernel_stack(s_parent_esp0)
-  process_destroy(proc)
-  process_set_current(s_parent_proc)
-  longjmp → parent (shell or user process)
+  paging_switch(kernel_pd)
+  sched_exit_current((unsigned int)regs)
+  mark task ZOMBIE
+  switch to next runnable task
+  process_destroy(proc) later from a safe waiter stack
 ```
 
 ---
@@ -276,7 +274,7 @@ pop segments, popa, iretd → ring 3 resumes
 
 The `isr128_stub` frame (pusha + 4 segment pushes + esp) is structurally identical to the `irq0_stub` frame. This means `regs` (the pointer passed to `syscall_handler_main`) can be passed directly to `sched_yield_now()` as a valid scheduler resume ESP.
 
-Normal syscalls return through this saved interrupt frame. `SYS_EXIT` is the exception: it tears down the current foreground process and returns to the saved parent context via `longjmp()` instead of unwinding through the original `iretd` path.
+Normal syscalls return through this saved interrupt frame. `SYS_EXIT` is the exception: it switches to the kernel page directory, marks the current task `PROCESS_STATE_ZOMBIE` through `sched_exit_current()`, and switches away instead of unwinding through the original `iretd` path.
 
 ---
 
@@ -425,39 +423,34 @@ process_create("elf")           → allocate process_t from PMM
 process_pd_create()             → fresh PD (pmm_alloc_frame), kernel entries shared
 map ELF segments                → pmm_alloc_frame() per page, PAGE_USER at 0x400000
 map user stack                  → pmm_alloc_frame(), PAGE_USER at 0xBFFFF000
-alloc kernel stack              → pmm_alloc_frame(), tss_set_kernel_stack(frame + PAGE_SIZE)
+alloc kernel stack              → pmm_alloc_frame(), per-process ring-0 stack for syscalls/interrupts
 elf_seed_sched_context()        → copy argv into process_t.user_arg_data, set proc->user_entry, build proc->sched_esp
                                    seeded to re-enter via elf_user_task_bootstrap()
-save parent context             → s_parent_proc = process_get_current()
-                                   s_parent_esp0 = parent ? parent->ksf+PAGE_SIZE : 0x90000
-process_set_current(proc)
 proc->state = RUNNING
+sched_enqueue(proc)             → child becomes a runnable task
+process_set_foreground(proc)    → foreground input owner for interactive waits
 
-[NOT enqueued in scheduler — foreground launch path still used]
+[runelf waits with process_wait(proc); runelf_nowait returns immediately]
 
-setjmp(proc->exit_ctx)          → save kernel context for sys_exit return
-keyboard_set_process_mode(1)
+scheduler enters child via elf_user_task_bootstrap()
 paging_switch(proc->pd)
-iret → ring 3
+iret → ring 3 with IF set
   ↓
-[program runs at CPL=3; timer still ticks but does not schedule this process]
+[program runs at CPL=3; timer schedules it normally]
   ↓
-sys_exit() → int 0x80 → elf_process_exit()
-  proc->state = EXITED
-  keyboard_set_process_mode(0)
-  paging_switch(s_parent_proc->pd or kernel_pd)   ← parent's PD if user process
-  tss_set_kernel_stack(s_parent_esp0)
-  process_destroy(proc)
-  process_set_current(s_parent_proc)
-  sti
-  longjmp(exit_ctx, 1)          → resume in elf_run_image → return to parent
+sys_exit() → int 0x80 → sched_exit_current((unsigned int)regs)
+  paging_switch(kernel_pd)
+  proc->state = ZOMBIE
+  sched_dequeue(cur)
+  switch to next runnable task
+  process_destroy(proc) later   → waiter reaps from a safe stack
 ```
 
 ---
 
 # SYS_EXEC
 
-A running user process can invoke a named child through the same blocking foreground path:
+A running user process can invoke a named child through the same ELF creation path:
 
 ```text
 sys_exec("hello", argc, argv)   [ring-3 call via int 0x80]
@@ -467,24 +460,14 @@ sys_exec_impl()
   ↓
 elf_run_named(kname, argc, argv)
   ↓
-elf_run_image()                 [full launch path above]
+elf_run_image()                 [create process, seed bootstrap, enqueue]
   ↓
-[parent remains suspended until child exit]
+sys_exec_impl returns immediately
   ↓
-child calls sys_exit() → elf_process_exit()
-  paging_switch(parent->pd)
-  tss_set_kernel_stack(parent->kernel_stack_frame + PAGE_SIZE)
-  process_destroy(child)
-  process_set_current(parent)
-  sti
-  longjmp(child->exit_ctx, 1)
-  ↓
-setjmp returns → elf_run_image returns → sys_exec_impl returns to parent
-  ↓
-isr128_stub iretd → parent resumes in ring 3
+isr128_stub iretd → parent resumes in ring 3 while child runs independently
 ```
 
-This is still blocking foreground execution, not spawn-style scheduler-owned process creation.
+This is async spawn, not blocking foreground execution.
 
 ---
 
@@ -517,7 +500,7 @@ build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
 # Known Limitations
 
 * ELF link address fixed at 0x400000 — no PIE/relocation support
-* `SYS_EXEC` tracks only a single explicit parent context — `s_parent_proc`/`s_parent_esp0` are single statics
+* `SYS_EXEC` is async spawn; foreground waiting is handled by `process_wait()` in shell-side command flow
 * Kernel trusts user pointers in syscalls (no copy-from-user validation)
 * ELF processes are not yet scheduler-owned tasks
 
@@ -556,7 +539,7 @@ per-process page directories — address space isolation, fully reclaimed on exi
 ring-3 ELF execution (hardware privilege enforcement)
 int 0x80 syscall interface (DPL=3 gate, TSS stack switch)
 argv copied into process_t kernel storage before CR3 switches
-clean process exit via setjmp/longjmp with parent context restore
+clean process exit via `PROCESS_STATE_ZOMBIE` transition and later reap from a safe stack
 physical memory manager (bitmap, all frames reclaimed on exit — no leak)
 per-process kernel stacks (PMM frame per process, freed on exit)
 SYS_READ — blocking keyboard input for user programs

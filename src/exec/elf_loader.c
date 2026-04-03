@@ -8,13 +8,8 @@
 #include "../drivers/fat16.h"
 #include "../drivers/terminal.h"
 #include "../kernel/gdt.h"
-#include "../drivers/keyboard.h"
-#include "../kernel/setjmp.h"
 
 typedef unsigned char u8;
-
-static process_t*   s_parent_proc = 0;
-static unsigned int s_parent_esp0 = 0;
 
 static void mem_copy(u8* dst, const u8* src, unsigned int n) {
     for (unsigned int i = 0; i < n; i++) dst[i] = src[i];
@@ -28,12 +23,6 @@ static int str_len(const char* s) {
     int n = 0;
     while (s[n]) n++;
     return n;
-}
-
-static void jmp_buf_copy(jmp_buf dst, jmp_buf src) {
-    for (int i = 0; i < 6; i++) {
-        dst[i] = src[i];
-    }
 }
 
 static void elf_enter_ring3(unsigned int entry,
@@ -70,17 +59,18 @@ static void elf_enter_ring3(unsigned int entry,
     unsigned int user_ds   = SEG_USER_DATA;
 
     __asm__ __volatile__ (
-        "mov  %3, %%eax     \n"
-        "mov  %%ax, %%ds    \n"
-        "mov  %%ax, %%es    \n"
-        "mov  %%ax, %%fs    \n"
-        "mov  %%ax, %%gs    \n"
-        "push %3            \n" /* SS */
-        "push %1            \n" /* ESP */
-        "pushf              \n" /* EFLAGS */
-        "push %2            \n" /* CS */
-        "push %0            \n" /* EIP */
-        "iret               \n"
+        "mov  %3, %%eax      \n"
+        "mov  %%ax, %%ds     \n"
+        "mov  %%ax, %%es     \n"
+        "mov  %%ax, %%fs     \n"
+        "mov  %%ax, %%gs     \n"
+        "push %3             \n" /* SS */
+        "push %1             \n" /* ESP */
+        "pushf               \n" /* EFLAGS */
+        "orl  $0x200, (%%esp)\n" /* set IF */
+        "push %2             \n" /* CS */
+        "push %0             \n" /* EIP */
+        "iret                \n"
         :
         : "r"(entry), "r"(final_esp), "r"(user_cs), "r"(user_ds)
         : "eax"
@@ -101,7 +91,6 @@ static void elf_user_task_bootstrap(void) {
 
     tss_set_kernel_stack(proc->kernel_stack_frame + PAGE_SIZE);
     paging_switch(proc->pd);
-    keyboard_set_process_mode(1);
 
     elf_enter_ring3(proc->user_entry,
                     USER_STACK_TOP,
@@ -155,45 +144,7 @@ int elf_process_running(void) {
     return proc && proc->state == PROCESS_STATE_RUNNING;
 }
 
-void elf_process_exit(void) {
-    process_t* proc = process_get_current();
-    jmp_buf    exit_ctx;
-
-    if (!proc) return;
-
-    proc->state = PROCESS_STATE_EXITED;
-    keyboard_set_process_mode(0);
-
-    /*
-     * Copy the jump target out of process_t before destroying it.
-     * process_destroy() frees the frame that contains proc->exit_ctx.
-     */
-    jmp_buf_copy(exit_ctx, proc->exit_ctx);
-
-    /*
-     * Restore the parent address space before longjmp.  If the parent is
-     * a user process, its ring-3 return EIP lives in that parent's PD.
-     * If there is no parent user process, fall back to the kernel PD.
-     */
-    if (s_parent_proc && s_parent_proc->pd) {
-        paging_switch(s_parent_proc->pd);
-    } else {
-        paging_switch(paging_get_kernel_pd());
-    }
-
-    tss_set_kernel_stack(s_parent_esp0);
-    process_destroy(proc);
-    process_set_current(s_parent_proc);
-
-    /*
-     * The syscall gate cleared IF on entry.  Re-enable interrupts before
-     * returning to the parent so keyboard IRQs and timer IRQs continue.
-     */
-    __asm__ __volatile__("sti");
-    longjmp(exit_ctx, 1);
-}
-
-int elf_run_image(const unsigned char* image, int argc, char** argv) {
+process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
     const Elf32_Ehdr* eh = (const Elf32_Ehdr*)image;
 
     if (*(const unsigned int*)eh->e_ident != ELF_MAGIC) {
@@ -288,49 +239,17 @@ int elf_run_image(const unsigned char* image, int argc, char** argv) {
         return 0;
     }
 
-    /*
-     * Save the parent foreground context for sys_exit/sys_exec return.
-     * Shell / top-level launch has no parent process_t, so use the
-     * static kernel stack top expected by the shell path.
-     */
-    s_parent_proc = process_get_current();
-    if (s_parent_proc) {
-        s_parent_esp0 = s_parent_proc->kernel_stack_frame + PAGE_SIZE;
-    } else {
-        s_parent_esp0 = 0x90000u;
-    }
-
-    process_set_current(proc);
     proc->state = PROCESS_STATE_RUNNING;
 
-    /*
-     * The process now has a valid first-entry scheduler context in
-     * proc->sched_esp, seeded to return into elf_user_task_bootstrap().
-     *
-     * We still do not enqueue it yet.  The command path remains the older
-     * foreground iret/longjmp model until launch and exit semantics are
-     * moved fully under scheduler ownership.
-     */
-    if (setjmp(proc->exit_ctx) != 0) {
-        return 1;
+    if (!sched_enqueue(proc)) {
+        process_destroy(proc);
+        return 0;
     }
 
-    keyboard_set_process_mode(1);
-    paging_switch(proc->pd);
-
-    /*
-     * Use the kernel-side argv copy.  This is required for SYS_EXEC:
-     * the raw argv pointers may live in the caller's user address space.
-     */
-    elf_enter_ring3(eh->e_entry,
-                    USER_STACK_TOP,
-                    proc->user_argc,
-                    proc->user_argv);
-
-    return 1;
+    return proc;
 }
 
-int elf_run_named(const char* name, int argc, char** argv) {
+process_t* elf_run_named(const char* name, int argc, char** argv) {
     u32 size = 0;
     const u8* data = fat16_load(name, &size);
     if (!data) {

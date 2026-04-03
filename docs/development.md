@@ -65,7 +65,7 @@ Kernel must load its own GDT early in `kernel_main()`, before interrupts are ena
 
 `tss_set_kernel_stack(esp0)` is the supported interface for updating TSS.ESP0.
 
-It must be called before every `iret` into ring 3. For a process-owned kernel stack, the value must be `kernel_stack_frame + PAGE_SIZE`. On process exit, `elf_process_exit` restores it to the parent process's kernel stack (or `0x90000` for the shell). During scheduler-driven context switches, the incoming process's `next_esp0` is passed through `sched_switch` and applied there via `tss_set_kernel_stack()`.
+It must be called before every `iret` into ring 3. For a process-owned kernel stack, the value must be `kernel_stack_frame + PAGE_SIZE`. `elf_user_task_bootstrap()` sets it before first ring-3 entry for a user task, and scheduler-driven context switches apply the incoming process's `next_esp0` through `sched_switch` via `tss_set_kernel_stack()`.
 
 Do not reintroduce `tss_get_esp0_ptr()` or any pointer-based access into the packed TSS structure.
 
@@ -136,9 +136,9 @@ meminfo              ← still identical after second run
 
 `sched_init()` must be called **after `idt_init()` and before `sti`**. It initialises the scheduler table. The shell is not registered here — it is created later in `kernel_main()` and added with `sched_enqueue()`. If called after `sti`, the first timer tick may fire with an uninitialised scheduler state.
 
-`sched_enqueue(proc)` — call after `proc->state = RUNNING` when handing a task to the scheduler. The shell task follows this path in `kernel_main()`. Foreground ELF launches currently do **not**: they still enter ring 3 through the older `setjmp`/`longjmp` path.
+`sched_enqueue(proc)` — call after `proc->state = RUNNING` when handing a task to the scheduler. The shell task follows this path in `kernel_main()`, and ELF launches now do as well.
 
-`sched_dequeue(proc)` is for scheduler-owned tasks. In the current tree it is used from `sched_exit_current()`, not from `elf_process_exit()`. It removes the process from the run queue, compacts the table, and adjusts scheduler indices so round-robin execution can continue over the remaining runnable entries.
+`sched_dequeue(proc)` is for scheduler-owned tasks. In the current tree it is used from `sched_exit_current()`. It removes the process from the run queue, compacts the table, and adjusts scheduler indices so round-robin execution can continue over the remaining runnable entries.
 
 **EOI ordering in `irq0_handler_main`**: EOI is sent **before** `sched_tick`. If `sched_switch` lands on a different context and `irq0_handler_main` never returns, EOI must already be sent. Do not move it after `sched_tick`.
 
@@ -156,7 +156,7 @@ meminfo              ← still identical after second run
 
 `process_destroy(proc)` frees PD, kernel stack frame, and the process_t frame. After this call `proc` is dangling.
 
-`elf_process_exit()` must copy `proc->exit_ctx` out of `process_t` before calling `process_destroy()`. Taking `&proc->exit_ctx` and then freeing `proc` would leave a dangling pointer.
+Exited tasks must be marked `PROCESS_STATE_ZOMBIE` and destroyed later from a safe stack. Do not free a task from inside `sched_exit_current()`, because the kernel is still running on that task's kernel stack.
 
 ---
 
@@ -164,9 +164,9 @@ meminfo              ← still identical after second run
 
 * Link user ELFs with `-Ttext-segment 0x400000`, not `-Ttext`
 * User frames from `pmm_alloc_frame()` only
-* In the current foreground ELF path, `tss_set_kernel_stack()` happens before `setjmp()`, and `paging_switch(proc->pd)` happens immediately before entering ring 3 with `iret`
-* Do not enqueue foreground ELF launches into the scheduler in the current hybrid model
-* Do not call `sched_dequeue()` from `elf_process_exit()` for foreground-only ELF processes
+* `elf_user_task_bootstrap()` sets `tss_set_kernel_stack()` before first ring-3 entry for a user task, and scheduler-driven switches update ESP0 for later entries
+* Use `esp - 8` from the IRQ0 / syscall-stub paths when handing a resume frame to the scheduler
+* Preserve the true interrupt/syscall resume ESP; do not let `sched_switch()` overwrite it with the scheduler's own C call-frame ESP
 
 ---
 
@@ -262,7 +262,7 @@ Useful signals:
 | 4 | Red '8' on screen | Double fault — bad TSS ESP0 or corrupt stack |
 | 5 | Crash after iret | TSS not loaded; wrong TSS ESP0; bad user GDT entries; DPL=0 on int 0x80 gate |
 | 6 | argv garbage in ring 3 | Strings not copied to user stack before iret |
-| 7 | Shell doesn't return | sys_exit not called, or longjmp context corrupted |
+| 7 | Shell doesn't return | child never reached ZOMBIE, or scheduler resume ESP bookkeeping is wrong |
 | 8 | Syscalls silently broken | syscall_regs_t mismatch |
 | 9 | PMM leak after runelf | ELF linked with `-Ttext` not `-Ttext-segment` |
 | 10 | "pmm: double free" | process_destroy called twice |

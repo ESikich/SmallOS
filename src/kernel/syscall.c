@@ -2,12 +2,14 @@
 #include "terminal.h"
 #include "timer.h"
 #include "paging.h"
-#include "elf_loader.h"
 #include "keyboard.h"
 #include "scheduler.h"
+#include "../exec/elf_loader.h"
 
-#define SYSCALL_ERR_INVALID  ((unsigned int)-1)
+#define SYSCALL_ERR_INVALID   ((unsigned int)-1)
 #define SYSCALL_MAX_WRITE_LEN 4096u
+#define EXEC_NAME_MAX         32
+#define SCHED_RESUME_RETADDR_OFFSET 8u
 
 static int sys_write_impl(const char* buf, unsigned int len) {
     if (buf == 0) return -1;
@@ -29,10 +31,13 @@ static int sys_putc_impl(unsigned int ch) {
     return 1;
 }
 
-static void sys_exit_impl(int code) {
-    (void)code;
-    elf_process_exit();
-    /* unreachable */
+static void sys_exit_impl(syscall_regs_t* regs) {
+    (void)regs->ebx;
+    paging_switch(paging_get_kernel_pd());
+    sched_exit_current((unsigned int)regs);
+    for (;;) {
+        __asm__ __volatile__("cli; hlt");
+    }
 }
 
 static unsigned int sys_get_ticks_impl(void) {
@@ -40,7 +45,7 @@ static unsigned int sys_get_ticks_impl(void) {
 }
 
 static int sys_yield_impl(unsigned int esp) {
-    sched_yield_now(esp);
+    sched_yield_now(esp - SCHED_RESUME_RETADDR_OFFSET);
     return 0;
 }
 
@@ -50,9 +55,6 @@ static int sys_read_impl(char* buf, unsigned int len) {
 
     unsigned int n = 0;
 
-    /* The syscall gate is an interrupt gate — IF is cleared on entry.
-     * Re-enable interrupts for the duration of the read so keyboard IRQs
-     * can fire and populate the input buffer. */
     __asm__ volatile ("sti");
 
     while (n < len) {
@@ -73,12 +75,12 @@ static int sys_read_impl(char* buf, unsigned int len) {
 /*
  * sys_exec_impl(name, argc, argv)
  *
- * Load and run a named ELF program through the current foreground
- * run-and-wait path.
+ * Spawn a named ELF program asynchronously.
  *
- * This is still blocking semantics: the caller is suspended until the
- * child exits through SYS_EXIT and control returns via
- * elf_process_exit() -> longjmp().
+ * The new program is created, seeded with a scheduler bootstrap context,
+ * enqueued, and execution returns immediately to the caller. The spawned
+ * process later exits through SYS_EXIT, which hands control to the
+ * scheduler via sched_exit_current().
  *
  * name and argv are user virtual addresses — valid here because the
  * caller's CR3 is still active when the syscall fires.
@@ -90,8 +92,6 @@ static int sys_read_impl(char* buf, unsigned int len) {
  * Returns 0 on success, -1 if the program was not found or failed to
  * load.
  */
-#define EXEC_NAME_MAX 32
-
 static int sys_exec_impl(const char* name, int argc, char** argv) {
     if (name == 0) return -1;
 
@@ -105,8 +105,7 @@ static int sys_exec_impl(const char* name, int argc, char** argv) {
 
     if (i == 0) return -1;
 
-    int ok = elf_run_named(kname, argc, argv);
-    return ok ? 0 : -1;
+    return elf_run_named(kname, argc, argv) ? 0 : -1;
 }
 
 void syscall_handler_main(syscall_regs_t* regs) {
@@ -119,8 +118,7 @@ void syscall_handler_main(syscall_regs_t* regs) {
             break;
 
         case SYS_EXIT:
-            sys_exit_impl((int)regs->ebx);
-            /* does not return */
+            sys_exit_impl(regs);
             break;
 
         case SYS_GET_TICKS:
@@ -137,11 +135,6 @@ void syscall_handler_main(syscall_regs_t* regs) {
             break;
 
         case SYS_YIELD:
-            /*
-             * Pass regs as the esp argument — regs IS the kernel stack
-             * pointer of the saved isr128_stub frame.  sched_yield_now
-             * saves this as the resume point for this process.
-             */
             regs->eax = (unsigned int)sys_yield_impl((unsigned int)regs);
             break;
 

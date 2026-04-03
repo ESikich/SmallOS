@@ -1,0 +1,38 @@
+*** src/exec/elf_loader.c.orig
+--- src/exec/elf_loader.c
+***************
+*** 77,82 ****
+--- 77,85 ----
+  static void elf_user_task_bootstrap(void) {
+      process_t* proc = sched_current();
+  
++     terminal_puts("elf: bootstrap enter\n");
++ 
+      if (!proc || proc->user_entry == 0) {
+          terminal_puts("elf: user task bootstrap failed\n");
+          for (;;) {
+***************
+*** 84,89 ****
+--- 87,106 ----
+      }
+  
++     terminal_puts("elf: proc=");
++     terminal_put_hex((unsigned int)proc);
++     terminal_puts(" pd=");
++     terminal_put_hex((unsigned int)proc->pd);
++     terminal_puts(" kstack=");
++     terminal_put_hex(proc->kernel_stack_frame);
++     terminal_puts(" entry=");
++     terminal_put_hex(proc->user_entry);
++     terminal_puts(" argc=");
++     terminal_put_uint((unsigned int)proc->user_argc);
++     terminal_putc('\n');
++ 
+      tss_set_kernel_stack(proc->kernel_stack_frame + PAGE_SIZE);
+      paging_switch(proc->pd);
++ 
++     terminal_puts("elf: entering ring3\n");
++ 
+      elf_enter_ring3(proc->user_entry,
+                      USER_STACK_TOP,
+                      proc->user_argc,

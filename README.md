@@ -27,16 +27,16 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
   * Manages `0x200000`–`0x7FFFFF` (6 MB, 1536 frames)
   * All process frames reclaimed on exit — no leak after `runelf`
 * ELF loader — validates, loads segments, zeroes BSS, launches in ring 3
-* `process_t` abstraction — per-process struct (PD, kernel stack, exit context, scheduler state, argv storage, name); fully PMM-allocated and reclaimed on exit
+* `process_t` abstraction — per-process struct (PD, kernel stack, scheduler state, argv storage, name); fully PMM-allocated and reclaimed on exit
 * Per-process page directories — address space isolation; PD itself freed on exit
 * Ring 3 user mode — hardware-enforced privilege separation
 * Per-process kernel stacks — dedicated PMM frame per process; TSS ESP0 set from it; freed on exit
 * Syscall layer via `int 0x80` (DPL=3 gate): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`, `SYS_READ`, `SYS_YIELD`, `SYS_EXEC`
-* `sys_exit()` returns cleanly to the parent (shell or user process) via `setjmp`/`longjmp`
+* `sys_exit()` is scheduler-owned: it switches to the kernel page directory, marks the current task `PROCESS_STATE_ZOMBIE`, and switches to the next runnable task
 * Shell now runs as an explicit kernel task scheduled by `scheduler.c`
 * **Preemptive round-robin scheduler** — timer IRQ (100 Hz) context-switches between kernel tasks; 10-tick (100 ms) quantum
 * **`SYS_YIELD`** — voluntary preemption; process surrenders its remaining quantum immediately
-**`SYS_EXEC`** — user process launches a named child ELF through the current foreground path, blocks until it exits, and returns `0` on success / `-1` on failure; the calling foreground context is saved/restored for this path, with only one explicit parent context tracked
+**`SYS_EXEC`** — user process asynchronously spawns a named child ELF and returns `0` on success / `-1` on failure
 * **ATA PIO driver** — polls the primary IDE channel (`0x1F0`) to read 512-byte sectors from disk in 32-bit protected mode; no DMA or IRQ required
 * **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing all user ELFs; built by `tools/mkfat16.c` with no external dependencies; readable at runtime via ATA PIO
 
@@ -92,6 +92,7 @@ ataread <lba>        dump first 32 bytes of a disk sector (ATA PIO)
 fsls               list FAT16 root directory
 fsread <name>      dump first 16 bytes of a FAT16 file
 runelf <name> [args] load and run an ELF from the FAT16 partition
+runelf_nowait <name> [args] enqueue an ELF and return immediately
 ```
 
 Current FAT16 programs: `hello`, `ticks`, `args`, `runelf_test`, `readline`, `exec_test`
@@ -124,17 +125,14 @@ runelf hello
  → process_create()      allocate process_t from PMM
  → process_pd_create()   fresh page directory (PMM), kernel entries shared
  → map ELF + stack       pmm_alloc_frame() per page
- → alloc kernel stack    tss_set_kernel_stack(frame + PAGE_SIZE)
- → seed sched context    elf_seed_sched_context() builds proc->sched_esp for elf_user_task_bootstrap()
- → save parent context   s_parent_proc / s_parent_esp0
- → setjmp()              save kernel context for sys_exit return
- → paging_switch(pd)     load process CR3
- → iret into ring 3
- → [program runs in foreground; timer still ticks]
- → sys_exit() → elf_process_exit()
- → paging_switch(parent_pd or kernel_pd)
- → process_destroy()     free all PMM frames
- → longjmp()             return to parent
+ → alloc kernel stack    per-process ring-0 stack for syscalls / interrupts
+ → seed sched context    proc->sched_esp returns into elf_user_task_bootstrap()
+ → sched_enqueue(proc)   child becomes a real runnable task
+ → process_wait(proc)    shell blocks in a safe wait loop
+ → scheduler enters child via elf_user_task_bootstrap()
+ → elf_enter_ring3()     iret into ring 3 with IF set in EFLAGS
+ → sys_exit()            switch to kernel PD, mark ZOMBIE, switch away
+ → shell wakes, process_destroy() reclaims PMM frames
 ```
 
 ---
@@ -192,7 +190,7 @@ The `pd == 0` rule still exists, but it is **not a table-layout concept**. It is
 - `pd == 0` → use kernel page directory
 - otherwise → use process page directory
 
-Today, the scheduler owns kernel tasks such as the shell. User ELF programs still run through the special foreground `setjmp`/`longjmp` path and are not yet scheduler-owned tasks.
+Today, the scheduler owns both kernel tasks such as the shell and ELF user programs. `runelf` waits for the child with `process_wait()`, while `runelf_nowait` returns immediately after enqueue.
 
 ---
 
@@ -205,7 +203,7 @@ irq0_stub
   ↓
 irq0_handler_main(esp)
   ↓
-sched_tick(esp)
+sched_tick(esp - 8)
   ↓
 sched_switch(&cur->sched_esp, nxt->sched_esp, next_cr3, next_esp0)
   ↓
@@ -236,7 +234,7 @@ This path no longer relies on a cached pointer into the packed TSS structure.
 The system is in a deliberate hybrid stage:
 
 * the **shell** is scheduler-owned
-* **ELF user programs** still execute through the foreground `setjmp` / `longjmp` path
-* `elf_run_image()` already seeds a valid scheduler entry context for user ELFs via `elf_seed_sched_context()`
+* **ELF user programs** are also scheduler-owned tasks entered through `elf_user_task_bootstrap()`
+* `runelf` blocks by waiting for `PROCESS_STATE_ZOMBIE`, while `runelf_nowait` returns immediately after enqueue
 
-The next architectural step is to make `runelf` enqueue those user tasks so the scheduler owns first entry and full lifecycle.
+The current architecture already uses the scheduler for first entry, preemption, and exit lifecycle; remaining work is mainly around background-child reaping and further polish.

@@ -86,10 +86,10 @@ void sched_yield_now(unsigned int esp);
  *
  * Terminate the current scheduled task without returning to it.
  *
- * The scheduler removes the task from the run queue, marks it for
- * deferred destruction, and switches directly to the next runnable
- * task.  The actual process_destroy() happens later on a safe stack
- * inside the scheduler.
+ * The scheduler marks the task ZOMBIE, removes it from the run queue,
+ * and switches directly to the next runnable task.  It does NOT call
+ * process_destroy(); the waiter/reaper is responsible for freeing the
+ * process later from a safe stack.
  */
 void sched_exit_current(unsigned int esp);
 

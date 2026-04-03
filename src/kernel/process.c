@@ -5,10 +5,10 @@
 #include "scheduler.h"
 
 /* ------------------------------------------------------------------ */
-/* Internal helpers                                                     */
+/* Internal helpers                                                   */
 /* ------------------------------------------------------------------ */
 
-static process_t* s_current = 0;
+static process_t* s_foreground = 0;
 
 static void proc_zero(process_t* p) {
     unsigned char* b = (unsigned char*)p;
@@ -22,7 +22,7 @@ static void str_copy_n(char* dst, const char* src, unsigned int n) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Kernel-task bootstrap                                                */
+/* Kernel-task bootstrap                                              */
 /* ------------------------------------------------------------------ */
 
 static void process_kernel_task_bootstrap(void) {
@@ -44,7 +44,7 @@ static void process_kernel_task_bootstrap(void) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Public API                                                           */
+/* Public API                                                         */
 /* ------------------------------------------------------------------ */
 
 process_t* process_create(const char* name) {
@@ -76,10 +76,6 @@ process_t* process_create_kernel_task(const char* name, void (*entry)(void)) {
         return 0;
     }
 
-    /*
-     * Kernel tasks run on the kernel page directory, so pd == 0 means
-     * "use paging_get_kernel_pd()" at runtime.
-     */
     proc->pd = 0;
     proc->kernel_entry = entry;
     proc->state = PROCESS_STATE_RUNNING;
@@ -107,26 +103,35 @@ void process_destroy(process_t* proc) {
         proc->kernel_stack_frame = 0;
     }
 
-    if (s_current == proc) {
-        s_current = 0;
+    if (s_foreground == proc) {
+        s_foreground = 0;
     }
 
     proc->state = PROCESS_STATE_EXITED;
     pmm_free_frame((u32)proc);
 }
 
-void process_set_current(process_t* proc) {
-    s_current = proc;
+process_t* process_get_current(void) {
+    return sched_current();
 }
 
-process_t* process_get_current(void) {
-    /*
-     * Transitional rule:
-     * while a foreground ELF is active through the old setjmp/longjmp
-     * path, it overrides the scheduler-owned current task.
-     */
-    if (s_current) {
-        return s_current;
+void process_set_foreground(process_t* proc) {
+    s_foreground = proc;
+}
+
+process_t* process_get_foreground(void) {
+    return s_foreground;
+}
+
+void process_wait(process_t* proc) {
+    if (!proc) return;
+
+    process_set_foreground(proc);
+
+    while (proc->state != PROCESS_STATE_ZOMBIE) {
+        __asm__ __volatile__("sti; hlt");
     }
-    return sched_current();
+
+    process_set_foreground(0);
+    process_destroy(proc);
 }

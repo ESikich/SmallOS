@@ -48,7 +48,7 @@ Writes `len` bytes from `buf` to terminal. Returns bytes written or `-1`.
 void sys_exit(int code);
 ```
 
-Terminates the current ring-3 process. Does not return to the caller. Control returns to the parent via `elf_process_exit()` → `longjmp()`. `elf_process_exit()` executes `sti` before `longjmp()` because SYS_EXIT enters through an interrupt gate and does not unwind through `iretd`.
+Terminates the current ring-3 process. Does not return to the caller. `sys_exit_impl()` switches to the kernel page directory and calls `sched_exit_current((unsigned int)regs)`. The task becomes `PROCESS_STATE_ZOMBIE`, is dequeued, and execution switches to the next runnable task. Destruction is deferred to a later waiter such as `process_wait()`.
 
 ---
 
@@ -92,7 +92,7 @@ void sys_yield(void);
 
 Voluntarily surrenders the current scheduler quantum. The calling process is immediately context-switched out and becomes runnable again on the next scheduler pass.
 
-**Implementation note:** `sys_yield_impl(esp)` receives `(unsigned int)regs` — a pointer to the `isr128_stub` register frame, which is structurally identical to the `irq0_stub` frame (same push order). This makes it valid as a scheduler resume ESP. `sched_yield_now(esp)` bypasses the quantum counter and calls `sched_do_switch(esp)`.
+**Implementation note:** `sys_yield_impl(esp)` receives `(unsigned int)regs` from `isr128_stub`, but the true resume-frame base is `esp - 8` because the stub passes ESP via `push esp` and then `call` adds a return address. `sched_yield_now(esp - 8)` bypasses the quantum counter and calls `sched_do_switch()` with the real resume ESP.
 
 ---
 
@@ -102,9 +102,9 @@ Voluntarily surrenders the current scheduler quantum. The calling process is imm
 int sys_exec(const char* name, int argc, char** argv);
 ```
 
-Loads and runs a named ELF program from the FAT16 partition through the current foreground run-and-wait path. The calling process is suspended until the child exits. Returns 0 on success, `-1` if not found or load fails.
+Loads and asynchronously spawns a named ELF program from the FAT16 partition. Returns `0` on success, `-1` if not found or load fails.
 
-`sys_exec_impl` copies `name` to a local kernel stack buffer before any CR3 switches because the load path later switches page directories and must not depend on the caller's user pointer remaining valid. `s_parent_proc`/`s_parent_esp0` statics save the parent context. `elf_run_image()` already seeds a valid scheduler entry context with `elf_seed_sched_context()`, but the active `SYS_EXEC` path still uses blocking foreground execution rather than spawn-style scheduler-owned launch. Only a single explicit parent context is tracked, so deeper nesting is not robustly supported.
+`sys_exec_impl` copies `name` to a local kernel stack buffer before any FAT16 or ELF work so the loader does not depend on the caller's user pointer remaining valid. It then calls `elf_run_named()`, which creates the process, seeds its scheduler bootstrap context, enqueues it, and returns immediately.
 
 ---
 
@@ -187,7 +187,7 @@ u_readline(...)    sys_read + null-terminate + strip newline
 
 * Programs run in ring 3 — hardware-enforced privilege separation
 * Kernel trusts user pointers (no copy-from-user validation yet)
-* `SYS_YIELD` and `SYS_EXEC` use the same `isr128_stub` frame as the timer path — the frame pointer is a valid scheduler resume ESP
+* `SYS_YIELD` and the timer path use the same stub layout, but the real scheduler resume ESP is `esp - 8`, not raw `esp`
 * EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`
 * The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.
 

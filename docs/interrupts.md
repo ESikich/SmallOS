@@ -132,7 +132,7 @@ vector 32 → irq0_stub → irq0_handler_main(esp)
 void irq0_handler_main(unsigned int esp) {
     timer_handle_irq();
     outb(0x20, 0x20);   /* EOI before sched_tick */
-    sched_tick(esp);
+    sched_tick(esp - 8);
 }
 ```
 
@@ -183,7 +183,7 @@ handler typically sets regs->eax = return value
   ↓
 pop frame, iretd → ring 3 resumes
 
-Exception: `SYS_EXIT` does not return through `iretd`; it unwinds through `elf_process_exit()` → `longjmp()` after restoring the parent context.
+Exception: `SYS_EXIT` does not return through `iretd`; it switches to the kernel page directory, calls `sched_exit_current((unsigned int)regs)`, marks the task `PROCESS_STATE_ZOMBIE`, and switches to the next runnable task.
 ```
 
 ---
@@ -215,7 +215,7 @@ typedef struct syscall_regs {
 
 # Scheduler Integration
 
-`irq0_stub` was extended to pass ESP to C specifically to support the scheduler. The kernel ESP at that point is the address of the register frame sitting on the current context's kernel stack. The scheduler records this as `sched_esp` and passes it to `sched_switch` as `next_esp` when resuming the context.
+`irq0_stub` was extended to pass ESP to C specifically to support the scheduler. Because the stub does `push esp` and then `call irq0_handler_main`, the true resume-frame base is `esp - 8`, not raw `esp`. That adjusted value is what the scheduler records as `sched_esp` and later passes to `sched_switch` as `next_esp`.
 
 The low-level switch interface is:
 

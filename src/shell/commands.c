@@ -7,6 +7,7 @@
 #include "pmm.h"
 #include "ata.h"
 #include "fat16.h"
+#include "../kernel/process.h"
 
 static int str_eq(const char* a, const char* b) {
     int i = 0;
@@ -32,6 +33,7 @@ static void cmd_help(command_t* cmd) {
     terminal_puts("  fsls               list FAT16 root directory\n");
     terminal_puts("  fsread <n>         dump first 16 bytes of a FAT16 file\n");
     terminal_puts("  runelf <n> [args]\n");
+    terminal_puts("  runelf_nowait <n> [args]\n");
 }
 
 static void cmd_clear(command_t* cmd) {
@@ -165,18 +167,11 @@ static void cmd_ataread(command_t* cmd) {
     }
 }
 
-/*
- * fsls — list FAT16 root directory
- */
 static void cmd_fsls(command_t* cmd) {
     (void)cmd;
     fat16_ls();
 }
 
-/*
- * fsread <n> — load a file from FAT16 and dump its first 16 bytes.
- * Expected: 7F 45 4C 46 for any ELF file.
- */
 static void cmd_fsread(command_t* cmd) {
     if (cmd->argc < 2) {
         terminal_puts("usage: fsread <n>\n");
@@ -211,24 +206,41 @@ static void cmd_runelf(command_t* cmd) {
         terminal_puts("Usage: runelf <n>\n");
         return;
     }
-    if (!elf_run_named(cmd->argv[1], cmd->argc - 1, &cmd->argv[1])) {
+
+    process_t* proc = elf_run_named(cmd->argv[1], cmd->argc - 1, &cmd->argv[1]);
+    if (!proc) {
         terminal_puts("runelf: failed\n");
+        return;
+    }
+
+    process_wait(proc);
+}
+
+static void cmd_runelf_nowait(command_t* cmd) {
+    if (cmd->argc < 2) {
+        terminal_puts("Usage: runelf_nowait <n>\n");
+        return;
+    }
+
+    if (!elf_run_named(cmd->argv[1], cmd->argc - 1, &cmd->argv[1])) {
+        terminal_puts("runelf_nowait: failed\n");
     }
 }
 
 static command_entry_t commands[] = {
-    { "help",    cmd_help },
-    { "clear",   cmd_clear },
-    { "echo",    cmd_echo },
-    { "about",   cmd_about },
-    { "halt",    cmd_halt },
-    { "reboot",  cmd_reboot },
-    { "uptime",  cmd_uptime },
-    { "meminfo", cmd_meminfo },
-    { "ataread", cmd_ataread },
-    { "fsls",    cmd_fsls },
-    { "fsread",  cmd_fsread },
-    { "runelf",  cmd_runelf },
+    { "help",          cmd_help },
+    { "clear",         cmd_clear },
+    { "echo",          cmd_echo },
+    { "about",         cmd_about },
+    { "halt",          cmd_halt },
+    { "reboot",        cmd_reboot },
+    { "uptime",        cmd_uptime },
+    { "meminfo",       cmd_meminfo },
+    { "ataread",       cmd_ataread },
+    { "fsls",          cmd_fsls },
+    { "fsread",        cmd_fsread },
+    { "runelf",        cmd_runelf },
+    { "runelf_nowait", cmd_runelf_nowait },
 };
 
 #define COMMAND_COUNT (sizeof(commands) / sizeof(commands[0]))

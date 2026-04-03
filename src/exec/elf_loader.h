@@ -5,37 +5,24 @@
  * elf_run_named(name, argc, argv)
  *
  * Look up `name` in the FAT16 partition, load it into a per-process address space,
- * and execute it in ring 3. Does not return until the process calls
- * sys_exit(). Returns 1 on success, 0 on failure.
+ * and create a process, seed its scheduler bootstrap context, enqueue it,
+ * and return the created process_t*. Returns 0 on failure.
  */
-int elf_run_named(const char* name, int argc, char** argv);
+#include "../kernel/process.h"
+
+process_t* elf_run_named(const char* name, int argc, char** argv);
 
 /*
  * elf_run_image(image, argc, argv)
  *
  * Load an ELF binary from the pointer `image` (in kernel address space)
- * into a fresh per-process page directory and execute it in ring 3.
- * Does not return until the process calls sys_exit().
- * Returns 1 on success, 0 on failure.
+ * into a fresh per-process page directory, seed its first-entry scheduler
+ * context, enqueue it, and return the created process_t*. Returns 0 on
+ * failure.
  *
  * The ELF must be linked at USER_CODE_BASE (0x400000).
  */
-int elf_run_image(const unsigned char* image, int argc, char** argv);
-
-/*
- * elf_process_exit()
- *
- * Called by sys_exit() from inside the syscall handler while the current
- * process page directory is still active.
- *
- * Restores the parent address space when one exists, otherwise falls back
- * to the kernel page directory; then destroys the exiting process and
- * longjmps back to the saved exit context in elf_run_image() without
- * unwinding through ring-3 frames.
- *
- * Does not return to its caller.
- */
-void elf_process_exit(void);
+process_t* elf_run_image(const unsigned char* image, int argc, char** argv);
 
 /*
  * elf_process_running()

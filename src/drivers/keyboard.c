@@ -3,29 +3,21 @@
 #include "shell.h"
 #include "screen.h"
 #include "terminal.h"
+#include "../kernel/scheduler.h"
+#include "../kernel/process.h"
 
 static unsigned char kb_color = 0x0F;
 
 /* ------------------------------------------------------------------ */
-/* Process-mode input buffer                                          */
+/* Process-input buffer                                               */
 /* ------------------------------------------------------------------ */
 
 #define KB_BUF_SIZE 256
 
 static char kb_buf[KB_BUF_SIZE];
-static int  kb_buf_head  = 0;   /* next write position */
-static int  kb_buf_tail  = 0;   /* next read  position */
+static int  kb_buf_head  = 0;
+static int  kb_buf_tail  = 0;
 static int  kb_buf_count = 0;
-static int  kb_process_mode = 0;
-
-void keyboard_set_process_mode(int on) {
-    kb_process_mode = on;
-    if (!on) {
-        kb_buf_head  = 0;
-        kb_buf_tail  = 0;
-        kb_buf_count = 0;
-    }
-}
 
 int keyboard_buf_available(void) {
     return kb_buf_count;
@@ -40,10 +32,26 @@ char keyboard_buf_pop(void) {
 }
 
 static void kb_buf_push(char c) {
-    if (kb_buf_count >= KB_BUF_SIZE) return;   /* drop if full */
+    if (kb_buf_count >= KB_BUF_SIZE) return;
     kb_buf[kb_buf_head] = c;
     kb_buf_head = (kb_buf_head + 1) % KB_BUF_SIZE;
     kb_buf_count++;
+}
+
+static void kb_buf_clear(void) {
+    kb_buf_head  = 0;
+    kb_buf_tail  = 0;
+    kb_buf_count = 0;
+}
+
+static int kb_in_process_mode(void) {
+    process_t* fg = process_get_foreground();
+    if (fg && fg->pd != 0) {
+        return 1;
+    }
+
+    process_t* cur = sched_current();
+    return cur && cur->pd != 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -369,13 +377,17 @@ void keyboard_handle_irq(void) {
     }
 
     if (ev.ascii) {
-        if (kb_process_mode) {
+        if (kb_in_process_mode()) {
             kb_buf_push(ev.ascii);
         } else if (ev.ascii == '\b') {
             shell_backspace();
         } else {
             shell_input_char(ev.ascii);
         }
+        return;
+    }
+
+    if (kb_in_process_mode()) {
         return;
     }
 
@@ -471,8 +483,5 @@ void keyboard_init(void) {
     e1_prefix = 0;
     pause_idx = 0;
     ps_state = PS_NONE;
-    kb_process_mode = 0;
-    kb_buf_head  = 0;
-    kb_buf_tail  = 0;
-    kb_buf_count = 0;
+    kb_buf_clear();
 }
