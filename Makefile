@@ -84,16 +84,10 @@ all: $(IMG_DIR)/os-image.bin
 dirs:
 	mkdir -p $(BUILD_SUBDIRS)
 
-$(OBJ_DIR)/kernel/setjmp.o: $(KERNEL_DIR)/setjmp.asm | dirs
+$(OBJ_DIR)/boot/%.o: $(BOOT_DIR)/%.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
-$(OBJ_DIR)/kernel/sched_switch.o: $(KERNEL_DIR)/sched_switch.asm | dirs
-	$(ASM) -f elf32 $< -o $@
-
-$(OBJ_DIR)/boot/kernel_entry.o: $(BOOT_DIR)/kernel_entry.asm | dirs
-	$(ASM) -f elf32 $< -o $@
-
-$(OBJ_DIR)/kernel/interrupts.o: $(KERNEL_DIR)/interrupts.asm | dirs
+$(OBJ_DIR)/kernel/%.o: $(KERNEL_DIR)/%.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
 $(OBJ_DIR)/kernel/%.o: $(KERNEL_DIR)/%.c | dirs
@@ -121,6 +115,9 @@ $(BIN_DIR)/%.elf: $(OBJ_DIR)/user/%.o | dirs
 	$(LD) $(USER_LDFLAGS) $< -o $@
 
 $(TOOLS_DIR)/mkfat16: tools/mkfat16.c | dirs
+	$(HOST_CC) -o $@ $<
+
+$(TOOLS_DIR)/mkimage: tools/mkimage.c | dirs
 	$(HOST_CC) -o $@ $<
 
 #
@@ -160,25 +157,17 @@ $(BIN_DIR)/boot.bin: $(BOOT_DIR)/boot.asm | dirs
 # boot-sector field declared by FAT16_LBA_PATCH_OFFSET in boot.asm so the kernel can read
 # it at runtime without any compile-time dependency.
 #
-$(IMG_DIR)/os-image.bin: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(BIN_DIR)/fat16.img | dirs
-	@kernel_size=$$(wc -c < $(BIN_DIR)/kernel.bin); \
-	padded=$$(( ($$kernel_size + $(BOOT_SECTOR_MASK)) & ~$(BOOT_SECTOR_MASK) )); \
-	pad=$$(( $$padded - $$kernel_size )); \
-	cp $(BIN_DIR)/kernel.bin $(BIN_DIR)/kernel_padded.bin; \
-	dd if=/dev/zero bs=1 count=$$pad >> $(BIN_DIR)/kernel_padded.bin 2>/dev/null; \
-	kernel_sectors=$$(( $$padded / $(BOOT_SECTOR_SIZE) )); \
-	fat16_lba=$$(( $(KERNEL_LBA) + $$kernel_sectors )); \
-	echo "kernel:  $$kernel_size bytes ($$kernel_sectors sectors, LBA $(KERNEL_LBA))"; \
-	echo "fat16:   $(FAT16_TOTAL_SECTORS) sectors ($(FAT16_TOTAL_SIZE_MB) MB), LBA $$fat16_lba"; \
-	cat $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel_padded.bin \
-		$(BIN_DIR)/fat16.img > $@; \
-	lba0=$$(( $$fat16_lba & 0xFF )); \
-	lba1=$$(( ($$fat16_lba >> 8) & 0xFF )); \
-	lba2=$$(( ($$fat16_lba >> 16) & 0xFF )); \
-	lba3=$$(( ($$fat16_lba >> 24) & 0xFF )); \
-	printf "$$(printf '\\%03o\\%03o\\%03o\\%03o' $$lba0 $$lba1 $$lba2 $$lba3)" | \
-		dd of=$@ bs=1 seek=$(BOOT_FAT16_LBA_PATCH_OFFSET) count=4 conv=notrunc 2>/dev/null; \
-	echo "fat16:   LBA $$fat16_lba patched into sector 0 offset $(BOOT_FAT16_LBA_PATCH_OFFSET)"
+$(IMG_DIR)/os-image.bin: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(BIN_DIR)/fat16.img $(TOOLS_DIR)/mkimage | dirs
+	$(TOOLS_DIR)/mkimage \
+		--boot $(BIN_DIR)/boot.bin \
+		--loader $(BIN_DIR)/loader2.bin \
+		--kernel $(BIN_DIR)/kernel.bin \
+		--fat16 $(BIN_DIR)/fat16.img \
+		--out $@ \
+		--sector-size $(BOOT_SECTOR_SIZE) \
+		--kernel-lba $(KERNEL_LBA) \
+		--loader-size $(LOADER2_SIZE_BYTES) \
+		--boot-fat16-lba-patch-offset $(BOOT_FAT16_LBA_PATCH_OFFSET)
 
 -include $(wildcard $(OBJ_DIR)/*.d)
 -include $(wildcard $(OBJ_DIR)/*/*.d)

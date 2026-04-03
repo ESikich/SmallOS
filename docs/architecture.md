@@ -1,12 +1,14 @@
 # Build/Boot Layout Ownership
 
-Boot-image layout facts are owned by the boot-stage source files, not by the Makefile:
+Boot-image layout facts are owned by the files that define them, not by the Makefile:
 
+* `src/boot/boot.asm` owns `BOOT_SECTOR_SIZE`
 * `src/boot/boot.asm` owns `FAT16_LBA_PATCH_OFFSET`
 * `src/boot/loader2.asm` owns `KERNEL_LBA`
 * `src/boot/loader2.asm` owns `LOADER2_SIZE_BYTES`
+* `tools/mkfat16.c` owns `TOTAL_SIZE_MB` / `TOTAL_SECTORS`
 
-The Makefile consumes these declarations while building `os-image.bin`.
+The Makefile consumes these declarations while building `os-image.bin`, and passes them into `mkimage` for final image assembly.
 
 ---
 
@@ -425,7 +427,7 @@ Sectors 68–99     Root directory (512 entries × 32 bytes = 32 sectors)
 Sectors 100+      Data region  (cluster 2 = sectors 100–103, etc.)
 ```
 
-The FAT16 start LBA is computed at build time as `5 + kernel_sectors` and patched as a little-endian u32 into byte offset 504 of sector 0. At runtime, `fat16_init()` reads ATA sector 0, extracts that value, and uses it to locate the live FAT16 volume.
+The FAT16 start LBA is computed during final image assembly by `mkimage` as `KERNEL_LBA + kernel_sectors` and patched as a little-endian u32 into the boot-sector field declared by `FAT16_LBA_PATCH_OFFSET`. At runtime, `fat16_init()` reads ATA sector 0, extracts that value, and uses it to locate the live FAT16 volume.
 
 Verified at runtime: `ataread <FAT16_LBA>` shows `EB 58 90 SIMPLEOS` and `0x55 0xAA`; `ataread <FAT16_LBA + 100>` shows `7F 45 4C 46` (ELF magic at cluster 2).
 
@@ -524,21 +526,21 @@ This is async spawn, not blocking foreground execution.
 ## Disk image layout
 
 ```text
-LBA 0         boot.bin              (512 bytes)
-LBA 1–4       loader2.bin           (2048 bytes)
-LBA 5+        kernel_padded.bin     (sector-aligned)
-LBA 5+ks      fat16.img             (16 MB FAT16 partition)
+LBA 0                     boot.bin
+LBA 1–4                   loader2.bin
+LBA KERNEL_LBA ... N      padded kernel region
+LBA N+1 ...               fat16.img
 ```
 
-`kernel.bin` is padded to a 512-byte sector boundary before concatenation. `FAT16_LBA = 5 + kernel_sectors` is patched into boot sector offset 504 after image assembly.
+`kernel.bin` is padded to a sector boundary during final image assembly by `mkimage`. `FAT16_LBA = KERNEL_LBA + kernel_sectors` is patched into the boot-sector field declared by `FAT16_LBA_PATCH_OFFSET`.
 
 ## Key generated artifacts
 
 ```text
 build/gen/loader2.gen.asm    KERNEL_SECTORS injected
-build/bin/kernel_padded.bin  kernel.bin padded to sector boundary
 build/bin/fat16.img          16 MB FAT16 image built by build/tools/mkfat16
-build/tools/mkfat16          host tool (no external FS dependencies)
+build/tools/mkfat16          host tool for FAT volume construction
+build/tools/mkimage          host tool for final disk image assembly
 build/obj/setjmp.o           assembled from src/kernel/setjmp.asm
 build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
 ```

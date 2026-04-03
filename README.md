@@ -57,7 +57,8 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 │   └── user/       hello.c, ticks.c, args.c, readline.c, exec_test.c,
 │                   user_lib.h, user_syscall.h
 ├── tools/
-│   └── mkfat16.c
+│   ├── mkfat16.c
+│   └── mkimage.c
 ├── build/
 ├── Makefile
 ├── linker.ld
@@ -95,7 +96,7 @@ runelf <name> [args] load and run an ELF from the FAT16 partition
 runelf_nowait <name> [args] enqueue an ELF and return immediately
 ```
 
-Current FAT16 programs: `hello`, `ticks`, `args`, `runelf_test`, `readline`, `exec_test`
+Current FAT16 programs: `hello`, `ticks`, `args`, `runelf_test`, `readline`, `exec_test`, `fileread`
 
 ---
 
@@ -143,20 +144,29 @@ runelf hello
 ```text
 LBA 0           boot.bin              (512 bytes)
 LBA 1–4         loader2.bin           (currently 2048 bytes)
-LBA KERNEL_LBA+ kernel_padded.bin     (sector-aligned)
+LBA KERNEL_LBA+ padded kernel region  (sector-aligned)
 LBA KERNEL_LBA+ks
                fat16.img             (16 MB FAT16 partition)
 ```
 
 `KERNEL_LBA` is declared in `src/boot/loader2.asm`. `FAT16_LBA_PATCH_OFFSET` is declared in `src/boot/boot.asm`.
 
-During image assembly, the Makefile reads those declarations and computes:
+During image assembly, the Makefile reads those declarations and passes them to `mkimage`, which computes:
 
 ```text
 FAT16_LBA = KERNEL_LBA + kernel_sectors
 ```
 
 The resulting FAT16 start LBA is patched into the boot-sector field declared by `FAT16_LBA_PATCH_OFFSET` (currently offset 504) after image assembly.
+
+---
+
+## Build Tools
+
+```text
+mkfat16   builds the FAT16 volume containing user ELFs
+mkimage   assembles the final bootable disk image
+```
 
 ---
 

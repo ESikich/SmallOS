@@ -67,10 +67,21 @@ Do not add imports of `process.h`, `scheduler.h`, or `shell.h` to `keyboard.c` o
 
 ---
 
+### 7. Build scripts must discover layout facts from the files that own them
+
+Examples:
+
+* `boot.asm` owns `BOOT_SECTOR_SIZE` and `FAT16_LBA_PATCH_OFFSET`
+* `loader2.asm` owns `KERNEL_LBA` and `LOADER2_SIZE_BYTES`
+* `mkfat16.c` owns FAT image size constants
+
+The Makefile should read those declarations and pass them into host tools such as `mkimage`. Do not reintroduce anonymous layout numbers into the Makefile.
+
+---
 * `boot.asm` must be **exactly 512 bytes**, ending with `dw 0xAA55`
 * `loader2.asm` must be **exactly 2048 bytes**
-* `kernel.bin` must be padded to a 512-byte sector boundary before concatenation into the disk image (Makefile handles this)
-* `FAT16_LBA` is computed as `5 + kernel_sectors` and patched into boot sector offset 504 — if padding is skipped, FAT16 reads will return zeros
+* `kernel.bin` must be padded to a 512-byte sector boundary during final image assembly (`mkimage` handles this)
+* `FAT16_LBA` is computed as `KERNEL_LBA + kernel_sectors` and patched into the boot-sector field declared by `FAT16_LBA_PATCH_OFFSET` — if padding is skipped, FAT16 reads will return incorrect data
 
 ### Loader2 address invariant
 
@@ -81,7 +92,7 @@ safe kernel size = (loader2_address - 0x1000) / 512 sectors
                  = (0xA000 - 0x1000) / 512 = 72 sectors = 36 KB
 ```
 
-The required invariant is `0x1000 + kernel_sectors * 512 < loader2 load address`. If the kernel exceeds 72 sectors with loader2 at `0xA000`, move loader2 to `0xB000` and update `LOADER2_OFFSET` in `boot.asm` and `[org]` in `loader2.asm`.
+The required invariant is `0x1000 + kernel_sectors * BOOT_SECTOR_SIZE < loader2 load address`. If the kernel exceeds 72 sectors with loader2 at `0xA000`, move loader2 to `0xB000` and update `LOADER2_OFFSET` in `boot.asm` and `[org]` in `loader2.asm`.
 
 **Symptom of violation**: BIOS INT 0x13 hangs silently mid-transfer at `Loading...` with no error message printed.
 
@@ -302,7 +313,7 @@ Useful signals:
 | 12 | Timer fires but no preemption | EOI sent after sched_tick; or irq0_stub not passing ESP |
 | 13 | System freezes after context switch | EOI not sent before sched_switch; IRQ0 permanently masked |
 | 14 | Hangs at "Loading." | Kernel too large — overwrites loader2 during INT 0x13 read; move loader2 higher |
-| 15 | "fat16: LBA not patched" | dd patch in Makefile os-image.bin rule failed; check printf octal escape |
+| 15 | "fat16: LBA not patched" | final image assembly failed; check the `mkimage` step and its arguments |
 | 16 | Heap grows across runelf | fat16_load is using kmalloc instead of static buffer |
 | 17 | "fat16: not found" | Filename not matching 8.3 uppercase format; check mkfat16 output |
 
