@@ -3,7 +3,7 @@
 ; Stage 2 loader contract:
 ;   - loaded by boot sector to physical 0xA000
 ;   - occupies exactly 4 sectors (2048 bytes)
-;   - kernel image begins at disk LBA 5 (0-based)
+;   - kernel image begins at disk LBA KERNEL_LBA (0-based)
 ;   - kernel is loaded to physical 0x1000
 ;   - after loading, stage 2 enters 32-bit protected mode
 ;   - then jumps to kernel entry at 0x1000
@@ -170,4 +170,5 @@ loader_msg           db "Loading...", 0
 kernel_loaded_msg    db "K", 13, 10, 0
 disk_msg             db "Disk err!", 0
 
-times 2048-($-$$) db 0
+LOADER2_SIZE_BYTES equ 2048
+times LOADER2_SIZE_BYTES-($-$$) db 0

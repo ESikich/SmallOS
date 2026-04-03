@@ -141,13 +141,22 @@ runelf hello
 ## Disk Image Layout
 
 ```text
-LBA 0         boot.bin              (512 bytes)
-LBA 1–4       loader2.bin           (2048 bytes)
-LBA 5+        kernel_padded.bin     (sector-aligned)
-LBA 5+ks      fat16.img             (16 MB FAT16 partition)
+LBA 0           boot.bin              (512 bytes)
+LBA 1–4         loader2.bin           (currently 2048 bytes)
+LBA KERNEL_LBA+ kernel_padded.bin     (sector-aligned)
+LBA KERNEL_LBA+ks
+               fat16.img             (16 MB FAT16 partition)
 ```
 
-FAT16_LBA is patched into boot sector offset 504 after image assembly.
+`KERNEL_LBA` is declared in `src/boot/loader2.asm`. `FAT16_LBA_PATCH_OFFSET` is declared in `src/boot/boot.asm`.
+
+During image assembly, the Makefile reads those declarations and computes:
+
+```text
+FAT16_LBA = KERNEL_LBA + kernel_sectors
+```
+
+The resulting FAT16 start LBA is patched into the boot-sector field declared by `FAT16_LBA_PATCH_OFFSET` (currently offset 504) after image assembly.
 
 ---
 

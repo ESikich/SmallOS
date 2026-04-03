@@ -16,7 +16,7 @@ This image contains:
 
 ```text
 boot.bin         stage 1 bootloader   (512 bytes, exactly)
-loader2.bin      stage 2 loader       (2048 bytes, exactly)
+loader2.bin      stage 2 loader       (size declared by loader2.asm; currently 2048 bytes)
 kernel.bin       kernel               (padded to 512-byte sector boundary in image)
 fat16.img        FAT16 partition      (16 MB, appended after the kernel)
 ```
@@ -134,6 +134,26 @@ i686-elf-objcopy -O binary kernel.elf kernel.bin
 ```
 
 Strips all ELF metadata. The result is a flat binary. The `.bss` section has no representation in this file — it is zero-initialized at runtime by `kernel_entry.asm`.
+
+---
+
+
+# Layout Constant Ownership
+
+SmallOS keeps disk-layout constants in the source files that own them. The Makefile reads those declarations during image assembly rather than redefining the numbers itself.
+
+Current ownership:
+
+```text
+src/boot/boot.asm
+  FAT16_LBA_PATCH_OFFSET   ; currently 504
+
+src/boot/loader2.asm
+  KERNEL_LBA               ; currently 5
+  LOADER2_SIZE_BYTES       ; currently 2048
+```
+
+This keeps the boot-stage source files as the single source of truth for boot-sector and stage-2 layout facts.
 
 ---
 

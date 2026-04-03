@@ -23,10 +23,11 @@ BIOS
 The OS image (`os-image.bin`) is structured as:
 
 ```text
-LBA 0         → boot.bin              (512 bytes, exactly)
-LBA 1–4       → loader2.bin           (2048 bytes, exactly)
-LBA 5+        → kernel_padded.bin     (sector-aligned)
-LBA 5+ks      → fat16.img             (16 MB FAT16 partition)
+LBA 0           → boot.bin              (512 bytes, exactly)
+LBA 1–4         → loader2.bin           (currently 2048 bytes, exactly)
+LBA KERNEL_LBA+ → kernel_padded.bin     (sector-aligned)
+LBA KERNEL_LBA+ks
+               → fat16.img             (16 MB FAT16 partition)
 ```
 
 where `ks = ceil(kernel.bin / 512)`.
@@ -34,11 +35,11 @@ where `ks = ceil(kernel.bin / 512)`.
 Constraints:
 
 * `boot.bin` must be **exactly 512 bytes**
-* `loader2.bin` must be **exactly 2048 bytes (4 sectors)**
-* kernel begins at **LBA 5** (0-based)
+* `loader2.bin` must be **exactly `LOADER2_SIZE_BYTES` bytes** (currently 2048 bytes / 4 sectors)
+* kernel begins at **`KERNEL_LBA`** (currently 5, 0-based)
 * `kernel.bin` must be **padded to a 512-byte sector boundary** in the image so the FAT16 partition starts at a clean LBA
-* FAT16 partition starts at `5 + kernel_sectors`
-* FAT16 LBA is patched as a little-endian u32 into byte offset 504 of sector 0 after image assembly; the kernel reads it during `fat16_init()`
+* FAT16 partition starts at `KERNEL_LBA + kernel_sectors`
+* FAT16 LBA is patched as a little-endian u32 into the field declared by `FAT16_LBA_PATCH_OFFSET` in `boot.asm` (currently byte offset 504 of sector 0); the kernel reads it during `fat16_init()`
 
 ---
 
@@ -84,7 +85,7 @@ Loaded to `0x0000:0xA000`.
 ## Responsibilities
 
 * Check INT 0x13 LBA extension support — halt with message if unsupported
-* Load kernel from disk (LBA 5) to physical `0x1000`
+* Load kernel from disk (`KERNEL_LBA`, currently 5) to physical `0x1000`
 * Setup temporary GDT
 * Switch to 32-bit protected mode
 * Jump to kernel entry at `0x1000`
@@ -98,6 +99,16 @@ safe kernel size = (0xA000 - 0x1000) / 512 = 72 sectors = 36 KB
 ```
 
 If the kernel exceeds 72 sectors, move loader2 to `0xB000` and update `LOADER2_OFFSET` in `boot.asm` and `[org]` in `loader2.asm`.
+
+## Layout Ownership
+
+The boot stages own the disk-layout constants they depend on:
+
+* `boot.asm` declares `FAT16_LBA_PATCH_OFFSET`
+* `loader2.asm` declares `KERNEL_LBA`
+* `loader2.asm` declares `LOADER2_SIZE_BYTES`
+
+The Makefile reads these declarations during image construction rather than redefining the numbers independently.
 
 **Symptom of violation:** BIOS INT 0x13 hangs silently mid-transfer. The screen shows `Loading...` but never advances. No error is printed because the hang occurs inside the BIOS call.
 

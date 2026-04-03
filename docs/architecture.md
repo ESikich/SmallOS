@@ -1,3 +1,15 @@
+# Build/Boot Layout Ownership
+
+Boot-image layout facts are owned by the boot-stage source files, not by the Makefile:
+
+* `src/boot/boot.asm` owns `FAT16_LBA_PATCH_OFFSET`
+* `src/boot/loader2.asm` owns `KERNEL_LBA`
+* `src/boot/loader2.asm` owns `LOADER2_SIZE_BYTES`
+
+The Makefile consumes these declarations while building `os-image.bin`.
+
+---
+
 # Architecture Overview
 
 This document describes how SimpleOS boots, initializes, and executes programs.
@@ -48,7 +60,7 @@ kernel_main()
 Runs in **real mode**, then switches to **protected mode**.
 
 * Checks `INT 0x13 AH=0x41` for LBA extension support — halts if not available
-* Loads kernel (LBA 5) to `0x1000` via `INT 0x13 AH=0x42`
+* Loads kernel (`KERNEL_LBA`, currently 5) to `0x1000` via `INT 0x13 AH=0x42`
 * Sets up temporary GDT, enables protected mode, jumps to `0x1000`
 
 One value injected by Makefile at build time: `KERNEL_SECTORS`.
@@ -89,7 +101,7 @@ Inside `kernel_main()`:
 6. `keyboard_init()`, `timer_init(100)`, `idt_init()` — drivers and interrupt table
 7. `sched_init()` — initialise the scheduler data structures
 8. `ata_init()` — software reset ATA primary channel (`0x1F0`), poll until ready
-9. `fat16_init()` — read ATA sector 0, extract the patched FAT16 start LBA from byte offset 504, then read and validate the FAT16 BPB at that runtime-discovered location
+9. `fat16_init()` — read ATA sector 0, extract the patched FAT16 start LBA from the field declared by `FAT16_LBA_PATCH_OFFSET` in `boot.asm` (currently byte offset 504), then read and validate the FAT16 BPB at that runtime-discovered location
 10. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
 11. `sched_enqueue(shell_proc)` — make the shell runnable
 12. `process_start_reaper()` — create and enqueue the zombie reaper kernel task

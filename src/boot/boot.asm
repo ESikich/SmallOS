@@ -77,5 +77,12 @@ boot_msg   db "Booting stage2...", 0
 loaded_msg db " loaded", 0
 disk_msg   db " Disk read error!", 0
 
-times 510-($-$$) db 0
+BOOT_SECTOR_SIZE       equ 512
+BOOT_SIGNATURE_SIZE    equ 2
+FAT16_LBA_PATCH_SIZE   equ 4
+FAT16_LBA_PATCH_OFFSET equ 504
+
+times FAT16_LBA_PATCH_OFFSET-($-$$) db 0
+fat16_start_lba dd 0
+times BOOT_SECTOR_SIZE-BOOT_SIGNATURE_SIZE-($-$$) db 0
 dw 0xAA55
