@@ -33,37 +33,43 @@ HOST_CC=gcc
 LDFLAGS=-T linker.ld -m elf_i386
 USER_LDFLAGS=-m elf_i386 -Ttext-segment 0x400000 -e _start
 
-KERNEL_OBJS=\
-	$(OBJ_DIR)/boot/kernel_entry.o \
-	$(OBJ_DIR)/kernel/interrupts.o \
-	$(OBJ_DIR)/kernel/setjmp.o \
-	$(OBJ_DIR)/kernel/sched_switch.o \
-	$(OBJ_DIR)/kernel/kernel.o \
-	$(OBJ_DIR)/kernel/idt.o \
-	$(OBJ_DIR)/drivers/keyboard.o \
-	$(OBJ_DIR)/shell/shell.o \
-	$(OBJ_DIR)/shell/line_editor.o \
-	$(OBJ_DIR)/drivers/terminal.o \
-	$(OBJ_DIR)/drivers/screen.o \
-	$(OBJ_DIR)/kernel/system.o \
-	$(OBJ_DIR)/kernel/timer.o \
-	$(OBJ_DIR)/kernel/klib.o \
-	$(OBJ_DIR)/kernel/memory.o \
-	$(OBJ_DIR)/kernel/pmm.o \
-	$(OBJ_DIR)/kernel/process.o \
-	$(OBJ_DIR)/kernel/scheduler.o \
-	$(OBJ_DIR)/shell/parse.o \
-	$(OBJ_DIR)/shell/commands.o \
-	$(OBJ_DIR)/exec/elf_loader.o \
-	$(OBJ_DIR)/kernel/syscall.o \
-	$(OBJ_DIR)/kernel/gdt.o \
-	$(OBJ_DIR)/kernel/paging.o \
-	$(OBJ_DIR)/drivers/ata.o \
-	$(OBJ_DIR)/drivers/fat16.o
+KERNEL_ASM_SRCS=\
+	$(BOOT_DIR)/kernel_entry.asm \
+	$(KERNEL_DIR)/interrupts.asm \
+	$(KERNEL_DIR)/setjmp.asm \
+	$(KERNEL_DIR)/sched_switch.asm
+
+KERNEL_C_SRCS=\
+	$(KERNEL_DIR)/kernel.c \
+	$(KERNEL_DIR)/idt.c \
+	$(DRIVERS_DIR)/keyboard.c \
+	$(SHELL_DIR)/shell.c \
+	$(SHELL_DIR)/line_editor.c \
+	$(DRIVERS_DIR)/terminal.c \
+	$(DRIVERS_DIR)/screen.c \
+	$(KERNEL_DIR)/system.c \
+	$(KERNEL_DIR)/timer.c \
+	$(KERNEL_DIR)/klib.c \
+	$(KERNEL_DIR)/memory.c \
+	$(KERNEL_DIR)/pmm.c \
+	$(KERNEL_DIR)/process.c \
+	$(KERNEL_DIR)/scheduler.c \
+	$(SHELL_DIR)/parse.c \
+	$(SHELL_DIR)/commands.c \
+	$(EXEC_DIR)/elf_loader.c \
+	$(KERNEL_DIR)/syscall.c \
+	$(KERNEL_DIR)/gdt.c \
+	$(KERNEL_DIR)/paging.c \
+	$(DRIVERS_DIR)/ata.c \
+	$(DRIVERS_DIR)/fat16.c
 
 USER_PROGS=hello ticks args runelf_test readline exec_test fileread
+USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
 
-USER_OBJS=$(addprefix $(OBJ_DIR)/user/,$(addsuffix .o,$(USER_PROGS)))
+KERNEL_OBJS=$(patsubst $(SRC_DIR)/%.asm,$(OBJ_DIR)/%.o,$(KERNEL_ASM_SRCS)) \
+            $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(KERNEL_C_SRCS))
+
+USER_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(USER_SRCS))
 USER_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_PROGS)))
 
 all: $(IMG_DIR)/os-image.bin
