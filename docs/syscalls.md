@@ -239,7 +239,6 @@ u_readline(...)    sys_read + null-terminate + strip newline
 
 * `SYS_SLEEP`
 * `SYS_ALLOC`
-* per-element `argv[]` pointer validation in `SYS_EXEC`
 * `SYS_FREAD` read caching to avoid repeated ATA loads for the same file
 
 ---

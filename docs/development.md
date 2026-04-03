@@ -344,7 +344,6 @@ Useful signals:
 ## Next Steps (Recommended)
 
 * `SYS_FREAD` read caching — avoid re-loading the full file from ATA on every `sys_fread` call; cache the loaded buffer keyed by fd until `sys_close`
-* Per-element `argv[]` validation in `SYS_EXEC` — currently only the array base is checked; each `argv[i]` string pointer should also be validated
 * `SYS_SLEEP` — block the calling process for N timer ticks, yield to the scheduler, wake via timer IRQ
 
 ---
