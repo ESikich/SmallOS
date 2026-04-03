@@ -118,6 +118,7 @@ kernel_main()
  → ata_init()            initialise ATA primary channel
  → fat16_init()          read BPB, validate FAT16 volume
  → create shell task     explicit kernel task with its own stack
+ → process_start_reaper() create and enqueue the zombie reaper task
  → sti
  → sched_start(shell)    switch from boot stack into shell task
 
@@ -231,10 +232,9 @@ This path no longer relies on a cached pointer into the packed TSS structure.
 
 ## Current Direction
 
-The system is in a deliberate hybrid stage:
+The scheduler-owned execution model is complete:
 
-* the **shell** is scheduler-owned
-* **ELF user programs** are also scheduler-owned tasks entered through `elf_user_task_bootstrap()`
-* `runelf` blocks by waiting for `PROCESS_STATE_ZOMBIE`, while `runelf_nowait` returns immediately after enqueue
-
-The current architecture already uses the scheduler for first entry, preemption, and exit lifecycle; remaining work is mainly around background-child reaping and further polish.
+* the **shell** is a scheduler-owned kernel task
+* **ELF user programs** are scheduler-owned tasks entered through `elf_user_task_bootstrap()`
+* `runelf` blocks by waiting for `PROCESS_STATE_ZOMBIE` via `process_wait()`
+* `runelf_nowait` and `SYS_EXEC` children are automatically reaped by the **reaper kernel task** (`sched_reap_zombies()`) within one scheduler quantum of exit — no frame leaks

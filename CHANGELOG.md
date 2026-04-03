@@ -1,6 +1,27 @@
 # Changelog
-
-## [Current] — SmallOS cleanup pass
+ 
+## [Current] — Zombie reaper kernel task
+ 
+### Added
+ 
+* **Zombie reaper** — permanent kernel task that automatically reclaims processes with no explicit waiter
+  * `sched_reap_zombies()` in `scheduler.c` — walks `s_table` back-to-front, calls `process_destroy()` on every `PROCESS_STATE_ZOMBIE` task that is not the currently running task
+  * `reaper_task_main()` in `process.c` — kernel task loop: call `sched_reap_zombies()`, then `sti; hlt` until the next timer tick
+  * `process_start_reaper()` — creates and enqueues the reaper; called from `kernel_main()` before `sched_start()`
+ 
+### Fixed
+ 
+* `runelf_nowait` and `SYS_EXEC` children that exited with no waiter leaked their `process_t` frame and kernel stack frame permanently. The reaper now frees them within one scheduler quantum.
+ 
+### Key design notes
+ 
+* The reaper sleeps in `hlt` between scans — CPU overhead is negligible.
+* `sched_reap_zombies()` skips the currently running slot, preserving the invariant that a task's kernel stack must not be freed while it is still executing.
+* `process_wait()` remains the preferred path for foreground children; the reaper only handles unclaimed zombies.
+ 
+---
+ 
+## [Previous] — SmallOS cleanup pass
 
 ### Added
 

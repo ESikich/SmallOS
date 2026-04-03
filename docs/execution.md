@@ -190,12 +190,13 @@ That transitions the CPU from CPL 0 to CPL 3 and begins execution at `e_entry` w
 
 # Parent / Child Tracking
 
-The old explicit parent-tracking statics are gone. The current design relies on scheduler ownership plus an optional foreground input owner:
+The old explicit parent-tracking statics are gone. The current design relies on scheduler ownership, foreground input ownership, and automatic zombie reaping:
 
 - `runelf` launches the child, then waits with `process_wait(proc)`
-- `runelf_nowait` launches the child and returns immediately
+- `runelf_nowait` launches the child and returns immediately; the reaper task frees it after exit
+- `SYS_EXEC` children are also unclaimed — freed by the reaper
 - interactive foreground input is tracked with `process_set_foreground(proc)` / `process_get_foreground()`
-- process destruction is deferred until a waiter observes `PROCESS_STATE_ZOMBIE`
+- process destruction is either explicit via `process_wait()` or automatic via `sched_reap_zombies()`
 
 ---
 
@@ -279,6 +280,7 @@ kernel_main()
   fat16_init()
   create shell kernel task
   sched_enqueue(shell_proc)
+  process_start_reaper()    ← creates and enqueues reaper task
   sti
   sched_start(shell_proc)
 ```
@@ -409,38 +411,14 @@ Likely causes:
 
 ---
 
-# Transitional Status
+# Current Status
 
-The execution model is intentionally mid-migration.
-
-Already true:
+The execution model is fully scheduler-owned.
 
 - scheduler-owned shell task
-- timer-driven preemption exists
-- `SYS_YIELD` exists
-- `SYS_EXEC` exists
+- scheduler-owned reaper task — frees unclaimed zombie processes automatically
+- timer-driven preemption
+- `SYS_YIELD`, `SYS_EXEC`, `SYS_EXIT` all scheduler-owned
 - ELF processes have real per-process page directories
-- `elf_run_image()` already calls `elf_seed_sched_context()`
-- user tasks already have valid seeded scheduler entry stacks that re-enter through `elf_user_task_bootstrap()`
-
-Not finished yet:
-
-- ELF launch through `sched_enqueue()` as the primary path
-- background-child reaping for async children
-- continued consistency around the scheduler-owned ELF/task model in docs and comments
-
----
-
-# Future Direction
-
-The intended next step is:
-
-```text
-runelf / sys_exec
-  → create process
-  → seed user bootstrap context (`elf_seed_sched_context()`)
-  → sched_enqueue(proc)
-  → scheduler owns first entry, preemption, and exit lifecycle
-```
-
-That would unify shell tasks and user ELF tasks under one execution model and eliminate the remaining parent-context special cases.
+- foreground `runelf` waits with `process_wait()`; `runelf_nowait` and `SYS_EXEC` children are reaped automatically
+- no known zombie or frame leaks
