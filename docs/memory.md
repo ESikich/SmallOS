@@ -1,229 +1,349 @@
-# Memory Model
+# Development Guide
 
-This document describes the physical memory layout, allocators, and paging architecture.
+This document explains how to safely work on the OS without breaking it.
 
 ---
 
-# Physical Memory Map
+## Build Workflow
 
-```text
-0x00007C00   bootloader stage 1 (BIOS loads here)
-0x0000A000   loader2 stage 2 (used before protected-mode jump)
-0x00001000   kernel image (loaded by loader2)
-0x00006000   kernel .bss start (page tables + PMM bitmap reside here)
-~0x0000A000  kernel .bss / early static region end (approx.; depends on build)
-0x00090000   KERNEL_BOOT_STACK_TOP (defined in `src/kernel/memory.h`)
-             boot stack top; grows downward from here and is the fallback ESP0
-             for kernel tasks that do not have a per-process kernel stack frame
-
-0x00100000   bump allocator base — permanent kernel structures
-               kmalloc()      — long-lived kernel-owned data only
-             grows upward to 0x1FFFFF
-
-0x00200000   PMM base — reclaimable frames
-               pmm_alloc_frame() — process_t structs, process page directories,
-                                   ELF segment frames, user stack frames,
-                                   all process-private page tables,
-                                   per-process kernel stack frames
-             6 MB = 1536 frames; all reclaimed on process exit
-0x00800000   PMM ceiling (= identity-map limit)
-
-0x00400000   USER_CODE_BASE — ELF virtual address (per-process mapping)
-0xBFFFF000   user stack virtual address (per-process mapping)
+```bash
+make clean && make
+qemu-system-i386 -drive format=raw,file=build/img/os-image.bin
 ```
 
+Do not use `-fda` (floppy). LBA extended reads require hard disk mode.
+
 ---
 
-# Two-Allocator Contract
+## Project Rules
 
-The system has two physical allocators with **disjoint, non-overlapping ranges**:
+### 1. Headers must NOT define functions
+
+### 2. One definition per symbol
+
+### 3. Never include `.c` files
+
+### 4. Always include required headers
+
+If you see `implicit declaration of function` — you forgot a header.
+
+### 5. No private copies of shared utilities
+
+`terminal_put_uint` and `terminal_put_hex` are declared in `terminal.h` and defined in `terminal.c`. Do not add private copies in any other file.
+
+`src/kernel/klib.h` / `src/kernel/klib.c` are now the canonical home for shared freestanding string and memory helpers such as `k_memcpy`, `k_memset`, `k_strlen`, `k_strcmp`, `k_strncpy`, and `k_starts_with`. If a helper is generally useful across more than one file, it belongs in `klib` rather than as a file-local static copy.
+
+---
+
+## klib
+
+`klib` is the shared freestanding kernel utility library in `src/kernel/klib.h` and `src/kernel/klib.c`.
+
+Use it for basic string and memory primitives that would normally come from libc, but must exist in the kernel without a hosted C runtime. The current exported helpers are:
+
+* `k_memcpy(dst, src, n)` — byte copy
+* `k_memset(dst, val, n)` — byte fill
+* `k_strlen(s)` — string length
+* `k_strcmp(a, b)` — equality check (`1` if equal, `0` otherwise)
+* `k_strncpy(dst, src, n)` — bounded copy that always null-terminates when `n > 0`
+* `k_starts_with(s, prefix)` — prefix check
+
+### klib rules
+
+* Use the `k_` prefix for shared freestanding helpers so call sites are clearly kernel-local and do not collide with any future libc-facing wrappers.
+* New shared string / memory primitives should be added to `klib`, not reintroduced as private statics in individual `.c` files.
+* Keep file-local helpers file-local only when they are truly specific to one implementation and are not general-purpose utilities.
+
+---
+
+## Bootloader Rules
+
+* `boot.asm` must be **exactly 512 bytes**, ending with `dw 0xAA55`
+* `loader2.asm` must be **exactly 2048 bytes**
+* `kernel.bin` must be padded to a 512-byte sector boundary before concatenation into the disk image (Makefile handles this)
+* `FAT16_LBA` is computed as `5 + kernel_sectors` and patched into boot sector offset 504 — if padding is skipped, FAT16 reads will return zeros
+
+### Loader2 address invariant
+
+Loader2 is currently at `0xA000`. The kernel loads to `0x1000`. The kernel must not grow large enough to overwrite loader2 during the INT 0x13 read:
 
 ```text
-kmalloc / kmalloc_page   0x100000 – 0x1FFFFF   bump, no free
-pmm_alloc_frame          0x200000 – 0x7FFFFF   bitmap, freed on process exit
+safe kernel size = (loader2_address - 0x1000) / 512 sectors
+                 = (0xA000 - 0x1000) / 512 = 72 sectors = 36 KB
 ```
 
-**`kmalloc` / `kmalloc_page` are for permanent kernel-owned structures** — command-line parse buffers and other bump-allocator data with kernel lifetime. These allocations are never freed.
+The required invariant is `0x1000 + kernel_sectors * 512 < loader2 load address`. If the kernel exceeds 72 sectors with loader2 at `0xA000`, move loader2 to `0xB000` and update `LOADER2_OFFSET` in `boot.asm` and `[org]` in `loader2.asm`.
 
-**`pmm_alloc_frame` is for everything reclaimed on exit** — `process_t` structs, process page directories, ELF segment frames, user stack frames, all process-private page tables, and per-process kernel stack frames. All of these are freed by `process_destroy()`.
-
-**PMM ceiling = identity-map limit (0x800000).** Frames above this address are not identity-mapped. The kernel accesses all PMM frames as direct pointers (phys == virt). `PMM_BASE + PMM_SIZE` must not exceed `0x800000`.
-
-**The two ranges are disjoint.** `pmm_alloc_frame()` and `kmalloc_page()` can never return the same address. If they overlapped, the PMM bitmap would hand out frames already claimed by the bump allocator, causing silent corruption.
+**Symptom of violation**: BIOS INT 0x13 hangs silently mid-transfer at `Loading...` with no error message printed.
 
 ---
 
-# Bump Allocator (`kmalloc` / `kmalloc_page`)
+## GDT Rules
+
+Kernel must load its own GDT early in `kernel_main()`, before interrupts are enabled. The GDT has 6 entries (null, k-code, k-data, u-code, u-data, TSS). The task register must be loaded with `ltr 0x28` in `gdt_init()`. If you add entries, update the array size and `gp.limit`.
+
+---
+
+## TSS Rules
+
+`tss_set_kernel_stack(esp0)` is the supported interface for updating TSS.ESP0.
+
+It must be called before every `iret` into ring 3. For a process-owned kernel stack, the value must be `kernel_stack_frame + PAGE_SIZE`. `elf_user_task_bootstrap()` sets it before first ring-3 entry for a user task, and scheduler-driven context switches apply the incoming process's `next_esp0` through `sched_switch` via `tss_set_kernel_stack()`.
+
+Do not reintroduce `tss_get_esp0_ptr()` or any pointer-based access into the packed TSS structure.
+
+---
+
+## Paging Rules
+
+### BSS must be zeroed before paging_init() and pmm_init()
+
+### paging_map_page() takes a page directory pointer
 
 ```c
-void  memory_init(unsigned int start);   // set base; called with 0x100000
-void* kmalloc(unsigned int size);        // allocate, 4-byte aligned
-void* kmalloc_page(void);               // allocate one 4096-byte page-aligned block
-unsigned int memory_get_heap_top(void); // current bump pointer (for meminfo)
+void paging_map_page(u32* pd, u32 virt, u32 phys, u32 flags);
 ```
 
-No free. Suitable for structures that live for the lifetime of the kernel: long-lived kernel-owned data and other permanent structures. `memory_get_heap_top()` is used by `meminfo` to report heap usage.
+### Process page tables must be PMM-backed
 
-Shell command parsing is intentionally **not** a bump-allocation use case anymore. `parse_command()` tokenizes the mutable input buffer in place and stores pointers in a fixed-size `argv[MAX_ARGS]` array, so repeated shell commands do not grow `heap used`.
+* Process page directories come from `pmm_alloc_frame()`
+* Any process-private user page table comes from `pmm_alloc_frame()`
+* Kernel-shared page tables remain shared from `kernel_page_directory`
+
+Do not allocate process-owned paging structures with `kmalloc_page()`. The bump allocator has no free path and will leak across `runelf` invocations.
+
+### Switching CR3
+
+`paging_switch(pd)` flushes the TLB. After switching to a process PD, only memory mapped in that directory is accessible. In the current design, process page directories copy the kernel mappings (all kernel PDEs except the private ELF region at PD index 1), so kernel code/data, VGA, heap, and stack remain accessible after the switch. Switch back to the kernel PD only when you specifically need the master kernel address space rather than the process-owned one.
 
 ---
 
-# Physical Memory Manager (`pmm`)
+## Memory Allocator Rules
+
+```text
+kmalloc / kmalloc_page   0x100000 – 0x1FFFFF   permanent (no free)
+pmm_alloc_frame          0x200000 – 0x7FFFFF   reclaimable on process exit
+```
+
+`kmalloc` / `kmalloc_page` are for permanent kernel structures only. Do not use them for transient buffers — the bump allocator has no free path and heap used will grow permanently with each call.
+
+`pmm_alloc_frame` is for everything reclaimed on exit: `process_t` structs, process page directories, ELF frames, stack frames, all process-private page tables, and kernel stack frames.
+
+### FAT16 load buffer rule
+
+`fat16_load()` uses a static BSS buffer (`s_load_buf[256 KB]`), not `kmalloc`. Do not change this to `kmalloc` — each `runelf` call would permanently consume heap.
+
+**Verify after changes with `meminfo`:**
+
+```text
+meminfo              ← note heap top and free frame count
+runelf hello
+meminfo              ← heap top and frame count must be identical
+runelf hello
+meminfo              ← still identical after second run
+```
+
+### Shell parser rule
+
+`parse_command()` must not allocate from the bump heap. It tokenizes the mutable shell input buffer in place, stores pointers in a fixed-size `argv[MAX_ARGS]` array, and must not call `kmalloc()`.
+
+### Process Data Ownership Rules
+
+* Do not rely on shell input buffers for process data.
+* All user-process arguments must be copied into process-owned storage before execution.
+* Pointers passed into a process must remain valid for the entire lifetime of that process.
+
+---
+
+## Scheduler Rules
+
+`sched_init()` must be called **after `idt_init()` and before `sti`**. It initialises the scheduler table. The shell is not registered here — it is created later in `kernel_main()` and added with `sched_enqueue()`. If called after `sti`, the first timer tick may fire with an uninitialised scheduler state.
+
+`sched_enqueue(proc)` — call after `proc->state = RUNNING` when handing a task to the scheduler. The shell task follows this path in `kernel_main()`, and ELF launches now do as well.
+
+`sched_dequeue(proc)` is for scheduler-owned tasks. In the current tree it is used from `sched_exit_current()`. It removes the process from the run queue, compacts the table, and adjusts scheduler indices so round-robin execution can continue over the remaining runnable entries.
+
+**EOI ordering in `irq0_handler_main`**: EOI is sent **before** `sched_tick`. If `sched_switch` lands on a different context and `irq0_handler_main` never returns, EOI must already be sent. Do not move it after `sched_tick`.
+
+**`irq0_stub` passes ESP to C**: `irq0_stub` pushes ESP and passes it to `irq0_handler_main`. This ESP is the address of the register frame on the kernel stack — the scheduler saves it as the resume point. If you modify `irq0_stub`, ensure ESP is still passed correctly.
+
+**`sched_switch` argument loading**: `sched_switch.asm` loads all four arguments (`save_esp`, `next_esp`, `next_cr3`, `next_esp0`) into registers **before** modifying ESP. Any change to the argument order must update both the C caller and the assembly. The arguments must all be read from the old stack before `esp` is replaced.
+
+**`sched_esp == 0` guard**: the scheduler skips slots with `sched_esp == 0` — this prevents switching to a process that has never been preempted and has no valid resume stack. Do not remove this guard.
+
+---
+
+## Process Rules
+
+`process_create(name)` allocates from PMM. Fill `pd`, `kernel_stack_frame`, and `sched_esp` (leave 0 — set by first preemption) before launching.
+
+`process_destroy(proc)` frees PD, kernel stack frame, and the process_t frame. After this call `proc` is dangling.
+
+Exited tasks must be marked `PROCESS_STATE_ZOMBIE` and destroyed later from a safe stack. Do not free a task from inside `sched_exit_current()`, because the kernel is still running on that task's kernel stack.
+
+---
+
+## ELF Loader Rules
+
+* Link user ELFs with `-Ttext-segment 0x400000`, not `-Ttext`
+* User frames from `pmm_alloc_frame()` only
+* `elf_user_task_bootstrap()` sets `tss_set_kernel_stack()` before first ring-3 entry for a user task, and scheduler-driven switches update ESP0 for later entries
+* Use `esp - 8` from the IRQ0 / syscall-stub paths when handing a resume frame to the scheduler
+* Preserve the true interrupt/syscall resume ESP; do not let `sched_switch()` overwrite it with the scheduler's own C call-frame ESP
+
+---
+
+## ATA / FAT16 Rules
+
+* `ata_init()` must be called before `fat16_init()` and before any `ata_read_sectors()` call
+* `fat16_init()` must be called before `fat16_load()` or `fat16_ls()`
+* `fat16_load()` returns a pointer into the static `s_load_buf` buffer — the caller must not hold this pointer across another `fat16_load()` call
+* `elf_run_image()` copies all ELF segment data into PMM frames before returning, so the buffer is safe to reuse immediately after `elf_run_named()` returns
+
+---
+
+## Interrupt Rules
+
+### After `sti`, everything must be valid
+
+* GDT loaded
+* IDT loaded
+* PIC remapped
+* All IRQ handlers installed
+* TSS loaded (`ltr` executed)
+* Scheduler initialised (`sched_init()` called)
+
+Failure → `#GP → #DF → triple fault → reboot`.
+
+### IRQ EOI should be sent before IRQ-side work that must not leave the PIC masked
+
+Both `irq0_handler_main` and `irq1_handler_main` send EOI as their first meaningful action. Do not move EOI below `sched_tick`; for IRQ1, keep it before `keyboard_handle_irq()` as the current handler ordering rule.
+
+---
+
+## Syscall Rules
+
+If you touch `isr128_stub`, you MUST update `syscall_regs_t` to match. The struct field order is determined by the assembly push order. See `syscalls.md`.
+
+---
+
+## Debugging Strategy
+
+### Early boot
+
+```asm
+mov byte [0xB8000], 'X'
+mov byte [0xB8001], 0x4F
+```
+
+### Kernel stage
 
 ```c
-void pmm_init(void);             // initialise bitmap; all frames start free
-u32  pmm_alloc_frame(void);      // return a 4KB-aligned physical address, or 0
-void pmm_free_frame(u32 addr);   // reclaim a frame; warns on double-free
-u32  pmm_free_count(void);       // current free frame count (used by meminfo)
+terminal_puts("debug\n");
+terminal_put_uint(value);
 ```
 
-192-byte bitmap in `.bss` (zeroed at boot). Linear scan with a search hint for O(n) worst-case allocation. Detects and logs double-free attempts.
+### Inside ring 3
 
-Run `meminfo` before and after `runelf` and `exec_test` to confirm the free count is unchanged.
+```c
+sys_write("debug\n", 6);
+```
 
----
-
-# Process Memory Lifecycle
-
-Each `runelf` invocation allocates from the PMM and fully reclaims on exit:
+### Memory accounting
 
 ```text
-process_create()
-  → pmm_alloc_frame()           process_t struct (< PAGE_SIZE, fits in one frame)
-
-process_pd_create()
-  → pmm_alloc_frame()           process page directory
-
-paging_map_page() for ELF segments:
-  → pmm_alloc_frame()           process-private page table (first use only)
-  → pmm_alloc_frame() × N       one frame per ELF page
-
-paging_map_page() for user stack:
-  → pmm_alloc_frame()           process-private page table (first use only)
-  → pmm_alloc_frame()           stack frame
-
-elf_run_image():
-  → pmm_alloc_frame()           per-process kernel stack (TSS ESP0)
-
---- process runs ---
-
-process_destroy()
-  → process_pd_destroy(pd)
-      pmm_free_frame() × N      ELF segment frames
-      pmm_free_frame()          stack frame  (walked via PD index 767 PTE)
-      pmm_free_frame()          each process-private page table
-      pmm_free_frame()          page directory itself
-  → pmm_free_frame()            kernel stack frame
-  → pmm_free_frame()            process_t frame
+meminfo   ← before and after runelf (heap and frames must be stable)
 ```
 
-After a clean `runelf`, `pmm_free_count()` returns the same value as before the call. The same reclamation logic is used on `SYS_EXEC` exit, but only a single explicit parent context is tracked, so deeper nesting should not be documented as a guaranteed case.
+### QEMU logging
+
+```bash
+qemu-system-i386 -drive format=raw,file=build/img/os-image.bin \
+    -no-reboot -no-shutdown \
+    -d int,cpu_reset,guest_errors \
+    -D qemu.log
+```
+
+Useful signals:
+
+* `v=0e` at `cpl=3` — page fault from ring 3
+* `v=0d` — general protection fault
+* `v=08` — double fault
+* `TR=0000` — task register not loaded
+* `CPU Reset` — triple fault
+* Repeated `INT 0x20` at same EIP — timer stuck
 
 ---
 
-# Process Paging Allocation Model
+## Common Failure Modes
 
-All paging structures associated with user processes are allocated from the Physical Memory Manager (PMM), not the bump allocator.
-
-## Rules
-
-* `kernel_page_directory` may still reference long-lived kernel-owned tables
-* Process page directories are allocated with `pmm_alloc_frame()`
-* Process-private user page tables are allocated with `pmm_alloc_frame()`
-* Process-private frames (ELF pages, user stack, kernel stack, `process_t`) are allocated with `pmm_alloc_frame()`
-
-## Rationale
-
-Previously, a process-private page table could come from `kmalloc_page()` and survive process teardown, creating a per-process leak in kernel heap pages. Using PMM for all process-owned paging structures makes allocation and reclamation symmetric.
-
-## Teardown
-
-`process_pd_destroy()` now:
-
-1. Walks the user PDE range
-2. Frees every mapped user frame referenced by present PTEs
-3. Frees every process-private page table frame
-4. Frees the page directory frame itself
-
-Kernel-shared mappings are left intact.
+| # | Symptom | Cause |
+|---|---|---|
+| 1 | Reboot loop | Bad GDT or IDT |
+| 2 | Triple fault on boot | BSS not zeroed |
+| 3 | "fat16: bad boot signature" | kernel.bin not sector-padded, FAT16 image missing, or `-fda` mode |
+| 4 | Red '8' on screen | Double fault — bad TSS ESP0 or corrupt stack |
+| 5 | Crash after iret | TSS not loaded; wrong TSS ESP0; bad user GDT entries; DPL=0 on int 0x80 gate |
+| 6 | argv garbage in ring 3 | Strings not copied to user stack before iret |
+| 7 | Shell doesn't return | child never reached ZOMBIE, or scheduler resume ESP bookkeeping is wrong |
+| 8 | Syscalls silently broken | syscall_regs_t mismatch |
+| 9 | PMM leak after runelf | ELF linked with `-Ttext` not `-Ttext-segment` |
+| 10 | "pmm: double free" | process_destroy called twice |
+| 11 | Crash on first context switch | sched_esp==0 guard missing; or sched_init not called before sti |
+| 12 | Timer fires but no preemption | EOI sent after sched_tick; or irq0_stub not passing ESP |
+| 13 | System freezes after context switch | EOI not sent before sched_switch; IRQ0 permanently masked |
+| 14 | Hangs at "Loading." | Kernel too large — overwrites loader2 during INT 0x13 read; move loader2 higher |
+| 15 | "fat16: LBA not patched" | dd patch in Makefile os-image.bin rule failed; check printf octal escape |
+| 16 | Heap grows across runelf | fat16_load is using kmalloc instead of static buffer |
+| 17 | "fat16: not found" | Filename not matching 8.3 uppercase format; check mkfat16 output |
 
 ---
 
-# Paging Architecture
+## Safe Development Order
 
-## Kernel page directory
-
-Three static arrays in `.bss`, zeroed at boot by `kernel_entry.asm`:
-
-```text
-kernel_page_directory[1024]   master PD (CR3 value during kernel execution)
-low_page_table_0[1024]        PD index 0 → 0x000000–0x3FFFFF (identity, supervisor)
-low_page_table_1[1024]        PD index 1 → 0x400000–0x7FFFFF (identity, supervisor)
-```
-
-After `paging_init()`: virtual == physical for all addresses `0x000000–0x7FFFFF`.
-
-## Per-process page directories
-
-`process_pd_create()` allocates a fresh PD from the PMM and copies the kernel's entries (PD indices 0 and 2–1023) into it so kernel code, VGA, ATA/FAT16 buffers, and heap remain accessible after CR3 switch. PD index 1 is left empty — each process gets its own private ELF mapping there.
-
-### Page table allocation policy
-
-`paging_map_page()` uses PMM-backed page tables for process-private user mappings. Kernel-shared mappings remain shared from the kernel page directory.
-
-The physical **frames** pointed to by user PTEs are PMM-allocated and freed by `process_pd_destroy()`. Process-private page tables are also PMM-allocated and freed there.
-
-## Virtual address space per process
-
-```text
-0x000000 – 0x3FFFFF   kernel (shared, supervisor-only — ring 3 cannot access)
-0x400000 – 0x7FFFFF   user ELF region (private mappings within PD index 1)
-0x800000 – 0xBFFEFFFF   unmapped
-0xBFFFF000 – 0xBFFFFFFF user stack page (private, PAGE_USER | PAGE_WRITE)
-0xC0000000            USER_STACK_TOP (top of user virtual space, not a mapped heap base)
-```
-
-## CR3 transitions
-
-```text
-boot               → kernel_page_directory (CR3 set by paging_init)
-runelf / exec      → process PD (paging_switch before entering ring 3)
-sys_exit           → kernel_page_directory
-                     (paging_switch in sys_exit_impl, before sched_exit_current)
-```
-
-On exit, CR3 is switched back to the kernel page directory before the task becomes `PROCESS_STATE_ZOMBIE`. The task is not destroyed there; destruction happens later from a safe waiter stack.
-
-Always switch CR3 away from the dying task's page directory **before** freeing that page directory.
+1. `make clean && make` — fix compile errors
+2. Boot — confirm shell appears and `fat16: ok` prints
+3. `ataread 0` — confirm `sig: 0x55 0xAA` and correct `fat16_lba patch` value
+4. `fsls` — confirm FAT16 root directory lists correctly
+5. `fsread hello.elf` — confirm `7F 45 4C 46` (ELF magic)
+6. `runelf hello` — confirm ELF loads from FAT16 and exits cleanly
+7. `meminfo` before and after — heap top and frame count must be identical
+8. Run a second `runelf hello` — confirm static buffer reuse is safe
+9. Then expand
 
 ---
 
-## Disk Image Layout
+## Adding a New User Program
 
-```text
-LBA 0         boot.bin              (512 bytes)
-LBA 1–4       loader2.bin           (2048 bytes)
-LBA 5+        kernel_padded.bin     (sector-aligned)
-LBA 5+ks      fat16.img             (16 MB FAT16 partition)
-```
-
-`kernel.bin` is padded to a sector boundary before concatenation. `fat16_lba = 5 + kernel_sectors` is computed at build time, then patched as a little-endian u32 into sector 0 byte offset 504 after image assembly. At runtime, `fat16_init()` reads sector 0 via ATA and extracts the patched value.
+1. Create `src/user/myprog.c` with `void _start(int argc, char** argv)`
+2. End with `sys_exit(0)`
+3. Add `myprog` to `USER_PROGS` in Makefile — automatically included in the FAT16 image
+4. `make clean && make`
+5. `runelf myprog`
 
 ---
 
-## Current Limitations
+## Coding Style
 
-* ELF programs linked at fixed address `0x400000` — no PIE/relocation
-* Kernel trusts user pointers in syscalls
-* Bump allocator has no free — permanent kernel structures only
-* ELF programs now launch as scheduler-enqueued tasks with per-process kernel stacks, and foreground runs are reclaimed later through `process_wait()` after the task reaches `PROCESS_STATE_ZOMBIE`
-* User argument pointers are only safe while the caller's CR3 is active; long-lived exec state must copy what it needs before switching away
+* Keep things simple
+* Prefer explicit over clever
+* Avoid hidden magic
+* Debug first, optimize later
 
 ---
 
-## Direction
+## Next Steps (Recommended)
 
-Next steps:
+* True blocking `SYS_READ` — when the keyboard buffer is empty, yield to the scheduler instead of busy-polling on `hlt`, and re-enqueue the process when input arrives
+* Copy-from-user validation in syscall pointer arguments
+* Per-process file descriptors / `SYS_OPEN` backed by the FAT16 driver
 
-* Make `runelf` create scheduler-owned user tasks
-* Keep allocator ownership clean: PMM for process-owned state, bump allocator for permanent kernel state
+---
+
+## Final Rule
+
+If something breaks:
+
+👉 Assume **you violated a contract** (ABI, memory layout, paging, privilege level, allocator invariants, scheduler invariants, or hardware expectations).
+
+Then trace from there.

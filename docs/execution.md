@@ -247,7 +247,7 @@ Important invariant:
 
 # Scheduler Interaction
 
-The scheduler is real and preemptive, but ELF launch is still not fully under scheduler ownership.
+The scheduler is real, preemptive, and fully owns ELF launch.
 
 ## Timer path
 
@@ -285,25 +285,21 @@ kernel_main()
   sched_start(shell_proc)
 ```
 
-## What the scheduler owns today
+## What the scheduler owns
 
-The scheduler directly owns:
+The scheduler owns everything:
 
-- kernel tasks created with `process_create_kernel_task()`
+- kernel tasks created with `process_create_kernel_task()` (shell, reaper)
+- ELF user tasks — `elf_loader.c` copies argv into `process_t` storage, builds a valid `sched_esp` on the process kernel stack, seeds first scheduler entry through `elf_user_task_bootstrap()`, and enqueues the process with `sched_enqueue(proc)`
 - voluntary yields via `SYS_YIELD` → `sched_yield_now()`
 - timer-driven preemption via `sched_tick()`
+- exit via `SYS_EXIT` → `sched_exit_current()`
 
-## What it does not fully own yet
-
-ELF launch is now fully scheduler-owned.
-
-`elf_loader.c` copies argv into `process_t` storage, builds a valid `sched_esp` on the process kernel stack, seeds first scheduler entry through `elf_user_task_bootstrap()`, and enqueues the process.
-
-The active execution path is now:
+The active execution path is:
 
 - **ELF launch uses `sched_enqueue(proc)`**
 - **foreground `runelf` waits with `process_wait()`**
-- **`runelf_nowait` returns immediately after enqueue**
+- **`runelf_nowait` and `SYS_EXEC` children are reaped automatically by the reaper task**
 
 ---
 

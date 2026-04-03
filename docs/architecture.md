@@ -521,13 +521,6 @@ build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
 * ELF link address fixed at 0x400000 — no PIE/relocation support
 * `SYS_EXEC` is async spawn; foreground waiting is handled by `process_wait()` in shell-side command flow
 * Kernel trusts user pointers in syscalls (no copy-from-user validation)
-* ELF processes are not yet scheduler-owned tasks
-
----
-
-# Future Architecture Direction
-
-1. Enqueue ELF processes into the scheduler as full tasks using the already-seeded `sched_esp` / `elf_user_task_bootstrap()` entry path
 
 ---
 
@@ -573,6 +566,6 @@ interactive shell with meminfo / ataread / fsls / fsread / runelf commands
 
 Foundation for:
 
-* ELF processes as scheduler-owned tasks
-* richer filesystem-backed program loading
-* cleaner separation between kernel tasks and user tasks
+* richer filesystem-backed program loading (file descriptors, `SYS_OPEN`/`SYS_CLOSE`)
+* true blocking syscalls (yield-to-scheduler on `SYS_READ` instead of busy-polling)
+* copy-from-user validation in syscall handlers
