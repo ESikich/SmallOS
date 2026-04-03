@@ -160,7 +160,7 @@ The process page directory is therefore a **hybrid** layout:
 
 # Ring-3 Entry
 
-After mappings are created, `elf_run_image()` prepares for ring-3 entry.
+After mappings are created, `elf_run_image()` prepares the task for its first scheduled entry.
 
 The code currently does all of the following:
 

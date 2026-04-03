@@ -232,8 +232,6 @@ process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
         return 0;
     }
 
-    tss_set_kernel_stack(proc->kernel_stack_frame + PAGE_SIZE);
-
     if (!elf_seed_sched_context(proc, eh->e_entry, argc, argv)) {
         process_destroy(proc);
         return 0;
