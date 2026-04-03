@@ -16,6 +16,8 @@ OBJ_DIR=$(BUILD_DIR)/obj
 BIN_DIR=$(BUILD_DIR)/bin
 GEN_DIR=$(BUILD_DIR)/gen
 IMG_DIR=$(BUILD_DIR)/img
+BOOT_SECTOR_SIZE := $(shell awk '/^BOOT_SECTOR_SIZE[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
+BOOT_SECTOR_MASK := $(shell echo $$(( $(BOOT_SECTOR_SIZE) - 1 )))
 KERNEL_LBA := $(shell awk '/^KERNEL_LBA[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/loader2.asm)
 BOOT_FAT16_LBA_PATCH_OFFSET := $(shell awk '/^FAT16_LBA_PATCH_OFFSET[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 LOADER2_SIZE_BYTES := $(shell awk '/^LOADER2_SIZE_BYTES[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/loader2.asm)
@@ -165,7 +167,7 @@ $(BIN_DIR)/fat16.img: $(USER_ELFS) $(TOOLS_DIR)/mkfat16 | dirs
 	$(TOOLS_DIR)/mkfat16 $@ $(USER_ELFS)
 
 $(GEN_DIR)/loader2.gen.asm: $(BOOT_DIR)/loader2.asm $(BIN_DIR)/kernel.bin | dirs
-	@kernel_sectors=$$(( ($$(wc -c < $(BIN_DIR)/kernel.bin) + 511) / 512 )); \
+	@kernel_sectors=$$(( ($$(wc -c < $(BIN_DIR)/kernel.bin) + $(BOOT_SECTOR_MASK)) / $(BOOT_SECTOR_SIZE) )); \
 	echo "kernel:  $$(wc -c < $(BIN_DIR)/kernel.bin) bytes ($$kernel_sectors sectors, LBA $(KERNEL_LBA))"; \
 	sed \
 		-e "s/__KERNEL_SECTORS__/$$kernel_sectors/" \
@@ -186,7 +188,7 @@ $(BIN_DIR)/boot.bin: $(BOOT_DIR)/boot.asm | dirs
 # Final disk image
 #
 # Layout:
-#   boot.bin             (512 bytes,   LBA 0)
+#   boot.bin             ($(BOOT_SECTOR_SIZE) bytes,   LBA 0)
 #   loader2.bin          (2048 bytes,  LBA 1-($(KERNEL_LBA)-1))
 #   kernel_padded.bin    (sector-aligned, LBA 5+)
 #   fat16.img            (16 MB FAT16 partition, LBA 5+kernel_sectors)
@@ -197,11 +199,11 @@ $(BIN_DIR)/boot.bin: $(BOOT_DIR)/boot.asm | dirs
 #
 $(IMG_DIR)/os-image.bin: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(BIN_DIR)/fat16.img | dirs
 	@kernel_size=$$(wc -c < $(BIN_DIR)/kernel.bin); \
-	padded=$$(( ($$kernel_size + 511) & ~511 )); \
+	padded=$$(( ($$kernel_size + $(BOOT_SECTOR_MASK)) & ~$(BOOT_SECTOR_MASK) )); \
 	pad=$$(( $$padded - $$kernel_size )); \
 	cp $(BIN_DIR)/kernel.bin $(BIN_DIR)/kernel_padded.bin; \
 	dd if=/dev/zero bs=1 count=$$pad >> $(BIN_DIR)/kernel_padded.bin 2>/dev/null; \
-	kernel_sectors=$$(( $$padded / 512 )); \
+	kernel_sectors=$$(( $$padded / $(BOOT_SECTOR_SIZE) )); \
 	fat16_lba=$$(( $(KERNEL_LBA) + $$kernel_sectors )); \
 	echo "kernel:  $$kernel_size bytes ($$kernel_sectors sectors, LBA $(KERNEL_LBA))"; \
 	echo "fat16:   32768 sectors (16 MB), LBA $$fat16_lba"; \

@@ -2,8 +2,9 @@
 [org 0x7C00]
 bits 16
 
-LOADER2_OFFSET  equ 0xA000
-LOADER2_SECTORS equ 4
+LOADER2_OFFSET   equ 0xA000
+BOOT_SECTOR_SIZE equ 512
+LOADER2_SECTORS  equ 4
 
 start:
     mov [BOOT_DRIVE], dl
@@ -77,7 +78,6 @@ boot_msg   db "Booting stage2...", 0
 loaded_msg db " loaded", 0
 disk_msg   db " Disk read error!", 0
 
-BOOT_SECTOR_SIZE       equ 512
 BOOT_SIGNATURE_SIZE    equ 2
 FAT16_LBA_PATCH_SIZE   equ 4
 FAT16_LBA_PATCH_OFFSET equ 504
