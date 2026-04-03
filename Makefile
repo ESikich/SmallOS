@@ -37,6 +37,7 @@ KERNEL_OBJS=\
 	$(OBJ_DIR)/screen.o \
 	$(OBJ_DIR)/system.o \
 	$(OBJ_DIR)/timer.o \
+	$(OBJ_DIR)/klib.o \
 	$(OBJ_DIR)/memory.o \
 	$(OBJ_DIR)/pmm.o \
 	$(OBJ_DIR)/process.o \
@@ -97,6 +98,9 @@ $(OBJ_DIR)/system.o: $(KERNEL_DIR)/system.c $(KERNEL_DIR)/system.h $(KERNEL_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/timer.o: $(KERNEL_DIR)/timer.c $(KERNEL_DIR)/timer.h $(KERNEL_DIR)/ports.h | dirs
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJ_DIR)/klib.o: $(KERNEL_DIR)/klib.c $(KERNEL_DIR)/klib.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/memory.o: $(KERNEL_DIR)/memory.c $(KERNEL_DIR)/memory.h | dirs

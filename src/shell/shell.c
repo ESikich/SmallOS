@@ -6,6 +6,7 @@
 #include "memory.h"
 #include "commands.h"
 #include "parse.h"
+#include "klib.h"
 
 #define HISTORY_MAX 8
 #define SHELL_EVENT_QUEUE_SIZE 64
@@ -43,36 +44,6 @@ static int event_head = 0;
 static int event_tail = 0;
 static int event_count = 0;
 
-static int str_eq(const char* a, const char* b) {
-    int i = 0;
-    while (a[i] && b[i]) {
-        if (a[i] != b[i]) {
-            return 0;
-        }
-        i++;
-    }
-    return a[i] == '\0' && b[i] == '\0';
-}
-
-static int str_starts_with(const char* s, const char* prefix) {
-    int i = 0;
-    while (prefix[i]) {
-        if (s[i] != prefix[i]) {
-            return 0;
-        }
-        i++;
-    }
-    return 1;
-}
-
-static void str_copy(char* dst, const char* src, int max_len) {
-    int i = 0;
-    while (i < max_len - 1 && src[i]) {
-        dst[i] = src[i];
-        i++;
-    }
-    dst[i] = '\0';
-}
 
 static int shell_enqueue_event(shell_event_type_t type, char c) {
     if (event_count >= SHELL_EVENT_QUEUE_SIZE) {
@@ -121,25 +92,25 @@ static void shell_start_prompt(void) {
 }
 
 static void shell_history_add(const char* cmd) {
-    if (str_eq(cmd, "")) {
+    if (k_strcmp(cmd, "")) {
         return;
     }
 
-    if (history_count > 0 && str_eq(history[history_count - 1], cmd)) {
+    if (history_count > 0 && k_strcmp(history[history_count - 1], cmd)) {
         return;
     }
 
     if (history_count < HISTORY_MAX) {
-        str_copy(history[history_count], cmd, LINE_EDITOR_MAX);
+        k_strncpy(history[history_count], cmd, LINE_EDITOR_MAX);
         history_count++;
         return;
     }
 
     for (int i = 1; i < HISTORY_MAX; i++) {
-        str_copy(history[i - 1], history[i], LINE_EDITOR_MAX);
+        k_strncpy(history[i - 1], history[i], LINE_EDITOR_MAX);
     }
 
-    str_copy(history[HISTORY_MAX - 1], cmd, LINE_EDITOR_MAX);
+    k_strncpy(history[HISTORY_MAX - 1], cmd, LINE_EDITOR_MAX);
 }
 
 static void shell_set_editor_text(const char* s) {
@@ -238,7 +209,7 @@ void shell_poll(void) {
                 }
 
                 if (history_index == -1) {
-                    str_copy(saved_current, editor.buf, LINE_EDITOR_MAX);
+                    k_strncpy(saved_current, editor.buf, LINE_EDITOR_MAX);
                     history_index = history_count - 1;
                 } else if (history_index > 0) {
                     history_index--;

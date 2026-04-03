@@ -7,16 +7,8 @@
 #include "pmm.h"
 #include "ata.h"
 #include "fat16.h"
-#include "../kernel/process.h"
-
-static int str_eq(const char* a, const char* b) {
-    int i = 0;
-    while (a[i] && b[i]) {
-        if (a[i] != b[i]) return 0;
-        i++;
-    }
-    return a[i] == '\0' && b[i] == '\0';
-}
+#include "process.h"
+#include "klib.h"
 
 static void cmd_help(command_t* cmd) {
     (void)cmd;
@@ -249,7 +241,7 @@ void commands_execute(command_t* cmd) {
     if (cmd->argc == 0) return;
 
     for (unsigned int i = 0; i < COMMAND_COUNT; i++) {
-        if (str_eq(cmd->argv[0], commands[i].name)) {
+        if (k_strcmp(cmd->argv[0], commands[i].name)) {
             commands[i].fn(cmd);
             return;
         }

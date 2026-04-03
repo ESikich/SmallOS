@@ -1,6 +1,7 @@
 #include "paging.h"
 #include "memory.h"
 #include "pmm.h"
+#include "klib.h"
 
 /*
  * paging.c — Paging subsystem
@@ -53,11 +54,6 @@ static void paging_panic(void) {
     vga[0] = 'P'; vga[1] = 0x4F;
     __asm__ __volatile__("cli");
     for (;;) { __asm__ __volatile__("hlt"); }
-}
-
-static void mem_zero_page(void* p) {
-    u32* w = (u32*)p;
-    for (u32 i = 0; i < PT_ENTRIES; i++) w[i] = 0;
 }
 
 static void flush_cr3(u32 pd_phys) {
@@ -125,7 +121,7 @@ void paging_map_page(u32* pd, u32 virt, u32 phys, u32 flags) {
             if (!frame) paging_panic();
             pt = (u32*)frame;
         }
-        mem_zero_page(pt);
+        k_memset(pt, 0, PAGE_SIZE);
         pd[pd_index] = (u32)pt | PAGE_PRESENT | PAGE_WRITE | PAGE_USER;
     }
 
@@ -152,7 +148,7 @@ u32* process_pd_create(void) {
     if (!frame) paging_panic();
 
     u32* pd = (u32*)frame;
-    mem_zero_page(pd);
+    k_memset(pd, 0, PAGE_SIZE);
 
     /*
      * Copy kernel PD entries into the process directory so that kernel

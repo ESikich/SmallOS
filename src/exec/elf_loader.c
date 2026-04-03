@@ -1,29 +1,16 @@
 #include "elf_loader.h"
 #include "../kernel/elf.h"
-#include "../kernel/paging.h"
-#include "../kernel/memory.h"
-#include "../kernel/pmm.h"
-#include "../kernel/process.h"
-#include "../kernel/scheduler.h"
-#include "../drivers/fat16.h"
-#include "../drivers/terminal.h"
-#include "../kernel/gdt.h"
+#include "paging.h"
+#include "memory.h"
+#include "pmm.h"
+#include "process.h"
+#include "scheduler.h"
+#include "fat16.h"
+#include "terminal.h"
+#include "gdt.h"
+#include "klib.h"
 
 typedef unsigned char u8;
-
-static void mem_copy(u8* dst, const u8* src, unsigned int n) {
-    for (unsigned int i = 0; i < n; i++) dst[i] = src[i];
-}
-
-static void mem_zero(u8* dst, unsigned int n) {
-    for (unsigned int i = 0; i < n; i++) dst[i] = 0;
-}
-
-static int str_len(const char* s) {
-    int n = 0;
-    while (s[n]) n++;
-    return n;
-}
 
 static void elf_enter_ring3(unsigned int entry,
                             unsigned int user_esp,
@@ -34,9 +21,9 @@ static void elf_enter_ring3(unsigned int entry,
     char* user_argv_ptrs[32];
 
     for (int i = argc - 1; i >= 0; i--) {
-        int len = str_len(argv[i]) + 1;
+        int len = k_strlen(argv[i]) + 1;
         sp -= len;
-        mem_copy((u8*)sp, (const u8*)argv[i], len);
+        k_memcpy(sp, argv[i], (k_size_t)len);
         user_argv_ptrs[i] = sp;
     }
 
@@ -112,14 +99,14 @@ static int elf_seed_sched_context(process_t* proc,
     }
 
     for (int i = 0; i < argc; i++) {
-        int len = str_len(argv[i]) + 1;
+        int len = k_strlen(argv[i]) + 1;
         if (used + (unsigned int)len > PROCESS_ARG_BYTES) {
             terminal_puts("elf: args too large for bootstrap\n");
             return 0;
         }
 
         proc->user_argv[i] = &proc->user_arg_data[used];
-        mem_copy((u8*)proc->user_argv[i], (const u8*)argv[i], (unsigned int)len);
+        k_memcpy(proc->user_argv[i], argv[i], (k_size_t)len);
         used += (unsigned int)len;
     }
 
@@ -182,7 +169,7 @@ process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
                 return 0;
             }
 
-            mem_zero((u8*)frame_phys, PAGE_SIZE);
+            k_memset((void*)frame_phys, 0, PAGE_SIZE);
             paging_map_page(proc->pd, page_virt, frame_phys,
                             PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
         }
@@ -205,7 +192,7 @@ process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
                     chunk = filesz - copied;
                 }
 
-                mem_copy(dst + page_off, src + copied, chunk);
+                k_memcpy(dst + page_off, src + copied, chunk);
                 copied += chunk;
             }
         }
@@ -220,7 +207,7 @@ process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
             return 0;
         }
 
-        mem_zero((u8*)stack_frame_phys, PAGE_SIZE);
+        k_memset((void*)stack_frame_phys, 0, PAGE_SIZE);
         paging_map_page(proc->pd, stack_virt, stack_frame_phys,
                         PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
     }

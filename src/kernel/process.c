@@ -3,23 +3,13 @@
 #include "paging.h"
 #include "terminal.h"
 #include "scheduler.h"
+#include "klib.h"
 
 /* ------------------------------------------------------------------ */
 /* Internal helpers                                                   */
 /* ------------------------------------------------------------------ */
 
 static process_t* s_foreground = 0;
-
-static void proc_zero(process_t* p) {
-    unsigned char* b = (unsigned char*)p;
-    for (unsigned int i = 0; i < sizeof(process_t); i++) b[i] = 0;
-}
-
-static void str_copy_n(char* dst, const char* src, unsigned int n) {
-    unsigned int i = 0;
-    for (; i < n - 1 && src[i]; i++) dst[i] = src[i];
-    dst[i] = '\0';
-}
 
 /* ------------------------------------------------------------------ */
 /* Kernel-task bootstrap                                              */
@@ -55,11 +45,11 @@ process_t* process_create(const char* name) {
     }
 
     process_t* proc = (process_t*)frame;
-    proc_zero(proc);
+    k_memset(proc, 0, sizeof(process_t));
 
     proc->state = PROCESS_STATE_UNUSED;
     if (name) {
-        str_copy_n(proc->name, name, PROCESS_NAME_MAX);
+        k_strncpy(proc->name, name, PROCESS_NAME_MAX);
     }
 
     return proc;
