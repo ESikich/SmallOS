@@ -72,22 +72,17 @@ KERNEL_OBJS=$(patsubst $(SRC_DIR)/%.asm,$(OBJ_DIR)/%.o,$(KERNEL_ASM_SRCS)) \
 USER_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(USER_SRCS))
 USER_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_PROGS)))
 
+OBJ_SUBDIRS=$(sort \
+	$(dir $(KERNEL_OBJS)) \
+	$(dir $(USER_OBJS)) \
+)
+
+BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(TOOLS_DIR) $(OBJ_SUBDIRS)
+
 all: $(IMG_DIR)/os-image.bin
 
 dirs:
-	mkdir -p \
-		$(BUILD_DIR) \
-		$(OBJ_DIR) \
-		$(OBJ_DIR)/boot \
-		$(OBJ_DIR)/kernel \
-		$(OBJ_DIR)/drivers \
-		$(OBJ_DIR)/shell \
-		$(OBJ_DIR)/exec \
-		$(OBJ_DIR)/user \
-		$(BIN_DIR) \
-		$(GEN_DIR) \
-		$(IMG_DIR) \
-		$(TOOLS_DIR)
+	mkdir -p $(BUILD_SUBDIRS)
 
 $(OBJ_DIR)/kernel/setjmp.o: $(KERNEL_DIR)/setjmp.asm | dirs
 	$(ASM) -f elf32 $< -o $@
