@@ -77,8 +77,8 @@ process_t* process_create_kernel_task(const char* name, void (*entry)(void)) {
     }
 
     /*
-     * Kernel tasks run on the kernel page directory, so pd == 0 keeps
-     * the scheduler sentinel meaning "use paging_get_kernel_pd()".
+     * Kernel tasks run on the kernel page directory, so pd == 0 means
+     * "use paging_get_kernel_pd()" at runtime.
      */
     proc->pd = 0;
     proc->kernel_entry = entry;

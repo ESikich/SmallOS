@@ -36,7 +36,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Shell now runs as an explicit kernel task scheduled by `scheduler.c`
 * **Preemptive round-robin scheduler** — timer IRQ (100 Hz) context-switches between kernel tasks; 10-tick (100 ms) quantum
 * **`SYS_YIELD`** — voluntary preemption; process surrenders its remaining quantum immediately
-* **`SYS_EXEC`** — user process launches a named child ELF through the current foreground path, blocks until it exits, and returns `0` on success / `-1` on failure; parent context is fully saved and restored
+**`SYS_EXEC`** — user process launches a named child ELF through the current foreground path, blocks until it exits, and returns `0` on success / `-1` on failure; the calling foreground context is saved/restored for this path, with only one explicit parent context tracked
 * **ATA PIO driver** — polls the primary IDE channel (`0x1F0`) to read 512-byte sectors from disk in 32-bit protected mode; no DMA or IRQ required
 * **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing all user ELFs; built by `tools/mkfat16.c` with no external dependencies; readable at runtime via ATA PIO
 
@@ -107,6 +107,7 @@ BIOS
  → kernel_entry.asm      zero BSS → kernel_main()
 
 kernel_main()
+ → terminal_init()       VGA text mode / terminal output
  → gdt_init()            GDT: null, k-code, k-data, u-code, u-data, TSS
  → paging_init()         enable paging, identity-map 8 MB
  → memory_init()         bump allocator at 0x100000

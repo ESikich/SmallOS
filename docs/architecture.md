@@ -18,6 +18,7 @@ kernel_entry.asm (32-bit)
   zeros BSS
   ↓
 kernel_main()
+  terminal_init()   ← VGA text mode, cursor control
   gdt_init()        ← null, k-code, k-data, u-code, u-data, TSS + ltr
   paging_init()     ← identity-maps first 8 MB, enables CR0.PG
   memory_init()     ← bump allocator base at 0x100000
@@ -514,7 +515,7 @@ build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
 # Known Limitations
 
 * ELF link address fixed at 0x400000 — no PIE/relocation support
-* `SYS_EXEC` is one-deep — `s_parent_proc`/`s_parent_esp0` are single statics
+* `SYS_EXEC` tracks only a single explicit parent context — `s_parent_proc`/`s_parent_esp0` are single statics
 * Kernel trusts user pointers in syscalls (no copy-from-user validation)
 * ELF processes are not yet scheduler-owned tasks
 
@@ -558,7 +559,7 @@ physical memory manager (bitmap, all frames reclaimed on exit — no leak)
 per-process kernel stacks (PMM frame per process, freed on exit)
 SYS_READ — blocking keyboard input for user programs
 SYS_YIELD — voluntary preemption via sched_yield_now()
-SYS_EXEC — nested foreground ELF execution with full parent context save/restore
+SYS_EXEC — foreground ELF execution with blocking parent save/restore; only one explicit parent context is tracked
 preemptive round-robin scheduler — timer IRQ context switch, 100 ms quantum
 ATA PIO driver — 28-bit LBA polling reads from primary IDE channel (0x1F0)
 FAT16 filesystem — ELF programs loaded from 16 MB FAT16 partition on disk

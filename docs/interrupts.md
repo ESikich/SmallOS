@@ -146,12 +146,12 @@ vector 33 → irq1_stub → irq1_handler_main
 
 ```c
 void irq1_handler_main(void) {
-    outb(0x20, 0x20);       /* EOI first — handler may never return */
+    outb(0x20, 0x20);       /* EOI first — keep PIC unmasked before IRQ-side work */
     keyboard_handle_irq();
 }
 ```
 
-EOI is sent first because the IRQ path can trigger work that may not return through the original straight-line handler path. In the current code, `keyboard_handle_irq()` feeds shell/process input, and shell command execution later enters the foreground ELF launch path. Keeping EOI first preserves the same safety rule as IRQ0: if control flow does not unwind normally, the PIC has already been unmasked.
+EOI is sent first so the PIC is unmasked before any IRQ-side work runs. In the current code, `keyboard_handle_irq()` feeds shell/process input and returns normally, but keeping EOI first preserves the same conservative rule used for IRQ0 and avoids coupling correctness to later control-flow changes.
 
 ---
 

@@ -57,7 +57,7 @@ The required invariant is `0x1000 + kernel_sectors * 512 < loader2 load address`
 
 ## GDT Rules
 
-Kernel must load its own GDT as the **first act** of `kernel_main()`. The GDT has 6 entries (null, k-code, k-data, u-code, u-data, TSS). The task register must be loaded with `ltr 0x28` in `gdt_init()`. If you add entries, update the array size and `gp.limit`.
+Kernel must load its own GDT early in `kernel_main()`, before interrupts are enabled. The GDT has 6 entries (null, k-code, k-data, u-code, u-data, TSS). The task register must be loaded with `ltr 0x28` in `gdt_init()`. If you add entries, update the array size and `gp.limit`.
 
 ---
 
@@ -192,9 +192,9 @@ meminfo              ← still identical after second run
 
 Failure → `#GP → #DF → triple fault → reboot`.
 
-### IRQ EOI must be sent before any handler that may not return
+### IRQ EOI should be sent before IRQ-side work that must not leave the PIC masked
 
-Both `irq0_handler_main` and `irq1_handler_main` send EOI as their first meaningful action. Do not move EOI below `sched_tick` or `keyboard_handle_irq`.
+Both `irq0_handler_main` and `irq1_handler_main` send EOI as their first meaningful action. Do not move EOI below `sched_tick`; for IRQ1, keep it before `keyboard_handle_irq()` as the current handler ordering rule.
 
 ---
 

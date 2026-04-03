@@ -216,7 +216,7 @@ init_pm:
 
 Segment registers loaded, stack set to `0x90000`, then execution jumps to the kernel entry point.
 
-The loader2 GDT is temporary. The kernel installs its own GDT as the very first call in `kernel_main()`. Relying on the loader2 GDT for interrupt handling results in a triple fault.
+The loader2 GDT is temporary. Early in `kernel_main()`, the kernel installs its own GDT with `gdt_init()` before interrupts are enabled. Relying on the loader2 GDT for interrupt handling results in a triple fault.
 
 ---
 
@@ -434,7 +434,7 @@ Stage 2  →  LBA extension check
          →  load kernel (LBA 5 → 0x1000, KERNEL_SECTORS sectors)
          →  protected mode entry
 Kernel   →  zero BSS
-         →  gdt_init, paging_init, memory_init, pmm_init
+         →  terminal_init, gdt_init, paging_init, memory_init, pmm_init
          →  keyboard, timer, idt, sched_init
          →  ata_init, fat16_init
          →  create shell task, sti, sched_start

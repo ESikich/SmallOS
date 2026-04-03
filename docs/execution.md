@@ -288,6 +288,7 @@ sched_tick(esp)
 
 ```text
 kernel_main()
+  terminal_init()
   gdt_init()
   paging_init()
   memory_init()

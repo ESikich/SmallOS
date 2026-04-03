@@ -115,7 +115,7 @@ process_destroy()
   → pmm_free_frame()            process_t frame
 ```
 
-After a clean `runelf`, `pmm_free_count()` returns the same value as before the call. This holds for nested exec via `SYS_EXEC` as well — the child's frames are fully reclaimed before the parent resumes.
+After a clean `runelf`, `pmm_free_count()` returns the same value as before the call. The same reclamation logic is used on `SYS_EXEC` exit, but only a single explicit parent context is tracked, so deeper nesting should not be documented as a guaranteed case.
 
 ---
 

@@ -103,6 +103,6 @@ void irq0_handler_main(unsigned int esp) {
 }
 
 void irq1_handler_main(void) {
-    outb(0x20, 0x20);   /* EOI first — keyboard_handle_irq may never return */
+    outb(0x20, 0x20);   /* EOI first — keep PIC unmasked before IRQ-side work */
     keyboard_handle_irq();
 }
