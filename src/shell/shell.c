@@ -242,6 +242,9 @@ void shell_task_main(void) {
     shell_init();
 
     for (;;) {
+        if (event_count == 0) {
+            __asm__ __volatile__("hlt");
+        }
         shell_poll();
     }
 }
