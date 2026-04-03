@@ -168,26 +168,38 @@ static int sys_read_impl(char* buf, unsigned int len) {
  *
  * Spawn a named ELF program asynchronously.
  *
- * name and argv are user virtual addresses — validated before use.
+ * name and argv are user virtual addresses — fully validated before use.
  * name is copied into a kernel-side buffer before calling elf_run_named()
  * because the loader later switches page directories and must not depend
  * on the caller's user pointer remaining valid.
  *
- * argv validation: we check that the argv array itself lies in user space.
- * Individual argv[i] string pointers are not validated here — they are
- * consumed by elf_seed_sched_context() while the caller's CR3 is still
- * active, so a bad argv[i] would fault rather than silently corrupt kernel
- * memory.  Full per-element argv validation is left for a future pass.
+ * argv validation:
+ *   1. The argv array base is checked with user_buf_ok() to ensure the
+ *      pointer array itself is within user space.
+ *   2. Each argv[i] string pointer is checked with user_str_ok() before
+ *      elf_seed_sched_context() calls k_strlen/k_memcpy on it.  Without
+ *      this, a user process could pass a kernel-address string pointer
+ *      that would dereference silently in ring-0 during the copy.
+ *   3. The checks happen here, while the caller's CR3 is still active,
+ *      so the argv array and its strings are readable.
  *
- * Returns 0 on success, -1 if validation fails or the program was not found.
+ * Returns 0 on success, -1 if any validation fails or the program was
+ * not found.
  */
 static int sys_exec_impl(const char* name, int argc, char** argv) {
     if (!user_str_ok((unsigned int)name)) return -1;
 
-    /* argv may legitimately be null if argc == 0 */
+    if (argc < 0 || argc > PROCESS_MAX_ARGS) return -1;
+
+    /* Validate the argv pointer array itself */
     if (argc > 0 && !user_buf_ok((unsigned int)argv,
                                   (unsigned int)argc * sizeof(char*))) {
         return -1;
+    }
+
+    /* Validate each individual argv[i] string pointer */
+    for (int i = 0; i < argc; i++) {
+        if (!user_str_ok((unsigned int)argv[i])) return -1;
     }
 
     char kname[EXEC_NAME_MAX];
