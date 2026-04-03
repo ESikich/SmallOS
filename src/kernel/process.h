@@ -11,7 +11,8 @@ typedef enum {
     PROCESS_STATE_UNUSED  = 0,
     PROCESS_STATE_RUNNING = 1,
     PROCESS_STATE_EXITED  = 2,
-    PROCESS_STATE_ZOMBIE  = 3
+    PROCESS_STATE_ZOMBIE  = 3,
+    PROCESS_STATE_WAITING = 4   /* blocked in SYS_READ, skipped by scheduler */
 } process_state_t;
 
 /* ------------------------------------------------------------------ */

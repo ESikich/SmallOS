@@ -1,6 +1,6 @@
 # Architecture Overview
 
-This document describes how SmallOS boots, initializes, and executes programs.
+This document describes how SimpleOS boots, initializes, and executes programs.
 
 ---
 
@@ -124,7 +124,7 @@ typedef struct {
     u32*            pd;                     /* PMM-allocated page directory        */
     u32             kernel_stack_frame;     /* PMM frame for ring-0 syscall stack  */
     unsigned int    sched_esp;              /* kernel ESP saved on preemption      */
-    process_state_t state;                  /* UNUSED / RUNNING / ZOMBIE / EXITED  */
+    process_state_t state;                  /* UNUSED / RUNNING / WAITING / ZOMBIE / EXITED */
     void          (*kernel_entry)(void);    /* kernel task entry point             */
     unsigned int    user_entry;             /* first ring-3 EIP for ELF tasks      */
     int             user_argc;              /* saved argc for bootstrap            */
@@ -293,6 +293,8 @@ The `isr128_stub` frame (pusha + 4 segment pushes + esp) is structurally identic
 
 Normal syscalls return through this saved interrupt frame. `SYS_EXIT` is the exception: it switches to the kernel page directory, marks the current task `PROCESS_STATE_ZOMBIE` through `sched_exit_current()`, and switches away instead of unwinding through the original `iretd` path.
 
+`SYS_READ` parks the calling process in `PROCESS_STATE_WAITING` and halts with `hlt` until a keypress arrives. It does **not** call `sched_yield_now()` — the process stays on the kernel stack inside `sys_read_impl` and is resumed there by the scheduler after `process_key_consumer()` marks it `RUNNING` again.
+
 ---
 
 # Terminal + Shell
@@ -326,7 +328,8 @@ keyboard IRQ → keyboard_handle_irq()
 
 The active consumer is managed by `keyboard_set_consumer()`:
 - `shell_init()` registers `shell_key_consumer` at boot
-- `process_set_foreground(proc)` registers `process_key_consumer` when a user process takes the foreground
+- `process_set_foreground(proc)` clears `kb_buf` (discarding any stale input, e.g. the Enter that launched `runelf`), then registers `process_key_consumer` when a user process takes the foreground
+- `process_key_consumer` pushes ASCII into `kb_buf`; after each push it checks `keyboard_get_waiting_process()` and, if a process is parked in `PROCESS_STATE_WAITING`, sets it back to `PROCESS_STATE_RUNNING` and clears the waiter slot so the scheduler picks it up
 - `process_set_foreground(0)` calls `shell_register_consumer()` to restore the shell consumer on exit
 
 The keyboard driver makes no routing decisions. It decodes scancodes and calls whoever is registered.
@@ -401,7 +404,7 @@ Built by `tools/mkfat16.c` — a host C tool with no external dependencies (`mkf
 Volume layout (within the partition image):
 
 ```text
-Sector   0        Boot sector (BPB) — OEM "SmallOS", FAT16 signature 0x55 0xAA
+Sector   0        Boot sector (BPB) — OEM "SIMPLEOS", FAT16 signature 0x55 0xAA
 Sectors  1–3      Reserved (4 reserved sectors total)
 Sectors  4–35     FAT 1  (32 sectors, 8192 FAT16 entries)
 Sectors 36–67     FAT 2  (mirror)
@@ -411,7 +414,7 @@ Sectors 100+      Data region  (cluster 2 = sectors 100–103, etc.)
 
 The FAT16 start LBA is computed at build time as `5 + kernel_sectors` and patched as a little-endian u32 into byte offset 504 of sector 0. At runtime, `fat16_init()` reads ATA sector 0, extracts that value, and uses it to locate the live FAT16 volume.
 
-Verified at runtime: `ataread <FAT16_LBA>` shows `EB 58 90 SmallOS` and `0x55 0xAA`; `ataread <FAT16_LBA + 100>` shows `7F 45 4C 46` (ELF magic at cluster 2).
+Verified at runtime: `ataread <FAT16_LBA>` shows `EB 58 90 SIMPLEOS` and `0x55 0xAA`; `ataread <FAT16_LBA + 100>` shows `7F 45 4C 46` (ELF magic at cluster 2).
 
 ---
 
@@ -553,7 +556,7 @@ build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
 
 # Summary
 
-SmallOS is currently:
+SimpleOS is currently:
 
 ```text
 two-stage bootloader (CHS + LBA)
@@ -567,7 +570,7 @@ argv copied into process_t kernel storage before CR3 switches
 clean process exit via `PROCESS_STATE_ZOMBIE` transition and later reap from a safe stack
 physical memory manager (bitmap, all frames reclaimed on exit — no leak)
 per-process kernel stacks (PMM frame per process, freed on exit)
-SYS_READ — blocking keyboard input for user programs
+SYS_READ — true blocking keyboard input: parks process in PROCESS_STATE_WAITING, woken by keyboard IRQ via process_key_consumer()
 SYS_YIELD — voluntary preemption via sched_yield_now()
 SYS_EXEC — foreground ELF execution with blocking parent save/restore; only one explicit parent context is tracked
 preemptive round-robin scheduler — timer IRQ context switch, 100 ms quantum
@@ -580,5 +583,4 @@ interactive shell with meminfo / ataread / fsls / fsread / runelf commands
 Foundation for:
 
 * richer filesystem-backed program loading (file descriptors, `SYS_OPEN`/`SYS_CLOSE`)
-* true blocking syscalls (yield-to-scheduler on `SYS_READ` instead of busy-polling)
 * copy-from-user validation in syscall handlers

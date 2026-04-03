@@ -31,10 +31,37 @@ void keyboard_buf_push_char(char c) {
     kb_buf_count++;
 }
 
-static void kb_buf_clear(void) {
+void keyboard_buf_clear(void) {
     kb_buf_head  = 0;
     kb_buf_tail  = 0;
     kb_buf_count = 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Waiting-process slot                                               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * s_waiting_proc — opaque pointer to the process_t currently parked in
+ * PROCESS_STATE_WAITING inside sys_read_impl().
+ *
+ * Stored as void* to avoid a circular header dependency (keyboard.h is
+ * included by process.h).  The only site that inspects the value as a
+ * process_t* is process_key_consumer() in process.c, which already has
+ * the full type in scope.
+ *
+ * Written from syscall context (IF=0 during the write) and read from
+ * IRQ1 context (IF=0 during the read), so no additional locking is
+ * needed on this uniprocessor kernel.
+ */
+static void* s_waiting_proc = 0;
+
+void keyboard_set_waiting_process(void* proc) {
+    s_waiting_proc = proc;
+}
+
+void* keyboard_get_waiting_process(void) {
+    return s_waiting_proc;
 }
 
 /* ------------------------------------------------------------------ */
@@ -379,5 +406,6 @@ void keyboard_init(void) {
     e1_prefix = 0;
     pause_idx = 0;
     ps_state = PS_NONE;
-    kb_buf_clear();
+    s_waiting_proc = 0;
+    keyboard_buf_clear();
 }

@@ -80,7 +80,9 @@ int sys_read(char* buf, uint32_t len);
 
 Blocks until keyboard input is available, echoing each character. Terminates early on newline (included in returned data). Returns bytes read or `-1`.
 
-`sys_read_impl` issues `sti` before the wait loop and `cli` before returning so keyboard IRQs fire during the blocking read.
+`sys_read_impl` uses true scheduler-aware blocking: when `kb_buf` is empty it sets the process state to `PROCESS_STATE_WAITING` and registers it as the keyboard waiter via `keyboard_set_waiting_process()`, then executes `hlt`. The timer IRQ fires normally; `sched_tick` sees the task is `WAITING`, skips it, and switches to another runnable task. When a keypress arrives, `process_key_consumer()` pushes the character into `kb_buf`, sets the waiting process back to `PROCESS_STATE_RUNNING`, and clears the waiter slot. On the next scheduler pass the process is selected, resumes after the `hlt`, and drains the buffer normally.
+
+`sti` is issued before the first `hlt` so IRQ1 can fire during the wait. `cli` is restored before returning, matching the IF=0 postcondition expected by the syscall gate.
 
 ---
 
@@ -198,7 +200,7 @@ u_readline(...)    sys_read + null-terminate + strip newline
 * `SYS_SLEEP`
 * `SYS_ALLOC`
 * copy-from-user validation
-* per-process file descriptors
+* per-process file descriptors (`SYS_OPEN` / `SYS_CLOSE` backed by the FAT16 driver)
 
 ---
 

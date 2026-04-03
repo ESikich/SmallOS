@@ -17,10 +17,26 @@ static process_t* s_foreground = 0;
  * holds the foreground.  Only ASCII characters are meaningful to user
  * programs; non-ASCII key events (arrows, function keys, etc.) are
  * silently ignored.
+ *
+ * True-blocking SYS_READ wake-up:
+ *   After pushing the character into kb_buf, check whether a process is
+ *   parked in PROCESS_STATE_WAITING.  If so, mark it PROCESS_STATE_RUNNING
+ *   and clear the waiting slot so the scheduler will pick it up on the
+ *   next pass.
+ *
+ *   This runs entirely in IRQ1 context (IF=0).  The only work done is a
+ *   state-flag write and a pointer clear — no allocation, no stack switch,
+ *   no blocking.
  */
 static void process_key_consumer(key_event_t ev) {
-    if (ev.ascii) {
-        keyboard_buf_push_char(ev.ascii);
+    if (!ev.ascii) return;
+
+    keyboard_buf_push_char(ev.ascii);
+
+    process_t* waiter = (process_t*)keyboard_get_waiting_process();
+    if (waiter && waiter->state == PROCESS_STATE_WAITING) {
+        waiter->state = PROCESS_STATE_RUNNING;
+        keyboard_set_waiting_process(0);
     }
 }
 
@@ -107,6 +123,16 @@ process_t* process_create_kernel_task(const char* name, void (*entry)(void)) {
 void process_destroy(process_t* proc) {
     if (!proc) return;
 
+    /*
+     * If this process is currently parked as the keyboard waiter, clear the
+     * slot before freeing the process_t frame.  Leaving a dangling pointer
+     * in the keyboard driver would cause process_key_consumer() to write
+     * through freed memory on the next keypress.
+     */
+    if (keyboard_get_waiting_process() == (void*)proc) {
+        keyboard_set_waiting_process(0);
+    }
+
     if (proc->pd) {
         process_pd_destroy(proc->pd);
         proc->pd = 0;
@@ -132,6 +158,9 @@ process_t* process_get_current(void) {
 void process_set_foreground(process_t* proc) {
     s_foreground = proc;
     if (proc) {
+        keyboard_buf_clear();           /* discard any input that arrived before
+                                           the process was ready to read it,
+                                           e.g. the Enter that launched runelf */
         keyboard_set_consumer(process_key_consumer);
     } else {
         shell_register_consumer();

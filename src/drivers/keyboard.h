@@ -95,6 +95,10 @@ typedef struct {
  */
 typedef void (*keyboard_consumer_fn)(key_event_t ev);
 
+/* Forward declaration — process.h includes keyboard.h so we avoid the
+   circular dependency by using a forward declaration here. */
+struct process_t_tag;
+
 void keyboard_init(void);
 void keyboard_handle_irq(void);
 
@@ -118,5 +122,26 @@ void keyboard_set_consumer(keyboard_consumer_fn fn);
 int  keyboard_buf_available(void);
 char keyboard_buf_pop(void);
 void keyboard_buf_push_char(char c);
+void keyboard_buf_clear(void);       /* discard any pending input */
+
+/*
+ * Waiting-process slot — used by the true-blocking SYS_READ path.
+ *
+ * sys_read_impl() calls keyboard_set_waiting_process(proc) before
+ * parking the process in PROCESS_STATE_WAITING and yielding.
+ * process_key_consumer() calls keyboard_get_waiting_process() on every
+ * keypress and, if a waiter is present, marks it PROCESS_STATE_RUNNING
+ * and clears the slot so the scheduler will pick it up again.
+ *
+ * process_destroy() must call keyboard_set_waiting_process(0) if the
+ * dying process is the current waiter, to prevent a dangling pointer.
+ *
+ * Only one waiter is supported at a time (matches the single-foreground-
+ * process model).  The pointer is written from syscall context and read
+ * from IRQ1 context; both run with IF=0 at the relevant moments so no
+ * additional locking is required.
+ */
+void           keyboard_set_waiting_process(void* proc);
+void*          keyboard_get_waiting_process(void);
 
 #endif

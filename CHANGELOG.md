@@ -1,6 +1,43 @@
 # Changelog
  
-## [Current] — Zombie reaper kernel task
+## [Current] — True blocking SYS_READ
+ 
+### Changed
+ 
+* **`src/kernel/syscall.c`** — `sys_read_impl` replaced busy-wait with scheduler-aware blocking
+  * When `kb_buf` is empty: sets `proc->state = PROCESS_STATE_WAITING`, registers the process via `keyboard_set_waiting_process(proc)`, and executes `hlt`
+  * The timer IRQ fires normally; `sched_tick` skips `WAITING` tasks so other processes run
+  * When a keypress arrives, `process_key_consumer()` wakes the waiter by setting its state back to `PROCESS_STATE_RUNNING` and clearing the waiter slot
+  * The process resumes inside `sys_read_impl` after the `hlt`, re-checks `keyboard_buf_available()`, and continues draining the buffer
+  * `sched_yield_now()` is **not** called from `sys_read_impl` — calling it with the `isr128_stub` resume ESP would bypass the C stack entirely and resume the process in ring-3 user space, abandoning the read loop
+ 
+* **`src/kernel/process.c`** — `process_key_consumer` now wakes the parked process after pushing to `kb_buf`
+  * After `keyboard_buf_push_char(c)`, checks `keyboard_get_waiting_process()` and flips state to `RUNNING` if a waiter is present
+  * `process_set_foreground(proc)` now calls `keyboard_buf_clear()` before switching the consumer, discarding any stale input (e.g. the Enter keypress that launched `runelf`) that would otherwise pre-fill the first `sys_read` call
+  * `process_destroy()` clears the waiter slot if the dying process is the registered waiter, preventing a dangling pointer
+ 
+* **`src/kernel/process.h`** — added `PROCESS_STATE_WAITING = 4` to `process_state_t`
+ 
+* **`src/drivers/keyboard.c`** / **`src/drivers/keyboard.h`**
+  * Added `s_waiting_proc` slot and public accessors `keyboard_set_waiting_process()` / `keyboard_get_waiting_process()`
+  * `kb_buf_clear()` promoted to public API as `keyboard_buf_clear()`
+  * `keyboard_init()` now clears the waiter slot and calls `keyboard_buf_clear()`
+ 
+### Fixed
+ 
+* **Spurious newline after every typed character** — `sched_yield_now(resume_esp)` was called from inside `sys_read_impl` with the `isr128_stub` frame ESP. This caused the scheduler to resume the process directly in ring-3 user space (via `iretd`), abandoning `sys_read_impl`'s C stack. The process re-entered user code as if `sys_read` had returned with garbage in `eax` after every single keypress. Fixed by using `PROCESS_STATE_WAITING` + `hlt` instead of `sched_yield_now`.
+ 
+* **Stale Enter consumed as first input character** — the `'\n'` from the Enter keypress that launched `runelf` was sitting in `kb_buf` when the process first called `sys_read`, causing it to return an empty line immediately. Fixed by calling `keyboard_buf_clear()` in `process_set_foreground()` when handing the consumer to a process.
+ 
+### Key design notes
+ 
+* **`PROCESS_STATE_WAITING` is skipped by `sched_find_next_runnable_from()`** — no change to the scheduler was needed; it already checks `state == PROCESS_STATE_RUNNING`.
+* **Wake-up happens in IRQ1 context** — `process_key_consumer` runs with IF=0. The only work it does is a state-flag write and a pointer clear — safe and non-blocking.
+* **Single waiter slot** — matches the single-foreground-process model. Only the foreground process can be in `PROCESS_STATE_WAITING` at any time.
+ 
+---
+ 
+## [Previous] — Zombie reaper kernel task
  
 ### Added
  

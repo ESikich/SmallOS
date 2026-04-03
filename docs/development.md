@@ -343,7 +343,6 @@ Useful signals:
 
 ## Next Steps (Recommended)
 
-* True blocking `SYS_READ` — when the keyboard buffer is empty, yield to the scheduler instead of busy-polling on `hlt`, and re-enqueue the process when input arrives
 * Copy-from-user validation in syscall pointer arguments
 * Per-process file descriptors / `SYS_OPEN` backed by the FAT16 driver
 
