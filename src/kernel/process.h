@@ -61,4 +61,14 @@ process_t* process_get_foreground(void);
  */
 void       process_wait(process_t* proc);
 
+/*
+ * process_start_reaper()
+ *
+ * Create and enqueue the kernel reaper task.  The reaper wakes on every
+ * timer tick, calls sched_reap_zombies() to free any unclaimed ZOMBIE
+ * processes (e.g. runelf_nowait / SYS_EXEC children), then halts until
+ * the next interrupt.  Call once from kernel_main() before sched_start().
+ */
+void       process_start_reaper(void);
+
 #endif /* PROCESS_H */

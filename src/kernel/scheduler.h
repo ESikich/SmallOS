@@ -109,4 +109,15 @@ process_t* sched_current(void);
  */
 void sched_start(process_t* first_proc);
 
+/*
+ * sched_reap_zombies()
+ *
+ * Walk the run-queue table and destroy every process in ZOMBIE state
+ * that is not the currently executing task.  Called from the reaper
+ * kernel task; must not be called from an interrupt context.
+ *
+ * Returns the number of processes reaped.
+ */
+int sched_reap_zombies(void);
+
 #endif /* SCHEDULER_H */

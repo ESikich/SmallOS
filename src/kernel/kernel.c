@@ -56,6 +56,8 @@ void kernel_main(void) {
         }
     }
 
+    process_start_reaper();
+
     __asm__ __volatile__("sti");
     sched_start(shell_proc);
 
