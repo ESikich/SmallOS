@@ -8,7 +8,7 @@
  * and create a process, seed its scheduler bootstrap context, enqueue it,
  * and return the created process_t*. Returns 0 on failure.
  */
-#include "../kernel/process.h"
+#include "process.h"
 
 process_t* elf_run_named(const char* name, int argc, char** argv);
 
@@ -23,17 +23,5 @@ process_t* elf_run_named(const char* name, int argc, char** argv);
  * The ELF must be linked at USER_CODE_BASE (0x400000).
  */
 process_t* elf_run_image(const unsigned char* image, int argc, char** argv);
-
-/*
- * elf_process_running()
- *
- * Returns 1 when the current process exists and is in PROCESS_STATE_RUNNING,
- * 0 otherwise.
- *
- * Note: this reflects the current process state returned by
- * process_get_current(); it is not limited strictly to a foreground ring-3
- * ELF process.
- */
-int elf_process_running(void);
 
 #endif

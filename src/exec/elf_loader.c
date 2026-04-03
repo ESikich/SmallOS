@@ -126,11 +126,6 @@ static int elf_seed_sched_context(process_t* proc,
     return 1;
 }
 
-int elf_process_running(void) {
-    process_t* proc = process_get_current();
-    return proc && proc->state == PROCESS_STATE_RUNNING;
-}
-
 process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
     const Elf32_Ehdr* eh = (const Elf32_Ehdr*)image;
 
