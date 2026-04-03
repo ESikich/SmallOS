@@ -6,8 +6,6 @@
 #include "../kernel/scheduler.h"
 #include "../kernel/process.h"
 
-static unsigned char kb_color = 0x0F;
-
 /* ------------------------------------------------------------------ */
 /* Process-input buffer                                               */
 /* ------------------------------------------------------------------ */
