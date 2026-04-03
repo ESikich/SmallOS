@@ -88,7 +88,7 @@ Inside `kernel_main()`:
 6. `keyboard_init()`, `timer_init(100)`, `idt_init()` — drivers and interrupt table
 7. `sched_init()` — initialise the scheduler data structures
 8. `ata_init()` — software reset ATA primary channel (`0x1F0`), poll until ready
-9. `fat16_init()` — read FAT16 BPB at `FAT16_LBA` (from sector 0 offset 504), validate volume
+9. `fat16_init()` — read ATA sector 0, extract the patched FAT16 start LBA from byte offset 504, then read and validate the FAT16 BPB at that runtime-discovered location
 10. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
 11. `sched_enqueue(shell_proc)` — make the shell runnable
 12. `sti` — enable interrupts
@@ -133,7 +133,7 @@ typedef struct {
 } process_t;
 ```
 
-`sched_esp` is 0 until the process has been preempted at least once. The scheduler skips any slot where `state != RUNNING` or `sched_esp == 0`.
+For runnable tasks, `sched_esp` is the saved kernel resume stack pointer used by the scheduler. Kernel tasks and ELF tasks can both have a valid seeded `sched_esp` before their first timer-driven switch.
 
 `user_arg_data` / `user_argv` hold copies of the argv strings inside the `process_t` PMM frame — independent of the shell input buffer and valid after CR3 switches.
 
@@ -205,7 +205,8 @@ irq0_stub — add esp 4, pop segments, popa, iretd → ring 3 resumes
 ```text
 runelf:
   process_create()
-  [NOT enqueued in scheduler — runs via foreground path]
+  elf_seed_sched_context()      → build valid proc->sched_esp for elf_user_task_bootstrap()
+  [NOT enqueued in scheduler — still runs via foreground path]
   save s_parent_proc / s_parent_esp0
   setjmp / iret into ring 3
 
@@ -379,7 +380,7 @@ Sectors 68–99     Root directory (512 entries × 32 bytes = 32 sectors)
 Sectors 100+      Data region  (cluster 2 = sectors 100–103, etc.)
 ```
 
-`FAT16_LBA` is computed at build time as `5 + kernel_sectors` and patched as a little-endian u32 into byte offset 504 of the boot sector. `fat16_init()` reads ATA sector 0 and extracts it.
+The FAT16 start LBA is computed at build time as `5 + kernel_sectors` and patched as a little-endian u32 into byte offset 504 of sector 0. At runtime, `fat16_init()` reads ATA sector 0, extracts that value, and uses it to locate the live FAT16 volume.
 
 Verified at runtime: `ataread <FAT16_LBA>` shows `EB 58 90 SIMPLEOS` and `0x55 0xAA`; `ataread <FAT16_LBA + 100>` shows `7F 45 4C 46` (ELF magic at cluster 2).
 
@@ -425,13 +426,14 @@ process_pd_create()             → fresh PD (pmm_alloc_frame), kernel entries s
 map ELF segments                → pmm_alloc_frame() per page, PAGE_USER at 0x400000
 map user stack                  → pmm_alloc_frame(), PAGE_USER at 0xBFFFF000
 alloc kernel stack              → pmm_alloc_frame(), tss_set_kernel_stack(frame + PAGE_SIZE)
-elf_seed_sched_context()        → copy argv into process_t.user_arg_data
+elf_seed_sched_context()        → copy argv into process_t.user_arg_data, set proc->user_entry, build proc->sched_esp
+                                   seeded to re-enter via elf_user_task_bootstrap()
 save parent context             → s_parent_proc = process_get_current()
                                    s_parent_esp0 = parent ? parent->ksf+PAGE_SIZE : 0x90000
 process_set_current(proc)
 proc->state = RUNNING
 
-[NOT enqueued in scheduler — runs via foreground path]
+[NOT enqueued in scheduler — foreground launch path still used]
 
 setjmp(proc->exit_ctx)          → save kernel context for sys_exit return
 keyboard_set_process_mode(1)
@@ -523,7 +525,7 @@ build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
 
 # Future Architecture Direction
 
-1. Enqueue ELF processes into the scheduler as full tasks
+1. Enqueue ELF processes into the scheduler as full tasks using the already-seeded `sched_esp` / `elf_user_task_bootstrap()` entry path
 
 ---
 
@@ -563,7 +565,7 @@ SYS_EXEC — foreground ELF execution with blocking parent save/restore; only on
 preemptive round-robin scheduler — timer IRQ context switch, 100 ms quantum
 ATA PIO driver — 28-bit LBA polling reads from primary IDE channel (0x1F0)
 FAT16 filesystem — ELF programs loaded from 16 MB FAT16 partition on disk
-run/runimg/exec infrastructure removed — runelf is the only execution path
+run/runimg infrastructure removed — `runelf` is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
 interactive shell with meminfo / ataread / fsls / fsread / runelf commands
 ```
 

@@ -125,6 +125,7 @@ runelf hello
  → process_pd_create()   fresh page directory (PMM), kernel entries shared
  → map ELF + stack       pmm_alloc_frame() per page
  → alloc kernel stack    tss_set_kernel_stack(frame + PAGE_SIZE)
+ → seed sched context    elf_seed_sched_context() builds proc->sched_esp for elf_user_task_bootstrap()
  → save parent context   s_parent_proc / s_parent_esp0
  → setjmp()              save kernel context for sys_exit return
  → paging_switch(pd)     load process CR3
@@ -235,6 +236,7 @@ This path no longer relies on a cached pointer into the packed TSS structure.
 The system is in a deliberate hybrid stage:
 
 * the **shell** is scheduler-owned
-* **ELF user programs** are still foreground-only
+* **ELF user programs** still execute through the foreground `setjmp` / `longjmp` path
+* `elf_run_image()` already seeds a valid scheduler entry context for user ELFs via `elf_seed_sched_context()`
 
-The next architectural step is to make `runelf` create full scheduler-owned user tasks.
+The next architectural step is to make `runelf` enqueue those user tasks so the scheduler owns first entry and full lifecycle.

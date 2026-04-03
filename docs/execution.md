@@ -34,7 +34,7 @@ Important current-state facts:
 - **keyboard IRQ1** does not mutate shell/editor state directly; it queues events that the shell task drains later
 - **ELF user programs** are loaded into their own page directory and do execute in ring 3
 - **ELF launch/exit still uses the older foreground `setjmp` / `longjmp` path**
-- the scheduler exists and supports kernel tasks plus voluntary / timer-driven switching, but ELF launch is **not yet fully scheduler-owned**
+- the scheduler exists and supports kernel tasks plus voluntary / timer-driven switching; the foreground ELF path still uses `setjmp` / `longjmp`, but `elf_run_image()` already seeds a valid scheduler entry context for the process with `elf_seed_sched_context()`
 
 ---
 
@@ -156,12 +156,13 @@ The code currently does all of the following:
 
 1. allocate the process kernel stack
 2. call `tss_set_kernel_stack(proc->kernel_stack_frame + PAGE_SIZE)`
-3. copy argv strings into `proc->user_arg_data`
+3. call `elf_seed_sched_context(proc, eh->e_entry, argc, argv)`
 4. save the parent foreground context in `s_parent_proc` / `s_parent_esp0`
 5. set `process_set_current(proc)`
-6. save a return point with `setjmp(proc->exit_ctx)`
-7. switch to the process page directory
-8. call `elf_enter_ring3()`
+6. mark the process `PROCESS_STATE_RUNNING`
+7. save a return point with `setjmp(proc->exit_ctx)`
+8. switch to the process page directory
+9. call `elf_enter_ring3()` using the kernel-side argv copy in `proc->user_argv`
 
 `elf_enter_ring3()` then:
 
@@ -321,12 +322,12 @@ The foreground ELF launch path in `elf_run_image()` still:
 - switches into the child directly with `iret`
 - returns via `elf_process_exit()` → `longjmp`
 
-There is code in `elf_loader.c` that seeds a scheduler context for user ELF entry (`elf_seed_sched_context()` and `elf_user_task_bootstrap()`), but the current launch path explicitly notes that it **does not enqueue the process yet**.
+`elf_loader.c` already seeds a scheduler context for user ELF entry via `elf_seed_sched_context()`. That code copies argv into `process_t` storage, builds a valid `sched_esp` on the process kernel stack, and seeds first scheduler re-entry through `elf_user_task_bootstrap()`.
 
-So the accurate statement is:
+The current launch path still does **not enqueue the process yet**, so the active execution path remains:
 
-- **scheduler support for future scheduler-owned ELF tasks is partially in place**
-- **foreground ELF launch/exit still uses the older direct path**
+- **foreground ELF launch/exit still uses the direct `setjmp` / `iret` / `longjmp` path**
+- **scheduler entry support for user ELFs is already present and valid, but not yet the primary launch path**
 
 ---
 
@@ -446,8 +447,10 @@ Already true:
 - scheduler-owned shell task
 - timer-driven preemption exists
 - `SYS_YIELD` exists
+- `SYS_EXEC` exists
 - ELF processes have real per-process page directories
-- user tasks already have seeded scheduler entry stacks available
+- `elf_run_image()` already calls `elf_seed_sched_context()`
+- user tasks already have valid seeded scheduler entry stacks that re-enter through `elf_user_task_bootstrap()`
 
 Not finished yet:
 
@@ -464,7 +467,7 @@ The intended next step is:
 ```text
 runelf / sys_exec
   → create process
-  → seed user bootstrap context
+  → seed user bootstrap context (`elf_seed_sched_context()`)
   → sched_enqueue(proc)
   → scheduler owns first entry, preemption, and exit lifecycle
   → remove foreground setjmp/longjmp path

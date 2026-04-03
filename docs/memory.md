@@ -215,7 +215,7 @@ LBA 5+ks      fat16.img             (16 MB FAT16 partition)
 * ELF programs linked at fixed address `0x400000` — no PIE/relocation
 * Kernel trusts user pointers in syscalls
 * Bump allocator has no free — permanent kernel structures only
-* ELF programs still run through the foreground `setjmp`/`longjmp` path instead of as full scheduler-owned tasks
+* ELF programs still launch and exit through the foreground `setjmp`/`longjmp` path instead of as fully scheduler-enqueued tasks, even though `elf_run_image()` already seeds valid scheduler entry state for them
 * User argument pointers are only safe while the caller's CR3 is active; long-lived exec state must copy what it needs before switching away
 
 ---

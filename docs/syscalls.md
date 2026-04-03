@@ -104,7 +104,7 @@ int sys_exec(const char* name, int argc, char** argv);
 
 Loads and runs a named ELF program from the FAT16 partition through the current foreground run-and-wait path. The calling process is suspended until the child exits. Returns 0 on success, `-1` if not found or load fails.
 
-`sys_exec_impl` copies `name` to a local kernel stack buffer before any CR3 switches because the load path later switches page directories and must not depend on the caller's user pointer remaining valid. `s_parent_proc`/`s_parent_esp0` statics save the parent context. Only a single explicit parent context is tracked, so deeper nesting is not robustly supported. This is still blocking foreground execution, not spawn-style execution.
+`sys_exec_impl` copies `name` to a local kernel stack buffer before any CR3 switches because the load path later switches page directories and must not depend on the caller's user pointer remaining valid. `s_parent_proc`/`s_parent_esp0` statics save the parent context. `elf_run_image()` already seeds a valid scheduler entry context with `elf_seed_sched_context()`, but the active `SYS_EXEC` path still uses blocking foreground execution rather than spawn-style scheduler-owned launch. Only a single explicit parent context is tracked, so deeper nesting is not robustly supported.
 
 ---
 
