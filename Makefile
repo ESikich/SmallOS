@@ -25,8 +25,8 @@ BOOT_FAT16_LBA_PATCH_OFFSET := $(shell awk '/^FAT16_LBA_PATCH_OFFSET[[:space:]]+
 LOADER2_SIZE_BYTES := $(shell awk '/^LOADER2_SIZE_BYTES[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/loader2.asm)
 TOOLS_DIR=$(BUILD_DIR)/tools
 
-CFLAGS=-ffreestanding -m32 -fno-pie -fno-stack-protector -nostdlib -nostartfiles \
-	-I$(KERNEL_DIR) -I$(DRIVERS_DIR) -I$(SHELL_DIR) -I$(EXEC_DIR) -I$(USER_DIR)
+CPPFLAGS=-I$(KERNEL_DIR) -I$(DRIVERS_DIR) -I$(SHELL_DIR) -I$(EXEC_DIR) -I$(USER_DIR)
+CFLAGS=-ffreestanding -m32 -fno-pie -fno-stack-protector -nostdlib -nostartfiles
 HOST_CC=gcc
 LDFLAGS=-T linker.ld -m elf_i386
 
@@ -80,71 +80,17 @@ $(OBJ_DIR)/kernel_entry.o: $(BOOT_DIR)/kernel_entry.asm | dirs
 $(OBJ_DIR)/interrupts.o: $(KERNEL_DIR)/interrupts.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
-$(OBJ_DIR)/kernel.o: $(KERNEL_DIR)/kernel.c $(KERNEL_DIR)/pmm.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/scheduler.h $(DRIVERS_DIR)/ata.h $(DRIVERS_DIR)/fat16.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
+$(OBJ_DIR)/%.o: $(KERNEL_DIR)/%.c | dirs
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/idt.o: $(KERNEL_DIR)/idt.c $(KERNEL_DIR)/idt.h $(KERNEL_DIR)/ports.h $(DRIVERS_DIR)/keyboard.h $(KERNEL_DIR)/scheduler.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
+$(OBJ_DIR)/%.o: $(DRIVERS_DIR)/%.c | dirs
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/keyboard.o: $(DRIVERS_DIR)/keyboard.c $(DRIVERS_DIR)/keyboard.h $(KERNEL_DIR)/ports.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
+$(OBJ_DIR)/%.o: $(SHELL_DIR)/%.c | dirs
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/shell.o: $(SHELL_DIR)/shell.c $(SHELL_DIR)/shell.h $(DRIVERS_DIR)/screen.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/screen.o: $(DRIVERS_DIR)/screen.c $(DRIVERS_DIR)/screen.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/terminal.o: $(DRIVERS_DIR)/terminal.c $(DRIVERS_DIR)/terminal.h $(DRIVERS_DIR)/screen.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/line_editor.o: $(SHELL_DIR)/line_editor.c $(SHELL_DIR)/line_editor.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/system.o: $(KERNEL_DIR)/system.c $(KERNEL_DIR)/system.h $(KERNEL_DIR)/ports.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/timer.o: $(KERNEL_DIR)/timer.c $(KERNEL_DIR)/timer.h $(KERNEL_DIR)/ports.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/klib.o: $(KERNEL_DIR)/klib.c $(KERNEL_DIR)/klib.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/memory.o: $(KERNEL_DIR)/memory.c $(KERNEL_DIR)/memory.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/pmm.o: $(KERNEL_DIR)/pmm.c $(KERNEL_DIR)/pmm.h $(DRIVERS_DIR)/terminal.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/process.o: $(KERNEL_DIR)/process.c $(KERNEL_DIR)/process.h $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/pmm.h $(DRIVERS_DIR)/terminal.h $(DRIVERS_DIR)/keyboard.h $(SHELL_DIR)/shell.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/scheduler.o: $(KERNEL_DIR)/scheduler.c $(KERNEL_DIR)/scheduler.h $(KERNEL_DIR)/process.h $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/gdt.h $(DRIVERS_DIR)/terminal.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/parse.o: $(SHELL_DIR)/parse.c $(SHELL_DIR)/parse.h $(KERNEL_DIR)/memory.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/commands.o: $(SHELL_DIR)/commands.c $(SHELL_DIR)/commands.h $(SHELL_DIR)/parse.h $(DRIVERS_DIR)/terminal.h $(KERNEL_DIR)/system.h $(KERNEL_DIR)/timer.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/pmm.h $(DRIVERS_DIR)/ata.h $(DRIVERS_DIR)/fat16.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/elf_loader.o: $(EXEC_DIR)/elf_loader.c $(EXEC_DIR)/elf_loader.h $(KERNEL_DIR)/elf.h $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/process.h $(KERNEL_DIR)/scheduler.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/pmm.h $(DRIVERS_DIR)/fat16.h $(DRIVERS_DIR)/terminal.h $(DRIVERS_DIR)/keyboard.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/syscall.o: $(KERNEL_DIR)/syscall.c $(KERNEL_DIR)/syscall.h $(DRIVERS_DIR)/terminal.h $(KERNEL_DIR)/timer.h $(KERNEL_DIR)/uapi_syscall.h $(DRIVERS_DIR)/keyboard.h $(KERNEL_DIR)/process.h $(DRIVERS_DIR)/fat16.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/gdt.o: $(KERNEL_DIR)/gdt.c $(KERNEL_DIR)/gdt.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/paging.o: $(KERNEL_DIR)/paging.c $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/pmm.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/ata.o: $(DRIVERS_DIR)/ata.c $(DRIVERS_DIR)/ata.h $(KERNEL_DIR)/ports.h $(DRIVERS_DIR)/terminal.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OBJ_DIR)/fat16.o: $(DRIVERS_DIR)/fat16.c $(DRIVERS_DIR)/fat16.h $(DRIVERS_DIR)/ata.h $(DRIVERS_DIR)/terminal.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
+$(OBJ_DIR)/%.o: $(EXEC_DIR)/%.c | dirs
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(BIN_DIR)/kernel.elf: $(KERNEL_OBJS) linker.ld | dirs
 	$(LD) $(LDFLAGS) $(KERNEL_OBJS) -o $@
@@ -153,14 +99,13 @@ $(BIN_DIR)/kernel.bin: $(BIN_DIR)/kernel.elf | dirs
 	$(OBJCOPY) -O binary $< $@
 
 $(OBJ_DIR)/%.o: $(USER_DIR)/%.c $(USER_DIR)/user_lib.h $(USER_DIR)/user_syscall.h $(KERNEL_DIR)/uapi_syscall.h | dirs
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(BIN_DIR)/%.elf: $(OBJ_DIR)/%.o | dirs
 	$(LD) -m elf_i386 -Ttext-segment 0x400000 -e _start $< -o $@
 
 $(TOOLS_DIR)/mkfat16: tools/mkfat16.c | dirs
 	$(HOST_CC) -o $@ $<
-
 
 #
 # FAT16 partition image (16 MB, no external dependencies)
