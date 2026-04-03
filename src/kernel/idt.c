@@ -3,7 +3,6 @@
 #include "keyboard.h"
 #include "timer.h"
 #include "scheduler.h"
-#include "terminal.h"
 
 extern void idt_flush(unsigned int);
 extern void irq0_stub(void);
@@ -100,23 +99,6 @@ void idt_init(void) {
 #define SCHED_RESUME_RETADDR_OFFSET 8u
 
 void irq0_handler_main(unsigned int esp) {
-    static int s_printed_irq0_esp = 0;
-
-    if (!s_printed_irq0_esp) {
-        unsigned int esp_m4 = *((unsigned int*)(esp - 4u));
-        unsigned int esp_m8 = *((unsigned int*)(esp - 8u));
-
-        terminal_puts("irq0 esp=");
-        terminal_put_hex(esp);
-        terminal_puts(" [esp-4]=");
-        terminal_put_hex(esp_m4);
-        terminal_puts(" [esp-8]=");
-        terminal_put_hex(esp_m8);
-        terminal_putc(10);
-
-        s_printed_irq0_esp = 1;
-    }
-
     timer_handle_irq();
     outb(0x20, 0x20);   /* EOI before sched_tick — see above */
     sched_tick(esp - SCHED_RESUME_RETADDR_OFFSET);
