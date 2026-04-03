@@ -1,6 +1,93 @@
 # Changelog
 
-## [Current] — Remove run/runimg/exec infrastructure
+## [Current] — ELF execution promoted to scheduler-owned user tasks
+
+### Added
+
+* **Foreground wait/reap path for scheduler-owned ELF tasks**
+  * `process_wait(proc)` — blocks in a `sti; hlt` loop until the child reaches `PROCESS_STATE_ZOMBIE`, then destroys it from a safe stack
+  * `runelf_nowait <name> [args]` shell command — enqueues an ELF task and returns immediately
+  * foreground input ownership in `process.c`:
+    * `process_set_foreground(proc)`
+    * `process_get_foreground()`
+
+### Changed
+
+* **`src/exec/elf_loader.c`**
+  * `elf_run_image()` no longer uses the old foreground `setjmp`/`longjmp` path
+  * now:
+    * creates the process
+    * builds the process page directory and mappings
+    * allocates a per-process kernel stack
+    * seeds `proc->sched_esp` with `elf_user_task_bootstrap`
+    * marks the task `PROCESS_STATE_RUNNING`
+    * enqueues it with `sched_enqueue(proc)`
+    * returns `process_t*`
+  * `elf_enter_ring3()` now sets IF in the pushed EFLAGS before `iret`
+
+* **`src/kernel/syscall.c`**
+  * `SYS_EXIT` is now scheduler-owned:
+    * switches to the kernel page directory
+    * calls `sched_exit_current((unsigned int)regs)`
+    * no longer returns via `elf_process_exit()` / `longjmp`
+  * `SYS_EXEC` is now async spawn:
+    * copies `name` into a kernel buffer
+    * calls `elf_run_named()`
+    * returns immediately with `0` / `-1`
+  * `SYS_YIELD` now passes the correct scheduler resume base (`esp - 8`), matching the IRQ0/syscall stub contract
+
+* **`src/kernel/scheduler.c` / `src/kernel/scheduler.h`**
+  * `sched_exit_current()` now:
+    * marks the current task `PROCESS_STATE_ZOMBIE`
+    * dequeues it
+    * switches directly to the next runnable task
+    * does **not** destroy the task there
+  * scheduler save/restore path corrected so task `sched_esp` preserves the real interrupt/syscall resume frame instead of being clobbered by the scheduler's own C call-frame ESP
+  * timer path now refreshes the shell task's saved `sched_esp` even when it is the only runnable task, so later switches back to the shell resume a real preempted context instead of the stale bootstrap stack
+
+* **`src/kernel/process.h` / `src/kernel/process.c`**
+  * added `PROCESS_STATE_ZOMBIE`
+  * removed the old hybrid foreground override model
+  * `process_get_current()` now returns `sched_current()`
+  * `process_t` no longer needs foreground `setjmp`/`longjmp` execution semantics
+  * foreground terminal/input ownership is now tracked explicitly and used by blocking `runelf`
+
+* **`src/shell/commands.c`**
+  * `runelf` now behaves like the old foreground path from the user's perspective by spawning an ELF task and waiting in `process_wait(proc)`
+  * `runelf_nowait` added as the explicit async spawn path
+
+* **`src/drivers/keyboard.c` / `src/drivers/keyboard.h`**
+  * removed the old global keyboard “process mode” routing model
+  * input routing now uses:
+    1. foreground user process owner, if any
+    2. otherwise the currently scheduled user task
+    3. otherwise the shell/editor
+  * this fixes input races for foreground interactive programs such as `readline`
+
+### Removed
+
+* **Old foreground ELF execution path**
+  * foreground `setjmp` / `longjmp` launch/return model
+  * `elf_process_exit()`
+  * parent-tracking statics such as `s_parent_proc` / `s_parent_esp0`
+  * `process_set_current()` foreground override semantics
+  * global keyboard process-mode switching (`keyboard_set_process_mode`)
+
+### Key design notes
+
+* **ELF programs are now real scheduler-owned tasks.**
+  `runelf` preserves old user-visible blocking behavior by waiting on a scheduled child, not by directly foreground-jumping into ring 3.
+
+* **Exit is split into two phases by design.**
+  `SYS_EXIT` only transitions the task to `ZOMBIE` and switches away. The actual destroy happens later from a safe stack (`process_wait()`), avoiding freeing the currently executing kernel stack.
+
+* **Foreground interactive correctness now depends on foreground ownership, not just `sched_current()`.**
+  This prevents the shell from stealing keystrokes while it is blocked waiting for a foreground child.
+
+* **Background tasks are scheduler-owned but not yet automatically reaped.**
+  Foreground runs are cleaned up by `process_wait()`. Async/background runs still need a future reap model if long-lived background execution becomes a first-class feature.
+
+## [Previous] — Remove run/runimg/exec infrastructure
 
 ### Removed
 
