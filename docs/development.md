@@ -31,6 +31,29 @@ If you see `implicit declaration of function` — you forgot a header.
 
 `terminal_put_uint` and `terminal_put_hex` are declared in `terminal.h` and defined in `terminal.c`. Do not add private copies in any other file.
 
+`src/kernel/klib.h` / `src/kernel/klib.c` are now the canonical home for shared freestanding string and memory helpers such as `k_memcpy`, `k_memset`, `k_strlen`, `k_strcmp`, `k_strncpy`, and `k_starts_with`. If a helper is generally useful across more than one file, it belongs in `klib` rather than as a file-local static copy.
+
+---
+
+## klib
+
+`klib` is the shared freestanding kernel utility library in `src/kernel/klib.h` and `src/kernel/klib.c`.
+
+Use it for basic string and memory primitives that would normally come from libc, but must exist in the kernel without a hosted C runtime. The current exported helpers are:
+
+* `k_memcpy(dst, src, n)` — byte copy
+* `k_memset(dst, val, n)` — byte fill
+* `k_strlen(s)` — string length
+* `k_strcmp(a, b)` — equality check (`1` if equal, `0` otherwise)
+* `k_strncpy(dst, src, n)` — bounded copy that always null-terminates when `n > 0`
+* `k_starts_with(s, prefix)` — prefix check
+
+### klib rules
+
+* Use the `k_` prefix for shared freestanding helpers so call sites are clearly kernel-local and do not collide with any future libc-facing wrappers.
+* New shared string / memory primitives should be added to `klib`, not reintroduced as private statics in individual `.c` files.
+* Keep file-local helpers file-local only when they are truly specific to one implementation and are not general-purpose utilities.
+
 ---
 
 ## Bootloader Rules

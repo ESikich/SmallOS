@@ -66,6 +66,15 @@ static void elf_enter_ring3(unsigned int entry,
     __builtin_unreachable();
 }
 
+/*
+ * First scheduled entry point for a user task.
+ *
+ * This is where TSS.ESP0 is updated for the process-owned kernel stack.
+ * Do not move that tss_set_kernel_stack() call earlier into elf_run_image():
+ * async launch paths such as runelf_nowait or SYS_EXEC may build a new process
+ * while some other task is still running, and updating ESP0 during setup would
+ * clobber the currently running task's ring-3 return stack.
+ */
 static void elf_user_task_bootstrap(void) {
     process_t* proc = sched_current();
 

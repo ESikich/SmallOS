@@ -204,6 +204,7 @@ irq0_stub — add esp 4, pop segments, popa, iretd → ring 3 resumes
 ```text
 runelf:
   process_create()
+  allocate proc->kernel_stack_frame
   seed proc->sched_esp         → first entry via elf_user_task_bootstrap()
   sched_enqueue(proc)
   process_wait(proc)           → shell waits until child is ZOMBIE
@@ -323,7 +324,8 @@ Programs are linked at fixed virtual address `0x400000`, loaded into private use
 0x00001000   kernel image
 0x00006000   kernel .bss start (page tables + PMM bitmap)
 ~0x0000A000  kernel .bss end
-0x00090000   kernel stack top (grows downward; shell context)
+0x00090000   KERNEL_BOOT_STACK_TOP (defined in `memory.h`) — boot stack top
+             (grows downward; fallback ESP0 for kernel tasks such as the shell)
 0x00100000   bump allocator base — permanent kernel structures
                kmalloc()      — long-lived kernel-owned data only
 0x00200000   PMM base — reclaimable frames
@@ -433,8 +435,9 @@ process_set_foreground(proc)    → foreground input owner for interactive waits
 [runelf waits with process_wait(proc); runelf_nowait returns immediately]
 
 scheduler enters child via elf_user_task_bootstrap()
-paging_switch(proc->pd)
-iret → ring 3 with IF set
+  tss_set_kernel_stack(proc->kernel_stack_frame + PAGE_SIZE)
+  paging_switch(proc->pd)
+  iret → ring 3 with IF set
   ↓
 [program runs at CPL=3; timer schedules it normally]
   ↓
@@ -460,7 +463,7 @@ sys_exec_impl()
   ↓
 elf_run_named(kname, argc, argv)
   ↓
-elf_run_image()                 [create process, seed bootstrap, enqueue]
+elf_run_image()                 [create process, allocate kernel stack, seed bootstrap, enqueue]
   ↓
 sys_exec_impl returns immediately
   ↓

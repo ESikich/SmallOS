@@ -170,6 +170,8 @@ The code currently does all of the following:
 4. enqueue it with `sched_enqueue(proc)`
 5. return the `process_t*` to the caller
 
+`tss_set_kernel_stack()` is **not** called during `elf_run_image()` setup. That update happens later inside `elf_user_task_bootstrap()`, at the moment the scheduler first enters the new process. This avoids clobbering the currently running task's ESP0 during async launch paths such as `runelf_nowait` and `SYS_EXEC`.
+
 For `runelf`, the shell then calls `process_wait(proc)` and blocks until the child reaches `PROCESS_STATE_ZOMBIE`. For `runelf_nowait`, the shell returns immediately after enqueue.
 
 `elf_enter_ring3()` then:
@@ -365,6 +367,7 @@ The following must remain true:
 - `fat16_load()` results must be copied before another FAT16 load reuses the static buffer
 - every user process must have a valid kernel stack frame before ring-3 entry
 - `tss_set_kernel_stack()` must match the process that will next return from ring 3 into the kernel
+  - this is enforced by `elf_user_task_bootstrap()` on first entry, not by the earlier `elf_run_image()` setup path
 - timer IRQ and syscall-yield paths must pass the scheduler the true resume-frame base, `esp - 8`, not raw `esp`
 - the scheduler must preserve that real saved resume ESP instead of letting `sched_switch()` overwrite it with the scheduler's own C call-frame ESP
 - `process_destroy()` must not run until a safe stack is active and the task is already `PROCESS_STATE_ZOMBIE`

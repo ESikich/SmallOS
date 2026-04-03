@@ -12,7 +12,9 @@ This document describes the physical memory layout, allocators, and paging archi
 0x00001000   kernel image (loaded by loader2)
 0x00006000   kernel .bss start (page tables + PMM bitmap reside here)
 ~0x0000A000  kernel .bss / early static region end (approx.; depends on build)
-0x00090000   kernel stack top (grows downward from here; shell/default context)
+0x00090000   KERNEL_BOOT_STACK_TOP (defined in `src/kernel/memory.h`)
+             boot stack top; grows downward from here and is the fallback ESP0
+             for kernel tasks that do not have a per-process kernel stack frame
 
 0x00100000   bump allocator base — permanent kernel structures
                kmalloc()      — long-lived kernel-owned data only

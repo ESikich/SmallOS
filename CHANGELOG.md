@@ -1,5 +1,48 @@
 # Changelog
 
+## [Current] — SmallOS cleanup pass
+
+### Added
+
+* **`src/kernel/klib.c` / `src/kernel/klib.h`** — shared freestanding kernel utility library
+  * consolidates shared string / memory helpers previously duplicated across multiple files
+  * exports `k_memcpy`, `k_memset`, `k_strlen`, `k_strcmp`, `k_strncpy`, and `k_starts_with`
+  * `Makefile` now builds `klib.o` as part of `KERNEL_OBJS`
+
+### Changed
+
+* **`src/exec/elf_loader.c` / `src/exec/elf_loader.h`**
+  * removed dead `elf_process_running()` declarations/implementation from the old foreground-ELF model
+  * cleaned include paths to match the rest of the tree, while intentionally keeping `../kernel/elf.h` relative because that header lives under `src/kernel/`
+  * `tss_set_kernel_stack()` is no longer called during `elf_run_image()` setup
+  * first-process-entry ESP0 setup now happens in `elf_user_task_bootstrap()`, which avoids clobbering the currently running task's TSS ESP0 during async launches such as `runelf_nowait` and `SYS_EXEC`
+
+* **`src/shell/shell.c`**
+  * shell task idle loop no longer busy-spins when no keyboard events are queued
+  * `shell_task_main()` now executes `hlt` while idle and wakes on the next timer tick or keyboard IRQ
+
+* **`src/kernel/scheduler.c` / `src/kernel/memory.h`**
+  * replaced the bare `0x90000u` boot-stack fallback with named constant `KERNEL_BOOT_STACK_TOP`
+
+* **Utility cleanup across the tree**
+  * removed now-redundant local string / memory helpers from `elf_loader.c`, `process.c`, `shell.c`, `commands.c`, and `paging.c`
+
+### Removed
+
+* **Private copies of shared string / memory helpers** that are now centralized in `klib`
+* **Dead shell helper** `str_starts_with`
+* **Dead ELF state query helper** `elf_process_running()`
+
+### Key design notes
+
+* **Shared freestanding primitives now have one canonical home.**
+  New general-purpose string and memory helpers should go in `klib`, not as file-local statics.
+
+* **TSS.ESP0 must track the task that will actually return from ring 3 next.**
+  Updating it in `elf_user_task_bootstrap()` preserves correctness for asynchronous process creation.
+
+---
+
 ## [Current] — ELF execution promoted to scheduler-owned user tasks
 
 ### Added

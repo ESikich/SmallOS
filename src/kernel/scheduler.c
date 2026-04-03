@@ -3,6 +3,7 @@
 #include "paging.h"
 #include "gdt.h"
 #include "terminal.h"
+#include "memory.h"
 
 extern void sched_switch(unsigned int* save_esp,
                          unsigned int  next_esp,
@@ -24,7 +25,7 @@ static unsigned int sched_proc_cr3(process_t* proc) {
 
 static unsigned int sched_proc_esp0(process_t* proc) {
     if (!proc || proc->kernel_stack_frame == 0) {
-        return 0x90000u;
+        return KERNEL_BOOT_STACK_TOP;
     }
     return proc->kernel_stack_frame + 4096u;
 }
