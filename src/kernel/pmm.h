@@ -1,6 +1,8 @@
 #ifndef PMM_H
 #define PMM_H
 
+#include "types.h"
+
 /*
  * pmm.h — Physical Memory Manager
  *
@@ -24,8 +26,6 @@
  * The two ranges are disjoint — pmm_alloc_frame() and kmalloc_page()
  * can never return the same physical address.
  */
-
-typedef unsigned int u32;
 
 #define PMM_BASE        0x200000u           /* 2 MB  */
 #define PMM_SIZE        0x600000u           /* 6 MB  */

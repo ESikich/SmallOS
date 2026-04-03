@@ -1,11 +1,11 @@
 #ifndef PAGING_H
 #define PAGING_H
 
-typedef unsigned int u32;
+#include "types.h"
 
-#define PAGE_PRESENT    0x001   /* entry is valid */
-#define PAGE_WRITE      0x002   /* read/write (clear = read-only) */
-#define PAGE_USER       0x004   /* accessible from ring 3 */
+#define PAGE_PRESENT    0x001
+#define PAGE_WRITE      0x002
+#define PAGE_USER       0x004
 
 #define PAGE_SIZE       4096u
 #define PAGE_ALIGN(a)   (((a) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1))
