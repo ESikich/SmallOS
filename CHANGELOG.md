@@ -145,7 +145,7 @@
 
 ---
 
-## [Current] — ELF execution promoted to scheduler-owned user tasks
+## [Previous] — ELF execution promoted to scheduler-owned user tasks
 
 ### Added
 
