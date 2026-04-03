@@ -40,7 +40,8 @@
 #define FAT_SECTORS          32u         /* 32 sectors × 512B / 2B = 8192 FAT16 entries */
 #define ROOT_ENTRY_COUNT     512u
 #define ROOT_DIR_SECTORS     (ROOT_ENTRY_COUNT * 32u / SECTOR_SIZE)   /* = 32 */
-#define TOTAL_SECTORS        32768u      /* 16 MB */
+#define TOTAL_SIZE_MB        16
+#define TOTAL_SECTORS        32768       /* 16 MB */
 #define VOLUME_LABEL         "SmallOS   "  /* 11 chars, space-padded */
 #define MAX_FILES            64
 

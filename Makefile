@@ -19,6 +19,8 @@ IMG_DIR=$(BUILD_DIR)/img
 BOOT_SECTOR_SIZE := $(shell awk '/^BOOT_SECTOR_SIZE[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 BOOT_SECTOR_MASK := $(shell echo $$(( $(BOOT_SECTOR_SIZE) - 1 )))
 KERNEL_LBA := $(shell awk '/^KERNEL_LBA[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/loader2.asm)
+FAT16_TOTAL_SECTORS := $(shell awk '/^#define[[:space:]]+TOTAL_SECTORS[[:space:]]+/ {print $$3}' tools/mkfat16.c)
+FAT16_TOTAL_SIZE_MB := $(shell awk '/^#define[[:space:]]+TOTAL_SIZE_MB[[:space:]]+/ {print $$3}' tools/mkfat16.c)
 BOOT_FAT16_LBA_PATCH_OFFSET := $(shell awk '/^FAT16_LBA_PATCH_OFFSET[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 LOADER2_SIZE_BYTES := $(shell awk '/^LOADER2_SIZE_BYTES[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/loader2.asm)
 TOOLS_DIR=$(BUILD_DIR)/tools
@@ -190,8 +192,8 @@ $(BIN_DIR)/boot.bin: $(BOOT_DIR)/boot.asm | dirs
 # Layout:
 #   boot.bin             ($(BOOT_SECTOR_SIZE) bytes,   LBA 0)
 #   loader2.bin          (2048 bytes,  LBA 1-($(KERNEL_LBA)-1))
-#   kernel_padded.bin    (sector-aligned, LBA 5+)
-#   fat16.img            (16 MB FAT16 partition, LBA 5+kernel_sectors)
+#   kernel_padded.bin    (sector-aligned, LBA $(KERNEL_LBA)+)
+#   fat16.img            ($(FAT16_TOTAL_SIZE_MB) MB FAT16 partition, LBA $(KERNEL_LBA)+kernel_sectors)
 #
 # The FAT16 partition start LBA is patched as a little-endian u32 into the
 # boot-sector field declared by FAT16_LBA_PATCH_OFFSET in boot.asm so the kernel can read
@@ -206,7 +208,7 @@ $(IMG_DIR)/os-image.bin: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/k
 	kernel_sectors=$$(( $$padded / $(BOOT_SECTOR_SIZE) )); \
 	fat16_lba=$$(( $(KERNEL_LBA) + $$kernel_sectors )); \
 	echo "kernel:  $$kernel_size bytes ($$kernel_sectors sectors, LBA $(KERNEL_LBA))"; \
-	echo "fat16:   32768 sectors (16 MB), LBA $$fat16_lba"; \
+	echo "fat16:   $(FAT16_TOTAL_SECTORS) sectors ($(FAT16_TOTAL_SIZE_MB) MB), LBA $$fat16_lba"; \
 	cat $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel_padded.bin \
 		$(BIN_DIR)/fat16.img > $@; \
 	lba0=$$(( $$fat16_lba & 0xFF )); \
