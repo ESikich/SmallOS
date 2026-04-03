@@ -16,6 +16,8 @@ OBJ_DIR=$(BUILD_DIR)/obj
 BIN_DIR=$(BUILD_DIR)/bin
 GEN_DIR=$(BUILD_DIR)/gen
 IMG_DIR=$(BUILD_DIR)/img
+TOOLS_DIR=$(BUILD_DIR)/tools
+
 BOOT_SECTOR_SIZE := $(shell awk '/^BOOT_SECTOR_SIZE[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 BOOT_SECTOR_MASK := $(shell echo $$(( $(BOOT_SECTOR_SIZE) - 1 )))
 KERNEL_LBA := $(shell awk '/^KERNEL_LBA[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/loader2.asm)
@@ -23,74 +25,90 @@ FAT16_TOTAL_SECTORS := $(shell awk '/^#define[[:space:]]+TOTAL_SECTORS[[:space:]
 FAT16_TOTAL_SIZE_MB := $(shell awk '/^#define[[:space:]]+TOTAL_SIZE_MB[[:space:]]+/ {print $$3}' tools/mkfat16.c)
 BOOT_FAT16_LBA_PATCH_OFFSET := $(shell awk '/^FAT16_LBA_PATCH_OFFSET[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 LOADER2_SIZE_BYTES := $(shell awk '/^LOADER2_SIZE_BYTES[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/loader2.asm)
-TOOLS_DIR=$(BUILD_DIR)/tools
 
 CPPFLAGS=-I$(KERNEL_DIR) -I$(DRIVERS_DIR) -I$(SHELL_DIR) -I$(EXEC_DIR) -I$(USER_DIR)
 CFLAGS=-ffreestanding -m32 -fno-pie -fno-stack-protector -nostdlib -nostartfiles
+DEPFLAGS=-MMD -MP
 HOST_CC=gcc
 LDFLAGS=-T linker.ld -m elf_i386
+USER_LDFLAGS=-m elf_i386 -Ttext-segment 0x400000 -e _start
 
 KERNEL_OBJS=\
-	$(OBJ_DIR)/kernel_entry.o \
-	$(OBJ_DIR)/interrupts.o \
-	$(OBJ_DIR)/setjmp.o \
-	$(OBJ_DIR)/sched_switch.o \
-	$(OBJ_DIR)/kernel.o \
-	$(OBJ_DIR)/idt.o \
-	$(OBJ_DIR)/keyboard.o \
-	$(OBJ_DIR)/shell.o \
-	$(OBJ_DIR)/line_editor.o \
-	$(OBJ_DIR)/terminal.o \
-	$(OBJ_DIR)/screen.o \
-	$(OBJ_DIR)/system.o \
-	$(OBJ_DIR)/timer.o \
-	$(OBJ_DIR)/klib.o \
-	$(OBJ_DIR)/memory.o \
-	$(OBJ_DIR)/pmm.o \
-	$(OBJ_DIR)/process.o \
-	$(OBJ_DIR)/scheduler.o \
-	$(OBJ_DIR)/parse.o \
-	$(OBJ_DIR)/commands.o \
-	$(OBJ_DIR)/elf_loader.o \
-	$(OBJ_DIR)/syscall.o \
-	$(OBJ_DIR)/gdt.o \
-	$(OBJ_DIR)/paging.o \
-	$(OBJ_DIR)/ata.o \
-	$(OBJ_DIR)/fat16.o
+	$(OBJ_DIR)/boot/kernel_entry.o \
+	$(OBJ_DIR)/kernel/interrupts.o \
+	$(OBJ_DIR)/kernel/setjmp.o \
+	$(OBJ_DIR)/kernel/sched_switch.o \
+	$(OBJ_DIR)/kernel/kernel.o \
+	$(OBJ_DIR)/kernel/idt.o \
+	$(OBJ_DIR)/drivers/keyboard.o \
+	$(OBJ_DIR)/shell/shell.o \
+	$(OBJ_DIR)/shell/line_editor.o \
+	$(OBJ_DIR)/drivers/terminal.o \
+	$(OBJ_DIR)/drivers/screen.o \
+	$(OBJ_DIR)/kernel/system.o \
+	$(OBJ_DIR)/kernel/timer.o \
+	$(OBJ_DIR)/kernel/klib.o \
+	$(OBJ_DIR)/kernel/memory.o \
+	$(OBJ_DIR)/kernel/pmm.o \
+	$(OBJ_DIR)/kernel/process.o \
+	$(OBJ_DIR)/kernel/scheduler.o \
+	$(OBJ_DIR)/shell/parse.o \
+	$(OBJ_DIR)/shell/commands.o \
+	$(OBJ_DIR)/exec/elf_loader.o \
+	$(OBJ_DIR)/kernel/syscall.o \
+	$(OBJ_DIR)/kernel/gdt.o \
+	$(OBJ_DIR)/kernel/paging.o \
+	$(OBJ_DIR)/drivers/ata.o \
+	$(OBJ_DIR)/drivers/fat16.o
 
 USER_PROGS=hello ticks args runelf_test readline exec_test fileread
 
+USER_OBJS=$(addprefix $(OBJ_DIR)/user/,$(addsuffix .o,$(USER_PROGS)))
 USER_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_PROGS)))
-USER_OBJS=$(addprefix $(OBJ_DIR)/,$(addsuffix .o,$(USER_PROGS)))
 
 all: $(IMG_DIR)/os-image.bin
 
 dirs:
-	mkdir -p $(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(TOOLS_DIR)
+	mkdir -p \
+		$(BUILD_DIR) \
+		$(OBJ_DIR) \
+		$(OBJ_DIR)/boot \
+		$(OBJ_DIR)/kernel \
+		$(OBJ_DIR)/drivers \
+		$(OBJ_DIR)/shell \
+		$(OBJ_DIR)/exec \
+		$(OBJ_DIR)/user \
+		$(BIN_DIR) \
+		$(GEN_DIR) \
+		$(IMG_DIR) \
+		$(TOOLS_DIR)
 
-$(OBJ_DIR)/setjmp.o: $(KERNEL_DIR)/setjmp.asm | dirs
+$(OBJ_DIR)/kernel/setjmp.o: $(KERNEL_DIR)/setjmp.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
-$(OBJ_DIR)/sched_switch.o: $(KERNEL_DIR)/sched_switch.asm | dirs
+$(OBJ_DIR)/kernel/sched_switch.o: $(KERNEL_DIR)/sched_switch.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
-$(OBJ_DIR)/kernel_entry.o: $(BOOT_DIR)/kernel_entry.asm | dirs
+$(OBJ_DIR)/boot/kernel_entry.o: $(BOOT_DIR)/kernel_entry.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
-$(OBJ_DIR)/interrupts.o: $(KERNEL_DIR)/interrupts.asm | dirs
+$(OBJ_DIR)/kernel/interrupts.o: $(KERNEL_DIR)/interrupts.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
-$(OBJ_DIR)/%.o: $(KERNEL_DIR)/%.c | dirs
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+$(OBJ_DIR)/kernel/%.o: $(KERNEL_DIR)/%.c | dirs
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
-$(OBJ_DIR)/%.o: $(DRIVERS_DIR)/%.c | dirs
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+$(OBJ_DIR)/drivers/%.o: $(DRIVERS_DIR)/%.c | dirs
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
-$(OBJ_DIR)/%.o: $(SHELL_DIR)/%.c | dirs
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+$(OBJ_DIR)/shell/%.o: $(SHELL_DIR)/%.c | dirs
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
-$(OBJ_DIR)/%.o: $(EXEC_DIR)/%.c | dirs
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+$(OBJ_DIR)/exec/%.o: $(EXEC_DIR)/%.c | dirs
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(OBJ_DIR)/user/%.o: $(USER_DIR)/%.c | dirs
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
 $(BIN_DIR)/kernel.elf: $(KERNEL_OBJS) linker.ld | dirs
 	$(LD) $(LDFLAGS) $(KERNEL_OBJS) -o $@
@@ -98,17 +116,14 @@ $(BIN_DIR)/kernel.elf: $(KERNEL_OBJS) linker.ld | dirs
 $(BIN_DIR)/kernel.bin: $(BIN_DIR)/kernel.elf | dirs
 	$(OBJCOPY) -O binary $< $@
 
-$(OBJ_DIR)/%.o: $(USER_DIR)/%.c $(USER_DIR)/user_lib.h $(USER_DIR)/user_syscall.h $(KERNEL_DIR)/uapi_syscall.h | dirs
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
-
-$(BIN_DIR)/%.elf: $(OBJ_DIR)/%.o | dirs
-	$(LD) -m elf_i386 -Ttext-segment 0x400000 -e _start $< -o $@
+$(BIN_DIR)/%.elf: $(OBJ_DIR)/user/%.o | dirs
+	$(LD) $(USER_LDFLAGS) $< -o $@
 
 $(TOOLS_DIR)/mkfat16: tools/mkfat16.c | dirs
 	$(HOST_CC) -o $@ $<
 
 #
-# FAT16 partition image (16 MB, no external dependencies)
+# FAT16 partition image (fixed size, no external dependencies)
 #
 $(BIN_DIR)/fat16.img: $(USER_ELFS) $(TOOLS_DIR)/mkfat16 | dirs
 	$(TOOLS_DIR)/mkfat16 $@ $(USER_ELFS)
@@ -136,7 +151,7 @@ $(BIN_DIR)/boot.bin: $(BOOT_DIR)/boot.asm | dirs
 #
 # Layout:
 #   boot.bin             ($(BOOT_SECTOR_SIZE) bytes,   LBA 0)
-#   loader2.bin          (2048 bytes,  LBA 1-($(KERNEL_LBA)-1))
+#   loader2.bin          ($(LOADER2_SIZE_BYTES) bytes, LBA 1-($(KERNEL_LBA)-1))
 #   kernel_padded.bin    (sector-aligned, LBA $(KERNEL_LBA)+)
 #   fat16.img            ($(FAT16_TOTAL_SIZE_MB) MB FAT16 partition, LBA $(KERNEL_LBA)+kernel_sectors)
 #
@@ -163,6 +178,9 @@ $(IMG_DIR)/os-image.bin: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/k
 	printf "$$(printf '\\%03o\\%03o\\%03o\\%03o' $$lba0 $$lba1 $$lba2 $$lba3)" | \
 		dd of=$@ bs=1 seek=$(BOOT_FAT16_LBA_PATCH_OFFSET) count=4 conv=notrunc 2>/dev/null; \
 	echo "fat16:   LBA $$fat16_lba patched into sector 0 offset $(BOOT_FAT16_LBA_PATCH_OFFSET)"
+
+-include $(wildcard $(OBJ_DIR)/*.d)
+-include $(wildcard $(OBJ_DIR)/*/*.d)
 
 clean:
 	rm -rf $(BUILD_DIR)
