@@ -1,6 +1,6 @@
 # Boot Process Deep Dive
 
-This document explains how SimpleOS boots from BIOS to kernel, including disk layout, memory usage, and design constraints.
+This document explains how SmallOS boots from BIOS to kernel, including disk layout, memory usage, and design constraints.
 
 ---
 

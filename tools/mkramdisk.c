@@ -1,5 +1,5 @@
 /*
- * mkramdisk.c — SimpleOS ramdisk builder
+ * mkramdisk.c — SmallOS ramdisk builder
  *
  * Usage:
  *   mkramdisk output.rd name1:file1.elf name2:file2.elf ...

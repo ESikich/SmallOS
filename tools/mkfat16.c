@@ -1,5 +1,5 @@
 /*
- * mkfat16.c — SimpleOS FAT16 image builder
+ * mkfat16.c — SmallOS FAT16 image builder
  *
  * Usage:
  *   mkfat16 output.img file1.elf file2.elf ...
@@ -41,7 +41,7 @@
 #define ROOT_ENTRY_COUNT     512u
 #define ROOT_DIR_SECTORS     (ROOT_ENTRY_COUNT * 32u / SECTOR_SIZE)   /* = 32 */
 #define TOTAL_SECTORS        32768u      /* 16 MB */
-#define VOLUME_LABEL         "SIMPLEOS   "  /* 11 chars, space-padded */
+#define VOLUME_LABEL         "SmallOS   "  /* 11 chars, space-padded */
 #define MAX_FILES            64
 
 /* Derived sector offsets */
@@ -99,7 +99,7 @@ static void build_boot_sector(u8* sector) {
     sector[2] = 0x90;
 
     /* OEM identifier */
-    memcpy(sector + 3, "SIMPLEOS", 8);
+    memcpy(sector + 3, "SmallOS", 8);
 
     /* BPB */
     put_u16(sector, 11, SECTOR_SIZE);

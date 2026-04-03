@@ -1,6 +1,6 @@
 # Architecture Overview
 
-This document describes how SimpleOS boots, initializes, and executes programs.
+This document describes how SmallOS boots, initializes, and executes programs.
 
 ---
 
@@ -401,7 +401,7 @@ Built by `tools/mkfat16.c` — a host C tool with no external dependencies (`mkf
 Volume layout (within the partition image):
 
 ```text
-Sector   0        Boot sector (BPB) — OEM "SIMPLEOS", FAT16 signature 0x55 0xAA
+Sector   0        Boot sector (BPB) — OEM "SmallOS", FAT16 signature 0x55 0xAA
 Sectors  1–3      Reserved (4 reserved sectors total)
 Sectors  4–35     FAT 1  (32 sectors, 8192 FAT16 entries)
 Sectors 36–67     FAT 2  (mirror)
@@ -411,7 +411,7 @@ Sectors 100+      Data region  (cluster 2 = sectors 100–103, etc.)
 
 The FAT16 start LBA is computed at build time as `5 + kernel_sectors` and patched as a little-endian u32 into byte offset 504 of sector 0. At runtime, `fat16_init()` reads ATA sector 0, extracts that value, and uses it to locate the live FAT16 volume.
 
-Verified at runtime: `ataread <FAT16_LBA>` shows `EB 58 90 SIMPLEOS` and `0x55 0xAA`; `ataread <FAT16_LBA + 100>` shows `7F 45 4C 46` (ELF magic at cluster 2).
+Verified at runtime: `ataread <FAT16_LBA>` shows `EB 58 90 SmallOS` and `0x55 0xAA`; `ataread <FAT16_LBA + 100>` shows `7F 45 4C 46` (ELF magic at cluster 2).
 
 ---
 
@@ -553,7 +553,7 @@ build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
 
 # Summary
 
-SimpleOS is currently:
+SmallOS is currently:
 
 ```text
 two-stage bootloader (CHS + LBA)
