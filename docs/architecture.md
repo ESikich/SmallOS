@@ -28,6 +28,7 @@ kernel_main()
   ata_init()        ← software reset ATA primary channel, verify ready
   fat16_init()      ← read BPB, validate FAT16 volume geometry
   create shell task ← explicit kernel task with dedicated stack
+  process_start_reaper() ← create and enqueue zombie reaper task
   sti
   sched_start()     ← switch from boot stack into shell task
 ```
@@ -91,8 +92,9 @@ Inside `kernel_main()`:
 9. `fat16_init()` — read ATA sector 0, extract the patched FAT16 start LBA from byte offset 504, then read and validate the FAT16 BPB at that runtime-discovered location
 10. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
 11. `sched_enqueue(shell_proc)` — make the shell runnable
-12. `sti` — enable interrupts
-13. `sched_start(shell_proc)` — switch from the boot stack into the shell task
+12. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
+13. `sti` — enable interrupts
+14. `sched_start(shell_proc)` — switch from the boot stack into the shell task
 
 `sched_init()` must still be called before `sti`, and `sched_start()` must happen only after the first runnable task has been created.
 
@@ -122,7 +124,7 @@ typedef struct {
     u32*            pd;                     /* PMM-allocated page directory        */
     u32             kernel_stack_frame;     /* PMM frame for ring-0 syscall stack  */
     unsigned int    sched_esp;              /* kernel ESP saved on preemption      */
-    process_state_t state;                  /* UNUSED / RUNNING / EXITED          */
+    process_state_t state;                  /* UNUSED / RUNNING / ZOMBIE / EXITED  */
     void          (*kernel_entry)(void);    /* kernel task entry point             */
     unsigned int    user_entry;             /* first ring-3 EIP for ELF tasks      */
     int             user_argc;              /* saved argc for bootstrap            */
@@ -202,19 +204,33 @@ irq0_stub — add esp 4, pop segments, popa, iretd → ring 3 resumes
 ## Lifecycle
 
 ```text
-runelf:
+runelf (foreground):
   process_create()
   allocate proc->kernel_stack_frame
   seed proc->sched_esp         → first entry via elf_user_task_bootstrap()
   sched_enqueue(proc)
   process_wait(proc)           → shell waits until child is ZOMBIE
+  process_destroy(proc)        → called from shell's safe stack on wakeup
+
+runelf_nowait / SYS_EXEC (background):
+  process_create()
+  allocate proc->kernel_stack_frame
+  seed proc->sched_esp         → first entry via elf_user_task_bootstrap()
+  sched_enqueue(proc)
+  return immediately           → no explicit waiter
 
 sys_exit:
   paging_switch(kernel_pd)
   sched_exit_current((unsigned int)regs)
   mark task ZOMBIE
   switch to next runnable task
-  process_destroy(proc) later from a safe waiter stack
+  [foreground] process_destroy() called by process_wait() in shell
+  [background] process_destroy() called by reaper within one quantum
+
+reaper task (permanent kernel task):
+  loop:
+    sched_reap_zombies()       → destroy any ZOMBIE not currently running
+    sti; hlt                   → sleep until next timer tick
 ```
 
 ---
