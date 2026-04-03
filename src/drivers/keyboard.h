@@ -86,20 +86,37 @@ typedef struct {
     char ascii;
 } key_event_t;
 
+/*
+ * keyboard_consumer_fn — called from keyboard_handle_irq() for every
+ * key-press event after scancode decoding.  The registered consumer
+ * receives the full key_event_t and decides what to do with it.
+ *
+ * Runs in IRQ context — must not block or sleep.
+ */
+typedef void (*keyboard_consumer_fn)(key_event_t ev);
+
 void keyboard_init(void);
 void keyboard_handle_irq(void);
 
 /*
- * Input buffer used by SYS_READ for the foreground user process.
+ * keyboard_set_consumer(fn)
  *
- * Routing is driven first by process_get_foreground(), and falls back to
- * the currently scheduled task when no foreground owner is set:
+ * Register the active input consumer.  Pass NULL to unregister.
+ * The keyboard driver calls fn for every key-press event and makes
+ * no routing decisions of its own.
  *
- *   - foreground user task present      -> route ASCII to process buffer
- *   - otherwise current task with pd!=0 -> route ASCII to process buffer
- *   - otherwise                         -> route to shell/editor
+ * Ownership transfers are:
+ *   shell_init()            — registers the shell consumer
+ *   process_set_foreground  — registers a process consumer (or restores shell)
+ */
+void keyboard_set_consumer(keyboard_consumer_fn fn);
+
+/*
+ * Raw ASCII ring buffer — written by the process-mode consumer,
+ * drained by SYS_READ in syscall.c.
  */
 int  keyboard_buf_available(void);
 char keyboard_buf_pop(void);
+void keyboard_buf_push_char(char c);
 
 #endif

@@ -54,9 +54,18 @@ Use it for basic string and memory primitives that would normally come from libc
 * New shared string / memory primitives should be added to `klib`, not reintroduced as private statics in individual `.c` files.
 * Keep file-local helpers file-local only when they are truly specific to one implementation and are not general-purpose utilities.
 
----
+### 6. The keyboard driver must not know about processes, the scheduler, or the shell
 
-## Bootloader Rules
+`keyboard.c` decodes scancodes and calls the registered `keyboard_consumer_fn`. That is its entire job.
+
+Routing decisions — whether input goes to the shell or a user process — belong to the consumer, not the driver. The consumer is registered via `keyboard_set_consumer()`:
+- `shell_init()` registers `shell_key_consumer`
+- `process_set_foreground(proc)` registers `process_key_consumer`
+- `process_set_foreground(0)` restores the shell consumer via `shell_register_consumer()`
+
+Do not add imports of `process.h`, `scheduler.h`, or `shell.h` to `keyboard.c` or `keyboard.h`. Do not add routing logic to `keyboard_handle_irq()`. If a new input consumer is needed, register it — do not modify the driver.
+
+---
 
 * `boot.asm` must be **exactly 512 bytes**, ending with `dw 0xAA55`
 * `loader2.asm` must be **exactly 2048 bytes**
@@ -334,7 +343,9 @@ Useful signals:
 
 ## Next Steps (Recommended)
 
-* Enqueue ELF processes into the scheduler as full tasks
+* True blocking `SYS_READ` — when the keyboard buffer is empty, yield to the scheduler instead of busy-polling on `hlt`, and re-enqueue the process when input arrives
+* Copy-from-user validation in syscall pointer arguments
+* Per-process file descriptors / `SYS_OPEN` backed by the FAT16 driver
 
 ---
 

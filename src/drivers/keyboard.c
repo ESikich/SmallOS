@@ -1,10 +1,5 @@
 #include "keyboard.h"
 #include "ports.h"
-#include "shell.h"
-#include "screen.h"
-#include "terminal.h"
-#include "../kernel/scheduler.h"
-#include "../kernel/process.h"
 
 /* ------------------------------------------------------------------ */
 /* Process-input buffer                                               */
@@ -29,7 +24,7 @@ char keyboard_buf_pop(void) {
     return c;
 }
 
-static void kb_buf_push(char c) {
+void keyboard_buf_push_char(char c) {
     if (kb_buf_count >= KB_BUF_SIZE) return;
     kb_buf[kb_buf_head] = c;
     kb_buf_head = (kb_buf_head + 1) % KB_BUF_SIZE;
@@ -42,14 +37,14 @@ static void kb_buf_clear(void) {
     kb_buf_count = 0;
 }
 
-static int kb_in_process_mode(void) {
-    process_t* fg = process_get_foreground();
-    if (fg && fg->pd != 0) {
-        return 1;
-    }
+/* ------------------------------------------------------------------ */
+/* Input consumer                                                     */
+/* ------------------------------------------------------------------ */
 
-    process_t* cur = sched_current();
-    return cur && cur->pd != 0;
+static keyboard_consumer_fn s_consumer = 0;
+
+void keyboard_set_consumer(keyboard_consumer_fn fn) {
+    s_consumer = fn;
 }
 
 /* ------------------------------------------------------------------ */
@@ -360,12 +355,6 @@ static key_event_t decode_scancode(unsigned char scancode) {
     return ev;
 }
 
-static void print_key_name(const char* name) {
-    terminal_putc('[');
-    terminal_puts(name);
-    terminal_putc(']');
-}
-
 void keyboard_handle_irq(void) {
     unsigned char scancode = inb(0x60);
     key_event_t ev = decode_scancode(scancode);
@@ -374,99 +363,8 @@ void keyboard_handle_irq(void) {
         return;
     }
 
-    if (ev.ascii) {
-        if (kb_in_process_mode()) {
-            kb_buf_push(ev.ascii);
-        } else if (ev.ascii == '\b') {
-            shell_backspace();
-        } else {
-            shell_input_char(ev.ascii);
-        }
-        return;
-    }
-
-    if (kb_in_process_mode()) {
-        return;
-    }
-
-    switch (ev.key) {
-        case KEY_LEFT:
-            shell_move_left();
-            break;
-        case KEY_RIGHT:
-            shell_move_right();
-            break;
-        case KEY_HOME:
-            shell_move_home();
-            break;
-        case KEY_END:
-            shell_move_end();
-            break;
-        case KEY_DELETE:
-            shell_delete();
-            break;
-        case KEY_UP:
-            shell_history_up();
-            break;
-        case KEY_DOWN:
-            shell_history_down();
-            break;
-        case KEY_PAGEUP:
-            print_key_name("PGUP");
-            break;
-        case KEY_PAGEDOWN:
-            print_key_name("PGDN");
-            break;
-        case KEY_INSERT:
-            print_key_name("INS");
-            break;
-        case KEY_ESC:
-            print_key_name("ESC");
-            break;
-        case KEY_F1:
-            print_key_name("F1");
-            break;
-        case KEY_F2:
-            print_key_name("F2");
-            break;
-        case KEY_F3:
-            print_key_name("F3");
-            break;
-        case KEY_F4:
-            print_key_name("F4");
-            break;
-        case KEY_F5:
-            print_key_name("F5");
-            break;
-        case KEY_F6:
-            print_key_name("F6");
-            break;
-        case KEY_F7:
-            print_key_name("F7");
-            break;
-        case KEY_F8:
-            print_key_name("F8");
-            break;
-        case KEY_F9:
-            print_key_name("F9");
-            break;
-        case KEY_F10:
-            print_key_name("F10");
-            break;
-        case KEY_F11:
-            print_key_name("F11");
-            break;
-        case KEY_F12:
-            print_key_name("F12");
-            break;
-        case KEY_PRINT_SCREEN:
-            print_key_name("PRTSC");
-            break;
-        case KEY_PAUSE:
-            print_key_name("PAUSE");
-            break;
-        default:
-            break;
+    if (s_consumer) {
+        s_consumer(ev);
     }
 }
 

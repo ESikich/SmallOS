@@ -3,12 +3,26 @@
 #include "paging.h"
 #include "terminal.h"
 #include "scheduler.h"
+#include "keyboard.h"
+#include "shell.h"
 
 /* ------------------------------------------------------------------ */
 /* Internal helpers                                                   */
 /* ------------------------------------------------------------------ */
 
 static process_t* s_foreground = 0;
+
+/*
+ * process_key_consumer — keyboard consumer active while a user process
+ * holds the foreground.  Only ASCII characters are meaningful to user
+ * programs; non-ASCII key events (arrows, function keys, etc.) are
+ * silently ignored.
+ */
+static void process_key_consumer(key_event_t ev) {
+    if (ev.ascii) {
+        keyboard_buf_push_char(ev.ascii);
+    }
+}
 
 static void proc_zero(process_t* p) {
     unsigned char* b = (unsigned char*)p;
@@ -117,6 +131,11 @@ process_t* process_get_current(void) {
 
 void process_set_foreground(process_t* proc) {
     s_foreground = proc;
+    if (proc) {
+        keyboard_set_consumer(process_key_consumer);
+    } else {
+        shell_register_consumer();
+    }
 }
 
 process_t* process_get_foreground(void) {

@@ -41,7 +41,10 @@ shell command
 Important current-state facts:
 
 - the **shell** is a scheduler-owned kernel task created at boot
-- **keyboard IRQ1** does not mutate shell/editor state directly; it queues events that the shell task drains later
+- **keyboard IRQ1** decodes scancodes and calls a registered `keyboard_consumer_fn` — it makes no routing decisions itself
+- the **shell consumer** (`shell_key_consumer` in `shell.c`) enqueues `shell_event_t` entries; the shell task drains them in `shell_poll()` outside IRQ context
+- the **process consumer** (`process_key_consumer` in `process.c`) pushes ASCII into `kb_buf`; non-ASCII key events are ignored
+- consumer ownership transfers via `process_set_foreground()` — shell consumer at boot, process consumer while a user process holds the foreground, shell consumer restored on exit
 - **ELF user programs** are loaded into their own page directory and do execute in ring 3
 - ELF launch and exit are now scheduler-owned: `elf_run_image()` seeds a bootstrap context, enqueues the task, and returns `process_t*`
 - the scheduler supports kernel tasks, ELF tasks, voluntary yielding, and timer-driven switching; `runelf` blocks with `process_wait()`, while `runelf_nowait` returns immediately
@@ -55,7 +58,13 @@ keyboard IRQ1
   ↓
 keyboard_handle_irq()
   ↓
-queue shell event (char, backspace, arrows, history, etc.)
+decode scancode → key_event_t
+  ↓
+call s_consumer(ev)   ← registered keyboard_consumer_fn
+  ↓
+shell_key_consumer()
+  ↓
+enqueue shell_event_t (char, backspace, arrows, history, etc.)
   ↓
 shell_task_main()
   ↓

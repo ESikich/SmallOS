@@ -7,6 +7,7 @@
 #include "commands.h"
 #include "parse.h"
 #include "klib.h"
+#include "keyboard.h"
 
 #define HISTORY_MAX 8
 #define SHELL_EVENT_QUEUE_SIZE 64
@@ -140,6 +141,44 @@ static void shell_execute(const char* input) {
     commands_execute(&cmd);
 }
 
+/* ------------------------------------------------------------------ */
+/* Keyboard consumer                                                  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * shell_key_consumer — the shell's registered keyboard_consumer_fn.
+ *
+ * Called from keyboard_handle_irq() for every key-press event while
+ * the shell holds the input consumer registration.  Translates key
+ * events into shell_event_t entries and enqueues them for shell_poll()
+ * to drain on the shell task's own stack, outside IRQ context.
+ */
+static void shell_key_consumer(key_event_t ev) {
+    if (ev.ascii) {
+        if (ev.ascii == '\b') {
+            shell_enqueue_event(SHELL_EVENT_BACKSPACE, 0);
+        } else {
+            shell_enqueue_event(SHELL_EVENT_INPUT_CHAR, ev.ascii);
+        }
+        return;
+    }
+
+    switch (ev.key) {
+        case KEY_LEFT:      shell_enqueue_event(SHELL_EVENT_MOVE_LEFT,    0); break;
+        case KEY_RIGHT:     shell_enqueue_event(SHELL_EVENT_MOVE_RIGHT,   0); break;
+        case KEY_HOME:      shell_enqueue_event(SHELL_EVENT_MOVE_HOME,    0); break;
+        case KEY_END:       shell_enqueue_event(SHELL_EVENT_MOVE_END,     0); break;
+        case KEY_DELETE:    shell_enqueue_event(SHELL_EVENT_DELETE,       0); break;
+        case KEY_UP:        shell_enqueue_event(SHELL_EVENT_HISTORY_UP,   0); break;
+        case KEY_DOWN:      shell_enqueue_event(SHELL_EVENT_HISTORY_DOWN, 0); break;
+        default: break;
+    }
+}
+
+void shell_register_consumer(void) {
+    keyboard_set_consumer(shell_key_consumer);
+}
+
 void shell_init(void) {
     line_editor_init(&editor);
     history_count = 0;
@@ -147,6 +186,7 @@ void shell_init(void) {
     event_head = 0;
     event_tail = 0;
     event_count = 0;
+    keyboard_set_consumer(shell_key_consumer);
     shell_start_prompt();
 }
 
@@ -247,40 +287,4 @@ void shell_task_main(void) {
         }
         shell_poll();
     }
-}
-
-void shell_input_char(char c) {
-    shell_enqueue_event(SHELL_EVENT_INPUT_CHAR, c);
-}
-
-void shell_backspace(void) {
-    shell_enqueue_event(SHELL_EVENT_BACKSPACE, 0);
-}
-
-void shell_delete(void) {
-    shell_enqueue_event(SHELL_EVENT_DELETE, 0);
-}
-
-void shell_move_left(void) {
-    shell_enqueue_event(SHELL_EVENT_MOVE_LEFT, 0);
-}
-
-void shell_move_right(void) {
-    shell_enqueue_event(SHELL_EVENT_MOVE_RIGHT, 0);
-}
-
-void shell_move_home(void) {
-    shell_enqueue_event(SHELL_EVENT_MOVE_HOME, 0);
-}
-
-void shell_move_end(void) {
-    shell_enqueue_event(SHELL_EVENT_MOVE_END, 0);
-}
-
-void shell_history_up(void) {
-    shell_enqueue_event(SHELL_EVENT_HISTORY_UP, 0);
-}
-
-void shell_history_down(void) {
-    shell_enqueue_event(SHELL_EVENT_HISTORY_DOWN, 0);
 }

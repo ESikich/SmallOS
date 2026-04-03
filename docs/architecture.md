@@ -306,17 +306,30 @@ VGA text mode (`0xB8000`). Provides `terminal_putc`, `terminal_puts`, `terminal_
 ```text
 keyboard IRQ → keyboard_handle_irq()
   ↓
-  if kb_process_mode: push to ring buffer (for SYS_READ)
-  else: queue shell event
-    ↓
-    shell_task_main() drains queue via shell_poll()
-    ↓
-    line_editor (insert, delete, cursor, history)
-    ↓
-    [Enter] → parse_command() → commands_execute()
-    ↓
-    runelf / fsls / fsread / ataread / meminfo / ... dispatch
+  decode scancode → key_event_t
+  ↓
+  call registered consumer (keyboard_consumer_fn)
+  ↓
+  [shell consumer]              [process consumer]
+  shell_key_consumer()          process_key_consumer()
+  enqueue shell_event_t         keyboard_buf_push_char(ascii)
+  ↓                             ↓
+  shell_task_main()             SYS_READ drains kb_buf
+  drains queue via shell_poll()
+  ↓
+  line_editor (insert, delete, cursor, history)
+  ↓
+  [Enter] → parse_command() → commands_execute()
+  ↓
+  runelf / fsls / fsread / ataread / meminfo / ... dispatch
 ```
+
+The active consumer is managed by `keyboard_set_consumer()`:
+- `shell_init()` registers `shell_key_consumer` at boot
+- `process_set_foreground(proc)` registers `process_key_consumer` when a user process takes the foreground
+- `process_set_foreground(0)` calls `shell_register_consumer()` to restore the shell consumer on exit
+
+The keyboard driver makes no routing decisions. It decodes scancodes and calls whoever is registered.
 
 ---
 

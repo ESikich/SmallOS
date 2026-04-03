@@ -79,7 +79,7 @@ $(OBJ_DIR)/kernel.o: $(KERNEL_DIR)/kernel.c $(KERNEL_DIR)/pmm.h $(KERNEL_DIR)/me
 $(OBJ_DIR)/idt.o: $(KERNEL_DIR)/idt.c $(KERNEL_DIR)/idt.h $(KERNEL_DIR)/ports.h $(DRIVERS_DIR)/keyboard.h $(KERNEL_DIR)/scheduler.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/keyboard.o: $(DRIVERS_DIR)/keyboard.c $(DRIVERS_DIR)/keyboard.h $(KERNEL_DIR)/ports.h $(SHELL_DIR)/shell.h $(DRIVERS_DIR)/screen.h | dirs
+$(OBJ_DIR)/keyboard.o: $(DRIVERS_DIR)/keyboard.c $(DRIVERS_DIR)/keyboard.h $(KERNEL_DIR)/ports.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/shell.o: $(SHELL_DIR)/shell.c $(SHELL_DIR)/shell.h $(DRIVERS_DIR)/screen.h | dirs
@@ -109,7 +109,7 @@ $(OBJ_DIR)/memory.o: $(KERNEL_DIR)/memory.c $(KERNEL_DIR)/memory.h | dirs
 $(OBJ_DIR)/pmm.o: $(KERNEL_DIR)/pmm.c $(KERNEL_DIR)/pmm.h $(DRIVERS_DIR)/terminal.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/process.o: $(KERNEL_DIR)/process.c $(KERNEL_DIR)/process.h $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/pmm.h $(DRIVERS_DIR)/terminal.h | dirs
+$(OBJ_DIR)/process.o: $(KERNEL_DIR)/process.c $(KERNEL_DIR)/process.h $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/pmm.h $(DRIVERS_DIR)/terminal.h $(DRIVERS_DIR)/keyboard.h $(SHELL_DIR)/shell.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/scheduler.o: $(KERNEL_DIR)/scheduler.c $(KERNEL_DIR)/scheduler.h $(KERNEL_DIR)/process.h $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/gdt.h $(DRIVERS_DIR)/terminal.h | dirs

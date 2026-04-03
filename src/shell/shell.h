@@ -4,16 +4,14 @@
 void shell_init(void);
 void shell_poll(void);
 void shell_task_main(void);
-void shell_input_char(char c);
-void shell_backspace(void);
 
-void shell_move_left(void);
-void shell_move_right(void);
-void shell_move_home(void);
-void shell_move_end(void);
-void shell_delete(void);
-
-void shell_history_up(void);
-void shell_history_down(void);
+/*
+ * shell_register_consumer()
+ *
+ * Register the shell's keyboard consumer with the keyboard driver.
+ * Called once from shell_init(), and again by process_set_foreground()
+ * when a user process releases the foreground.
+ */
+void shell_register_consumer(void);
 
 #endif

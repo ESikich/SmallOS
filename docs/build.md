@@ -427,4 +427,4 @@ Replaces CHS `AH=0x02`. Removes the 18-sector-per-track limit. Required because 
 
 * True blocking `SYS_READ` — yield to scheduler on empty keyboard buffer rather than busy-polling
 * Per-process file descriptors backed by the FAT16 driver (`SYS_OPEN`, `SYS_CLOSE`)
-* Copy-from-user validation in syscall pointer arguments
+* Copy-from-user validation in syscall pointer argumentsGive 
