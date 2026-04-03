@@ -110,6 +110,42 @@ Loads and asynchronously spawns a named ELF program from the FAT16 partition. Re
 
 ---
 
+### SYS_OPEN (8)
+
+```c
+int sys_open(const char* name);
+```
+
+Opens a file from the FAT16 root directory by name (case-insensitive 8.3 matching). Allocates the lowest free slot in the calling process's fd table (fd ≥ 3) and records the filename, file size, and an initial read offset of 0. fds 0/1/2 are reserved.
+
+Returns the fd (≥ 3) on success, or `-1` if the file is not found, the fd table is full (`PROCESS_FD_MAX = 8`), or the name pointer fails user-space validation.
+
+`sys_open_impl` validates the name pointer with `user_str_ok()`, copies the name into a kernel buffer bounded by `PROCESS_FD_NAME_MAX` (16 bytes), then calls `fat16_stat()` to confirm the file exists without loading its data.
+
+---
+
+### SYS_CLOSE (9)
+
+```c
+int sys_close(int fd);
+```
+
+Closes an open file descriptor, freeing its slot for reuse. Returns `0` on success, `-1` if the fd is out of range or not currently open.
+
+---
+
+### SYS_FREAD (10)
+
+```c
+int sys_fread(int fd, char* buf, uint32_t len);
+```
+
+Reads up to `len` bytes from the open file at `fd` into `buf`, starting at the current file position. Advances the position by the number of bytes actually read. Returns the number of bytes read, `0` at end-of-file, or `-1` on error (bad fd, invalid buffer, read failure).
+
+`sys_fread_impl` calls `fat16_load()` to load the full file into the kernel's static buffer on each call, then copies the requested slice into the validated user buffer. This is intentionally simple: files are small (≤ 256 KB) and only one foreground process reads at a time, so repeated ATA reads are acceptable. Caching the loaded data is a future optimization.
+
+---
+
 ## Kernel Entry Point
 
 ```c
@@ -172,6 +208,9 @@ sys_get_ticks()
 sys_read(buf, len)
 sys_yield()
 sys_exec(name, argc, argv)
+sys_open(name)
+sys_close(fd)
+sys_fread(fd, buf, len)
 ```
 
 `user_lib.h` higher-level wrappers:
@@ -188,10 +227,11 @@ u_readline(...)    sys_read + null-terminate + strip newline
 ## Design Notes
 
 * Programs run in ring 3 — hardware-enforced privilege separation
-* Kernel trusts user pointers (no copy-from-user validation yet)
+* All pointer arguments to syscalls are validated with `user_buf_ok()` / `user_str_ok()` before kernel dereference — pointers below `USER_CODE_BASE` (0x400000) or spanning above `USER_STACK_TOP` (0xC0000000) are rejected with `-1`
 * `SYS_YIELD` and the timer path use the same stub layout, but the real scheduler resume ESP is `esp - 8`, not raw `esp`
 * EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`
 * The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.
+* fd 0/1/2 are reserved by convention; user-opened files start at fd 3. The fd table (`fd_entry_t fds[PROCESS_FD_MAX]`) lives inside `process_t` and is zero-initialized by `process_create()`; no explicit close-on-exit is needed since the entire frame is freed by `pmm_free_frame` on process destruction.
 
 ---
 
@@ -199,8 +239,8 @@ u_readline(...)    sys_read + null-terminate + strip newline
 
 * `SYS_SLEEP`
 * `SYS_ALLOC`
-* copy-from-user validation
-* per-process file descriptors (`SYS_OPEN` / `SYS_CLOSE` backed by the FAT16 driver)
+* per-element `argv[]` pointer validation in `SYS_EXEC`
+* `SYS_FREAD` read caching to avoid repeated ATA loads for the same file
 
 ---
 

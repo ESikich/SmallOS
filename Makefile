@@ -51,7 +51,7 @@ KERNEL_OBJS=\
 	$(OBJ_DIR)/ata.o \
 	$(OBJ_DIR)/fat16.o
 
-USER_PROGS=hello ticks args runelf_test readline exec_test
+USER_PROGS=hello ticks args runelf_test readline exec_test fileread
 
 USER_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_PROGS)))
 USER_OBJS=$(addprefix $(OBJ_DIR)/,$(addsuffix .o,$(USER_PROGS)))
@@ -124,7 +124,7 @@ $(OBJ_DIR)/commands.o: $(SHELL_DIR)/commands.c $(SHELL_DIR)/commands.h $(SHELL_D
 $(OBJ_DIR)/elf_loader.o: $(EXEC_DIR)/elf_loader.c $(EXEC_DIR)/elf_loader.h $(KERNEL_DIR)/elf.h $(KERNEL_DIR)/paging.h $(KERNEL_DIR)/process.h $(KERNEL_DIR)/scheduler.h $(KERNEL_DIR)/memory.h $(KERNEL_DIR)/pmm.h $(DRIVERS_DIR)/fat16.h $(DRIVERS_DIR)/terminal.h $(DRIVERS_DIR)/keyboard.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/syscall.o: $(KERNEL_DIR)/syscall.c $(KERNEL_DIR)/syscall.h $(DRIVERS_DIR)/terminal.h $(KERNEL_DIR)/timer.h $(KERNEL_DIR)/uapi_syscall.h $(DRIVERS_DIR)/keyboard.h | dirs
+$(OBJ_DIR)/syscall.o: $(KERNEL_DIR)/syscall.c $(KERNEL_DIR)/syscall.h $(DRIVERS_DIR)/terminal.h $(KERNEL_DIR)/timer.h $(KERNEL_DIR)/uapi_syscall.h $(DRIVERS_DIR)/keyboard.h $(KERNEL_DIR)/process.h $(DRIVERS_DIR)/fat16.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/gdt.o: $(KERNEL_DIR)/gdt.c $(KERNEL_DIR)/gdt.h | dirs

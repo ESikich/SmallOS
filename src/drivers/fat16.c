@@ -256,6 +256,32 @@ void fat16_ls(void) {
     }
 }
 
+int fat16_stat(const char* name, u32* out_size) {
+    if (!s_initialised) return 0;
+
+    for (u32 s = 0; s < ROOT_DIR_SECTORS; s++) {
+        if (!ata_read_sectors(abs_lba(ROOT_REL_SECTOR + s), 1, s_sector))
+            return 0;
+
+        for (u32 e = 0; e < SECTOR_SIZE / 32u; e++) {
+            const u8* entry = s_sector + e * 32u;
+
+            if (entry[DIR_NAME] == 0x00) return 0;
+            if (entry[DIR_NAME] == 0xE5) continue;
+
+            u8 attr = entry[DIR_ATTR];
+            if (attr == ATTR_LONG_NAME) continue;
+            if (attr & ATTR_VOLUME_ID)  continue;
+
+            if (match_83(entry + DIR_NAME, name)) {
+                *out_size = read_u32_le(entry, DIR_FILE_SIZE);
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 const u8* fat16_load(const char* name, u32* out_size) {
     if (!s_initialised) { terminal_puts("fat16: not initialised\n"); return 0; }
 

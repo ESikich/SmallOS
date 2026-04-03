@@ -108,4 +108,40 @@ static inline int sys_exec(const char* name, int argc, char** argv) {
     return syscall3(SYS_EXEC, (uint32_t)name, (uint32_t)argc, (uint32_t)argv);
 }
 
+/*
+ * sys_open(name)
+ *
+ * Open a file from the FAT16 partition by name.  The name is matched
+ * case-insensitively using 8.3 rules (e.g. "readme.txt", "DATA.BIN").
+ *
+ * Returns a file descriptor (>= 3) on success, or -1 on failure
+ * (file not found, fd table full, name too long).
+ */
+static inline int sys_open(const char* name) {
+    return syscall1(SYS_OPEN, (uint32_t)name);
+}
+
+/*
+ * sys_close(fd)
+ *
+ * Close an open file descriptor.  Returns 0 on success, -1 on error.
+ */
+static inline int sys_close(int fd) {
+    return syscall1(SYS_CLOSE, (uint32_t)fd);
+}
+
+/*
+ * sys_fread(fd, buf, len)
+ *
+ * Read up to len bytes from the file at fd into buf, starting at the
+ * current file position.  Advances the position by the number of bytes
+ * actually read.
+ *
+ * Returns the number of bytes read (0 at end-of-file), or -1 on error
+ * (bad fd, invalid buffer, read failure).
+ */
+static inline int sys_fread(int fd, char* buf, uint32_t len) {
+    return syscall3(SYS_FREAD, (uint32_t)fd, (uint32_t)buf, len);
+}
+
 #endif

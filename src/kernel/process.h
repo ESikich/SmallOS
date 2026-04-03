@@ -16,6 +16,26 @@ typedef enum {
 } process_state_t;
 
 /* ------------------------------------------------------------------ */
+/* Per-process file descriptor table                                  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * File descriptors 0, 1, 2 are reserved for stdin/stdout/stderr.
+ * User-opened files start at fd 3.  PROCESS_FD_MAX controls the total
+ * table size (including the reserved slots).
+ */
+#define PROCESS_FD_MAX      8
+#define PROCESS_FD_FIRST    3        /* first allocatable fd */
+#define PROCESS_FD_NAME_MAX 16       /* max filename length stored in fd entry */
+
+typedef struct {
+    int  valid;                            /* 1 if this slot is open */
+    char name[PROCESS_FD_NAME_MAX];        /* filename as passed to SYS_OPEN */
+    u32  size;                             /* file size in bytes */
+    u32  offset;                           /* current read position */
+} fd_entry_t;
+
+/* ------------------------------------------------------------------ */
 /* process_t                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -34,6 +54,7 @@ typedef struct {
     char*           user_argv[PROCESS_MAX_ARGS];
     char            user_arg_data[PROCESS_ARG_BYTES];
     char            name[PROCESS_NAME_MAX];
+    fd_entry_t      fds[PROCESS_FD_MAX];   /* per-process open file table */
 } process_t;
 
 /* ------------------------------------------------------------------ */

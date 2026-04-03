@@ -52,6 +52,17 @@ int fat16_init(void);
 void fat16_ls(void);
 
 /*
+ * fat16_stat(name, out_size)
+ *
+ * Check whether a file exists in the root directory (case-insensitive 8.3)
+ * and return its size.  Does not load the file data.
+ *
+ * Returns 1 if found (and sets *out_size), 0 if not found or on error.
+ * Used by SYS_OPEN to validate a file before recording it in the fd table.
+ */
+int fat16_stat(const char* name, u32* out_size);
+
+/*
  * fat16_load(name, out_size)
  *
  * Find a file by name in the root directory (case-insensitive 8.3),

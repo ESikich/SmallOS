@@ -1,6 +1,50 @@
 # Changelog
  
-## [Current] — True blocking SYS_READ
+## [Current] — SYS_OPEN / SYS_CLOSE / SYS_FREAD + copy-from-user validation
+ 
+### Added
+ 
+* **Per-process file descriptor table** (`src/kernel/process.h`)
+  * `fd_entry_t` struct: `valid`, `name[16]`, `size`, `offset`
+  * `fds[PROCESS_FD_MAX]` (8 slots) embedded in `process_t` — zero-initialized by `proc_zero()` in `process_create()`; freed automatically with the process frame; no explicit close-on-exit needed
+  * fds 0/1/2 reserved by convention; user-opened files start at fd 3 (`PROCESS_FD_FIRST`)
+ 
+* **`SYS_OPEN (8)`** — open a FAT16 file by name
+  * Validates name pointer with `user_str_ok()`, copies into a kernel buffer (bounded by `PROCESS_FD_NAME_MAX = 16`)
+  * Calls `fat16_stat()` to confirm existence without loading data
+  * Allocates lowest free fd slot; stores name, size, offset=0
+  * Returns fd ≥ 3 on success, -1 on failure
+ 
+* **`SYS_CLOSE (9)`** — close an fd, freeing its slot for reuse
+ 
+* **`SYS_FREAD (10)`** — read bytes from an open fd into a user buffer
+  * Validates user buffer with `user_buf_ok()`
+  * Calls `fat16_load()` to load the full file, copies the slice `[offset, offset+len)` into the user buffer, advances offset
+  * Returns bytes copied, 0 at EOF, -1 on error
+ 
+* **`fat16_stat(name, out_size)`** (`src/drivers/fat16.h` / `fat16.c`)
+  * Walks the root directory and returns file size without touching the static load buffer
+  * Used by `SYS_OPEN` to validate existence cheaply
+ 
+* **Copy-from-user validation** (`src/kernel/syscall.c`)
+  * `user_buf_ok(ptr, len)` — rejects any buffer not entirely within `[USER_CODE_BASE, USER_STACK_TOP)` = `[0x400000, 0xC0000000)`; overflow-safe
+  * `user_str_ok(ptr)` — validates string pointer base only (length unknown before scan)
+  * Applied to all pointer-bearing syscalls: `SYS_WRITE`, `SYS_READ`, `SYS_EXEC` (name + argv array), `SYS_OPEN`, `SYS_FREAD`
+ 
+* **`src/user/fileread.c`** — end-to-end test program
+  * Opens itself (`fileread.elf`), reads and hex-dumps first 16 bytes (ELF magic), drains to EOF, closes fd
+  * Verifies double-close and bad-fd both return -1
+ 
+### Key design notes
+ 
+* **The fd table lives inside `process_t`** — no separate allocation, no leak risk, destroyed automatically with the process.
+* **`SYS_FREAD` reloads from ATA on every call** — intentionally simple for now; caching is a future optimization.
+* **`fat16_stat` does not disturb `s_load_buf`** — `SYS_OPEN` validation and ELF loading can interleave safely.
+* **Copy-from-user is address-range only** — it does not walk page tables. A user pointer in the valid range but backed by a missing PTE would still fault in the kernel; full fault handling is future work.
+ 
+---
+ 
+## [Previous] — True blocking SYS_READ
  
 ### Changed
  

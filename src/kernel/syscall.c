@@ -6,6 +6,7 @@
 #include "scheduler.h"
 #include "process.h"
 #include "../exec/elf_loader.h"
+#include "fat16.h"
 
 #define SYSCALL_ERR_INVALID   ((unsigned int)-1)
 #define SYSCALL_MAX_WRITE_LEN 4096u
@@ -202,6 +203,122 @@ static int sys_exec_impl(const char* name, int argc, char** argv) {
     return elf_run_named(kname, argc, argv) ? 0 : -1;
 }
 
+/* ------------------------------------------------------------------ */
+/* File descriptor syscalls                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * sys_open_impl(name)
+ *
+ * Validate the filename, confirm the file exists on the FAT16 partition
+ * via fat16_stat(), allocate the lowest free fd slot (>= PROCESS_FD_FIRST)
+ * in the current process's fd table, and record name, size, and offset=0.
+ *
+ * Returns the fd (>= 3) on success, -1 on any failure.
+ */
+static int sys_open_impl(const char* name) {
+    if (!user_str_ok((unsigned int)name)) return -1;
+
+    /* Copy name into kernel buffer — bounded by PROCESS_FD_NAME_MAX */
+    char kname[PROCESS_FD_NAME_MAX];
+    unsigned int i = 0;
+    while (i < PROCESS_FD_NAME_MAX - 1 && name[i] != '\0') {
+        kname[i] = name[i];
+        i++;
+    }
+    kname[i] = '\0';
+    if (i == 0) return -1;
+
+    /* Check the file exists and get its size */
+    u32 file_size = 0;
+    if (!fat16_stat(kname, &file_size)) return -1;
+
+    /* Allocate an fd slot in the current process */
+    process_t* proc = (process_t*)sched_current();
+    if (!proc) return -1;
+
+    for (int fd = PROCESS_FD_FIRST; fd < PROCESS_FD_MAX; fd++) {
+        if (!proc->fds[fd].valid) {
+            proc->fds[fd].valid  = 1;
+            proc->fds[fd].size   = file_size;
+            proc->fds[fd].offset = 0;
+            for (unsigned int j = 0; j <= i; j++)
+                proc->fds[fd].name[j] = kname[j];
+            return fd;
+        }
+    }
+
+    return -1;   /* fd table full */
+}
+
+/*
+ * sys_close_impl(fd)
+ *
+ * Mark the fd slot as free.  Returns 0 on success, -1 on bad fd.
+ */
+static int sys_close_impl(int fd) {
+    if (fd < PROCESS_FD_FIRST || fd >= PROCESS_FD_MAX) return -1;
+
+    process_t* proc = (process_t*)sched_current();
+    if (!proc) return -1;
+    if (!proc->fds[fd].valid) return -1;
+
+    proc->fds[fd].valid  = 0;
+    proc->fds[fd].offset = 0;
+    proc->fds[fd].size   = 0;
+    proc->fds[fd].name[0] = '\0';
+    return 0;
+}
+
+/*
+ * sys_fread_impl(fd, buf, len)
+ *
+ * Read up to len bytes from the file at fd into the user buffer buf,
+ * starting at the current file offset.  Advances the offset.
+ *
+ * Implementation:
+ *   fat16_load() is called to load the entire file into the kernel's
+ *   static load buffer on each SYS_FREAD call.  This is intentionally
+ *   simple: files are small (<= 256 KB), and the static buffer is
+ *   safe to reuse because only one foreground process runs at a time.
+ *   A future optimization would cache the loaded data, but for now the
+ *   simplicity is worth the repeated ATA reads.
+ *
+ * Returns bytes copied (0 at EOF), -1 on error.
+ */
+static int sys_fread_impl(int fd, char* buf, unsigned int len) {
+    if (fd < PROCESS_FD_FIRST || fd >= PROCESS_FD_MAX) return -1;
+    if (len == 0) return 0;
+    if (!user_buf_ok((unsigned int)buf, len)) return -1;
+
+    process_t* proc = (process_t*)sched_current();
+    if (!proc) return -1;
+    if (!proc->fds[fd].valid) return -1;
+
+    fd_entry_t* ent = &proc->fds[fd];
+
+    /* Already at or past end of file */
+    if (ent->offset >= ent->size) return 0;
+
+    /* Load the file from FAT16 into the static kernel buffer */
+    u32 loaded_size = 0;
+    const u8* data = fat16_load(ent->name, &loaded_size);
+    if (!data) return -1;
+
+    /* Clamp to remaining bytes */
+    u32 remaining = ent->size - ent->offset;
+    u32 to_copy   = (len < remaining) ? len : remaining;
+
+    /* Copy from kernel buffer into user buffer */
+    const u8* src = data + ent->offset;
+    for (u32 i = 0; i < to_copy; i++) {
+        buf[i] = (char)src[i];
+    }
+
+    ent->offset += to_copy;
+    return (int)to_copy;
+}
+
 void syscall_handler_main(syscall_regs_t* regs) {
     if (regs == 0) return;
 
@@ -238,6 +355,22 @@ void syscall_handler_main(syscall_regs_t* regs) {
                             (const char*)regs->ebx,
                             (int)regs->ecx,
                             (char**)regs->edx);
+            break;
+
+        case SYS_OPEN:
+            regs->eax = (unsigned int)sys_open_impl(
+                            (const char*)regs->ebx);
+            break;
+
+        case SYS_CLOSE:
+            regs->eax = (unsigned int)sys_close_impl((int)regs->ebx);
+            break;
+
+        case SYS_FREAD:
+            regs->eax = (unsigned int)sys_fread_impl(
+                            (int)regs->ebx,
+                            (char*)regs->ecx,
+                            regs->edx);
             break;
 
         default:

@@ -131,6 +131,7 @@ typedef struct {
     char*           user_argv[16];          /* saved argv pointers                 */
     char            user_arg_data[256];     /* argv string storage (kernel-side)   */
     char            name[32];               /* null-terminated process name        */
+    fd_entry_t      fds[8];                 /* per-process open file table (fd 3+) */
 } process_t;
 ```
 
@@ -573,6 +574,8 @@ per-process kernel stacks (PMM frame per process, freed on exit)
 SYS_READ — true blocking keyboard input: parks process in PROCESS_STATE_WAITING, woken by keyboard IRQ via process_key_consumer()
 SYS_YIELD — voluntary preemption via sched_yield_now()
 SYS_EXEC — foreground ELF execution with blocking parent save/restore; only one explicit parent context is tracked
+SYS_OPEN / SYS_CLOSE / SYS_FREAD — per-process file descriptor table backed by FAT16; fds 0/1/2 reserved, user files at fd 3+
+copy-from-user validation — all syscall pointer arguments checked against user address space [USER_CODE_BASE, USER_STACK_TOP) before dereference
 preemptive round-robin scheduler — timer IRQ context switch, 100 ms quantum
 ATA PIO driver — 28-bit LBA polling reads from primary IDE channel (0x1F0)
 FAT16 filesystem — ELF programs loaded from 16 MB FAT16 partition on disk
@@ -582,5 +585,6 @@ interactive shell with meminfo / ataread / fsls / fsread / runelf commands
 
 Foundation for:
 
-* richer filesystem-backed program loading (file descriptors, `SYS_OPEN`/`SYS_CLOSE`)
-* copy-from-user validation in syscall handlers
+* `SYS_SLEEP` / `SYS_ALLOC`
+* per-element `argv[]` validation in `SYS_EXEC`
+* `SYS_FREAD` read caching to avoid repeated ATA loads
