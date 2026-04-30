@@ -143,6 +143,7 @@ Current FAT16 programs:
 - `fileread` - exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE
 - `compiler_demo` - exercise SYS_WRITEFILE and readback
 - `sleep_test` - exercise SYS_SLEEP semantics
+- `preempt_test` - prove timer-driven preemption between runnable tasks
 - `fault` - fault probe (ud/gp/de/br/pf)
 
 `help` renders the built-in shell command list from the command table and the shipped-program list from the program table, with the same short descriptions.
