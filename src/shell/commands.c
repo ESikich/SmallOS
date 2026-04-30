@@ -10,22 +10,16 @@
 #include "process.h"
 #include "klib.h"
 
+static void print_command_list(void);
+static void print_program_list(void);
+
 static void cmd_help(command_t* cmd) {
     (void)cmd;
     terminal_puts("Commands:\n");
-    terminal_puts("  help\n");
-    terminal_puts("  clear\n");
-    terminal_puts("  echo\n");
-    terminal_puts("  about\n");
-    terminal_puts("  halt\n");
-    terminal_puts("  reboot\n");
-    terminal_puts("  uptime\n");
-    terminal_puts("  meminfo\n");
-    terminal_puts("  ataread <lba>      dump first 32 bytes of a sector\n");
-    terminal_puts("  fsls               list FAT16 root directory\n");
-    terminal_puts("  fsread <n>         dump first 16 bytes of a FAT16 file\n");
-    terminal_puts("  runelf <n> [args]\n");
-    terminal_puts("  runelf_nowait <n> [args]\n");
+    print_command_list();
+
+    terminal_puts("\nPrograms:\n");
+    print_program_list();
 }
 
 static void cmd_clear(command_t* cmd) {
@@ -220,22 +214,80 @@ static void cmd_runelf_nowait(command_t* cmd) {
 }
 
 static command_entry_t commands[] = {
-    { "help",          cmd_help },
-    { "clear",         cmd_clear },
-    { "echo",          cmd_echo },
-    { "about",         cmd_about },
-    { "halt",          cmd_halt },
-    { "reboot",        cmd_reboot },
-    { "uptime",        cmd_uptime },
-    { "meminfo",       cmd_meminfo },
-    { "ataread",       cmd_ataread },
-    { "fsls",          cmd_fsls },
-    { "fsread",        cmd_fsread },
-    { "runelf",        cmd_runelf },
-    { "runelf_nowait", cmd_runelf_nowait },
+    { "help",          "show commands and program list", cmd_help },
+    { "clear",         "clear the screen",              cmd_clear },
+    { "echo",          "print arguments",               cmd_echo },
+    { "about",         "show the OS version",           cmd_about },
+    { "halt",          "halt the machine",              cmd_halt },
+    { "reboot",        "reboot the machine",            cmd_reboot },
+    { "uptime",        "show tick and second counts",   cmd_uptime },
+    { "meminfo",       "show heap and frame usage",     cmd_meminfo },
+    { "ataread",       "dump raw sector bytes",         cmd_ataread },
+    { "fsls",          "list FAT16 root directory",     cmd_fsls },
+    { "fsread",        "dump FAT16 file bytes",         cmd_fsread },
+    { "runelf",        "run a FAT16 ELF and wait",      cmd_runelf },
+    { "runelf_nowait", "run a FAT16 ELF and return",    cmd_runelf_nowait },
 };
 
 #define COMMAND_COUNT (sizeof(commands) / sizeof(commands[0]))
+
+typedef struct {
+    const char* name;
+    const char* help;
+} program_entry_t;
+
+static program_entry_t programs[] = {
+    { "hello",       "print argc/argv and tick count" },
+    { "ticks",       "print the current tick count" },
+    { "args",        "print argc and argv" },
+    { "runelf_test", "verify ELF loading, syscalls, and stack setup" },
+    { "readline",    "interactive SYS_READ demo" },
+    { "exec_test",   "exercise SYS_EXEC semantics" },
+    { "fileread",    "exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE" },
+    { "fault",       "fault probe (ud/gp/de/br/pf)" },
+};
+
+#define PROGRAM_COUNT (sizeof(programs) / sizeof(programs[0]))
+
+static void print_command_list(void) {
+    for (unsigned int i = 0; i < COMMAND_COUNT; i++) {
+        terminal_puts("  ");
+        terminal_puts(commands[i].name);
+
+        unsigned int name_len = 0;
+        while (commands[i].name[name_len]) name_len++;
+        if (name_len < 16) {
+            for (unsigned int pad = name_len; pad < 16; pad++) {
+                terminal_putc(' ');
+            }
+        } else {
+            terminal_putc(' ');
+        }
+
+        terminal_puts(commands[i].help);
+        terminal_putc('\n');
+    }
+}
+
+static void print_program_list(void) {
+    for (unsigned int i = 0; i < PROGRAM_COUNT; i++) {
+        terminal_puts("  ");
+        terminal_puts(programs[i].name);
+
+        unsigned int name_len = 0;
+        while (programs[i].name[name_len]) name_len++;
+        if (name_len < 16) {
+            for (unsigned int pad = name_len; pad < 16; pad++) {
+                terminal_putc(' ');
+            }
+        } else {
+            terminal_putc(' ');
+        }
+
+        terminal_puts(programs[i].help);
+        terminal_putc('\n');
+    }
+}
 
 void commands_execute(command_t* cmd) {
     if (cmd->argc == 0) return;

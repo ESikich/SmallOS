@@ -7,6 +7,7 @@ typedef void (*command_fn_t)(command_t* cmd);
 
 typedef struct {
     const char* name;
+    const char* help;
     command_fn_t fn;
 } command_entry_t;
 

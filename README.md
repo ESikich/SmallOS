@@ -57,7 +57,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 │   ├── shell/      shell, line_editor, parse, commands
 │   ├── exec/       elf_loader
 │   └── user/       hello.c, ticks.c, args.c, readline.c, exec_test.c,
-│                   user_lib.h, user_syscall.h
+│                   fault.c, user_lib.h, user_syscall.h
 ├── tools/
 │   ├── mkfat16.c
 │   └── mkimage.c
@@ -85,11 +85,18 @@ make run-headless           # starts QEMU as a daemon
 tail -f /tmp/smallos-serial.log   # read all kernel output
 ```
 
+**Windows / PowerShell debug run:**
+```powershell
+qemu-system-i386 -drive format=raw,file=os-image.bin -m 32 -serial stdio -d int,cpu_reset,guest_errors -D qemu.log -display gtk 2>&1 | Tee-Object -FilePath qemu-console.log
+```
+
 `run-headless` daemonizes QEMU, writes a PID to `/tmp/smallos.pid`, and
 mirrors all terminal output to `/tmp/smallos-serial.log` via the COM1
 serial driver.  Use the QEMU monitor socket at
 `/tmp/smallos-monitor.sock` to send keystrokes (`sendkey`) or take
 screenshots (`screendump`).
+
+The PowerShell command keeps a GTK window visible while capturing guest output in the console and saving `qemu.log` plus `qemu-console.log` for later debugging.
 
 Use `-drive format=raw` (hard disk mode). Do not use `-fda` (floppy).
 
@@ -103,7 +110,7 @@ clear
 echo [args...]
 about
 halt
-reboot
+reboot              reboot the machine
 uptime
 meminfo
 ataread <lba>        dump first 32 bytes of a disk sector (ATA PIO)
@@ -114,7 +121,8 @@ runelf <name> [args] load and run an ELF from the FAT16 partition
 runelf_nowait <name> [args] enqueue an ELF and return immediately
 ```
 
-Current FAT16 programs: `hello`, `ticks`, `args`, `runelf_test`, `readline`, `exec_test`, `fileread`
+Current FAT16 programs: `hello`, `ticks`, `args`, `runelf_test`, `readline`, `exec_test`, `fileread`, `fault` (fault probe: `ud`, `gp`, `de`, `br`, `pf`)
+`help` renders the built-in shell command list from the command table and the shipped-program list from the program table, with short descriptions for both.
 
 ---
 

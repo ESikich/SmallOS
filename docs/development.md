@@ -11,7 +11,18 @@ make clean && make
 qemu-system-i386 -drive format=raw,file=build/img/os-image.bin
 ```
 
+On Windows / PowerShell, this pattern keeps a GTK window open and captures both console output and QEMU logs:
+
+```powershell
+qemu-system-i386 -drive format=raw,file=os-image.bin -m 32 -serial stdio -d int,cpu_reset,guest_errors -D qemu.log -display gtk 2>&1 | Tee-Object -FilePath qemu-console.log
+```
+
 Do not use `-fda` (floppy). LBA extended reads require hard disk mode.
+
+`help` is table-driven:
+- built-in shell commands are listed from the shell command table
+- shipped ELF programs are listed from the program table
+- both sections carry short descriptions, so keep the tables and the help output in sync when adding or removing entries
 
 ---
 

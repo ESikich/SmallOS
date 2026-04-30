@@ -41,7 +41,7 @@ gcc              → host tool compilation (mkfat16, mkimage)
 build/
 ├── bin/   → final binaries (kernel.elf, kernel.bin,
 │             hello.elf, ticks.elf, args.elf, runelf_test.elf,
-│             readline.elf, exec_test.elf, fileread.elf,
+│             readline.elf, exec_test.elf, fileread.elf, fault.elf,
 │             fat16.img, boot.bin, loader2.bin)
 ├── obj/   → object files and depfiles (.o, .d), mirrored by source subtree
 ├── gen/   → generated source (loader2.gen.asm)
@@ -242,7 +242,8 @@ build/tools/mkfat16 build/bin/fat16.img \
     build/bin/runelf_test.elf \
     build/bin/readline.elf \
     build/bin/exec_test.elf \
-    build/bin/fileread.elf
+    build/bin/fileread.elf \
+    build/bin/fault.elf
 ```
 
 `mkfat16` produces a raw FAT16 volume containing the user ELFs in the root directory.
@@ -456,7 +457,7 @@ Cause: simple linker script does not separate read-only and executable sections.
 ```text
 hello.elf ──────────────────────────────┐
 ticks.elf ──────────────────────────────┤
-args.elf / runelf_test.elf / ... ──────┤→ fat16.img ───────────────┐
+args.elf / runelf_test.elf / ... / fault.elf ──┤→ fat16.img ───────┐
                                         │                           │
 kernel.bin ───────────────┐             │                           │
                           ├→ loader2.gen.asm → loader2.bin ───────┤
