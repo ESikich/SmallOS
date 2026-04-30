@@ -27,7 +27,7 @@ LBA 0           → boot.bin              (512 bytes, exactly)
 LBA 1–4         → loader2.bin           (currently 2048 bytes, exactly)
 LBA 5+          → padded kernel region  (sector-aligned)
 LBA 5+ks
-               → fat16.img             (16 MB FAT16 partition)
+               → FAT16 partition        (16 MB volume inside the image)
 ```
 
 where `ks = ceil(kernel.bin / BOOT_SECTOR_SIZE)` and `kernel_lba = 1 + loader2_sectors`.
@@ -38,8 +38,8 @@ Constraints:
 * `loader2.bin` must be **exactly `LOADER2_SIZE_BYTES` bytes** (currently 2048 bytes / 4 sectors)
 * `kernel.bin` must be **padded to a sector boundary during final image assembly** so the FAT16 partition starts at a clean LBA
 * FAT16 partition starts at `kernel_lba + kernel_sectors`
-* loader2 sector count is patched into the field declared by `LOADER2_SECTORS_PATCH_OFFSET` in `boot.asm` (currently byte offset 488 of sector 0)
-* FAT16 LBA is patched as a little-endian u32 into the field declared by `FAT16_LBA_PATCH_OFFSET` in `boot.asm` (currently byte offset 504 of sector 0); the kernel reads it during `fat16_init()`
+* partition entry 0 records the kernel LBA range and boot flag
+* partition entry 1 records the FAT16 LBA range; the kernel reads it during `fat16_init()`
 
 ---
 
@@ -98,18 +98,18 @@ Loader2 now sits at `0x40000`. The kernel loads to `0x1000`. Stage 2 now uses a 
 safe kernel size = (0x40000 - 0x1000) / 512 = 504 sectors = 252 KiB
 ```
 
-If the kernel exceeds 504 sectors, the build fails before image assembly. The ceiling is computed from the loader2 load address and the generated stage-2 stack top, so any future layout bump must update both in `Makefile` and `loader2.asm`.
+That is still the practical envelope for the current layout, but the build no longer enforces a hard ceiling. If the kernel grows too large, stage 2 will overwrite itself while reading from disk. Any future layout bump must update both the loader placement and the stage-2 stack contract.
 
 ## Layout Ownership
 
 The boot stages own the disk-layout constants they depend on:
 
 * `boot.asm` declares `BOOT_SECTOR_SIZE`
-* `boot.asm` declares `LOADER2_SECTORS_PATCH_OFFSET`
-* `boot.asm` declares `FAT16_LBA_PATCH_OFFSET`
+* `boot.asm` declares `MBR_PARTITION_TABLE_OFFSET`
+* `boot.asm` declares `MBR_PARTITION_ENTRY_SIZE`
 * `loader2.asm` declares `LOADER2_SIZE_BYTES`
 
-The Makefile reads these declarations during image construction rather than redefining the numbers independently, injects the generated kernel-sector and stack-top values into `loader2.asm`, and passes the resulting layout facts into `mkimage` for final disk-image assembly.
+The Makefile reads these declarations during image construction rather than redefining the numbers independently, injects the generated stack-top values into `loader2.asm`, and passes the resulting layout facts into `mkimage` for final disk-image assembly.
 
 ## Layout Check
 
@@ -123,7 +123,7 @@ The Makefile reads these declarations during image construction rather than rede
 
 This keeps the hand-rolled boot path explicit: the build fails before QEMU starts if the layout drifts.
 
-`make image-layout-check` goes one step further and validates the finished `os-image.bin` itself. It checks the boot-sector patch, the loader and kernel placement, the FAT16 start LBA, and the zero padding between the kernel and FAT16 region.
+`make image-layout-check` goes one step further and validates the finished `os-image.bin` itself. It checks the partition table entries, the loader and kernel placement, the FAT16 start LBA, and the zero padding between the kernel and FAT16 region.
 
 `make verify` runs the full preflight sequence: boot-layout check, image-layout check, guest `test`, and `smoke`.
 
@@ -189,20 +189,21 @@ jc disk_error
 ## Kernel Loading
 
 ```text
-kernel_lba, KERNEL_SECTORS sectors
+kernel_lba, kernel_sectors
 ES:BX = 0x0000:0x1000  →  physical 0x1000
 ```
 
-`KERNEL_SECTORS` is injected by the Makefile at build time. It is the only placeholder in `loader2.asm`.
+`loader2.asm` reads the kernel LBA and size from partition entry 0 at runtime. There are no injected kernel-size placeholders in the stage-2 binary.
 
 ---
 
 ## Injected Values
 
-The Makefile generates `build/gen/loader2.gen.asm` by replacing one placeholder in `loader2.asm`:
+The Makefile still generates `build/gen/loader2.gen.asm`, but only the stack-top values are injected:
 
 ```text
-__KERNEL_SECTORS__      ceil(kernel.bin / BOOT_SECTOR_SIZE)
+__STAGE2_STACK_TOP__    0xFF00
+__STAGE2_STACK_TOP_32__ 0x1FF000
 ```
 
 ---
@@ -320,10 +321,10 @@ The FAT16 partition start LBA cannot be a compile-time constant in `fat16.c` wit
 
 1. The Makefile discovers source-owned layout constants from `boot.asm` and `loader2.asm`
 2. `mkimage` computes `kernel_lba = 1 + loader2_sectors` and then `fat16_lba = kernel_lba + kernel_sectors` during final image assembly
-3. `mkimage` patches the loader2 sector count and FAT16 LBA as little-endian u32 values into the fields declared by `LOADER2_SECTORS_PATCH_OFFSET` and `FAT16_LBA_PATCH_OFFSET` in `boot.asm`
-4. At runtime, `fat16_init()` reads ATA sector 0 and extracts the patched value
+3. `mkimage` writes the kernel and FAT16 spans into the MBR partition table entries declared by `MBR_PARTITION_TABLE_OFFSET` and `MBR_PARTITION_ENTRY_SIZE` in `boot.asm`
+4. At runtime, `fat16_init()` reads ATA sector 0 and extracts the partition metadata
 
-The patch field lives in the declared boot-sector padding area before the `0x55AA` signature and is safe to overwrite.
+The partition table lives in the declared boot-sector padding area before the `0x55AA` signature and is safe to overwrite.
 
 ---
 
@@ -335,8 +336,8 @@ The following must always hold:
 * kernel is loaded to physical `0x1000`
 * `kernel.bin` is padded to a whole-sector boundary during final image assembly
 * FAT16 partition starts at `kernel_lba + kernel_sectors` (LBA)
-* loader2 sector count is patched into the boot-sector field declared by `LOADER2_SECTORS_PATCH_OFFSET`
-* FAT16 LBA is patched into the boot-sector field declared by `FAT16_LBA_PATCH_OFFSET`
+* partition entry 0 describes the kernel range
+* partition entry 1 describes the FAT16 range
 * loader2 GDT is temporary — kernel installs its own GDT first
 * segment registers correctly initialized before protected mode entry
 * `bss_start` / `bss_end` correctly defined and BSS zeroed before `paging_init()`
@@ -363,9 +364,9 @@ The kernel load overwrote loader2 or the generated stage-2 stack mid-transfer. T
 
 BIOS does not support INT 0x13 extensions. Ensure QEMU is not in floppy mode.
 
-## "fat16: bad boot signature" or "fat16: LBA not patched"
+## "fat16: bad MBR signature", "fat16: MBR partition type mismatch", or "fat16: partition entry not populated"
 
-The sector-0 patch failed or the FAT16 image was not appended. Check the `mkimage` step in the final image build.
+The partition table is missing, malformed, or the FAT16 image was not appended. Check the `mkimage` step in the final image build.
 
 ## Triple fault immediately after kernel loads
 
@@ -421,20 +422,20 @@ qemu-system-i386 -drive format=raw,file=build/img/os-image.bin \
 
 # Design Decisions
 
-## Fixed Disk Layout
+## Partition Table Layout
 
-Pros: simple, predictable, no partition table required.
-Cons: inflexible, requires careful LBA calculation when sizes change.
+Pros: explicit and standard, without relying on ad hoc boot-sector patch fields.
+Cons: a little more code in stage 2 and the kernel.
 
 ## Fixed Load Address (0x1000)
 
 Pros: easy to reason about, matches linker script directly.
 Cons: no relocation support.
 
-## FAT16 LBA via Boot Sector Patch
+## FAT16 LBA via Partition Entry
 
 Pros: no compile-time dependency, no chicken-and-egg; the correct value is always in the image regardless of kernel size changes.
-Cons: slightly unusual; the patch must not corrupt the boot signature at offset 510–511.
+Cons: the image builder and consumers need to agree on partition-table offsets and entry meanings.
 
 ## No Ramdisk
 
@@ -447,8 +448,8 @@ Programs are loaded from the FAT16 partition at runtime via ATA PIO. The ramdisk
 ```text
 Stage 1  →  load stage 2 (CHS, fixed-size loader, to 0x40000)
 Stage 2  →  LBA extension check
-         →  read boot-sector metadata at 0x7C00
-         →  derive kernel_lba = fat16_lba - KERNEL_SECTORS
+         →  read partition table metadata at 0x7C00
+         →  derive kernel_lba from partition entry 0
          →  load kernel to 0x1000
          →  protected mode entry
 Kernel   →  zero BSS
@@ -464,6 +465,5 @@ Boot code is the most fragile part of the system. Failures here are often silent
 
 # Future Work
 
-* Replace fixed disk layout with a partition table or boot protocol
-* Support kernels larger than 504 sectors
+* Support kernels larger than the current loader2/stack envelope
 * Multiboot-style boot protocol for GRUB compatibility

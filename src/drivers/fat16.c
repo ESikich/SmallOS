@@ -22,6 +22,15 @@
 #define ROOT_REL_SECTOR   (RESERVED_SECTORS + NUM_FATS * FAT_SECTORS)  /* 68  */
 #define DATA_REL_SECTOR   (ROOT_REL_SECTOR + ROOT_DIR_SECTORS)         /* 100 */
 
+/* MBR partition table layout in sector 0 */
+#define MBR_PARTITION_TABLE_OFFSET   446u
+#define MBR_PARTITION_ENTRY_SIZE      16u
+#define MBR_PARTITION_TYPE_OFFSET     4u
+#define MBR_PARTITION_LBA_OFFSET      8u
+#define MBR_PARTITION_SIZE_OFFSET     12u
+#define FAT16_PARTITION_ENTRY_INDEX   1u
+#define FAT16_PARTITION_TYPE          0x06u
+
 #define FIRST_CLUSTER     2u
 #define FAT16_EOC_MIN     0xFFF8u
 #define FAT_ENTRIES       (FAT_SECTORS * SECTOR_SIZE / 2u)
@@ -289,17 +298,31 @@ static int match_83(const u8 dir_name[11], const char* name) {
 
 int fat16_init(void) {
     /*
-     * Step 1: read sector 0 of the whole disk to get the FAT16 LBA.
-     * The Makefile patches a little-endian u32 at byte offset 504.
+     * Step 1: read sector 0 of the whole disk to get the FAT16 LBA
+     * from the MBR partition table.
      */
     if (!ata_read_sectors(0, 1, s_sector)) {
         terminal_puts("fat16: cannot read sector 0\n");
         return 0;
     }
-    s_fat16_lba = read_u32_le(s_sector, FAT16_LBA_OFFSET_IN_SECTOR0);
 
-    if (s_fat16_lba == 0) {
-        terminal_puts("fat16: LBA not patched (zero)\n");
+    if (s_sector[510] != 0x55 || s_sector[511] != 0xAA) {
+        terminal_puts("fat16: bad MBR signature\n");
+        return 0;
+    }
+
+    u32 entry_off = MBR_PARTITION_TABLE_OFFSET +
+                    FAT16_PARTITION_ENTRY_INDEX * MBR_PARTITION_ENTRY_SIZE;
+    if (s_sector[entry_off + MBR_PARTITION_TYPE_OFFSET] != FAT16_PARTITION_TYPE) {
+        terminal_puts("fat16: MBR partition type mismatch\n");
+        return 0;
+    }
+
+    s_fat16_lba = read_u32_le(s_sector, entry_off + MBR_PARTITION_LBA_OFFSET);
+    u32 fat16_sectors = read_u32_le(s_sector, entry_off + MBR_PARTITION_SIZE_OFFSET);
+
+    if (s_fat16_lba == 0 || fat16_sectors == 0) {
+        terminal_puts("fat16: partition entry not populated\n");
         return 0;
     }
 

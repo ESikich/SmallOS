@@ -23,8 +23,8 @@ typedef struct {
     const char* out_path;
     u32 sector_size;
     u32 loader_size;
-    u32 boot_loader2_sectors_patch_offset;
-    u32 boot_fat16_lba_patch_offset;
+    u32 boot_partition_table_offset;
+    u32 boot_partition_entry_size;
 } Options;
 
 /* Fatal error with a simple fixed message. */
@@ -89,10 +89,10 @@ static void parse_args(int argc, char** argv, Options* opt) {
             opt->sector_size = parse_u32(argv[++i], "sector size");
         } else if (strcmp(argv[i], "--loader-size") == 0 && i + 1 < argc) {
             opt->loader_size = parse_u32(argv[++i], "loader size");
-        } else if (strcmp(argv[i], "--boot-loader2-sectors-patch-offset") == 0 && i + 1 < argc) {
-            opt->boot_loader2_sectors_patch_offset = parse_u32(argv[++i], "boot loader2 sectors patch offset");
-        } else if (strcmp(argv[i], "--boot-fat16-lba-patch-offset") == 0 && i + 1 < argc) {
-            opt->boot_fat16_lba_patch_offset = parse_u32(argv[++i], "boot FAT16 LBA patch offset");
+        } else if (strcmp(argv[i], "--boot-partition-table-offset") == 0 && i + 1 < argc) {
+            opt->boot_partition_table_offset = parse_u32(argv[++i], "boot partition table offset");
+        } else if (strcmp(argv[i], "--boot-partition-entry-size") == 0 && i + 1 < argc) {
+            opt->boot_partition_entry_size = parse_u32(argv[++i], "boot partition entry size");
         } else {
             fprintf(stderr, "mkimage: unknown or incomplete argument: %s\n", argv[i]);
             exit(1);
@@ -114,15 +114,14 @@ static void parse_args(int argc, char** argv, Options* opt) {
         die("loader size must be sector-aligned");
     }
 
-    /*
-     * We patch 4-byte little-endian values into the boot sector.
-     * Each patch field must fit entirely inside the first sector.
-     */
-    if (opt->boot_loader2_sectors_patch_offset + 4 > opt->sector_size) {
-        die("boot loader2 sectors patch offset does not fit in boot sector");
+    if (opt->boot_partition_table_offset == 0) {
+        die("boot partition table offset must be non-zero");
     }
-    if (opt->boot_fat16_lba_patch_offset + 4 > opt->sector_size) {
-        die("boot FAT16 LBA patch offset does not fit in boot sector");
+    if (opt->boot_partition_entry_size == 0) {
+        die("boot partition entry size must be non-zero");
+    }
+    if (opt->boot_partition_table_offset + 2 * opt->boot_partition_entry_size > opt->sector_size) {
+        die("boot partition table does not fit in boot sector");
     }
 }
 
@@ -179,17 +178,25 @@ static void write_zeroes(FILE* f, size_t count, const char* out_path) {
     }
 }
 
-/*
- * Patch a 32-bit little-endian value into an in-memory buffer.
- *
- * Here this is used to write the FAT16 start LBA into the boot sector field
- * declared by boot.asm.
- */
 static void patch_u32_le(u8* buf, u32 offset, u32 value) {
     buf[offset + 0] = (u8)(value & 0xFF);
     buf[offset + 1] = (u8)((value >> 8) & 0xFF);
     buf[offset + 2] = (u8)((value >> 16) & 0xFF);
     buf[offset + 3] = (u8)((value >> 24) & 0xFF);
+}
+
+static void write_partition_entry(u8* boot, u32 entry_offset, u8 bootable, u8 type,
+                                  u32 lba_start, u32 sectors) {
+    boot[entry_offset + 0] = bootable;
+    boot[entry_offset + 1] = 0;
+    boot[entry_offset + 2] = 0;
+    boot[entry_offset + 3] = 0;
+    boot[entry_offset + 4] = type;
+    boot[entry_offset + 5] = 0;
+    boot[entry_offset + 6] = 0;
+    boot[entry_offset + 7] = 0;
+    patch_u32_le(boot, entry_offset + 8, lba_start);
+    patch_u32_le(boot, entry_offset + 12, sectors);
 }
 
 int main(int argc, char** argv) {
@@ -229,7 +236,8 @@ int main(int argc, char** argv) {
      *   [zero padding to next sector boundary]
      *   [fat16.img]
      *
-     * FAT16 starts immediately after the padded kernel region.
+     * The MBR partition table records the kernel and FAT16 ranges so stage 2
+     * and the kernel can discover them without any boot-sector patch fields.
      */
     size_t padded_kernel_size =
         ((kernel_size + opt.sector_size - 1) / opt.sector_size) * opt.sector_size;
@@ -243,10 +251,20 @@ int main(int argc, char** argv) {
         die("computed FAT16 LBA overflows u32");
     }
     u32 fat16_lba = kernel_lba + kernel_sectors;
+    u32 fat16_sectors = (u32)(fat16_size / opt.sector_size);
 
-    /* Patch loader2 size and FAT16 start LBA into the boot sector before writing output. */
-    patch_u32_le(boot, opt.boot_loader2_sectors_patch_offset, loader_sectors);
-    patch_u32_le(boot, opt.boot_fat16_lba_patch_offset, fat16_lba);
+    /*
+     * Populate the MBR partition table entries.
+     *
+     * Entry 0: kernel image partition
+     * Entry 1: FAT16 filesystem partition
+     */
+    write_partition_entry(boot,
+                          opt.boot_partition_table_offset + 0u * opt.boot_partition_entry_size,
+                          0x80u, 0x83u, kernel_lba, kernel_sectors);
+    write_partition_entry(boot,
+                          opt.boot_partition_table_offset + 1u * opt.boot_partition_entry_size,
+                          0x00u, 0x06u, fat16_lba, fat16_sectors);
 
     FILE* out = fopen(opt.out_path, "wb");
     if (!out) die_errno("cannot open output", opt.out_path);
@@ -265,18 +283,18 @@ int main(int argc, char** argv) {
      * Reporting is based on actual artifact sizes, not duplicated constants.
      * That keeps the output honest even if FAT image size changes later.
      */
-    size_t fat16_sectors = fat16_size / opt.sector_size;
-
     printf("kernel:  %zu bytes (%u sectors, LBA %u)\n",
            kernel_size, kernel_sectors, kernel_lba);
-    printf("fat16:   %zu sectors (%zu MB), LBA %u\n",
+    printf("fat16:   %u sectors (%zu MB), LBA %u\n",
            fat16_sectors,
            fat16_size / (1024u * 1024u),
            fat16_lba);
-    printf("fat16:   LBA %u patched into sector 0 offset %u\n",
-           fat16_lba, opt.boot_fat16_lba_patch_offset);
-    printf("boot:    loader2 sectors %u patched into sector 0 offset %u\n",
-           loader_sectors, opt.boot_loader2_sectors_patch_offset);
+    printf("boot:    partition table offset %u\n",
+           opt.boot_partition_table_offset);
+    printf("boot:    kernel partition  LBA %u size %u sectors\n",
+           kernel_lba, kernel_sectors);
+    printf("boot:    FAT16 partition   LBA %u size %u sectors\n",
+           fat16_lba, fat16_sectors);
 
     free(boot);
     free(loader);

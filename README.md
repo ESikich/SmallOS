@@ -196,10 +196,10 @@ LBA 0           boot.bin              (512 bytes)
 LBA 1–4         loader2.bin           (currently 2048 bytes)
 LBA 5+          padded kernel region  (sector-aligned)
 LBA 5+ks
-               fat16.img             (16 MB FAT16 partition)
+               FAT16 partition        (16 MB volume inside the image)
 ```
 
-`LOADER2_SECTORS_PATCH_OFFSET` and `FAT16_LBA_PATCH_OFFSET` are declared in `src/boot/boot.asm`. The kernel start LBA is derived from the loader2 size, not hardcoded in stage 2.
+`MBR_PARTITION_TABLE_OFFSET` and `MBR_PARTITION_ENTRY_SIZE` are declared in `src/boot/boot.asm`. Stage 2 reads the kernel range from partition entry 0, and the kernel discovers the FAT16 partition from entry 1.
 
 During image assembly, the Makefile reads those declarations and passes them to `mkimage`, which computes:
 
@@ -208,7 +208,7 @@ kernel_lba = 1 + loader2_sectors
 FAT16_LBA = kernel_lba + kernel_sectors
 ```
 
-The resulting loader2 sector count and FAT16 start LBA are patched into the boot-sector fields declared by `LOADER2_SECTORS_PATCH_OFFSET` and `FAT16_LBA_PATCH_OFFSET` (currently offsets 488 and 504) after image assembly.
+The resulting kernel and FAT16 spans are written into the MBR partition table in sector 0 after image assembly.
 
 `make verify` runs the full preflight: boot-layout check, image-layout check, guest `test`, and `smoke`. Use `make boot-layout-check` or `make image-layout-check` when you want to isolate a specific layer.
 

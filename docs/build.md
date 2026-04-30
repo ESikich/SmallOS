@@ -18,7 +18,7 @@ This image contains:
 boot.bin         stage 1 bootloader   (size declared by boot.asm; currently 512 bytes)
 loader2.bin      stage 2 loader       (size declared by loader2.asm; currently 2048 bytes)
 kernel.bin       kernel               (padded to sector boundary during final image assembly)
-fat16.img        FAT16 partition      (fixed-size FAT volume, appended after the padded kernel)
+fat16.img        FAT16 partition      (fixed-size FAT volume, stored after the padded kernel)
 ```
 
 ---
@@ -168,8 +168,8 @@ Current ownership:
 ```text
 src/boot/boot.asm
   BOOT_SECTOR_SIZE
-  LOADER2_SECTORS_PATCH_OFFSET
-  FAT16_LBA_PATCH_OFFSET
+  MBR_PARTITION_TABLE_OFFSET
+  MBR_PARTITION_ENTRY_SIZE
 
 src/boot/loader2.asm
   LOADER2_SIZE_BYTES
@@ -291,17 +291,18 @@ Shipped FAT16 programs:
 
 # Loader2 Generation
 
-`loader2.asm` contains one placeholder value that must be filled in at build time:
+`loader2.asm` is generated at build time so the stage-2 stack-top values can be filled in without hardcoding them:
 
 ```asm
-KERNEL_SECTORS      equ __KERNEL_SECTORS__
+STAGE2_STACK_TOP    equ __STAGE2_STACK_TOP__
+STAGE2_STACK_TOP_32 equ __STAGE2_STACK_TOP_32__
 ```
 
-The Makefile computes this value from the actual size of `kernel.bin` and generates `build/gen/loader2.gen.asm` via `sed`:
+The Makefile injects those values from the generated stage-2 stack contract and writes `build/gen/loader2.gen.asm` via `sed`:
 
 ```makefile
-kernel_sectors=$(( ($(wc -c < kernel.bin) + (BOOT_SECTOR_SIZE - 1)) / BOOT_SECTOR_SIZE ))
-sed -e "s/__KERNEL_SECTORS__/$kernel_sectors/" \
+sed -e "s/__STAGE2_STACK_TOP__/0xFF00/" \
+    -e "s/__STAGE2_STACK_TOP_32__/0x1FF000/" \
     loader2.asm > loader2.gen.asm
 ```
 
@@ -388,7 +389,7 @@ kernel_sectors  = ceil(kernel.bin / BOOT_SECTOR_SIZE)
 FAT16_LBA       = kernel_lba + kernel_sectors
 ```
 
-It then patches `loader2_sectors` and `FAT16_LBA` as little-endian `u32` values into the boot-sector fields declared by `LOADER2_SECTORS_PATCH_OFFSET` and `FAT16_LBA_PATCH_OFFSET` in `boot.asm`.
+It then writes the kernel and FAT16 spans into the MBR partition table entries declared by `MBR_PARTITION_TABLE_OFFSET` and `MBR_PARTITION_ENTRY_SIZE` in `boot.asm`.
 
 ## Layout
 
@@ -436,7 +437,7 @@ qemu-system-i386 -drive format=raw,file=build/img/os-image.bin
 
 Cause: FAT16 start LBA was computed or patched incorrectly, FAT16 image missing from the disk image, or launching in floppy mode. The kernel reads the wrong LBA or invalid data instead of a FAT16 boot sector.
 
-Fix: the `mkimage` step handles kernel padding and FAT16 LBA patching automatically. If the image is assembled manually, preserve the same layout and patching rules.
+Fix: the `mkimage` step handles kernel padding and FAT16 partition-table writing automatically. If the image is assembled manually, preserve the same layout and table rules.
 
 ## loader2.bin size error
 
@@ -538,13 +539,13 @@ Current approach: ELF binaries are stored in a separate `fat16.img` partition. K
 
 ## Generated Loader2
 
-The Makefile generates `loader2.gen.asm` by text substitution into `loader2.asm`. This allows build-time injection of `KERNEL_SECTORS` without hardcoding it.
+The Makefile generates `loader2.gen.asm` by text substitution into `loader2.asm`. This allows build-time injection of the generated stack-top values without hardcoding them.
 
 ## Host Tool Image Assembly
 
-`mkimage` owns final disk-image assembly. This keeps Make focused on dependency orchestration while moving disk-layout mechanics (padding, LBA calculation, boot-sector patching) into ordinary host-side code.
+`mkimage` owns final disk-image assembly. This keeps Make focused on dependency orchestration while moving disk-layout mechanics (padding, LBA calculation, partition-table writing) into ordinary host-side code.
 
-`make image-layout-check` is the companion verifier for the finished `os-image.bin`. It checks that the assembled image still matches the intended sector map and FAT16 patch.
+`make image-layout-check` is the companion verifier for the finished `os-image.bin`. It checks that the assembled image still matches the intended sector map and partition-table layout.
 
 ## LBA Extended Reads
 

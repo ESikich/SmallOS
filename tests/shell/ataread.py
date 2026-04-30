@@ -7,7 +7,7 @@ CASES = [
         must_contain=[
             "shelltest: ataread begin",
             "sig: 0x55 0xAA",
-            "fat16_lba patch:",
+            "fat16 partition lba:",
             "shelltest: ataread end",
         ],
         timeout=60.0,

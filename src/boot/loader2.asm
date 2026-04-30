@@ -3,26 +3,24 @@
 ; Stage 2 loader contract:
 ;   - loaded by boot sector to physical 0x40000
 ;   - occupies exactly 4 sectors (2048 bytes)
-;   - kernel image begins immediately before the FAT16 partition
+;   - kernel and FAT16 partitions are described by the MBR partition table
 ;   - kernel is loaded to physical 0x1000
 ;   - after loading, stage 2 enters 32-bit protected mode
 ;   - then jumps to kernel entry at 0x1000
-;
-; Safe kernel size:
-;   The build guard compares the kernel load span against both this loader's
-;   physical address and the generated stage-2 stack top.
-;   If the kernel exceeds that ceiling, the build fails before image assembly.
 
 [org 0x40000]
 bits 16
 
 LOADER2_SEGMENT      equ 0x4000
 KERNEL_OFFSET        equ 0x1000
-KERNEL_SECTORS       equ __KERNEL_SECTORS__
 STAGE2_STACK_TOP     equ __STAGE2_STACK_TOP__
 STAGE2_STACK_TOP_32  equ __STAGE2_STACK_TOP_32__
 BOOT_SECTOR_ADDR     equ 0x7C00
-FAT16_LBA_PATCH_OFFSET equ 504
+MBR_PARTITION_TABLE_OFFSET equ 446
+MBR_PARTITION_ENTRY_SIZE   equ 16
+MBR_PARTITION_LBA_OFFSET   equ 8
+MBR_PARTITION_SIZE_OFFSET  equ 12
+KERNEL_PARTITION_INDEX     equ 0
 
 start:
     cli
@@ -91,15 +89,17 @@ lba_read:
 
 load_kernel:
     pusha
-    mov word  [dap_count], KERNEL_SECTORS
     mov word  [dap_off],   KERNEL_OFFSET
     mov word  [dap_seg],   0x0000
     push ds
     xor ax, ax
     mov ds, ax
-    mov eax, [BOOT_SECTOR_ADDR + FAT16_LBA_PATCH_OFFSET]
+    mov eax, [BOOT_SECTOR_ADDR + MBR_PARTITION_TABLE_OFFSET + KERNEL_PARTITION_INDEX * MBR_PARTITION_ENTRY_SIZE + MBR_PARTITION_LBA_OFFSET]
+    mov edx, [BOOT_SECTOR_ADDR + MBR_PARTITION_TABLE_OFFSET + KERNEL_PARTITION_INDEX * MBR_PARTITION_ENTRY_SIZE + MBR_PARTITION_SIZE_OFFSET]
     pop ds
-    sub eax, KERNEL_SECTORS
+    mov word  [dap_count], dx
+    test dx, dx
+    jz disk_error
     mov dword [dap_lba],   eax
     mov dword [dap_lba+4], 0
     call lba_read

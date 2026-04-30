@@ -2,7 +2,7 @@
 
 This document defines how the system stores, discovers, and reads files from disk.
 
-The current implementation is a **raw FAT16 volume** appended directly to the OS image. There is no partition table, no subdirectory traversal, and no VFS layer. Root-directory file writes are supported for compiler-style output and similar generated artifacts.
+The current implementation stores a **raw FAT16 volume inside an MBR-partitioned disk image**. Sector 0 contains the partition table, and the FAT16 partition starts immediately after the kernel region. There is no subdirectory traversal and no VFS layer. Root-directory file writes are supported for compiler-style output and similar generated artifacts.
 
 ---
 
@@ -11,10 +11,10 @@ The current implementation is a **raw FAT16 volume** appended directly to the OS
 The final disk image is:
 
 ```text
-LBA 0         boot sector for stage 1 bootloader
+LBA 0         boot sector + MBR partition table
 LBA 1–4       stage 2 loader
 LBA 5+        kernel_padded.bin
-LBA 5+ks      fat16.img   (raw FAT16 volume, no partition table)
+LBA 5+ks      FAT16 partition   (raw FAT16 volume data)
 ```
 
 where:
@@ -24,7 +24,7 @@ ks = ceil(kernel.bin / 512)
 fat16_lba = 5 + ks
 ```
 
-The FAT16 start LBA is **not** compiled into the kernel. The Makefile computes it after the kernel size is known, patches it into disk sector 0 at byte offset 504, and `fat16_init()` reads it back at boot.
+The FAT16 start LBA is **not** compiled into the kernel. The Makefile computes it after the kernel size is known, writes it into partition entry 1, and `fat16_init()` reads the partition table back at boot.
 
 ---
 
@@ -97,30 +97,30 @@ Padding the kernel is therefore a hard requirement, not an optimization.
 
 ---
 
-# FAT16 LBA Patch
+# FAT16 LBA Entry
 
 The kernel cannot know the FAT16 start LBA at compile time because it depends on the final kernel size.
 
-Instead, the Makefile patches a little-endian `u32` into:
+Instead, the Makefile writes a little-endian `u32` into:
 
 ```text
-sector 0, byte offset 504
+sector 0, partition entry 1
 ```
 
-That location is in the zero-padded tail of the boot sector and does not overlap the boot signature at bytes 510–511.
+That location is in the MBR partition table and does not overlap the boot signature at bytes 510–511.
 
 At runtime:
 
 1. `ata_init()` brings up the ATA PIO driver
 2. `fat16_init()` reads ATA sector 0
-3. `fat16_init()` extracts the FAT16 LBA from byte offset 504
+3. `fat16_init()` extracts the FAT16 LBA from partition entry 1
 4. `fat16_init()` reads the FAT16 boot sector at that LBA
 5. `fat16_init()` validates the BPB geometry
 
-If the patched value is zero, `fat16_init()` prints:
+If the partition entry is missing or malformed, `fat16_init()` prints:
 
 ```text
-fat16: LBA not patched (zero)
+fat16: partition entry not populated
 ```
 
 ---
@@ -371,9 +371,17 @@ A filesystem API was called before `fat16_init()` succeeded.
 
 ATA could not read the image boot sector, so the FAT16 start LBA could not be discovered.
 
-## `fat16: LBA not patched (zero)`
+## `fat16: bad MBR signature`
 
-The Makefile patch step did not run or wrote the wrong bytes.
+The disk image does not contain the expected MBR signature at the end of sector 0.
+
+## `fat16: MBR partition type mismatch`
+
+The FAT16 partition entry does not have the expected partition type.
+
+## `fat16: partition entry not populated`
+
+The FAT16 partition entry is empty or has a zero start LBA.
 
 ## `fat16: cannot read FAT16 boot sector`
 

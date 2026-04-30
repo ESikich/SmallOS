@@ -30,6 +30,20 @@ def patch_u32_le(buf: bytearray, offset: int, value: int) -> None:
     buf[offset + 3] = (value >> 24) & 0xFF
 
 
+def write_partition_entry(buf: bytearray, offset: int, bootable: int, ptype: int,
+                          lba_start: int, sectors: int) -> None:
+    buf[offset + 0] = bootable
+    buf[offset + 1] = 0
+    buf[offset + 2] = 0
+    buf[offset + 3] = 0
+    buf[offset + 4] = ptype
+    buf[offset + 5] = 0
+    buf[offset + 6] = 0
+    buf[offset + 7] = 0
+    patch_u32_le(buf, offset + 8, lba_start)
+    patch_u32_le(buf, offset + 12, sectors)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify the final bootable image layout.")
     parser.add_argument("--image", type=Path, required=True)
@@ -38,8 +52,8 @@ def main() -> int:
     parser.add_argument("--kernel", type=Path, required=True)
     parser.add_argument("--fat16", type=Path, required=True)
     parser.add_argument("--sector-size", type=int, required=True)
-    parser.add_argument("--boot-loader2-sectors-patch-offset", type=int, required=True)
-    parser.add_argument("--boot-fat16-lba-patch-offset", type=int, required=True)
+    parser.add_argument("--boot-partition-table-offset", type=int, required=True)
+    parser.add_argument("--boot-partition-entry-size", type=int, required=True)
     args = parser.parse_args()
 
     image = read_bytes(args.image)
@@ -51,10 +65,8 @@ def main() -> int:
     expect(len(boot) == args.sector_size, f"boot.bin must be {args.sector_size} bytes")
     expect(len(loader2) == 2048, "loader2.bin must be 2048 bytes")
     expect(len(loader2) % args.sector_size == 0, "loader2.bin must be sector-aligned")
-    expect(args.boot_loader2_sectors_patch_offset + 4 <= args.sector_size,
-           "boot loader2 sector-count patch field must fit inside the boot sector")
-    expect(args.boot_fat16_lba_patch_offset + 4 <= args.sector_size,
-           "boot FAT16 patch field must fit inside the boot sector")
+    expect(args.boot_partition_table_offset + 2 * args.boot_partition_entry_size <= args.sector_size,
+           "boot partition table must fit inside the boot sector")
 
     loader2_sectors = len(loader2) // args.sector_size
     kernel_lba = 1 + loader2_sectors
@@ -62,13 +74,16 @@ def main() -> int:
     kernel_pad = kernel_padded_size - len(kernel)
     kernel_sectors = kernel_padded_size // args.sector_size
     fat16_lba = kernel_lba + kernel_sectors
+    fat16_sectors = len(fat16) // args.sector_size
 
     expected_size = args.sector_size + len(loader2) + kernel_padded_size + len(fat16)
     expect(len(image) == expected_size,
            f"image size mismatch: expected {expected_size}, got {len(image)}")
 
-    patch_u32_le(boot, args.boot_loader2_sectors_patch_offset, loader2_sectors)
-    patch_u32_le(boot, args.boot_fat16_lba_patch_offset, fat16_lba)
+    write_partition_entry(boot, args.boot_partition_table_offset + 0 * args.boot_partition_entry_size,
+                          0x80, 0x83, kernel_lba, kernel_sectors)
+    write_partition_entry(boot, args.boot_partition_table_offset + 1 * args.boot_partition_entry_size,
+                          0x00, 0x06, fat16_lba, fat16_sectors)
     expect(image[:len(boot)] == boot, "boot sector bytes do not match patched boot.bin")
     expect(image[args.sector_size:args.sector_size + len(loader2)] == loader2,
            "loader2 bytes do not match loader2.bin")
@@ -82,10 +97,6 @@ def main() -> int:
     fat16_offset = fat16_lba * args.sector_size
     expect(image[fat16_offset:fat16_offset + len(fat16)] == fat16,
            "fat16 image bytes do not match at the expected LBA")
-
-    patched_lba = u32_le(image, args.boot_fat16_lba_patch_offset)
-    expect(patched_lba == fat16_lba,
-           f"boot sector FAT16 patch mismatch: expected {fat16_lba}, got {patched_lba}")
 
     print("image layout ok")
     print(f"  image size          = {len(image)} bytes")

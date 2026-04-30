@@ -96,8 +96,7 @@ Do not add imports of `process.h`, `scheduler.h`, or `shell.h` to `keyboard.c` o
 
 Examples:
 
-* `boot.asm` owns `BOOT_SECTOR_SIZE` and `FAT16_LBA_PATCH_OFFSET`
-* `boot.asm` owns `LOADER2_SECTORS_PATCH_OFFSET`
+* `boot.asm` owns `BOOT_SECTOR_SIZE`, `MBR_PARTITION_TABLE_OFFSET`, and `MBR_PARTITION_ENTRY_SIZE`
 * `loader2.asm` owns `LOADER2_SIZE_BYTES`
 * `mkfat16.c` owns FAT image size constants
 
@@ -108,7 +107,7 @@ The Makefile should read those declarations and pass them into host tools such a
 * `loader2.asm` must be **exactly 2048 bytes**
 * `kernel.bin` must be padded to a 512-byte sector boundary during final image assembly (`mkimage` handles this)
 * `kernel_lba` is derived as `1 + loader2_sectors`
-* `FAT16_LBA` is computed as `kernel_lba + kernel_sectors` and patched into the boot-sector field declared by `FAT16_LBA_PATCH_OFFSET` — if padding is skipped, FAT16 reads will return incorrect data
+* `FAT16_LBA` is computed as `kernel_lba + kernel_sectors` and written into the FAT16 partition entry — if padding is skipped, FAT16 reads will return incorrect data
 
 ### Loader2 address invariant
 
@@ -344,7 +343,7 @@ Useful signals:
 | 12 | Timer fires but no preemption | EOI sent after sched_tick; or irq0_stub not passing ESP |
 | 13 | System freezes after context switch | EOI not sent before sched_switch; IRQ0 permanently masked |
 | 14 | Hangs at "Loading." | Kernel too large — overwrites loader2 during INT 0x13 read; move loader2 higher |
-| 15 | "fat16: LBA not patched" | final image assembly failed; check the `mkimage` step and its arguments |
+| 15 | "fat16: bad MBR signature" / "fat16: partition entry not populated" | final image assembly failed; check the `mkimage` step and its arguments |
 | 16 | Heap grows across runelf | fat16_load is using kmalloc instead of static buffer |
 | 17 | "fat16: not found" | Filename not matching 8.3 uppercase format; check mkfat16 output |
 
@@ -354,7 +353,7 @@ Useful signals:
 
 1. `make clean && make` — fix compile errors
 2. Boot — confirm shell appears and `fat16: ok` prints
-3. `ataread 0` — confirm `sig: 0x55 0xAA` and correct `fat16_lba patch` value
+3. `ataread 0` — confirm `sig: 0x55 0xAA` and the correct FAT16 partition LBA value
 4. `fsls` — confirm FAT16 root directory lists correctly
 5. `fsread hello.elf` — confirm `7F 45 4C 46` (ELF magic)
 6. `runelf hello` — confirm ELF loads from FAT16 and exits cleanly
@@ -385,7 +384,7 @@ Useful signals:
 
 ## Current Next Steps
 
-* Boot/layout work — the fixed disk layout is still intentionally explicit; the loader now sits at `0x40000` and the current kernel ceiling is 504 sectors
+* Boot/layout work — the fixed disk layout is still intentionally explicit; the loader now sits at `0x40000`, and the partition-table path is the main boot contract to extend next
 
 ---
 

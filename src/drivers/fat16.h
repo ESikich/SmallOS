@@ -8,8 +8,8 @@ typedef unsigned char  u8;
 /*
  * fat16.h — FAT16 filesystem driver
  *
- * The FAT16 partition start LBA is stored at byte offset 504 in the
- * disk boot sector (sector 0) and read at runtime by fat16_init().
+ * The FAT16 partition start LBA is stored in the MBR partition table
+ * entry for the FAT16 volume and read at runtime by fat16_init().
  * This avoids any compile-time dependency on a generated header.
  *
  * Volume geometry matches mkfat16.c exactly:
@@ -27,17 +27,11 @@ typedef unsigned char  u8;
 #define FAT16_MAX_FILE_BYTES  (256u * 1024u)
 
 /*
- * Byte offset within the disk boot sector (sector 0) where the Makefile
- * patches in the FAT16 partition start LBA as a little-endian u32.
- * Must not overlap the BPB (bytes 0–61) or the boot signature (510–511).
- */
-#define FAT16_LBA_OFFSET_IN_SECTOR0  504u
-
-/*
  * fat16_init()
  *
- * Reads sector 0 via ATA, extracts FAT16_LBA from offset 504, then
- * reads the FAT16 boot sector and validates the volume geometry.
+ * Reads sector 0 via ATA, extracts FAT16_LBA from the FAT16 partition
+ * entry in the MBR partition table, then reads the FAT16 boot sector
+ * and validates the volume geometry.
  *
  * Must be called after ata_init(), before any other fat16 call.
  * Returns 1 on success, 0 on failure.

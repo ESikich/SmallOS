@@ -138,17 +138,25 @@ static void cmd_ataread(command_t* cmd) {
     terminal_putc('\n');
 
     if (lba == 0) {
+        enum {
+            MBR_PARTITION_TABLE_OFFSET = 446,
+            MBR_PARTITION_ENTRY_SIZE = 16,
+            MBR_PARTITION_LBA_OFFSET = 8,
+            FAT16_PARTITION_ENTRY_INDEX = 1,
+        };
+        unsigned int entry_off = MBR_PARTITION_TABLE_OFFSET +
+                                 FAT16_PARTITION_ENTRY_INDEX * MBR_PARTITION_ENTRY_SIZE;
         terminal_puts("sig: ");
         terminal_put_hex(sector[510]);
         terminal_putc(' ');
         terminal_put_hex(sector[511]);
         terminal_puts(" (expect 0x55 0xAA)\n");
-        terminal_puts("fat16_lba patch: ");
-        unsigned int patched_lba = sector[504]
-                                 | ((unsigned int)sector[505] << 8)
-                                 | ((unsigned int)sector[506] << 16)
-                                 | ((unsigned int)sector[507] << 24);
-        terminal_put_uint(patched_lba);
+        terminal_puts("fat16 partition lba: ");
+        unsigned int partition_lba = sector[entry_off + MBR_PARTITION_LBA_OFFSET]
+                                   | ((unsigned int)sector[entry_off + MBR_PARTITION_LBA_OFFSET + 1] << 8)
+                                   | ((unsigned int)sector[entry_off + MBR_PARTITION_LBA_OFFSET + 2] << 16)
+                                   | ((unsigned int)sector[entry_off + MBR_PARTITION_LBA_OFFSET + 3] << 24);
+        terminal_put_uint(partition_lba);
         terminal_putc('\n');
     }
 }

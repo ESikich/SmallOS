@@ -293,7 +293,7 @@ Useful signals:
 | 12 | Timer fires but no preemption | EOI sent after sched_tick; or irq0_stub not passing ESP |
 | 13 | System freezes after context switch | EOI not sent before sched_switch; IRQ0 permanently masked |
 | 14 | Hangs at "Loading." | Kernel too large — overwrites loader2 or stack during INT 0x13 read; move stage 2 higher |
-| 15 | "fat16: LBA not patched" | dd patch in Makefile os-image.bin rule failed; check printf octal escape |
+| 15 | "fat16: bad MBR signature" / "fat16: partition entry not populated" | image assembly failed; check the `mkimage` step and its arguments |
 | 16 | Heap grows across runelf | fat16_load is using kmalloc instead of static buffer |
 | 17 | "fat16: not found" | Filename not matching 8.3 uppercase format; check mkfat16 output |
 
@@ -303,7 +303,7 @@ Useful signals:
 
 1. `make clean && make` — fix compile errors
 2. Boot — confirm shell appears and `fat16: ok` prints
-3. `ataread 0` — confirm `sig: 0x55 0xAA` and correct `fat16_lba patch` value
+3. `ataread 0` — confirm `sig: 0x55 0xAA` and the correct FAT16 partition LBA value
 4. `fsls` — confirm FAT16 root directory lists correctly
 5. `fsread hello.elf` — confirm `7F 45 4C 46` (ELF magic)
 6. `runelf hello` — confirm ELF loads from FAT16 and exits cleanly

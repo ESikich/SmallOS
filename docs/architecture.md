@@ -3,10 +3,10 @@
 Boot-image layout facts are owned by the files that define them, not by the Makefile:
 
 * `src/boot/boot.asm` owns `BOOT_SECTOR_SIZE`
-* `src/boot/boot.asm` owns `LOADER2_SECTORS_PATCH_OFFSET`
-* `src/boot/boot.asm` owns `FAT16_LBA_PATCH_OFFSET`
+* `src/boot/boot.asm` owns `MBR_PARTITION_TABLE_OFFSET`
+* `src/boot/boot.asm` owns `MBR_PARTITION_ENTRY_SIZE`
 * `src/boot/loader2.asm` owns `LOADER2_SIZE_BYTES`
-* `Makefile` owns the generated stage-2 stack top and safe kernel ceiling
+* `Makefile` owns the generated stage-2 stack top
 * `tools/mkfat16.c` owns `TOTAL_SIZE_MB` / `TOTAL_SECTORS`
 
 The Makefile consumes these declarations while building `os-image.bin`, and passes them into `mkimage` for final image assembly.
@@ -65,11 +65,11 @@ kernel_main()
 Runs in **real mode**, then switches to **protected mode**.
 
 * Checks `INT 0x13 AH=0x41` for LBA extension support — halts if not available
-* Reads the boot-sector metadata patched by `mkimage`, derives `kernel_lba = fat16_lba - KERNEL_SECTORS`, and loads the kernel to `0x1000` via `INT 0x13 AH=0x42`
+* Reads partition entry 0 from the MBR partition table, derives the kernel LBA and size from that entry, and loads the kernel to `0x1000` via `INT 0x13 AH=0x42`
 * Sets up a generated temporary stack (`SP=0xFF00`, physical top `0x4FF00`), installs a temporary GDT, enables protected mode, and uses a 32-bit far jump into `init_pm`
 * In protected mode, switches to `0x1FF000` as the boot/kernel stack top and jumps to kernel entry at `0x1000`
 
-One value injected by Makefile at build time: `KERNEL_SECTORS`.
+One value injected by Makefile at build time: the generated stack-top constants.
 
 Loader2 GDT is temporary — kernel installs its own immediately.
 
@@ -108,7 +108,7 @@ Inside `kernel_main()`:
 7. `keyboard_init()`, `timer_init(100)`, `idt_init()` — drivers and interrupt table
 8. `sched_init()` — initialise the scheduler data structures
 9. `ata_init()` — software reset ATA primary channel (`0x1F0`), poll until ready
-10. `fat16_init()` — read ATA sector 0, extract the patched FAT16 start LBA from the field declared by `FAT16_LBA_PATCH_OFFSET` in `boot.asm` (currently byte offset 504), then read and validate the FAT16 BPB at that runtime-discovered location
+10. `fat16_init()` — read ATA sector 0, extract the FAT16 start LBA from partition entry 1 in the MBR partition table, then read and validate the FAT16 BPB at that runtime-discovered location
 11. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
 12. `sched_enqueue(shell_proc)` — make the shell runnable
 13. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
@@ -432,7 +432,7 @@ Sectors 68–99     Root directory (512 entries × 32 bytes = 32 sectors)
 Sectors 100+      Data region  (cluster 2 = sectors 100–103, etc.)
 ```
 
-The FAT16 start LBA is computed during final image assembly by `mkimage` as `kernel_lba + kernel_sectors` and patched as a little-endian u32 into the boot-sector field declared by `FAT16_LBA_PATCH_OFFSET`. `loader2.asm` reads that same boot-sector metadata, subtracts the injected `KERNEL_SECTORS`, and uses the derived kernel start LBA to load the kernel. At runtime, `fat16_init()` reads ATA sector 0, extracts the FAT16 value, and uses it to locate the live FAT16 volume.
+The FAT16 start LBA is computed during final image assembly by `mkimage` as `kernel_lba + kernel_sectors` and written into partition entry 1 of the MBR partition table. `loader2.asm` reads partition entry 0 to load the kernel. At runtime, `fat16_init()` reads ATA sector 0, extracts the FAT16 partition metadata, and uses it to locate the live FAT16 volume.
 
 Verified at runtime: `ataread <FAT16_LBA>` shows `EB 58 90 SIMPLEOS` and `0x55 0xAA`; `ataread <FAT16_LBA + 100>` shows `7F 45 4C 46` (ELF magic at cluster 2).
 
@@ -537,12 +537,12 @@ LBA 5 ... N               padded kernel region
 LBA N+1 ...               fat16.img
 ```
 
-`kernel.bin` is padded to a sector boundary during final image assembly by `mkimage`. `kernel_lba` is derived from the actual loader2 size, and `FAT16_LBA = kernel_lba + kernel_sectors` is patched into the boot-sector fields declared by `LOADER2_SECTORS_PATCH_OFFSET` and `FAT16_LBA_PATCH_OFFSET`.
+`kernel.bin` is padded to a sector boundary during final image assembly by `mkimage`. `kernel_lba` is derived from the actual loader2 size, and `FAT16_LBA = kernel_lba + kernel_sectors` is written into partition entry 1 of the MBR partition table.
 
 ## Key generated artifacts
 
 ```text
-build/gen/loader2.gen.asm    KERNEL_SECTORS injected
+build/gen/loader2.gen.asm    stack-top values injected
 build/bin/fat16.img          16 MB FAT16 image built by build/tools/mkfat16
 build/tools/mkfat16          host tool for FAT volume construction
 build/tools/mkimage          host tool for final disk image assembly
