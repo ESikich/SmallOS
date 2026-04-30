@@ -163,4 +163,12 @@ static inline int sys_writefile(const char* name, const char* buf, uint32_t len)
     return syscall3(SYS_WRITEFILE, (uint32_t)name, (uint32_t)buf, len);
 }
 
+static inline int sys_halt(void) {
+    return syscall0(SYS_HALT);
+}
+
+static inline int sys_reboot(void) {
+    return syscall0(SYS_REBOOT);
+}
+
 #endif

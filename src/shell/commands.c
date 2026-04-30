@@ -1,7 +1,5 @@
 #include "commands.h"
 #include "terminal.h"
-#include "system.h"
-#include "timer.h"
 #include "elf_loader.h"
 #include "memory.h"
 #include "pmm.h"
@@ -12,6 +10,7 @@
 
 static void print_command_list(void);
 static void print_program_list(void);
+static void run_elf_command(command_t* cmd, const char* program);
 
 static void cmd_help(command_t* cmd) {
     (void)cmd;
@@ -27,39 +26,35 @@ static void cmd_clear(command_t* cmd) {
     terminal_clear();
 }
 
-static void cmd_echo(command_t* cmd) {
-    for (int i = 1; i < cmd->argc; i++) {
-        terminal_puts(cmd->argv[i]);
-        if (i != cmd->argc - 1) terminal_putc(' ');
+static void run_elf_command(command_t* cmd, const char* program) {
+    process_t* proc = elf_run_named(program, cmd->argc, cmd->argv);
+    if (!proc) {
+        terminal_puts(program);
+        terminal_puts(": failed\n");
+        return;
     }
-    terminal_putc('\n');
+
+    process_wait(proc);
 }
 
 static void cmd_about(command_t* cmd) {
-    (void)cmd;
-    terminal_puts("SmallOS v0.1\n");
+    run_elf_command(cmd, "about");
 }
 
 static void cmd_halt(command_t* cmd) {
-    (void)cmd;
-    terminal_puts("System halted.\n");
-    system_halt();
+    run_elf_command(cmd, "halt");
 }
 
 static void cmd_reboot(command_t* cmd) {
-    (void)cmd;
-    terminal_puts("Rebooting...\n");
-    system_reboot();
+    run_elf_command(cmd, "reboot");
 }
 
 static void cmd_uptime(command_t* cmd) {
-    (void)cmd;
-    terminal_puts("Ticks: ");
-    terminal_put_uint(timer_get_ticks());
-    terminal_putc('\n');
-    terminal_puts("Seconds: ");
-    terminal_put_uint(timer_get_seconds());
-    terminal_putc('\n');
+    run_elf_command(cmd, "uptime");
+}
+
+static void cmd_echo(command_t* cmd) {
+    run_elf_command(cmd, "echo");
 }
 
 static void cmd_meminfo(command_t* cmd) {
@@ -369,11 +364,11 @@ static void cmd_selftest(command_t* cmd) {
 static command_entry_t commands[] = {
     { "help",          "show commands and program list", cmd_help },
     { "clear",         "clear the screen",              cmd_clear },
-    { "echo",          "print arguments",               cmd_echo },
-    { "about",         "show the OS version",           cmd_about },
-    { "halt",          "halt the machine",              cmd_halt },
-    { "reboot",        "reboot the machine",            cmd_reboot },
-    { "uptime",        "show tick and second counts",   cmd_uptime },
+    { "echo",          "print arguments via ELF",       cmd_echo },
+    { "about",         "show the OS version via ELF",   cmd_about },
+    { "halt",          "halt the machine via ELF",      cmd_halt },
+    { "reboot",        "reboot the machine via ELF",    cmd_reboot },
+    { "uptime",        "show tick and second counts via ELF", cmd_uptime },
     { "meminfo",       "show heap and frame usage",     cmd_meminfo },
     { "ataread",       "dump raw sector bytes",         cmd_ataread },
     { "fsls",          "list FAT16 root directory",     cmd_fsls },
@@ -392,6 +387,11 @@ typedef struct {
 } program_entry_t;
 
 static program_entry_t programs[] = {
+    { "echo",         "print arguments" },
+    { "about",        "show the OS version" },
+    { "uptime",       "show tick and second counts" },
+    { "halt",         "halt the machine" },
+    { "reboot",       "reboot the machine" },
     { "hello",       "print argc/argv and tick count" },
     { "ticks",       "print the current tick count" },
     { "args",        "print argc and argv" },

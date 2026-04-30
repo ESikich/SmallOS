@@ -93,6 +93,8 @@ The shell task itself is created in `kernel_main()` with `process_create_kernel_
 
 Commands like `help`, `clear`, `meminfo`, `fsls`, and `fsread` are normal kernel C functions dispatched by `commands_execute()`.
 
+Commands like `echo`, `about`, `uptime`, `halt`, and `reboot` are thin kernel wrappers that launch same-named ELFs and wait for them to finish. The command names stay in the shell, but the behavior now lives in user space.
+
 They:
 
 - run in ring 0

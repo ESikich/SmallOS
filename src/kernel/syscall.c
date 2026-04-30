@@ -6,6 +6,7 @@
 #include "scheduler.h"
 #include "process.h"
 #include "pmm.h"
+#include "system.h"
 #include "klib.h"
 #include "../exec/elf_loader.h"
 #include "fat16.h"
@@ -488,6 +489,16 @@ void syscall_handler_main(syscall_regs_t* regs) {
                             (const char*)regs->ebx,
                             (const void*)regs->ecx,
                             regs->edx);
+            break;
+
+        case SYS_HALT:
+            system_halt();
+            regs->eax = 0;
+            break;
+
+        case SYS_REBOOT:
+            system_reboot();
+            regs->eax = 0;
             break;
 
         case SYS_EXEC:

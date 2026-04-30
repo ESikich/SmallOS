@@ -39,7 +39,9 @@ enum {
     SYS_CLOSE     = 9,   /* close an fd */
     SYS_FREAD     = 10,  /* read bytes from an open fd into a user buffer */
     SYS_SLEEP     = 11,  /* block for N timer ticks */
-    SYS_WRITEFILE = 12   /* create/overwrite a root-directory file */
+    SYS_WRITEFILE = 12,  /* create/overwrite a root-directory file */
+    SYS_HALT      = 13,  /* halt the machine */
+    SYS_REBOOT    = 14   /* reboot the machine */
 };
 
 #endif

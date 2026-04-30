@@ -134,6 +134,11 @@ shelltest           run built-in shell command tests
 ```
 
 Current FAT16 programs:
+- `echo` - print arguments
+- `about` - show the OS version
+- `uptime` - show tick and second counts
+- `halt` - halt the machine
+- `reboot` - reboot the machine
 - `hello` - print argc/argv and tick count
 - `ticks` - print the current tick count
 - `args` - print argc and argv
