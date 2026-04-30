@@ -334,8 +334,8 @@ Useful signals:
 
 ## Next Steps (Recommended)
 
-* Clean up the remaining RWX linker warning
 * Broaden the test matrix for the new syscall pointer checks
+* Add a few more boundary-case syscall regressions around page edges
 * Consider smaller quality-of-life shell commands for debugging the new runtime contracts
 
 ---

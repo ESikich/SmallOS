@@ -384,7 +384,8 @@ Useful signals:
 
 ## Current Next Steps
 
-* Clean up the remaining RWX linker warning from `sched_switch.o`
+* Broaden the syscall pointer regression coverage with page-boundary cases
+* Consider smaller quality-of-life shell commands for debugging the new runtime contracts
 
 ---
 
