@@ -41,7 +41,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 **`SYS_EXEC`** — user process asynchronously spawns a named child ELF and returns `0` on success / `-1` on failure
 * **`SYS_WRITEFILE`** — user process creates or overwrites a root-directory FAT16 file in one shot
 * **ATA PIO driver** — polls the primary IDE channel (`0x1F0`) to read 512-byte sectors from disk in 32-bit protected mode; no DMA or IRQ required
-* **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing all user ELFs; built by `tools/mkfat16.c` with no external dependencies; readable and writable at runtime for root-directory files via ATA PIO
+* **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing all user ELFs; built by `tools/mkfat16.c` with no external dependencies; readable via ATA PIO with nested directory paths, writable at runtime for root-directory files
 
 ---
 
@@ -125,7 +125,7 @@ uptime
 meminfo
 ataread <lba>        dump first 32 bytes of a disk sector (ATA PIO)
 
-fsls               list FAT16 root directory
+fsls [path]        list a FAT16 directory (root by default)
 fsread <name>      dump first 16 bytes of a FAT16 file
 runelf <name> [args] load and run an ELF from the FAT16 partition
 runelf_nowait <name> [args] enqueue an ELF and return immediately

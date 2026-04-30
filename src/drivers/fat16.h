@@ -46,6 +46,14 @@ int fat16_init(void);
 void fat16_ls(void);
 
 /*
+ * fat16_ls_path(path)
+ *
+ * Print the entries in the named directory.  Passing 0 or "" lists the
+ * root directory.
+ */
+void fat16_ls_path(const char* path);
+
+/*
  * fat16_stat(name, out_size)
  *
  * Check whether a file exists in the root directory (case-insensitive 8.3)

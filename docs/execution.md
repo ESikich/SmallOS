@@ -91,7 +91,7 @@ The shell task itself is created in `kernel_main()` with `process_create_kernel_
 
 ## 1. Built-in shell commands
 
-Commands like `help`, `clear`, `meminfo`, `fsls`, and `fsread` are normal kernel C functions dispatched by `commands_execute()`.
+Commands like `help`, `clear`, `meminfo`, `fsls [path]`, and `fsread` are normal kernel C functions dispatched by `commands_execute()`.
 
 Commands like `echo`, `about`, `uptime`, `halt`, and `reboot` are thin kernel wrappers that launch same-named ELFs and wait for them to finish. The command names stay in the shell, but the behavior now lives in user space.
 
@@ -114,7 +114,7 @@ if (!elf_run_named(cmd->argv[1], cmd->argc - 1, &cmd->argv[1])) {
 }
 ```
 
-That means `argv[0]` inside the ELF process is the program name passed to `runelf`, and the rest of the shell tokens follow as normal argv entries.
+That means `argv[0]` inside the ELF process is the program name passed to `runelf`, and the rest of the shell tokens follow as normal argv entries. Nested paths such as `runelf apps/demo/hello alpha beta` are supported as long as the FAT16 image contains the target entry.
 
 There is **no active `runimg` command path** in the current shell command table.
 
@@ -128,7 +128,7 @@ There is **no active `runimg` command path** in the current shell command table.
 
 ```text
 fat16_load(name, &size)
-  → case-insensitive FAT16 root-directory lookup
+  → case-insensitive FAT16 path lookup
   → follow cluster chain with ATA PIO reads
   → copy file into static FAT16 load buffer
   → return pointer to buffer

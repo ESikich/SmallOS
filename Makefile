@@ -73,6 +73,8 @@ KERNEL_C_SRCS=\
 
 USER_PROGS=echo about uptime halt reboot hello ticks args runelf_test readline exec_test fileread compiler_demo fault sleep_test ptrguard spinwkr preempt_test
 USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
+FAT16_ROOT_ENTRIES=$(foreach prog,$(USER_PROGS),$(prog).elf=$(BIN_DIR)/$(prog).elf)
+FAT16_EXTRA_ENTRIES=apps/demo/hello.elf=$(BIN_DIR)/hello.elf
 
 KERNEL_OBJS=$(patsubst $(SRC_DIR)/%.asm,$(OBJ_DIR)/%.o,$(KERNEL_ASM_SRCS)) \
             $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(KERNEL_C_SRCS))
@@ -132,7 +134,7 @@ $(TOOLS_DIR)/mkimage: tools/mkimage.c | dirs
 # FAT16 partition image (fixed size, no external dependencies)
 #
 $(BIN_DIR)/fat16.img: $(USER_ELFS) $(TOOLS_DIR)/mkfat16 | dirs
-	$(TOOLS_DIR)/mkfat16 $@ $(USER_ELFS)
+	$(TOOLS_DIR)/mkfat16 $@ $(FAT16_ROOT_ENTRIES) $(FAT16_EXTRA_ENTRIES)
 
 $(GEN_DIR)/loader2.gen.asm: $(BOOT_DIR)/loader2.asm | dirs
 	sed \

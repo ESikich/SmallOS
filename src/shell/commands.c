@@ -157,8 +157,12 @@ static void cmd_ataread(command_t* cmd) {
 }
 
 static void cmd_fsls(command_t* cmd) {
-    (void)cmd;
-    fat16_ls();
+    if (cmd->argc < 2) {
+        fat16_ls();
+        return;
+    }
+
+    fat16_ls_path(cmd->argv[1]);
 }
 
 static void cmd_fsread(command_t* cmd) {
@@ -244,9 +248,12 @@ static void cmd_shelltest(command_t* cmd) {
     command_t uptime_cmd = { 1, { "uptime" } };
     command_t meminfo_cmd = { 1, { "meminfo" } };
     command_t ataread_cmd = { 2, { "ataread", "0" } };
-    command_t fsls_cmd = { 1, { "fsls" } };
+    command_t fsls_root_cmd = { 1, { "fsls" } };
+    command_t fsls_path_cmd = { 2, { "fsls", "apps/demo" } };
     command_t fsread_cmd = { 2, { "fsread", "hello.elf" } };
+    command_t fsread_path_cmd = { 2, { "fsread", "apps/demo/hello.elf" } };
     command_t runelf_cmd = { 2, { "runelf", "hello" } };
+    command_t runelf_path_cmd = { 4, { "runelf", "apps/demo/hello", "alpha", "beta" } };
     command_t runelf_nowait_cmd = { 2, { "runelf_nowait", "ticks" } };
     command_t compiler_demo_cmd = { 2, { "runelf", "compiler_demo" } };
 
@@ -259,9 +266,12 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("uptime", cmd_uptime, &uptime_cmd);
     shelltest_call("meminfo", cmd_meminfo, &meminfo_cmd);
     shelltest_call("ataread", cmd_ataread, &ataread_cmd);
-    shelltest_call("fsls", cmd_fsls, &fsls_cmd);
+    shelltest_call("fsls", cmd_fsls, &fsls_root_cmd);
+    shelltest_call("fsls_path", cmd_fsls, &fsls_path_cmd);
     shelltest_call("fsread", cmd_fsread, &fsread_cmd);
+    shelltest_call("fsread_path", cmd_fsread, &fsread_path_cmd);
     shelltest_call("runelf", cmd_runelf, &runelf_cmd);
+    shelltest_call("runelf_path", cmd_runelf, &runelf_path_cmd);
     shelltest_call("runelf_nowait", cmd_runelf_nowait, &runelf_nowait_cmd);
     shelltest_call("compiler_demo", cmd_runelf, &compiler_demo_cmd);
 

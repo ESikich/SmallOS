@@ -27,7 +27,7 @@ typedef enum {
  */
 #define PROCESS_FD_MAX      8
 #define PROCESS_FD_FIRST    3        /* first allocatable fd */
-#define PROCESS_FD_NAME_MAX 16       /* max filename length stored in fd entry */
+#define PROCESS_FD_NAME_MAX 128      /* max path length stored in fd entry */
 #define PROCESS_FD_CACHE_PAGES 64    /* 256 KB max file / 4 KB per page */
 
 typedef struct {

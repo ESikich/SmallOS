@@ -3,9 +3,10 @@
 /*
  * fileread — end-to-end test for SYS_OPEN / SYS_FREAD / SYS_CLOSE.
  *
- * Opens itself (fileread.elf) from the FAT16 partition, reads the first
- * 16 bytes, dumps them as hex, reads the rest to confirm EOF behaviour,
- * then closes the fd.  Also tests double-close and bad-fd error returns.
+ * Opens a nested file from the FAT16 partition
+ * (apps/demo/hello.elf), reads the first 16 bytes, dumps them as hex,
+ * reads the rest to confirm EOF behaviour, then closes the fd.  Also
+ * tests double-close and bad-fd error returns.
  *
  * Expected output for a well-formed ELF:
  *   first 16 bytes: 7F 45 4C 46 ...   (ELF magic)
@@ -29,7 +30,7 @@ void _start(int argc, char** argv) {
     u_puts("-------------\n");
 
     /* --- open --- */
-    int fd = sys_open("fileread.elf");
+    int fd = sys_open("apps/demo/hello.elf");
     if (fd < 0) {
         u_puts("open failed\n");
         sys_exit(1);

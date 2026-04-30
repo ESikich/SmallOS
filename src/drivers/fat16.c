@@ -46,6 +46,7 @@
 #define DIR_FILE_SIZE     28   /* u32 */
 
 #define ATTR_VOLUME_ID    0x08
+#define ATTR_DIRECTORY    0x10
 #define ATTR_LONG_NAME    0x0Fu
 
 /* ------------------------------------------------------------------ */
@@ -75,6 +76,12 @@ static u8 s_root_buf[ROOT_DIR_SECTORS * SECTOR_SIZE] __attribute__((aligned(2)))
 static u8 s_load_buf[FAT16_MAX_FILE_BYTES];
 static u8 s_cluster_buf[CLUSTER_BYTES];
 
+typedef struct {
+    int is_root;
+    u16 start_cluster;
+    u32 size;
+} dir_ctx_t;
+
 /* ------------------------------------------------------------------ */
 /* Helpers                                                              */
 /* ------------------------------------------------------------------ */
@@ -96,6 +103,34 @@ static u32 abs_lba(u32 rel) {
 
 static u32 cluster_to_rel_sector(u32 cluster) {
     return DATA_REL_SECTOR + (cluster - FIRST_CLUSTER) * SECTORS_PER_CLUSTER;
+}
+
+static int is_sep(char c) {
+    return c == '/' || c == '\\';
+}
+
+static int path_has_sep(const char* path) {
+    if (!path) return 0;
+    for (const char* p = path; *p; p++) {
+        if (is_sep(*p)) return 1;
+    }
+    return 0;
+}
+
+static dir_ctx_t root_dir_ctx(void) {
+    dir_ctx_t dir;
+    dir.is_root = 1;
+    dir.start_cluster = 0;
+    dir.size = ROOT_DIR_SECTORS * SECTOR_SIZE;
+    return dir;
+}
+
+static dir_ctx_t dir_ctx_from_entry(const u8 entry[32]) {
+    dir_ctx_t dir;
+    dir.is_root = 0;
+    dir.start_cluster = read_u16_le(entry, DIR_FIRST_CLUSTER);
+    dir.size = read_u32_le(entry, DIR_FILE_SIZE);
+    return dir;
 }
 
 /*
@@ -177,6 +212,289 @@ static void to_83(const char* path, u8 name83[11]) {
             name83[8 + ei] = (u8)to_upper(*p);
         }
     }
+}
+
+static int match_83(const u8 dir_name[11], const char* name);
+
+static int path_next_component(const char** path, char* out, unsigned int out_size, int* is_last) {
+    const char* p = *path;
+
+    while (*p && is_sep(*p)) p++;
+    if (*p == '\0') {
+        *path = p;
+        return 0;
+    }
+
+    unsigned int len = 0;
+    while (p[len] && !is_sep(p[len])) len++;
+    if (len == 0 || len >= out_size) {
+        return -1;
+    }
+
+    for (unsigned int i = 0; i < len; i++) {
+        out[i] = p[i];
+    }
+    out[len] = '\0';
+
+    p += len;
+    while (*p && is_sep(*p)) p++;
+    *is_last = (*p == '\0');
+    *path = p;
+    return 1;
+}
+
+static int entry_is_valid(const u8* entry) {
+    if (entry[DIR_NAME] == 0x00) return 0;
+    if (entry[DIR_NAME] == 0xE5) return 0;
+    if (entry[DIR_NAME] == '.' &&
+        (entry[DIR_NAME + 1] == 0x00 ||
+         entry[DIR_NAME + 1] == ' ' ||
+         entry[DIR_NAME + 1] == '.')) return 0;
+    if (entry[DIR_ATTR] == ATTR_LONG_NAME) return 0;
+    if (entry[DIR_ATTR] & ATTR_VOLUME_ID) return 0;
+    return 1;
+}
+
+static int entry_is_dir(const u8* entry) {
+    return (entry[DIR_ATTR] & ATTR_DIRECTORY) != 0;
+}
+
+static void print_83_name(const u8 name83[11], int is_dir) {
+    int base_end = 8;
+    while (base_end > 0 && name83[base_end - 1] == ' ') base_end--;
+
+    int ext_end = 3;
+    while (ext_end > 0 && name83[8 + ext_end - 1] == ' ') ext_end--;
+
+    for (int i = 0; i < base_end; i++) {
+        terminal_putc((char)name83[i]);
+    }
+
+    if (ext_end > 0) {
+        terminal_putc('.');
+        for (int i = 0; i < ext_end; i++) {
+            terminal_putc((char)name83[8 + i]);
+        }
+    }
+
+    if (is_dir) {
+        terminal_putc('/');
+    }
+}
+
+static int dir_scan(const dir_ctx_t* dir,
+                    int (*cb)(const u8* entry, void* ctx),
+                    void* ctx)
+{
+    if (!dir || !cb) return 0;
+
+    if (dir->is_root) {
+        for (u32 s = 0; s < ROOT_DIR_SECTORS; s++) {
+            if (!ata_read_sectors(abs_lba(ROOT_REL_SECTOR + s), 1, s_sector)) {
+                terminal_puts("fat16: root dir read error\n");
+                return 0;
+            }
+
+            for (u32 e = 0; e < SECTOR_SIZE / 32u; e++) {
+                const u8* entry = s_sector + e * 32u;
+                if (!entry_is_valid(entry)) {
+                    if (entry[DIR_NAME] == 0x00) return 1;
+                    continue;
+                }
+                if (!cb(entry, ctx)) return 1;
+            }
+        }
+        return 1;
+    }
+
+    if (dir->start_cluster < FIRST_CLUSTER || dir->size == 0) {
+        return 1;
+    }
+
+    u32 bytes_remaining = dir->size;
+    u32 cluster = dir->start_cluster;
+
+    while (cluster >= FIRST_CLUSTER && cluster < FAT16_EOC_MIN && bytes_remaining > 0) {
+        u32 rel_sector = cluster_to_rel_sector(cluster);
+
+        for (u32 s = 0; s < SECTORS_PER_CLUSTER; s++) {
+            if (!ata_read_sectors(abs_lba(rel_sector + s), 1,
+                                  s_cluster_buf + s * SECTOR_SIZE)) {
+                terminal_puts("fat16: directory read error\n");
+                return 0;
+            }
+        }
+
+        u32 bytes_in_cluster = bytes_remaining < CLUSTER_BYTES
+                             ? bytes_remaining
+                             : CLUSTER_BYTES;
+
+        for (u32 off = 0; off + 32u <= bytes_in_cluster; off += 32u) {
+            const u8* entry = s_cluster_buf + off;
+            if (!entry_is_valid(entry)) {
+                if (entry[DIR_NAME] == 0x00) return 1;
+                continue;
+            }
+            if (!cb(entry, ctx)) return 1;
+        }
+
+        bytes_remaining -= bytes_in_cluster;
+        if (bytes_remaining == 0) break;
+
+        cluster = fat_entry(cluster);
+    }
+
+    return 1;
+}
+
+typedef struct {
+    const char* name;
+    u8* out_entry;
+    int found;
+} find_entry_ctx_t;
+
+static int find_entry_cb(const u8* entry, void* raw) {
+    find_entry_ctx_t* ctx = (find_entry_ctx_t*)raw;
+    if (match_83(entry + DIR_NAME, ctx->name)) {
+        k_memcpy(ctx->out_entry, entry, 32);
+        ctx->found = 1;
+        return 0;
+    }
+    return 1;
+}
+
+static int dir_find_entry(const dir_ctx_t* dir, const char* name, u8 out_entry[32]) {
+    find_entry_ctx_t ctx;
+    ctx.name = name;
+    ctx.out_entry = out_entry;
+    ctx.found = 0;
+
+    if (!dir_scan(dir, find_entry_cb, &ctx)) {
+        return 0;
+    }
+
+    return ctx.found;
+}
+
+typedef struct {
+    int count;
+} count_entries_ctx_t;
+
+static int count_entry_cb(const u8* entry, void* raw) {
+    (void)entry;
+    count_entries_ctx_t* ctx = (count_entries_ctx_t*)raw;
+    ctx->count++;
+    return 1;
+}
+
+static int dir_entry_count(const dir_ctx_t* dir) {
+    count_entries_ctx_t ctx;
+    ctx.count = 0;
+    if (!dir_scan(dir, count_entry_cb, &ctx)) {
+        return -1;
+    }
+    return ctx.count;
+}
+
+typedef struct {
+    dir_ctx_t parent;
+    u8 entry[32];
+    int has_entry;
+} resolved_path_t;
+
+static int resolve_path(const char* path, resolved_path_t* out) {
+    if (!out) return 0;
+
+    dir_ctx_t stack[16];
+    int depth = 0;
+    stack[0] = root_dir_ctx();
+
+    if (!path || path[0] == '\0') {
+        out->parent = stack[0];
+        out->has_entry = 0;
+        return 1;
+    }
+
+    const char* cursor = path;
+    char component[32];
+
+    while (1) {
+        int is_last = 0;
+        int r = path_next_component(&cursor, component, sizeof(component), &is_last);
+        if (r < 0) return 0;
+        if (r == 0) break;
+
+        if (k_strcmp(component, ".")) {
+            if (is_last) {
+                out->parent = stack[depth];
+                out->has_entry = 0;
+                return 1;
+            }
+            continue;
+        }
+
+        if (k_strcmp(component, "..")) {
+            if (depth > 0) depth--;
+            if (is_last) {
+                out->parent = stack[depth];
+                out->has_entry = 0;
+                return 1;
+            }
+            continue;
+        }
+
+        if (is_last) {
+            if (!dir_find_entry(&stack[depth], component, out->entry)) {
+                return 0;
+            }
+            out->parent = stack[depth];
+            out->has_entry = 1;
+            return 1;
+        }
+
+        if (!dir_find_entry(&stack[depth], component, out->entry)) {
+            return 0;
+        }
+        if (!entry_is_dir(out->entry)) {
+            return 0;
+        }
+        if (depth + 1 >= (int)(sizeof(stack) / sizeof(stack[0]))) {
+            return 0;
+        }
+        stack[++depth] = dir_ctx_from_entry(out->entry);
+    }
+
+    out->parent = stack[depth];
+    out->has_entry = 0;
+    return 1;
+}
+
+static int list_entry_cb(const u8* entry, void* raw) {
+    (void)raw;
+    u8 name83[11];
+    k_memcpy(name83, entry + DIR_NAME, 11);
+    u16 cluster = read_u16_le(entry, DIR_FIRST_CLUSTER);
+    u32 file_size = read_u32_le(entry, DIR_FILE_SIZE);
+
+    terminal_puts("  ");
+    print_83_name(name83, entry_is_dir(entry));
+    terminal_puts("  ");
+    terminal_put_uint(file_size);
+    terminal_puts(" bytes  cluster ");
+    terminal_put_uint(cluster);
+    terminal_putc('\n');
+    return 1;
+}
+
+static int dir_list_ctx(const dir_ctx_t* dir, const char* label) {
+    if (label && k_strcmp(label, "root directory")) {
+        terminal_puts("fat16 root directory:\n");
+    } else {
+        terminal_puts("fat16 directory: ");
+        terminal_puts(label ? label : "");
+        terminal_putc('\n');
+    }
+    return dir_scan(dir, list_entry_cb, 0);
 }
 
 static void write_dirent(u8* entry, const u8 name83[11], u16 start_cluster, u32 file_size) {
@@ -364,115 +682,72 @@ int fat16_init(void) {
     return 1;
 }
 
-void fat16_ls(void) {
+void fat16_ls_path(const char* path) {
     if (!s_initialised) { terminal_puts("fat16: not initialised\n"); return; }
 
-    terminal_puts("fat16 root directory:\n");
-
-    for (u32 s = 0; s < ROOT_DIR_SECTORS; s++) {
-        if (!ata_read_sectors(abs_lba(ROOT_REL_SECTOR + s), 1, s_sector)) {
-            terminal_puts("fat16: read error\n");
-            return;
-        }
-
-        for (u32 e = 0; e < SECTOR_SIZE / 32u; e++) {
-            const u8* entry = s_sector + e * 32u;
-
-            if (entry[DIR_NAME] == 0x00) return;
-            if (entry[DIR_NAME] == 0xE5) continue;
-
-            u8 attr = entry[DIR_ATTR];
-            if (attr == ATTR_LONG_NAME)  continue;
-            if (attr & ATTR_VOLUME_ID)   continue;
-
-            char name[13];
-            int  ni = 0;
-            for (int j = 0; j < 8 && entry[DIR_NAME + j] != ' '; j++)
-                name[ni++] = (char)entry[DIR_NAME + j];
-            name[ni++] = '.';
-            for (int j = 0; j < 3 && entry[DIR_NAME + 8 + j] != ' '; j++)
-                name[ni++] = (char)entry[DIR_NAME + 8 + j];
-            name[ni] = '\0';
-
-            u16 cluster   = read_u16_le(entry, DIR_FIRST_CLUSTER);
-            u32 file_size = read_u32_le(entry, DIR_FILE_SIZE);
-
-            terminal_puts("  ");
-            terminal_puts(name);
-            terminal_puts("  ");
-            terminal_put_uint(file_size);
-            terminal_puts(" bytes  cluster ");
-            terminal_put_uint(cluster);
-            terminal_putc('\n');
-        }
+    resolved_path_t resolved;
+    if (!resolve_path(path, &resolved)) {
+        terminal_puts("fat16: not found: ");
+        terminal_puts(path ? path : "");
+        terminal_putc('\n');
+        return;
     }
+
+    if (!resolved.has_entry) {
+        if (!dir_list_ctx(&resolved.parent, "root directory")) {
+            terminal_puts("fat16: directory read error\n");
+        }
+        return;
+    }
+
+    if (!entry_is_dir(resolved.entry)) {
+        terminal_puts("fat16: not a directory: ");
+        terminal_puts(path ? path : "");
+        terminal_putc('\n');
+        return;
+    }
+
+    dir_ctx_t dir = dir_ctx_from_entry(resolved.entry);
+    if (!dir_list_ctx(&dir, path)) {
+        terminal_puts("fat16: directory read error\n");
+    }
+}
+
+void fat16_ls(void) {
+    fat16_ls_path(0);
 }
 
 int fat16_stat(const char* name, u32* out_size) {
     if (!s_initialised) return 0;
 
-    for (u32 s = 0; s < ROOT_DIR_SECTORS; s++) {
-        if (!ata_read_sectors(abs_lba(ROOT_REL_SECTOR + s), 1, s_sector))
-            return 0;
+    resolved_path_t resolved;
+    if (!resolve_path(name, &resolved) || !resolved.has_entry) return 0;
+    if (entry_is_dir(resolved.entry)) return 0;
 
-        for (u32 e = 0; e < SECTOR_SIZE / 32u; e++) {
-            const u8* entry = s_sector + e * 32u;
-
-            if (entry[DIR_NAME] == 0x00) return 0;
-            if (entry[DIR_NAME] == 0xE5) continue;
-
-            u8 attr = entry[DIR_ATTR];
-            if (attr == ATTR_LONG_NAME) continue;
-            if (attr & ATTR_VOLUME_ID)  continue;
-
-            if (match_83(entry + DIR_NAME, name)) {
-                *out_size = read_u32_le(entry, DIR_FILE_SIZE);
-                return 1;
-            }
-        }
-    }
-    return 0;
+    *out_size = read_u32_le(resolved.entry, DIR_FILE_SIZE);
+    return 1;
 }
 
 const u8* fat16_load(const char* name, u32* out_size) {
     if (!s_initialised) { terminal_puts("fat16: not initialised\n"); return 0; }
 
-    /* Search root directory */
-    u16 start_cluster = 0;
-    u32 file_size     = 0;
-    int found         = 0;
-
-    for (u32 s = 0; s < ROOT_DIR_SECTORS && !found; s++) {
-        if (!ata_read_sectors(abs_lba(ROOT_REL_SECTOR + s), 1, s_sector)) {
-            terminal_puts("fat16: dir read error\n");
-            return 0;
-        }
-
-        for (u32 e = 0; e < SECTOR_SIZE / 32u && !found; e++) {
-            const u8* entry = s_sector + e * 32u;
-
-            if (entry[DIR_NAME] == 0x00) goto search_done;
-            if (entry[DIR_NAME] == 0xE5) continue;
-
-            u8 attr = entry[DIR_ATTR];
-            if (attr == ATTR_LONG_NAME) continue;
-            if (attr & ATTR_VOLUME_ID)  continue;
-
-            if (match_83(entry + DIR_NAME, name)) {
-                start_cluster = read_u16_le(entry, DIR_FIRST_CLUSTER);
-                file_size     = read_u32_le(entry, DIR_FILE_SIZE);
-                found = 1;
-            }
-        }
-    }
-
-search_done:
-    if (!found) {
+    resolved_path_t resolved;
+    if (!resolve_path(name, &resolved) || !resolved.has_entry) {
         terminal_puts("fat16: not found: ");
         terminal_puts(name);
         terminal_putc('\n');
         return 0;
     }
+
+    if (entry_is_dir(resolved.entry)) {
+        terminal_puts("fat16: not a file: ");
+        terminal_puts(name);
+        terminal_putc('\n');
+        return 0;
+    }
+
+    u16 start_cluster = read_u16_le(resolved.entry, DIR_FIRST_CLUSTER);
+    u32 file_size = read_u32_le(resolved.entry, DIR_FILE_SIZE);
 
     if (file_size == 0) {
         terminal_puts("fat16: file is empty\n");
@@ -533,6 +808,11 @@ int fat16_write(const char* name, const u8* data, u32 size) {
     }
 
     if (!name || (!data && size > 0)) {
+        return 0;
+    }
+
+    if (path_has_sep(name)) {
+        terminal_puts("fat16: writes are root-directory only\n");
         return 0;
     }
 

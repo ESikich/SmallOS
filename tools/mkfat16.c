@@ -191,15 +191,227 @@ static void to_83(const char* path, u8 name83[11]) {
     }
 }
 
+#define PATH_MAX_CHARS 256
+
+typedef struct node node_t;
+
+typedef struct child_ref {
+    node_t* node;
+    struct child_ref* next;
+} child_ref_t;
+
+struct node {
+    u8 name83[11];
+    int is_dir;
+    const char* src_path;
+    u32 size;
+    u32 cluster;
+    u32 cluster_count;
+    node_t* parent;
+    child_ref_t* children;
+    child_ref_t* child_tail;
+};
+
+static void die(const char* msg);
+static u32 measure_file(const char* path);
+
+static int is_sep(char c) {
+    return c == '/' || c == '\\';
+}
+
+static const char* basename_ptr(const char* path) {
+    const char* base = path;
+    for (const char* p = path; *p; p++) {
+        if (is_sep(*p)) base = p + 1;
+    }
+    return base;
+}
+
+static void copy_path_base(char* dst, size_t dst_size, const char* src) {
+    const char* base = basename_ptr(src);
+    size_t i = 0;
+    while (base[i] && i + 1 < dst_size) {
+        dst[i] = base[i];
+        i++;
+    }
+    dst[i] = '\0';
+}
+
+static const char* parse_spec(const char* spec, char* dest, size_t dest_size) {
+    const char* eq = strchr(spec, '=');
+    if (!eq) {
+        copy_path_base(dest, dest_size, spec);
+        return spec;
+    }
+
+    size_t dest_len = (size_t)(eq - spec);
+    if (dest_len >= dest_size) {
+        return 0;
+    }
+    memcpy(dest, spec, dest_len);
+    dest[dest_len] = '\0';
+    return eq + 1;
+}
+
+static node_t* node_create(int is_dir, const char* src_path) {
+    node_t* node = calloc(1, sizeof(node_t));
+    if (!node) die("out of memory");
+    node->is_dir = is_dir;
+    node->src_path = src_path;
+    return node;
+}
+
+static node_t* node_find_child(node_t* parent, const u8 name83[11]) {
+    for (child_ref_t* ref = parent->children; ref; ref = ref->next) {
+        if (memcmp(ref->node->name83, name83, 11) == 0) {
+            return ref->node;
+        }
+    }
+    return 0;
+}
+
+static node_t* node_add_child(node_t* parent, node_t* child) {
+    child_ref_t* ref = calloc(1, sizeof(child_ref_t));
+    if (!ref) die("out of memory");
+    ref->node = child;
+    if (!parent->children) {
+        parent->children = ref;
+    } else {
+        parent->child_tail->next = ref;
+    }
+    parent->child_tail = ref;
+    child->parent = parent;
+    return child;
+}
+
+static void ensure_directory_path(node_t* root, const char* path, node_t** out_parent) {
+    node_t* cur = root;
+    const char* p = path;
+    char component[PATH_MAX_CHARS];
+
+    while (*p) {
+        while (*p && is_sep(*p)) p++;
+        if (!*p) break;
+
+        size_t len = 0;
+        while (p[len] && !is_sep(p[len])) len++;
+        if (len == 0 || len >= sizeof(component)) {
+            die("path component too long");
+        }
+
+        memcpy(component, p, len);
+        component[len] = '\0';
+        p += len;
+
+        while (*p && is_sep(*p)) p++;
+
+        if (*p == '\0') {
+            *out_parent = cur;
+            return;
+        }
+
+        u8 name83[11];
+        to_83(component, name83);
+        if (name83[0] == ' ') die("invalid directory name");
+
+        node_t* next = node_find_child(cur, name83);
+        if (!next) {
+            next = node_create(1, 0);
+            memcpy(next->name83, name83, 11);
+            node_add_child(cur, next);
+        } else if (!next->is_dir) {
+            die("path component collides with file");
+        }
+        cur = next;
+    }
+
+    *out_parent = cur;
+}
+
+static void add_file_entry(node_t* root, const char* dest_path, const char* src_path) {
+    node_t* parent = 0;
+    ensure_directory_path(root, dest_path, &parent);
+
+    const char* base = basename_ptr(dest_path);
+    u8 name83[11];
+    to_83(base, name83);
+    if (name83[0] == ' ') die("invalid file name");
+
+    if (node_find_child(parent, name83)) {
+        die("duplicate destination path");
+    }
+
+    node_t* file = node_create(0, src_path);
+    memcpy(file->name83, name83, 11);
+    file->size = measure_file(src_path);
+    node_add_child(parent, file);
+}
+
+static void compute_layout(node_t* node) {
+    if (!node->is_dir) {
+        if (node->size == 0) {
+            node->cluster_count = 1;
+        } else {
+            node->cluster_count = (node->size + CLUSTER_BYTES - 1u) / CLUSTER_BYTES;
+            if (node->cluster_count == 0) node->cluster_count = 1;
+        }
+        return;
+    }
+
+    u32 child_count = 0;
+    for (child_ref_t* ref = node->children; ref; ref = ref->next) {
+        compute_layout(ref->node);
+        child_count++;
+    }
+
+    node->size = (2u + child_count) * 32u;
+    node->cluster_count = (node->size + CLUSTER_BYTES - 1u) / CLUSTER_BYTES;
+    if (node->cluster_count == 0) node->cluster_count = 1;
+}
+
+static u32 assign_clusters(node_t* node, u32 next_cluster) {
+    if (!node->is_dir) {
+        node->cluster = next_cluster;
+        return next_cluster + node->cluster_count;
+    }
+
+    if (node->parent != 0) {
+        node->cluster = next_cluster;
+        next_cluster += node->cluster_count;
+    }
+
+    for (child_ref_t* ref = node->children; ref; ref = ref->next) {
+        next_cluster = assign_clusters(ref->node, next_cluster);
+    }
+
+    return next_cluster;
+}
+
+static void mark_fat_chain(u16* fat, u32 start, u32 count) {
+    for (u32 i = 0; i < count; i++) {
+        u32 cluster = start + i;
+        fat[cluster] = (i + 1 < count) ? (u16)(cluster + 1) : FAT16_EOC;
+    }
+}
+
+static u32 count_nodes(node_t* node) {
+    if (!node->is_dir) return 1;
+    u32 total = 0;
+    for (child_ref_t* ref = node->children; ref; ref = ref->next) {
+        total += count_nodes(ref->node);
+    }
+    return total;
+}
+
 /* ------------------------------------------------------------------ */
 /* Directory entry                                                     */
 /* ------------------------------------------------------------------ */
 
 static void write_dirent(u8* entry, const u8 name83[11],
-                         u16 start_cluster, u32 file_size) {
+                         u8 attr, u16 start_cluster, u32 file_size) {
     memset(entry, 0, 32);
     memcpy(entry,      name83, 11);
-    entry[11] = 0x20;                       /* attribute: archive */
+    entry[11] = attr;
     put_u16(entry, 26, start_cluster);
     put_u32(entry, 28, file_size);
 }
@@ -211,6 +423,138 @@ static void write_dirent(u8* entry, const u8 name83[11],
 static void die(const char* msg) {
     fprintf(stderr, "mkfat16: %s\n", msg);
     exit(1);
+}
+
+static void write_dot_entry(u8* entry, u16 cluster, u32 size, int is_dotdot) {
+    memset(entry, 0, 32);
+    entry[0] = '.';
+    if (is_dotdot) {
+        entry[1] = '.';
+    }
+    entry[11] = 0x10;
+    put_u16(entry, 26, cluster);
+    put_u32(entry, 28, size);
+}
+
+static void emit_directory_contents(node_t* dir, u8* buf, u32 buf_size) {
+    memset(buf, 0, buf_size);
+    u32 entry_index = 0;
+
+    if (dir->parent != 0) {
+        if ((entry_index + 1u) * 32u > buf_size) die("directory too large");
+        write_dot_entry(buf + entry_index * 32u, (u16)dir->cluster, dir->size, 0);
+        entry_index++;
+
+        u16 parent_cluster = 0;
+        if (dir->parent->parent != 0) {
+            parent_cluster = (u16)dir->parent->cluster;
+        }
+        if ((entry_index + 1u) * 32u > buf_size) die("directory too large");
+        write_dot_entry(buf + entry_index * 32u, parent_cluster,
+                        dir->parent->is_dir ? dir->parent->size : dir->parent->size,
+                        1);
+        entry_index++;
+    }
+
+    for (child_ref_t* ref = dir->children; ref; ref = ref->next) {
+        node_t* child = ref->node;
+        u8 attr = child->is_dir ? 0x10 : 0x20;
+        if ((entry_index + 1u) * 32u > buf_size) die("directory too large");
+        write_dirent(buf + entry_index * 32u,
+                     child->name83,
+                     attr,
+                     (u16)child->cluster,
+                     child->is_dir ? child->size : child->size);
+        entry_index++;
+    }
+}
+
+static void emit_file_data(node_t* file, FILE* out) {
+    FILE* f = fopen(file->src_path, "rb");
+    if (!f) {
+        fprintf(stderr, "mkfat16: cannot open '%s'\n", file->src_path);
+        exit(1);
+    }
+
+    u8* cbuf = calloc(CLUSTER_BYTES, 1);
+    if (!cbuf) die("out of memory");
+
+    u32 remaining = file->size;
+    for (u32 c = 0; c < file->cluster_count; c++) {
+        memset(cbuf, 0, CLUSTER_BYTES);
+        u32 to_read = remaining < CLUSTER_BYTES ? remaining : CLUSTER_BYTES;
+        if (to_read > 0) {
+            size_t got = fread(cbuf, 1, to_read, f);
+            if (got != to_read) {
+                fprintf(stderr, "mkfat16: read error on '%s'\n", file->src_path);
+                fclose(f);
+                free(cbuf);
+                exit(1);
+            }
+            remaining -= (u32)got;
+        }
+        if (fwrite(cbuf, 1, CLUSTER_BYTES, out) != CLUSTER_BYTES) die("write failed");
+    }
+
+    free(cbuf);
+    fclose(f);
+}
+
+static void emit_directory_data(node_t* dir, FILE* out) {
+    u32 bytes = dir->cluster_count * CLUSTER_BYTES;
+    u8* buf = calloc(bytes, 1);
+    if (!buf) die("out of memory");
+
+    emit_directory_contents(dir, buf, bytes);
+    if (fwrite(buf, 1, bytes, out) != bytes) die("write failed");
+    free(buf);
+}
+
+static void emit_tree_data(node_t* node, FILE* out) {
+    if (!node->is_dir) {
+        emit_file_data(node, out);
+        return;
+    }
+
+    if (node->parent != 0) {
+        emit_directory_data(node, out);
+    }
+
+    for (child_ref_t* ref = node->children; ref; ref = ref->next) {
+        emit_tree_data(ref->node, out);
+    }
+}
+
+static void mark_tree_fat(node_t* node, u16* fat) {
+    if (node->parent != 0) {
+        mark_fat_chain(fat, node->cluster, node->cluster_count);
+    }
+
+    if (!node->is_dir) {
+        return;
+    }
+
+    for (child_ref_t* ref = node->children; ref; ref = ref->next) {
+        mark_tree_fat(ref->node, fat);
+    }
+}
+
+static u32 data_sector_count(node_t* node) {
+    u32 total = 0;
+
+    if (node->parent != 0) {
+        total += node->cluster_count * SECTORS_PER_CLUSTER;
+    }
+
+    if (!node->is_dir) {
+        return total;
+    }
+
+    for (child_ref_t* ref = node->children; ref; ref = ref->next) {
+        total += data_sector_count(ref->node);
+    }
+
+    return total;
 }
 
 static u32 measure_file(const char* path) {
@@ -232,49 +576,40 @@ static u32 measure_file(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: mkfat16 output.img [file.elf ...]\n");
+        fprintf(stderr, "Usage: mkfat16 output.img [dest=]source ...\n");
         return 1;
     }
 
     const char* output_path = argv[1];
-    int nfiles = argc - 2;
-    if (nfiles > MAX_FILES) die("too many files (max 64)");
+    int nspecs = argc - 2;
+    if (nspecs > MAX_FILES) die("too many files (max 64)");
 
-    /* Measure files */
-    const char* paths[MAX_FILES];
-    u32         sizes[MAX_FILES];
-    for (int i = 0; i < nfiles; i++) {
-        paths[i] = argv[2 + i];
-        sizes[i] = measure_file(paths[i]);
+    node_t root_node;
+    memset(&root_node, 0, sizeof(root_node));
+    root_node.is_dir = 1;
+
+    for (int i = 0; i < nspecs; i++) {
+        char dest[PATH_MAX_CHARS];
+        const char* src = parse_spec(argv[2 + i], dest, sizeof(dest));
+        if (!src) die("invalid destination path");
+        add_file_entry(&root_node, dest, src);
     }
 
-    /* Assign clusters */
-    fat_init();
-    u32 file_cluster[MAX_FILES];
-    u32 next_cluster = FIRST_CLUSTER;
+    compute_layout(&root_node);
+    u32 next_cluster = assign_clusters(&root_node, FIRST_CLUSTER);
     u32 max_data_clusters = (TOTAL_SECTORS - DATA_START) / SECTORS_PER_CLUSTER;
-
-    for (int i = 0; i < nfiles; i++) {
-        u32 clusters = (sizes[i] + CLUSTER_BYTES - 1) / CLUSTER_BYTES;
-        if (clusters == 0) clusters = 1;
-        if (next_cluster + clusters > FIRST_CLUSTER + max_data_clusters) {
-            fprintf(stderr, "mkfat16: filesystem full\n");
-            return 1;
-        }
-        file_cluster[i] = next_cluster;
-        fat_alloc_chain(next_cluster, clusters);
-        next_cluster += clusters;
+    if (next_cluster > FIRST_CLUSTER + max_data_clusters) {
+        die("filesystem full");
     }
 
-    /* Open output */
+    fat_init();
+    mark_tree_fat(&root_node, s_fat);
+
     FILE* out = fopen(output_path, "wb");
     if (!out) {
         fprintf(stderr, "mkfat16: cannot open output '%s'\n", output_path);
         return 1;
     }
-
-    u8* zbuf = calloc(CLUSTER_BYTES, 1);   /* general zero / scratch buffer */
-    if (!zbuf) die("out of memory");
 
     /* --- Sector 0: boot sector --- */
     u8 boot[SECTOR_SIZE];
@@ -282,9 +617,10 @@ int main(int argc, char** argv) {
     if (fwrite(boot, 1, SECTOR_SIZE, out) != SECTOR_SIZE) die("write failed");
 
     /* --- Sectors 1–3: reserved (zero) --- */
+    u8 zero_sector[SECTOR_SIZE];
+    memset(zero_sector, 0, sizeof(zero_sector));
     for (u32 s = 1; s < RESERVED_SECTORS; s++) {
-        memset(zbuf, 0, SECTOR_SIZE);
-        if (fwrite(zbuf, 1, SECTOR_SIZE, out) != SECTOR_SIZE) die("write failed");
+        if (fwrite(zero_sector, 1, SECTOR_SIZE, out) != SECTOR_SIZE) die("write failed");
     }
 
     /* --- FAT1 and FAT2 --- */
@@ -300,80 +636,33 @@ int main(int argc, char** argv) {
     free(fat_buf);
 
     /* --- Root directory --- */
-    u8* root = calloc(ROOT_DIR_SECTORS * SECTOR_SIZE, 1);
-    if (!root) die("out of memory");
+    u8* root_buf = calloc(ROOT_DIR_SECTORS * SECTOR_SIZE, 1);
+    if (!root_buf) die("out of memory");
 
-    for (int i = 0; i < nfiles; i++) {
-        u8 name83[11];
-        to_83(paths[i], name83);
-        write_dirent(root + i * 32, name83, (u16)file_cluster[i], sizes[i]);
-
-        /* Pretty-print 8.3 name for build log */
-        char disp[13];
-        int di = 0;
-        for (int j = 0; j < 8 && name83[j] != ' '; j++) disp[di++] = name83[j];
-        disp[di++] = '.';
-        for (int j = 0; j < 3 && name83[8+j] != ' '; j++) disp[di++] = name83[8+j];
-        disp[di] = '\0';
-        fprintf(stdout, "  %-12s  cluster %4u  %7u bytes  (%s)\n",
-                disp, file_cluster[i], sizes[i], paths[i]);
-    }
-
-    if (fwrite(root, 1, ROOT_DIR_SECTORS * SECTOR_SIZE, out)
+    emit_directory_contents(&root_node, root_buf, ROOT_DIR_SECTORS * SECTOR_SIZE);
+    if (fwrite(root_buf, 1, ROOT_DIR_SECTORS * SECTOR_SIZE, out)
             != ROOT_DIR_SECTORS * SECTOR_SIZE) die("write failed");
-    free(root);
+    free(root_buf);
 
-    /* --- Data region --- */
-    u8* cbuf = calloc(CLUSTER_BYTES, 1);
-    if (!cbuf) die("out of memory");
+    emit_tree_data(&root_node, out);
 
-    u32 current_sector = DATA_START;
-
-    for (int i = 0; i < nfiles; i++) {
-        u32 clusters = (sizes[i] + CLUSTER_BYTES - 1) / CLUSTER_BYTES;
-        if (clusters == 0) clusters = 1;
-
-        FILE* f = fopen(paths[i], "rb");
-        if (!f) {
-            fprintf(stderr, "mkfat16: cannot open '%s'\n", paths[i]);
-            fclose(out);
-            return 1;
+    u32 written_sectors = DATA_START + data_sector_count(&root_node);
+    if (written_sectors < TOTAL_SECTORS) {
+        u8* pad = calloc(CLUSTER_BYTES, 1);
+        if (!pad) die("out of memory");
+        while (written_sectors < TOTAL_SECTORS) {
+            u32 left = TOTAL_SECTORS - written_sectors;
+            u32 write_sectors = left < SECTORS_PER_CLUSTER ? left : SECTORS_PER_CLUSTER;
+            u32 write_bytes = write_sectors * SECTOR_SIZE;
+            if (fwrite(pad, 1, write_bytes, out) != write_bytes) die("write failed");
+            written_sectors += write_sectors;
         }
-
-        u32 remaining = sizes[i];
-        for (u32 c = 0; c < clusters; c++) {
-            memset(cbuf, 0, CLUSTER_BYTES);
-            u32 to_read = remaining < CLUSTER_BYTES ? remaining : CLUSTER_BYTES;
-            if (to_read > 0) {
-                size_t got = fread(cbuf, 1, to_read, f);
-                if (got != to_read) {
-                    fprintf(stderr, "mkfat16: read error on '%s'\n", paths[i]);
-                    fclose(f); fclose(out); return 1;
-                }
-                remaining -= (u32)got;
-            }
-            if (fwrite(cbuf, 1, CLUSTER_BYTES, out) != CLUSTER_BYTES)
-                die("write failed");
-            current_sector += SECTORS_PER_CLUSTER;
-        }
-        fclose(f);
+        free(pad);
     }
 
-    /* Pad remaining sectors to reach TOTAL_SECTORS */
-    memset(cbuf, 0, CLUSTER_BYTES);
-    while (current_sector < TOTAL_SECTORS) {
-        u32 left = TOTAL_SECTORS - current_sector;
-        u32 write_sectors = left < SECTORS_PER_CLUSTER ? left : SECTORS_PER_CLUSTER;
-        u32 write_bytes = write_sectors * SECTOR_SIZE;
-        if (fwrite(cbuf, 1, write_bytes, out) != write_bytes) die("write failed");
-        current_sector += write_sectors;
-    }
-
-    free(cbuf);
-    free(zbuf);
     fclose(out);
 
-    fprintf(stdout, "fat16: %s  %d file(s)  %u sectors (%u KB)\n",
-            output_path, nfiles, TOTAL_SECTORS, TOTAL_SECTORS / 2);
+    fprintf(stdout, "fat16: %s  %u sector volume\n",
+            output_path, TOTAL_SECTORS);
     return 0;
 }

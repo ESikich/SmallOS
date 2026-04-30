@@ -2,7 +2,7 @@
 
 This document defines how the system stores, discovers, and reads files from disk.
 
-The current implementation stores a **raw FAT16 volume inside an MBR-partitioned disk image**. Sector 0 contains the partition table, and the FAT16 partition starts immediately after the kernel region. There is no subdirectory traversal and no VFS layer. Root-directory file writes are supported for compiler-style output and similar generated artifacts.
+The current implementation stores a **raw FAT16 volume inside an MBR-partitioned disk image**. Sector 0 contains the partition table, and the FAT16 partition starts immediately after the kernel region. The runtime now resolves nested FAT16 paths for reads and directory listings, while root-directory file writes remain the only write path.
 
 ---
 
@@ -177,18 +177,17 @@ The current FAT16 driver is intentionally narrow.
 
 ## Supported
 
-- read and write access to root-directory files
-- root directory scan
+- read access to root-directory and nested-directory files
+- directory listing by path with `fat16_ls_path(path)` and `fsls [path]`
 - case-insensitive 8.3 filename matching
 - FAT chain following for file reads
-- root-directory file creation and overwrite
 - loading one file at a time into a shared static buffer
-- listing root-directory files with `fat16_ls()`
+- root-directory file creation and overwrite
 
 ## Not supported
 
-- subdirectories
 - long filenames (LFN)
+- directory creation or writes outside the root directory
 - multiple concurrent file buffers
 - general-purpose file descriptors
 - mounting arbitrary FAT layouts
@@ -218,11 +217,16 @@ Internally the driver:
 - splits at the last `.`
 - pads base name and extension with spaces to 11 bytes
 - compares against the 11-byte FAT directory entry name
+- resolves path components one at a time before applying the 8.3 match
+
+Path components such as `apps/demo/hello.elf` therefore work even though each
+component is still matched with FAT16 8.3 rules.
 
 Practical limits:
 - base name truncated to 8 characters for matching
 - extension truncated to 3 characters for matching
-- only the root directory is searched
+- nested directories are supported for reads and listings, but writes still
+  target the root directory only
 
 ---
 
@@ -233,7 +237,7 @@ The read path for `fat16_load()` is:
 ```text
 fat16_load(name, &size)
   ↓
-scan root directory sectors
+resolve path components from the root directory downward
   ↓
 find matching 8.3 entry
   ↓
@@ -304,7 +308,7 @@ The write path is intentionally narrow:
 
 - root directory only
 - 8.3 filename matching
-- no subdirectories
+- no subdirectory creation
 - no long filenames
 - no concurrent writer support
 
@@ -357,7 +361,8 @@ For each file it prints:
 <NAME.EXT>  <size> bytes  cluster <start_cluster>
 ```
 
-The listing is derived directly from directory entries. It is not sorted and it does not descend into subdirectories.
+`fat16_ls_path(path)` descends into nested directories before listing. The
+listing is derived directly from directory entries. It is not sorted.
 
 ---
 
@@ -397,7 +402,7 @@ The FAT16 image was built with geometry that does not match `fat16.c`.
 
 ## `fat16: not found: <name>`
 
-No matching 8.3 root-directory entry exists.
+No matching 8.3 entry exists for the requested path component chain.
 
 ## `fat16: dir read error` / `fat16: cluster read error` / `fat16: FAT read error`
 
@@ -434,6 +439,6 @@ The following must stay true unless the implementation is changed everywhere:
 - FAT16 geometry in `fat16.c` matches `mkfat16.c`
 - `fat16_load()` returns a pointer into a reused static buffer
 - callers copy data out before another file load occurs
-- only root-directory 8.3 lookup is supported
+- nested reads/listings use path-aware 8.3 lookup; writes remain root-only
 
 Breaking any of these produces either immediate mount failure or silent file corruption.
