@@ -35,6 +35,11 @@
   * Windows / PowerShell debug launch documented with GTK and QEMU logging flags
   * Boot/layout docs updated for the generated stage-2 stack guard and the `0xB000` loader2 placement
 
+* **Reboot/halt smoke targets** (`Makefile`, `tools/qemu_smoke.py`)
+  * `make smoke` runs dedicated reboot and halt guest checks without folding them into the full selftest suite
+  * `make smoke-reboot` and `make smoke-halt` exercise the shell commands individually
+  * The host smoke runner waits for the shell prompt, injects the command through the QEMU monitor, and watches the serial log for the expected reset or halt markers
+
 * **Process exit status plumbing** (`src/kernel/process.c`, `src/kernel/syscall.c`, `src/kernel/idt.c`)
   * Foreground `runelf` calls now preserve the child exit status
   * The shell selftest uses that status to verify normal exits and expected fault terminations

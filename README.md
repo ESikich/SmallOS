@@ -101,6 +101,10 @@ command, feeds the interactive `readline` prompt, and checks every
 shipped ELF in one pass.  The built-in shell command expectations live
 under `tests/shell/` and the ELF expectations live under `tests/elfs/`.
 
+`make smoke` runs the dedicated reboot and halt smoke checks.  Use
+`make smoke-reboot` or `make smoke-halt` if you want to exercise one
+command at a time.
+
 The PowerShell command keeps a GTK window visible while capturing guest output in the console and saving `qemu.log` plus `qemu-console.log` for later debugging.
 
 Use `-drive format=raw` (hard disk mode). Do not use `-fda` (floppy).

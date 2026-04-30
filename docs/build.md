@@ -82,6 +82,10 @@ loader2.bin          boot.bin
 verifies the built-in shell command suite in `tests/shell/` plus every
 shipped ELF against the per-program expectation files in `tests/elfs/`.
 
+`make smoke` runs the dedicated reboot and halt smoke checks.  Use
+`make smoke-reboot` or `make smoke-halt` to exercise those shell
+commands on their own.
+
 ---
 
 # Kernel Build

@@ -22,6 +22,10 @@ command, feeds the interactive `readline` prompt, and verifies both the
 built-in shell commands (`tests/shell/`) and shipped ELFs
 (`tests/elfs/`).
 
+`make smoke` runs the dedicated reboot/halt checks.  Use
+`make smoke-reboot` or `make smoke-halt` when you want to verify those
+commands without running the full guest suite.
+
 Do not use `-fda` (floppy). LBA extended reads require hard disk mode.
 
 `help` is table-driven:
@@ -368,10 +372,11 @@ Useful signals:
 
 ---
 
-## Next Steps (Recommended)
+## Current Next Steps
 
 * `SYS_FREAD` read caching — avoid re-loading the full file from ATA on every `sys_fread` call; cache the loaded buffer keyed by fd until `sys_close`
 * `SYS_SLEEP` — block the calling process for N timer ticks, yield to the scheduler, wake via timer IRQ
+* Boot/layout work — the fixed disk layout and 112-sector kernel ceiling are still the main remaining platform limit; see [boot.md](boot.md#future-work)
 
 ---
 

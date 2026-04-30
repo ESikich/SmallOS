@@ -191,9 +191,14 @@ $(IMG_DIR)/os-image.bin: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/k
 
 QEMU=qemu-system-i386
 SERIAL_LOG=/tmp/smallos-serial.log
+MONITOR_SOCK=/tmp/smallos-monitor.sock
+PIDFILE=/tmp/smallos.pid
+SMOKE_TIMEOUT=120.0
 PYTHON3=python3
 QEMUFLAGS=-drive format=raw,file=$(IMG_DIR)/os-image.bin -m 32 \
           -serial file:$(SERIAL_LOG)
+
+.PHONY: all dirs run run-headless test smoke smoke-reboot smoke-halt clean
 
 run: $(IMG_DIR)/os-image.bin
 	$(QEMU) $(QEMUFLAGS) -display curses
@@ -204,13 +209,39 @@ run-headless: $(IMG_DIR)/os-image.bin
 	    -daemonize -pidfile /tmp/smallos.pid
 
 test: $(IMG_DIR)/os-image.bin
-	@if [ -f /tmp/smallos.pid ]; then kill "$$(cat /tmp/smallos.pid)" 2>/dev/null || true; fi
-	rm -f $(SERIAL_LOG) /tmp/smallos-monitor.sock /tmp/smallos.pid
+	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
+	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
 	$(MAKE) run-headless
 	$(PYTHON3) tools/qemu_selftest.py \
-		--monitor /tmp/smallos-monitor.sock \
+		--monitor $(MONITOR_SOCK) \
 		--serial $(SERIAL_LOG) \
-		--pidfile /tmp/smallos.pid
+		--pidfile $(PIDFILE)
+
+smoke: $(IMG_DIR)/os-image.bin
+	$(MAKE) smoke-reboot
+	$(MAKE) smoke-halt
+
+smoke-reboot: $(IMG_DIR)/os-image.bin
+	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
+	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
+	$(MAKE) run-headless
+	$(PYTHON3) tools/qemu_smoke.py \
+		--command reboot \
+		--monitor $(MONITOR_SOCK) \
+		--serial $(SERIAL_LOG) \
+		--pidfile $(PIDFILE) \
+		--timeout $(SMOKE_TIMEOUT)
+
+smoke-halt: $(IMG_DIR)/os-image.bin
+	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
+	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
+	$(MAKE) run-headless
+	$(PYTHON3) tools/qemu_smoke.py \
+		--command halt \
+		--monitor $(MONITOR_SOCK) \
+		--serial $(SERIAL_LOG) \
+		--pidfile $(PIDFILE) \
+		--timeout $(SMOKE_TIMEOUT)
 
 clean:
 	rm -rf $(BUILD_DIR)
