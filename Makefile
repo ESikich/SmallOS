@@ -17,6 +17,7 @@ BIN_DIR=$(BUILD_DIR)/bin
 GEN_DIR=$(BUILD_DIR)/gen
 IMG_DIR=$(BUILD_DIR)/img
 TOOLS_DIR=$(BUILD_DIR)/tools
+STATE_DIR=.state
 
 BOOT_SECTOR_SIZE := $(shell awk '/^BOOT_SECTOR_SIZE[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 BOOT_SECTOR_MASK := $(shell echo $$(( $(BOOT_SECTOR_SIZE) - 1 )))
@@ -87,7 +88,7 @@ OBJ_SUBDIRS=$(sort \
 	$(dir $(USER_OBJS)) \
 )
 
-BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(TOOLS_DIR) $(OBJ_SUBDIRS)
+BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
 
 all: $(IMG_DIR)/os-image.bin
 
@@ -130,11 +131,16 @@ $(TOOLS_DIR)/mkfat16: tools/mkfat16.c | dirs
 $(TOOLS_DIR)/mkimage: tools/mkimage.c | dirs
 	$(HOST_CC) -o $@ $<
 
+# FAT16 seed image (generated from the current tree)
 #
-# FAT16 partition image (fixed size, no external dependencies)
-#
-$(BIN_DIR)/fat16.img: $(USER_ELFS) $(TOOLS_DIR)/mkfat16 | dirs
+$(BIN_DIR)/fat16.seed.img: $(USER_ELFS) $(TOOLS_DIR)/mkfat16 | dirs
 	$(TOOLS_DIR)/mkfat16 $@ $(FAT16_ROOT_ENTRIES) $(FAT16_EXTRA_ENTRIES)
+
+$(STATE_DIR)/fat16.img: $(BIN_DIR)/fat16.seed.img | dirs
+	@if [ ! -f $@ ]; then cp $< $@; fi
+
+reset-disk: $(BIN_DIR)/fat16.seed.img | dirs
+	cp $< $(STATE_DIR)/fat16.img
 
 $(GEN_DIR)/loader2.gen.asm: $(BOOT_DIR)/loader2.asm | dirs
 	sed \
@@ -169,18 +175,18 @@ boot-layout-check: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(GEN_DIR)/loader2
 #   boot.bin             ($(BOOT_SECTOR_SIZE) bytes,   LBA 0)
 #   loader2.bin          ($(LOADER2_SIZE_BYTES) bytes, LBA 1-$(shell echo $$(( $(LOADER2_SIZE_BYTES) / $(BOOT_SECTOR_SIZE) ))))
 #   kernel_padded.bin    (sector-aligned, immediately after loader2.bin)
-#   fat16.img            ($(FAT16_TOTAL_SIZE_MB) MB FAT16 partition, after the padded kernel)
+#   .state/fat16.img     mutable FAT16 partition copy, after the padded kernel
 #
 # Sector 0 is now an MBR-style boot sector with partition table entries for
 # the kernel image and FAT16 partition, so stage 2 and the kernel can
 # discover disk locations directly from the image itself.
 #
-$(IMG_DIR)/os-image.bin: boot-layout-check $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(BIN_DIR)/fat16.img $(TOOLS_DIR)/mkimage | dirs
+$(IMG_DIR)/os-image.bin: boot-layout-check $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(STATE_DIR)/fat16.img $(TOOLS_DIR)/mkimage | dirs
 	$(TOOLS_DIR)/mkimage \
 		--boot $(BIN_DIR)/boot.bin \
 		--loader $(BIN_DIR)/loader2.bin \
 		--kernel $(BIN_DIR)/kernel.bin \
-		--fat16 $(BIN_DIR)/fat16.img \
+		--fat16 $(STATE_DIR)/fat16.img \
 		--out $@ \
 		--sector-size $(BOOT_SECTOR_SIZE) \
 		--loader-size $(LOADER2_SIZE_BYTES) \
@@ -193,7 +199,7 @@ image-layout-check: $(IMG_DIR)/os-image.bin
 		--boot $(BIN_DIR)/boot.bin \
 		--loader2 $(BIN_DIR)/loader2.bin \
 		--kernel $(BIN_DIR)/kernel.bin \
-		--fat16 $(BIN_DIR)/fat16.img \
+		--fat16 $(STATE_DIR)/fat16.img \
 		--sector-size $(BOOT_SECTOR_SIZE) \
 		--boot-partition-table-offset $(BOOT_PARTITION_TABLE_OFFSET) \
 		--boot-partition-entry-size $(BOOT_PARTITION_ENTRY_SIZE)
@@ -210,7 +216,7 @@ PYTHON3=python3
 QEMUFLAGS=-drive format=raw,file=$(IMG_DIR)/os-image.bin -boot c -m 32 \
           -serial file:$(SERIAL_LOG)
 
-.PHONY: all dirs run run-headless test smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify
+.PHONY: all dirs run run-headless test smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify reset-disk
 
 run: image-layout-check
 	$(QEMU) $(QEMUFLAGS) -display curses
@@ -220,7 +226,7 @@ run-headless: image-layout-check
 	    -monitor unix:/tmp/smallos-monitor.sock,server,nowait \
 	    -daemonize -pidfile /tmp/smallos.pid
 
-test: image-layout-check
+test: reset-disk image-layout-check
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
 	$(MAKE) run-headless
@@ -229,7 +235,7 @@ test: image-layout-check
 		--serial $(SERIAL_LOG) \
 		--pidfile $(PIDFILE)
 
-smoke: image-layout-check
+smoke: reset-disk image-layout-check
 	$(MAKE) smoke-reboot
 	$(MAKE) smoke-halt
 

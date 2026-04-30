@@ -97,6 +97,10 @@ serial driver.  Use the QEMU monitor socket at
 `/tmp/smallos-monitor.sock` to send keystrokes (`sendkey`) or take
 screenshots (`screendump`).
 
+The mutable FAT16 disk state now lives in `.state/fat16.img`, so normal
+rebuilds keep your files.  Use `make reset-disk` if you want to restore
+the seeded filesystem from the latest build.
+
 `make test` boots the image headlessly, runs the shell `selftest`
 command, feeds the interactive `readline` prompt, and checks every
 shipped ELF in one pass.  The built-in shell command expectations live
