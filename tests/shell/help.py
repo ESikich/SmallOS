@@ -12,6 +12,8 @@ CASES = [
             "touch           create or truncate a FAT16 file",
             "cp              copy a FAT16 file",
             "mv              move or rename a FAT16 entry",
+            "cd              change the shell working directory",
+            "pwd             print the shell working directory",
             "Programs:",
             "shelltest: help end",
         ],

@@ -6,6 +6,7 @@
 
 * **Shell file management commands** (`src/shell/commands.c`, `src/drivers/fat16.c`, `src/drivers/fat16.h`)
   * `cat <path>` prints FAT16 file contents directly in the shell
+  * `cd <path>` changes the shell working directory and `pwd` reports it
   * `cp <src> <dst>` copies FAT16 files, including into existing directories
   * `mv <src> <dst>` renames or moves FAT16 files and directories
   * `rm <path>` removes FAT16 files in place

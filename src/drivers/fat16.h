@@ -130,6 +130,16 @@ int fat16_rmdir(const char* path);
 int fat16_rm(const char* path);
 
 /*
+ * fat16_is_dir(path)
+ *
+ * Check whether the named path resolves to a directory.  The root
+ * directory counts as a directory.
+ *
+ * Returns 1 if the path is a directory, 0 otherwise.
+ */
+int fat16_is_dir(const char* path);
+
+/*
  * fat16_copy(src, dst)
  *
  * Copy a file from src to dst.  If dst names an existing directory, the

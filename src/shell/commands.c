@@ -1,4 +1,5 @@
 #include "commands.h"
+#include "shell.h"
 #include "terminal.h"
 #include "elf_loader.h"
 #include "memory.h"
@@ -11,6 +12,8 @@
 static void print_command_list(void);
 static void print_program_list(void);
 static void run_elf_command(command_t* cmd, const char* program);
+static int resolve_shell_path_arg(const char* input, char* out, unsigned int out_size);
+static void terminal_put_cwd(void);
 
 static void cmd_help(command_t* cmd) {
     (void)cmd;
@@ -37,6 +40,28 @@ static void run_elf_command(command_t* cmd, const char* program) {
     process_wait(proc);
 }
 
+static int resolve_shell_path_arg(const char* input, char* out, unsigned int out_size) {
+    if (!shell_resolve_path(input, out, out_size)) {
+        terminal_puts("fat16: invalid path: ");
+        terminal_puts(input ? input : "");
+        terminal_putc('\n');
+        return 0;
+    }
+
+    return 1;
+}
+
+static void terminal_put_cwd(void) {
+    const char* cwd = shell_get_cwd();
+    if (!cwd || cwd[0] == '\0') {
+        terminal_putc('/');
+        return;
+    }
+
+    terminal_putc('/');
+    terminal_puts(cwd);
+}
+
 static void cmd_about(command_t* cmd) {
     run_elf_command(cmd, "about");
 }
@@ -55,6 +80,29 @@ static void cmd_uptime(command_t* cmd) {
 
 static void cmd_echo(command_t* cmd) {
     run_elf_command(cmd, "echo");
+}
+
+static void cmd_pwd(command_t* cmd) {
+    (void)cmd;
+    terminal_puts("pwd: ");
+    terminal_put_cwd();
+    terminal_putc('\n');
+}
+
+static void cmd_cd(command_t* cmd) {
+    if (cmd->argc < 2) {
+        terminal_puts("usage: cd <path>\n");
+        return;
+    }
+
+    if (!shell_set_cwd(cmd->argv[1])) {
+        terminal_puts("cd: failed\n");
+        return;
+    }
+
+    terminal_puts("cd: ");
+    terminal_put_cwd();
+    terminal_putc('\n');
 }
 
 static void cmd_meminfo(command_t* cmd) {
@@ -162,7 +210,12 @@ static void cmd_fsls(command_t* cmd) {
         return;
     }
 
-    fat16_ls_path(cmd->argv[1]);
+    char path[SHELL_PATH_MAX];
+    if (!resolve_shell_path_arg(cmd->argv[1], path, sizeof(path))) {
+        return;
+    }
+
+    fat16_ls_path(path);
 }
 
 static void cmd_fsread(command_t* cmd) {
@@ -171,8 +224,13 @@ static void cmd_fsread(command_t* cmd) {
         return;
     }
 
+    char path[SHELL_PATH_MAX];
+    if (!resolve_shell_path_arg(cmd->argv[1], path, sizeof(path))) {
+        return;
+    }
+
     unsigned int size = 0;
-    const unsigned char* data = fat16_load(cmd->argv[1], &size);
+    const unsigned char* data = fat16_load(path, &size);
     if (!data) {
         terminal_puts("fsread: load failed\n");
         return;
@@ -200,8 +258,13 @@ static void cmd_cat(command_t* cmd) {
         return;
     }
 
+    char path[SHELL_PATH_MAX];
+    if (!resolve_shell_path_arg(cmd->argv[1], path, sizeof(path))) {
+        return;
+    }
+
     unsigned int size = 0;
-    const unsigned char* data = fat16_load(cmd->argv[1], &size);
+    const unsigned char* data = fat16_load(path, &size);
     if (!data) {
         terminal_puts("cat: failed\n");
         return;
@@ -218,7 +281,12 @@ static void cmd_mkdir(command_t* cmd) {
         return;
     }
 
-    if (!fat16_mkdir(cmd->argv[1])) {
+    char path[SHELL_PATH_MAX];
+    if (!resolve_shell_path_arg(cmd->argv[1], path, sizeof(path))) {
+        return;
+    }
+
+    if (!fat16_mkdir(path)) {
         terminal_puts("mkdir: failed\n");
         return;
     }
@@ -234,7 +302,12 @@ static void cmd_rmdir(command_t* cmd) {
         return;
     }
 
-    if (!fat16_rmdir(cmd->argv[1])) {
+    char path[SHELL_PATH_MAX];
+    if (!resolve_shell_path_arg(cmd->argv[1], path, sizeof(path))) {
+        return;
+    }
+
+    if (!fat16_rmdir(path)) {
         terminal_puts("rmdir: failed\n");
         return;
     }
@@ -250,7 +323,12 @@ static void cmd_rm(command_t* cmd) {
         return;
     }
 
-    if (!fat16_rm(cmd->argv[1])) {
+    char path[SHELL_PATH_MAX];
+    if (!resolve_shell_path_arg(cmd->argv[1], path, sizeof(path))) {
+        return;
+    }
+
+    if (!fat16_rm(path)) {
         terminal_puts("rm: failed\n");
         return;
     }
@@ -266,7 +344,12 @@ static void cmd_touch(command_t* cmd) {
         return;
     }
 
-    if (!fat16_write_path(cmd->argv[1], 0, 0)) {
+    char path[SHELL_PATH_MAX];
+    if (!resolve_shell_path_arg(cmd->argv[1], path, sizeof(path))) {
+        return;
+    }
+
+    if (!fat16_write_path(path, 0, 0)) {
         terminal_puts("touch: failed\n");
         return;
     }
@@ -282,7 +365,16 @@ static void cmd_cp(command_t* cmd) {
         return;
     }
 
-    if (!fat16_copy(cmd->argv[1], cmd->argv[2])) {
+    char src[SHELL_PATH_MAX];
+    char dst[SHELL_PATH_MAX];
+    if (!resolve_shell_path_arg(cmd->argv[1], src, sizeof(src))) {
+        return;
+    }
+    if (!resolve_shell_path_arg(cmd->argv[2], dst, sizeof(dst))) {
+        return;
+    }
+
+    if (!fat16_copy(src, dst)) {
         terminal_puts("cp: failed\n");
         return;
     }
@@ -300,7 +392,16 @@ static void cmd_mv(command_t* cmd) {
         return;
     }
 
-    if (!fat16_move(cmd->argv[1], cmd->argv[2])) {
+    char src[SHELL_PATH_MAX];
+    char dst[SHELL_PATH_MAX];
+    if (!resolve_shell_path_arg(cmd->argv[1], src, sizeof(src))) {
+        return;
+    }
+    if (!resolve_shell_path_arg(cmd->argv[2], dst, sizeof(dst))) {
+        return;
+    }
+
+    if (!fat16_move(src, dst)) {
         terminal_puts("mv: failed\n");
         return;
     }
@@ -318,7 +419,12 @@ static void cmd_runelf(command_t* cmd) {
         return;
     }
 
-    process_t* proc = elf_run_named(cmd->argv[1], cmd->argc - 1, &cmd->argv[1]);
+    char path[SHELL_PATH_MAX];
+    if (!resolve_shell_path_arg(cmd->argv[1], path, sizeof(path))) {
+        return;
+    }
+
+    process_t* proc = elf_run_named(path, cmd->argc - 1, &cmd->argv[1]);
     if (!proc) {
         terminal_puts("runelf: failed\n");
         return;
@@ -365,6 +471,15 @@ static void cmd_shelltest(command_t* cmd) {
     command_t about_cmd = { 1, { "about" } };
     command_t uptime_cmd = { 1, { "uptime" } };
     command_t meminfo_cmd = { 1, { "meminfo" } };
+    command_t cd_demo_cmd = { 2, { "cd", "apps/demo" } };
+    command_t pwd_demo_cmd = { 1, { "pwd" } };
+    command_t fsread_rel_cmd = { 2, { "fsread", "hello.elf" } };
+    command_t cat_rel_cmd = { 2, { "cat", "../../compiler.out" } };
+    command_t touch_rel_cmd = { 2, { "touch", "LOCAL.TXT" } };
+    command_t fsread_touch_rel_cmd = { 2, { "fsread", "LOCAL.TXT" } };
+    command_t runelf_rel_cmd = { 4, { "runelf", "hello", "alpha", "beta" } };
+    command_t cd_root_cmd = { 2, { "cd", "/" } };
+    command_t pwd_root_cmd = { 1, { "pwd" } };
     command_t ataread_cmd = { 2, { "ataread", "0" } };
     command_t fsls_root_cmd = { 1, { "fsls" } };
     command_t fsls_path_cmd = { 2, { "fsls", "apps/demo" } };
@@ -428,6 +543,15 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("cat", cmd_cat, &cat_cmd);
     shelltest_call("touch", cmd_touch, &touch_cmd);
     shelltest_call("fsread_touch", cmd_fsread, &fsread_touch_cmd);
+    shelltest_call("cd", cmd_cd, &cd_demo_cmd);
+    shelltest_call("pwd", cmd_pwd, &pwd_demo_cmd);
+    shelltest_call("fsread_rel", cmd_fsread, &fsread_rel_cmd);
+    shelltest_call("cat_rel", cmd_cat, &cat_rel_cmd);
+    shelltest_call("touch_rel", cmd_touch, &touch_rel_cmd);
+    shelltest_call("fsread_touch_rel", cmd_fsread, &fsread_touch_rel_cmd);
+    shelltest_call("runelf_rel", cmd_runelf, &runelf_rel_cmd);
+    shelltest_call("cd_root", cmd_cd, &cd_root_cmd);
+    shelltest_call("pwd_root", cmd_pwd, &pwd_root_cmd);
     shelltest_call("cp", cmd_cp, &cp_cmd);
     shelltest_call("fsread_copy", cmd_fsread, &fsread_copy_cmd);
     shelltest_call("mv", cmd_mv, &mv_cmd);
@@ -547,6 +671,8 @@ static command_entry_t commands[] = {
     { "reboot",        "reboot the machine via ELF",    cmd_reboot },
     { "uptime",        "show tick and second counts via ELF", cmd_uptime },
     { "meminfo",       "show heap and frame usage",     cmd_meminfo },
+    { "cd",            "change the shell working directory", cmd_cd },
+    { "pwd",           "print the shell working directory", cmd_pwd },
     { "ataread",       "dump raw sector bytes",         cmd_ataread },
     { "fsls",          "list FAT16 root directory",     cmd_fsls },
     { "fsread",        "dump FAT16 file bytes",         cmd_fsread },

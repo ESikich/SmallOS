@@ -6,6 +6,7 @@
 #include "memory.h"
 #include "commands.h"
 #include "parse.h"
+#include "fat16.h"
 #include "klib.h"
 #include "keyboard.h"
 
@@ -21,6 +22,7 @@ static char history[HISTORY_MAX][LINE_EDITOR_MAX];
 static int history_count = 0;
 static int history_index = -1;
 static char saved_current[LINE_EDITOR_MAX];
+static char shell_cwd[SHELL_PATH_MAX];
 
 typedef enum {
     SHELL_EVENT_NONE = 0,
@@ -44,6 +46,116 @@ static shell_event_t event_queue[SHELL_EVENT_QUEUE_SIZE];
 static int event_head = 0;
 static int event_tail = 0;
 static int event_count = 0;
+
+static int path_is_sep(char c) {
+    return c == '/' || c == '\\';
+}
+
+static int path_add_component(char comps[][32], int* count, const char* component) {
+    if (*count >= 16) {
+        return 0;
+    }
+
+    int len = 0;
+    while (component[len] != '\0') {
+        if (len >= 31) {
+            return 0;
+        }
+        len++;
+    }
+
+    for (int i = 0; i < len; i++) {
+        comps[*count][i] = component[i];
+    }
+    comps[*count][len] = '\0';
+    (*count)++;
+    return 1;
+}
+
+static int shell_path_build(const char* base, const char* path, char* out, unsigned int out_size) {
+    char comps[16][32];
+    int count = 0;
+
+    const char* sources[2];
+    int source_count = 0;
+    if (base && base[0] != '\0' && (!path || !path_is_sep(path[0]))) {
+        sources[source_count++] = base;
+    }
+    sources[source_count++] = path ? path : "";
+
+    for (int s = 0; s < source_count; s++) {
+        const char* cursor = sources[s];
+        while (*cursor) {
+            while (*cursor && path_is_sep(*cursor)) {
+                cursor++;
+            }
+            if (*cursor == '\0') {
+                break;
+            }
+
+            char component[32];
+            int len = 0;
+            while (cursor[len] && !path_is_sep(cursor[len])) {
+                if (len >= 31) {
+                    return 0;
+                }
+                component[len] = cursor[len];
+                len++;
+            }
+            component[len] = '\0';
+            cursor += len;
+
+            if (k_strcmp(component, ".")) {
+                continue;
+            }
+            if (k_strcmp(component, "..")) {
+                if (count > 0) {
+                    count--;
+                }
+                continue;
+            }
+
+            if (!path_add_component(comps, &count, component)) {
+                return 0;
+            }
+        }
+    }
+
+    if (count == 0) {
+        if (out_size == 0) {
+            return 0;
+        }
+        out[0] = '\0';
+        return 1;
+    }
+
+    unsigned int pos = 0;
+    for (int i = 0; i < count; i++) {
+        unsigned int len = 0;
+        while (comps[i][len] != '\0') {
+            len++;
+        }
+
+        if (pos + len + (i > 0 ? 1u : 0u) + 1u > out_size) {
+            return 0;
+        }
+
+        if (i > 0) {
+            out[pos++] = '/';
+        }
+
+        for (unsigned int j = 0; j < len; j++) {
+            out[pos++] = comps[i][j];
+        }
+    }
+
+    out[pos] = '\0';
+    return 1;
+}
+
+static void shell_set_cwd_root(void) {
+    shell_cwd[0] = '\0';
+}
 
 
 static int shell_enqueue_event(shell_event_type_t type, char c) {
@@ -90,6 +202,34 @@ static void shell_start_prompt(void) {
 
     history_index = -1;
     saved_current[0] = '\0';
+}
+
+const char* shell_get_cwd(void) {
+    return shell_cwd;
+}
+
+int shell_resolve_path(const char* path, char* out, unsigned int out_size) {
+    return shell_path_build(shell_cwd, path, out, out_size);
+}
+
+int shell_set_cwd(const char* path) {
+    char resolved[SHELL_PATH_MAX];
+    if (!shell_resolve_path(path, resolved, sizeof(resolved))) {
+        return 0;
+    }
+
+    if (!fat16_is_dir(resolved)) {
+        return 0;
+    }
+
+    if (resolved[0] == '\0') {
+        shell_set_cwd_root();
+        return 1;
+    }
+
+    k_strncpy(shell_cwd, resolved, sizeof(shell_cwd));
+    shell_cwd[sizeof(shell_cwd) - 1] = '\0';
+    return 1;
 }
 
 static void shell_history_add(const char* cmd) {
@@ -186,6 +326,7 @@ void shell_init(void) {
     event_head = 0;
     event_tail = 0;
     event_count = 0;
+    shell_set_cwd_root();
     keyboard_set_consumer(shell_key_consumer);
     shell_start_prompt();
 }

@@ -1655,6 +1655,23 @@ int fat16_rm(const char* path) {
     return 1;
 }
 
+int fat16_is_dir(const char* path) {
+    if (!s_initialised) {
+        return 0;
+    }
+
+    if (path_resolves_to_root(path)) {
+        return 1;
+    }
+
+    resolved_path_t resolved;
+    if (!resolve_path(path, &resolved) || !resolved.has_entry) {
+        return 0;
+    }
+
+    return entry_is_dir(resolved.entry);
+}
+
 int fat16_mkdir(const char* path) {
     if (!s_initialised) {
         terminal_puts("fat16: not initialised\n");

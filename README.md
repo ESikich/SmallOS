@@ -128,6 +128,8 @@ ataread <lba>        dump first 32 bytes of a disk sector (ATA PIO)
 fsls [path]        list a FAT16 directory (root by default)
 fsread <name>      dump first 16 bytes of a FAT16 file
 cat <path>          print a FAT16 file
+cd <path>           change the shell working directory
+pwd                 print the shell working directory
 mkdir <path>       create a FAT16 directory
 rmdir <path>       remove an empty FAT16 directory
 rm <path>          remove a FAT16 file

@@ -1,9 +1,14 @@
 #ifndef SHELL_H
 #define SHELL_H
 
+#define SHELL_PATH_MAX 128
+
 void shell_init(void);
 void shell_poll(void);
 void shell_task_main(void);
+const char* shell_get_cwd(void);
+int shell_set_cwd(const char* path);
+int shell_resolve_path(const char* path, char* out, unsigned int out_size);
 
 /*
  * shell_register_consumer()

@@ -1,0 +1,42 @@
+from .common import case
+
+
+CASES = [
+    case(
+        name="cd_pwd",
+        must_contain=[
+            "shelltest: cd begin",
+            "cd: /apps/demo",
+            "shelltest: cd end",
+            "shelltest: pwd begin",
+            "pwd: /apps/demo",
+            "shelltest: pwd end",
+            "shelltest: fsread_rel begin",
+            "fsread: hello.elf",
+            "shelltest: fsread_rel end",
+            "shelltest: cat_rel begin",
+            ";; SmallOS compiler demo output",
+            "MOV AX, 1",
+            "INT 0x80",
+            "shelltest: cat_rel end",
+            "shelltest: touch_rel begin",
+            "touch: LOCAL.TXT",
+            "shelltest: touch_rel end",
+            "shelltest: fsread_touch_rel begin",
+            "fsread: LOCAL.TXT  0 bytes",
+            "shelltest: fsread_touch_rel end",
+            "shelltest: runelf_rel begin",
+            "argv[0] = \"hello\"",
+            "argv[1] = \"alpha\"",
+            "argv[2] = \"beta\"",
+            "shelltest: runelf_rel end",
+            "shelltest: cd_root begin",
+            "cd: /",
+            "shelltest: cd_root end",
+            "shelltest: pwd_root begin",
+            "pwd: /",
+            "shelltest: pwd_root end",
+        ],
+        timeout=60.0,
+    )
+]
