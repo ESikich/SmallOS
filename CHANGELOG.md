@@ -5,9 +5,11 @@
 ### Added
 
 * **Shell file management commands** (`src/shell/commands.c`, `src/drivers/fat16.c`, `src/drivers/fat16.h`)
+  * `cat <path>` prints FAT16 file contents directly in the shell
   * `cp <src> <dst>` copies FAT16 files, including into existing directories
   * `mv <src> <dst>` renames or moves FAT16 files and directories
   * `rm <path>` removes FAT16 files in place
+  * `touch <path>` creates or truncates FAT16 files
   * The command help text and docs now describe the expanded shell surface
 
 * **Nested-path FAT16 writes** (`src/drivers/fat16.c`, `tools/mkfat16.c`)

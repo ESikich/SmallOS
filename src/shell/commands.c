@@ -194,6 +194,24 @@ static void cmd_fsread(command_t* cmd) {
     terminal_putc('\n');
 }
 
+static void cmd_cat(command_t* cmd) {
+    if (cmd->argc < 2) {
+        terminal_puts("usage: cat <path>\n");
+        return;
+    }
+
+    unsigned int size = 0;
+    const unsigned char* data = fat16_load(cmd->argv[1], &size);
+    if (!data) {
+        terminal_puts("cat: failed\n");
+        return;
+    }
+
+    for (unsigned int i = 0; i < size; i++) {
+        terminal_putc((char)data[i]);
+    }
+}
+
 static void cmd_mkdir(command_t* cmd) {
     if (cmd->argc < 2) {
         terminal_puts("usage: mkdir <path>\n");
@@ -238,6 +256,22 @@ static void cmd_rm(command_t* cmd) {
     }
 
     terminal_puts("rm: ");
+    terminal_puts(cmd->argv[1]);
+    terminal_putc('\n');
+}
+
+static void cmd_touch(command_t* cmd) {
+    if (cmd->argc < 2) {
+        terminal_puts("usage: touch <path>\n");
+        return;
+    }
+
+    if (!fat16_write_path(cmd->argv[1], 0, 0)) {
+        terminal_puts("touch: failed\n");
+        return;
+    }
+
+    terminal_puts("touch: ");
     terminal_puts(cmd->argv[1]);
     terminal_putc('\n');
 }
@@ -356,6 +390,9 @@ static void cmd_shelltest(command_t* cmd) {
     command_t fsread_dir_removed_cmd = { 2, { "fsread", "apps/demo/compiler.out" } };
     command_t mv_dir_cmd = { 3, { "mv", "compiler.moved", "apps/demo" } };
     command_t fsread_dir_moved_cmd = { 2, { "fsread", "apps/demo/compiler.moved" } };
+    command_t cat_cmd = { 2, { "cat", "compiler.out" } };
+    command_t touch_cmd = { 2, { "touch", "EMPTY.TXT" } };
+    command_t fsread_touch_cmd = { 2, { "fsread", "EMPTY.TXT" } };
     command_t runelf_cmd = { 2, { "runelf", "hello" } };
     command_t runelf_path_cmd = { 4, { "runelf", "apps/demo/hello", "alpha", "beta" } };
     command_t runelf_nowait_cmd = { 2, { "runelf_nowait", "ticks" } };
@@ -374,6 +411,9 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("fsls_path", cmd_fsls, &fsls_path_cmd);
     shelltest_call("fsread", cmd_fsread, &fsread_cmd);
     shelltest_call("fsread_path", cmd_fsread, &fsread_path_cmd);
+    shelltest_call("cat", cmd_cat, &cat_cmd);
+    shelltest_call("touch", cmd_touch, &touch_cmd);
+    shelltest_call("fsread_touch", cmd_fsread, &fsread_touch_cmd);
     shelltest_call("mkdir", cmd_mkdir, &mkdir_cmd);
     shelltest_call("fsls_newdir", cmd_fsls, &fsls_newdir_cmd);
     shelltest_call("rmdir", cmd_rmdir, &rmdir_cmd);
@@ -385,6 +425,9 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("rmdir_nested_parent", cmd_rmdir, &rmdir_nested_parent_cmd);
     shelltest_call("fsls_nested_removed", cmd_fsls, &fsls_nested_removed_cmd);
     shelltest_call("compiler_demo", cmd_runelf, &compiler_demo_cmd);
+    shelltest_call("cat", cmd_cat, &cat_cmd);
+    shelltest_call("touch", cmd_touch, &touch_cmd);
+    shelltest_call("fsread_touch", cmd_fsread, &fsread_touch_cmd);
     shelltest_call("cp", cmd_cp, &cp_cmd);
     shelltest_call("fsread_copy", cmd_fsread, &fsread_copy_cmd);
     shelltest_call("mv", cmd_mv, &mv_cmd);
@@ -507,9 +550,11 @@ static command_entry_t commands[] = {
     { "ataread",       "dump raw sector bytes",         cmd_ataread },
     { "fsls",          "list FAT16 root directory",     cmd_fsls },
     { "fsread",        "dump FAT16 file bytes",         cmd_fsread },
+    { "cat",           "print a FAT16 file",            cmd_cat },
     { "mkdir",         "create a FAT16 directory",     cmd_mkdir },
     { "rmdir",         "remove a FAT16 directory",     cmd_rmdir },
     { "rm",            "remove a FAT16 file",          cmd_rm },
+    { "touch",         "create or truncate a FAT16 file", cmd_touch },
     { "cp",            "copy a FAT16 file",            cmd_cp },
     { "mv",            "move or rename a FAT16 entry", cmd_mv },
     { "runelf",        "run a FAT16 ELF and wait",      cmd_runelf },

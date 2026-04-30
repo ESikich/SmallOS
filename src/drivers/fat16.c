@@ -1276,14 +1276,14 @@ const u8* fat16_load(const char* name, u32* out_size) {
     u16 start_cluster = read_u16_le(resolved.entry, DIR_FIRST_CLUSTER);
     u32 file_size = read_u32_le(resolved.entry, DIR_FILE_SIZE);
 
-    if (file_size == 0) {
-        terminal_puts("fat16: file is empty\n");
-        return 0;
-    }
-
     if (file_size > FAT16_MAX_FILE_BYTES) {
         terminal_puts("fat16: file too large\n");
         return 0;
+    }
+
+    if (file_size == 0) {
+        *out_size = 0;
+        return s_load_buf;
     }
 
     /* Use the static load buffer — safe since ELFs run sequentially */
