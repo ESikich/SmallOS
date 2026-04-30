@@ -51,6 +51,18 @@ static void str_copy_n(char* dst, const char* src, unsigned int n) {
     dst[i] = '\0';
 }
 
+void process_fd_cache_free(fd_entry_t* ent) {
+    if (!ent) return;
+
+    for (unsigned int i = 0; i < ent->cache_page_count; i++) {
+        if (ent->cache_pages[i]) {
+            pmm_free_frame(ent->cache_pages[i]);
+            ent->cache_pages[i] = 0;
+        }
+    }
+    ent->cache_page_count = 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Kernel-task bootstrap                                              */
 /* ------------------------------------------------------------------ */
@@ -131,6 +143,10 @@ void process_destroy(process_t* proc) {
      */
     if (keyboard_get_waiting_process() == (void*)proc) {
         keyboard_set_waiting_process(0);
+    }
+
+    for (int i = 0; i < PROCESS_FD_MAX; i++) {
+        process_fd_cache_free(&proc->fds[i]);
     }
 
     if (proc->pd) {

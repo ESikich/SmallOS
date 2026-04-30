@@ -374,7 +374,6 @@ Useful signals:
 
 ## Current Next Steps
 
-* `SYS_FREAD` read caching — avoid re-loading the full file from ATA on every `sys_fread` call; cache the loaded buffer keyed by fd until `sys_close`
 * Boot/layout work — the fixed disk layout and 112-sector kernel ceiling are still the main remaining platform limit; see [boot.md](boot.md#future-work)
 
 ---

@@ -45,6 +45,10 @@
   * The scheduler wakes sleeping tasks from timer IRQ context and re-enqueues them when their deadline expires
   * `sleep_test` exercises the new syscall end-to-end through the normal `runelf` path and is covered by the host selftest suite
 
+* **`SYS_FREAD` cache pages** (`src/kernel/syscall.c`, `src/kernel/process.c`)
+  * The per-fd `SYS_FREAD` path now caches file contents in PMM-backed pages on first use
+  * Repeated reads from the same descriptor reuse that cache until `sys_close()` or process teardown
+
 * **Process exit status plumbing** (`src/kernel/process.c`, `src/kernel/syscall.c`, `src/kernel/idt.c`)
   * Foreground `runelf` calls now preserve the child exit status
   * The shell selftest uses that status to verify normal exits and expected fault terminations
@@ -98,7 +102,7 @@
 ### Key design notes
  
 * **The fd table lives inside `process_t`** — no separate allocation, no leak risk, destroyed automatically with the process.
-* **`SYS_FREAD` reloads from ATA on every call** — intentionally simple for now; caching is a future optimization.
+* **`SYS_FREAD` cache pages** — per-fd reads now populate PMM-backed cache pages on first use and reuse them until `sys_close()` or process teardown.
 * **`fat16_stat` does not disturb `s_load_buf`** — `SYS_OPEN` validation and ELF loading can interleave safely.
 * **Copy-from-user is address-range only** — it does not walk page tables. A user pointer in the valid range but backed by a missing PTE would still fault in the kernel; full fault handling is future work.
  

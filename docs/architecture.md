@@ -591,7 +591,7 @@ SYS_READ — true blocking keyboard input: parks process in PROCESS_STATE_WAITIN
 SYS_YIELD — voluntary preemption via sched_yield_now()
 SYS_SLEEP — timed sleep: parks process in PROCESS_STATE_SLEEPING and wakes via the timer IRQ once the deadline is reached
 SYS_EXEC — async ELF spawn from the current foreground context; the child runs independently and the parent returns immediately in `runelf_nowait` / `sys_exec`
-SYS_OPEN / SYS_CLOSE / SYS_FREAD — per-process file descriptor table backed by FAT16; fds 0/1/2 reserved, user files at fd 3+
+SYS_OPEN / SYS_CLOSE / SYS_FREAD — per-process file descriptor table backed by FAT16; fds 0/1/2 reserved, user files at fd 3+, and `SYS_FREAD` caches file data in PMM-backed pages until close
 copy-from-user validation — all syscall pointer arguments checked against user address space [USER_CODE_BASE, USER_STACK_TOP) before dereference
 preemptive round-robin scheduler — timer IRQ context switch, 100 ms quantum
 ATA PIO driver — 28-bit LBA polling reads from primary IDE channel (0x1F0)
@@ -604,4 +604,3 @@ Foundation for:
 
 * `SYS_ALLOC`
 * per-element `argv[]` validation in `SYS_EXEC`
-* `SYS_FREAD` read caching to avoid repeated ATA loads

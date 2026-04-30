@@ -154,7 +154,7 @@ int sys_fread(int fd, char* buf, uint32_t len);
 
 Reads up to `len` bytes from the open file at `fd` into `buf`, starting at the current file position. Advances the position by the number of bytes actually read. Returns the number of bytes read, `0` at end-of-file, or `-1` on error (bad fd, invalid buffer, read failure).
 
-`sys_fread_impl` calls `fat16_load()` to load the full file into the kernel's static buffer on each call, then copies the requested slice into the validated user buffer. This is intentionally simple: files are small (≤ 256 KB) and only one foreground process reads at a time, so repeated ATA reads are acceptable. Caching the loaded data is a future optimization.
+`sys_fread_impl` loads the file once into PMM-backed per-fd cache pages on first use, then copies the requested slice from that cache into the validated user buffer. The cache stays live until `sys_close()` or process teardown, so repeated reads from the same descriptor avoid extra ATA traffic.
 
 ---
 
@@ -251,7 +251,6 @@ u_readline(...)    sys_read + null-terminate + strip newline
 ## Future Extensions
 
 * `SYS_ALLOC`
-* `SYS_FREAD` read caching to avoid repeated ATA loads for the same file
 
 ---
 

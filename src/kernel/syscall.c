@@ -5,6 +5,7 @@
 #include "keyboard.h"
 #include "scheduler.h"
 #include "process.h"
+#include "pmm.h"
 #include "../exec/elf_loader.h"
 #include "fat16.h"
 
@@ -12,6 +13,7 @@
 #define SYSCALL_MAX_WRITE_LEN 4096u
 #define EXEC_NAME_MAX         32
 #define SCHED_RESUME_RETADDR_OFFSET 8u  /* push esp + call return address */
+#define FREAD_CACHE_MAX_BYTES (PROCESS_FD_CACHE_PAGES * 4096u)
 
 /* ------------------------------------------------------------------ */
 /* Copy-from-user validation                                          */
@@ -311,11 +313,48 @@ static int sys_close_impl(int fd) {
     if (!proc) return -1;
     if (!proc->fds[fd].valid) return -1;
 
+    process_fd_cache_free(&proc->fds[fd]);
     proc->fds[fd].valid  = 0;
     proc->fds[fd].offset = 0;
     proc->fds[fd].size   = 0;
     proc->fds[fd].name[0] = '\0';
     return 0;
+}
+
+static int fd_cache_load(process_t* proc, fd_entry_t* ent) {
+    if (!proc || !ent) return 0;
+    if (ent->cache_page_count != 0) return 1;
+    if (ent->size == 0) return 1;
+    if (ent->size > FREAD_CACHE_MAX_BYTES) return 0;
+
+    u32 loaded_size = 0;
+    const u8* data = fat16_load(ent->name, &loaded_size);
+    if (!data) return 0;
+    if (loaded_size != ent->size) return 0;
+
+    u32 pages = (ent->size + 4095u) / 4096u;
+    ent->cache_page_count = 0;
+    for (u32 i = 0; i < pages; i++) {
+        u32 frame = pmm_alloc_frame();
+        if (!frame) {
+            process_fd_cache_free(ent);
+            return 0;
+        }
+        ent->cache_pages[i] = frame;
+        ent->cache_page_count++;
+    }
+
+    for (u32 i = 0; i < pages; i++) {
+        u32 remaining = ent->size - (i * 4096u);
+        u32 chunk = remaining < 4096u ? remaining : 4096u;
+        u8* dst = (u8*)ent->cache_pages[i];
+        const u8* src = data + (i * 4096u);
+        for (u32 j = 0; j < chunk; j++) {
+            dst[j] = src[j];
+        }
+    }
+
+    return 1;
 }
 
 /*
@@ -325,12 +364,8 @@ static int sys_close_impl(int fd) {
  * starting at the current file offset.  Advances the offset.
  *
  * Implementation:
- *   fat16_load() is called to load the entire file into the kernel's
- *   static load buffer on each SYS_FREAD call.  This is intentionally
- *   simple: files are small (<= 256 KB), and the static buffer is
- *   safe to reuse because only one foreground process runs at a time.
- *   A future optimization would cache the loaded data, but for now the
- *   simplicity is worth the repeated ATA reads.
+ *   The first read loads the file into PMM-backed per-fd cache pages.
+ *   Later reads reuse that cache until sys_close() or process teardown.
  *
  * Returns bytes copied (0 at EOF), -1 on error.
  */
@@ -348,19 +383,19 @@ static int sys_fread_impl(int fd, char* buf, unsigned int len) {
     /* Already at or past end of file */
     if (ent->offset >= ent->size) return 0;
 
-    /* Load the file from FAT16 into the static kernel buffer */
-    u32 loaded_size = 0;
-    const u8* data = fat16_load(ent->name, &loaded_size);
-    if (!data) return -1;
+    if (!fd_cache_load(proc, ent)) return -1;
 
     /* Clamp to remaining bytes */
     u32 remaining = ent->size - ent->offset;
     u32 to_copy   = (len < remaining) ? len : remaining;
 
     /* Copy from kernel buffer into user buffer */
-    const u8* src = data + ent->offset;
+    u32 src_off = ent->offset;
     for (u32 i = 0; i < to_copy; i++) {
-        buf[i] = (char)src[i];
+        u32 page_idx = (src_off + i) / 4096u;
+        u32 page_off = (src_off + i) % 4096u;
+        const u8* src = (const u8*)ent->cache_pages[page_idx];
+        buf[i] = (char)src[page_off];
     }
 
     ent->offset += to_copy;
