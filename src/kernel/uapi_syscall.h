@@ -38,7 +38,8 @@ enum {
     SYS_OPEN      = 8,   /* open a FAT16 file; returns fd or -1 */
     SYS_CLOSE     = 9,   /* close an fd */
     SYS_FREAD     = 10,  /* read bytes from an open fd into a user buffer */
-    SYS_SLEEP     = 11   /* block for N timer ticks */
+    SYS_SLEEP     = 11,  /* block for N timer ticks */
+    SYS_WRITEFILE = 12   /* create/overwrite a root-directory file */
 };
 
 #endif

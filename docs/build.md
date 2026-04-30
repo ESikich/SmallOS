@@ -41,8 +41,8 @@ gcc              → host tool compilation (mkfat16, mkimage)
 build/
 ├── bin/   → final binaries (kernel.elf, kernel.bin,
 │             hello.elf, ticks.elf, args.elf, runelf_test.elf,
-│             readline.elf, exec_test.elf, fileread.elf, sleep_test.elf,
-│             fault.elf,
+│             readline.elf, exec_test.elf, fileread.elf, compiler_demo.elf,
+│             sleep_test.elf, fault.elf,
 │             fat16.img, boot.bin, loader2.bin)
 ├── obj/   → object files and depfiles (.o, .d), mirrored by source subtree
 ├── gen/   → generated source (loader2.gen.asm)
@@ -197,6 +197,7 @@ src/user/runelf_test.c
 src/user/readline.c
 src/user/exec_test.c
 src/user/fileread.c
+src/user/compiler_demo.c
 src/user/sleep_test.c
 ```
 
@@ -260,6 +261,7 @@ build/tools/mkfat16 build/bin/fat16.img \
     build/bin/readline.elf \
     build/bin/exec_test.elf \
     build/bin/fileread.elf \
+    build/bin/compiler_demo.elf \
     build/bin/sleep_test.elf \
     build/bin/fault.elf
 ```
@@ -274,6 +276,7 @@ Shipped FAT16 programs:
 - `readline` - interactive SYS_READ demo
 - `exec_test` - exercise SYS_EXEC semantics
 - `fileread` - exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE
+- `compiler_demo` - exercise SYS_WRITEFILE and readback
 - `sleep_test` - exercise SYS_SLEEP semantics
 - `fault` - fault probe (ud/gp/de/br/pf)
 
@@ -486,7 +489,7 @@ Cause: simple linker script does not separate read-only and executable sections.
 ```text
 hello.elf ──────────────────────────────┐
 ticks.elf ──────────────────────────────┤
-args.elf / runelf_test.elf / ... / fault.elf ──┤→ fat16.img ───────┐
+args.elf / runelf_test.elf / ... / compiler_demo.elf / fault.elf ──┤→ fat16.img ───────┐
                                         │                           │
 kernel.bin ───────────────┐             │                           │
                           ├→ loader2.gen.asm → loader2.bin ───────┤

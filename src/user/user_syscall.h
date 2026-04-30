@@ -152,4 +152,15 @@ static inline int sys_fread(int fd, char* buf, uint32_t len) {
     return syscall3(SYS_FREAD, (uint32_t)fd, (uint32_t)buf, len);
 }
 
+/*
+ * sys_writefile(name, buf, len)
+ *
+ * Create or overwrite a root-directory FAT16 file with the provided
+ * data.  This is the simplest persistence primitive for generated
+ * compiler output and similar build artifacts.
+ */
+static inline int sys_writefile(const char* name, const char* buf, uint32_t len) {
+    return syscall3(SYS_WRITEFILE, (uint32_t)name, (uint32_t)buf, len);
+}
+
 #endif

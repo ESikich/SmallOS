@@ -253,6 +253,29 @@ static int sys_exec_impl(const char* name, int argc, char** argv) {
     return elf_run_named(kname, argc, argv) ? 0 : -1;
 }
 
+/*
+ * sys_writefile_impl(name, buf, len)
+ *
+ * Create or overwrite a root-directory FAT16 file in one shot.  This is
+ * the simplest output primitive for user-space tools that need to emit a
+ * compiler product or generated artifact.
+ */
+static int sys_writefile_impl(const char* name, const void* buf, unsigned int len) {
+    if (!user_str_ok((unsigned int)name)) return -1;
+    if (len > 0 && !user_buf_ok((unsigned int)buf, len)) return -1;
+
+    char kname[EXEC_NAME_MAX];
+    unsigned int i = 0;
+    while (i < EXEC_NAME_MAX - 1 && name[i] != '\0') {
+        kname[i] = name[i];
+        i++;
+    }
+    kname[i] = '\0';
+    if (i == 0) return -1;
+
+    return fat16_write(kname, (const u8*)buf, len) ? 0 : -1;
+}
+
 /* ------------------------------------------------------------------ */
 /* File descriptor syscalls                                           */
 /* ------------------------------------------------------------------ */
@@ -435,6 +458,13 @@ void syscall_handler_main(syscall_regs_t* regs) {
 
         case SYS_SLEEP:
             regs->eax = (unsigned int)sys_sleep_impl(regs, regs->ebx);
+            break;
+
+        case SYS_WRITEFILE:
+            regs->eax = (unsigned int)sys_writefile_impl(
+                            (const char*)regs->ebx,
+                            (const void*)regs->ecx,
+                            regs->edx);
             break;
 
         case SYS_EXEC:

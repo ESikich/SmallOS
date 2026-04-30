@@ -110,6 +110,18 @@ Blocks the calling process for at least `ticks` timer ticks. The task marks itse
 
 ---
 
+### SYS_WRITEFILE (12)
+
+```c
+int sys_writefile(const char* name, const char* buf, uint32_t len);
+```
+
+Creates or overwrites a root-directory FAT16 file in one shot. Returns `0` on success, `-1` on failure.
+
+This is the simplest persistence primitive for generated artifacts such as compiler output, assembly listings, or other build products. The kernel validates both the filename and the byte range before calling into `fat16_write()`.
+
+---
+
 ### SYS_EXEC (7)
 
 ```c
@@ -221,6 +233,7 @@ sys_read(buf, len)
 sys_yield()
 sys_sleep(ticks)
 sys_exec(name, argc, argv)
+sys_writefile(name, buf, len)
 sys_open(name)
 sys_close(fd)
 sys_fread(fd, buf, len)
@@ -245,6 +258,7 @@ u_readline(...)    sys_read + null-terminate + strip newline
 * EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`
 * The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.
 * fd 0/1/2 are reserved by convention; user-opened files start at fd 3. The fd table (`fd_entry_t fds[PROCESS_FD_MAX]`) lives inside `process_t` and is zero-initialized by `process_create()`; no explicit close-on-exit is needed since the entire frame is freed by `pmm_free_frame` on process destruction.
+* `SYS_WRITEFILE` is the simplest persistence path for user tools that want to emit a generated artifact without managing an fd-based write stream.
 
 ---
 

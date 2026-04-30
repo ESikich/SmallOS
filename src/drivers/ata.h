@@ -40,4 +40,15 @@ void ata_init(void);
  */
 int ata_read_sectors(u32 lba, unsigned char count, void* buf);
 
+/*
+ * ata_write_sectors(lba, count, buf)
+ *
+ * Write `count` 512-byte sectors starting at 28-bit LBA address `lba`
+ * from the buffer at `buf`.
+ *
+ * Returns 1 on success, 0 on error.  Like reads, this is blocking PIO
+ * and only supports the primary channel master drive.
+ */
+int ata_write_sectors(u32 lba, unsigned char count, const void* buf);
+
 #endif /* ATA_H */

@@ -33,6 +33,7 @@
 
 /* ATA commands */
 #define ATA_CMD_READ_SECTORS  0x20u
+#define ATA_CMD_WRITE_SECTORS 0x30u
 
 /* How many status reads to spin before declaring a timeout */
 #define ATA_TIMEOUT   100000u
@@ -70,6 +71,23 @@ static int ata_poll_drq(void) {
         if (status & ATA_SR_DRQ) return 1;
     }
     terminal_puts("ata: DRQ timeout\n");
+    return 0;
+}
+
+/*
+ * ata_poll_complete()
+ *
+ * Wait for the drive to finish a write or flush command.
+ */
+static int ata_poll_complete(void) {
+    unsigned int i;
+    for (i = 0; i < ATA_TIMEOUT; i++) {
+        unsigned char status = inb(ATA_STATUS);
+        if (status & ATA_SR_ERR) { terminal_puts("ata: ERR\n"); return 0; }
+        if (status & ATA_SR_DF)  { terminal_puts("ata: DF\n");  return 0; }
+        if (!(status & ATA_SR_BSY)) return 1;
+    }
+    terminal_puts("ata: complete timeout\n");
     return 0;
 }
 
@@ -165,4 +183,39 @@ int ata_read_sectors(u32 lba, unsigned char count, void* buf) {
     }
 
     return 1;
+}
+
+int ata_write_sectors(u32 lba, unsigned char count, const void* buf) {
+    const u16* src = (const u16*)buf;
+
+    if (!ata_poll_bsy()) {
+        terminal_puts("ata: busy before command\n");
+        return 0;
+    }
+
+    outb(ATA_DRIVE,    (unsigned char)(ATA_DRIVE_MASTER_LBA | ((lba >> 24) & 0x0Fu)));
+    outb(ATA_FEATURES, 0x00);
+    outb(ATA_SECCOUNT, count);
+    outb(ATA_LBA0,     (unsigned char)( lba        & 0xFFu));
+    outb(ATA_LBA1,     (unsigned char)((lba >>  8) & 0xFFu));
+    outb(ATA_LBA2,     (unsigned char)((lba >> 16) & 0xFFu));
+
+    outb(ATA_COMMAND, ATA_CMD_WRITE_SECTORS);
+
+    unsigned char s;
+    for (s = 0; s < count; s++) {
+        ata_400ns_delay();
+
+        if (!ata_poll_drq()) {
+            return 0;
+        }
+
+        unsigned int w;
+        for (w = 0; w < 256; w++) {
+            u16 word = *src++;
+            __asm__ __volatile__("outw %0, %1" : : "a"(word), "Nd"((u16)ATA_DATA));
+        }
+    }
+
+    return ata_poll_complete();
 }

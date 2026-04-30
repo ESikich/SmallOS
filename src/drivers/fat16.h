@@ -6,7 +6,7 @@ typedef unsigned short u16;
 typedef unsigned char  u8;
 
 /*
- * fat16.h — FAT16 read-only filesystem driver
+ * fat16.h — FAT16 filesystem driver
  *
  * The FAT16 partition start LBA is stored at byte offset 504 in the
  * disk boot sector (sector 0) and read at runtime by fat16_init().
@@ -74,5 +74,16 @@ int fat16_stat(const char* name, u32* out_size);
  * fat16_load() calls.
  */
 const u8* fat16_load(const char* name, u32* out_size);
+
+/*
+ * fat16_write(name, data, size)
+ *
+ * Create or overwrite a root-directory file with the provided data.
+ * The file is stored in 8.3 form and is limited to the root directory;
+ * subdirectories and long filenames are not supported.
+ *
+ * Returns 1 on success, 0 on failure.
+ */
+int fat16_write(const char* name, const u8* data, u32 size);
 
 #endif /* FAT16_H */

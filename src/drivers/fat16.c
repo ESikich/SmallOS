@@ -1,6 +1,7 @@
 #include "fat16.h"
 #include "ata.h"
 #include "../drivers/terminal.h"
+#include "../kernel/klib.h"
 
 /* ------------------------------------------------------------------ */
 /* Volume geometry — must match mkfat16.c exactly                      */
@@ -17,11 +18,14 @@
 
 /* Relative sector offsets within the FAT16 partition */
 #define FAT1_REL_SECTOR   RESERVED_SECTORS                              /* 4   */
+#define FAT2_REL_SECTOR   (FAT1_REL_SECTOR + FAT_SECTORS)               /* 36  */
 #define ROOT_REL_SECTOR   (RESERVED_SECTORS + NUM_FATS * FAT_SECTORS)  /* 68  */
 #define DATA_REL_SECTOR   (ROOT_REL_SECTOR + ROOT_DIR_SECTORS)         /* 100 */
 
 #define FIRST_CLUSTER     2u
 #define FAT16_EOC_MIN     0xFFF8u
+#define FAT_ENTRIES       (FAT_SECTORS * SECTOR_SIZE / 2u)
+#define FAT16_MAX_FILE_CLUSTERS (FAT16_MAX_FILE_BYTES / CLUSTER_BYTES)
 
 /* ------------------------------------------------------------------ */
 /* Directory entry field offsets                                        */
@@ -44,6 +48,10 @@ static u32  s_fat16_lba   = 0;   /* absolute LBA of FAT16 partition start */
 
 /* Scratch buffer — reused for BPB, FAT sector, directory sector reads */
 static u8 s_sector[SECTOR_SIZE];
+
+/* Writable working copies of the FAT and root directory. */
+static u8 s_fat_buf[FAT_SECTORS * SECTOR_SIZE] __attribute__((aligned(2)));
+static u8 s_root_buf[ROOT_DIR_SECTORS * SECTOR_SIZE] __attribute__((aligned(2)));
 
 /*
  * Static ELF load buffer — reused across fat16_load() calls.
@@ -99,6 +107,18 @@ static u16 fat_entry(u32 cluster) {
     return read_u16_le(s_sector, offset_in_sector);
 }
 
+static void write_u16_le(u8* buf, u32 off, u16 val) {
+    buf[off] = (u8)(val & 0xFFu);
+    buf[off + 1] = (u8)((val >> 8) & 0xFFu);
+}
+
+static void write_u32_le(u8* buf, u32 off, u32 val) {
+    buf[off] = (u8)(val & 0xFFu);
+    buf[off + 1] = (u8)((val >> 8) & 0xFFu);
+    buf[off + 2] = (u8)((val >> 16) & 0xFFu);
+    buf[off + 3] = (u8)((val >> 24) & 0xFFu);
+}
+
 /* ------------------------------------------------------------------ */
 /* 8.3 name matching                                                   */
 /* ------------------------------------------------------------------ */
@@ -113,6 +133,115 @@ static unsigned int fat16_strlen(const char* s) {
 static char to_upper(char c) {
     if (c >= 'a' && c <= 'z') return (char)(c - 32);
     return c;
+}
+
+/*
+ * to_83(path, name83)
+ *
+ * Convert a human-readable filename into uppercase 8.3 form.  Path
+ * separators are ignored; only the last component is used.
+ */
+static void to_83(const char* path, u8 name83[11]) {
+    const char* base = path;
+    for (const char* p = path; *p; p++) {
+        if (*p == '/' || *p == '\\') base = p + 1;
+    }
+
+    const char* dot = 0;
+    for (const char* p = base; *p; p++) {
+        if (*p == '.') dot = p;
+    }
+
+    for (int i = 0; i < 11; i++) {
+        name83[i] = ' ';
+    }
+
+    const char* end_base = dot ? dot : base + fat16_strlen(base);
+    int ni = 0;
+    for (const char* p = base; p < end_base && ni < 8; p++, ni++) {
+        name83[ni] = (u8)to_upper(*p);
+    }
+
+    if (dot) {
+        int ei = 0;
+        for (const char* p = dot + 1; *p && ei < 3; p++, ei++) {
+            name83[8 + ei] = (u8)to_upper(*p);
+        }
+    }
+}
+
+static void write_dirent(u8* entry, const u8 name83[11], u16 start_cluster, u32 file_size) {
+    k_memset(entry, 0, 32);
+    k_memcpy(entry, name83, 11);
+    entry[11] = 0x20;
+    write_u16_le(entry, DIR_FIRST_CLUSTER, start_cluster);
+    write_u32_le(entry, DIR_FILE_SIZE, file_size);
+}
+
+static int load_fat_and_root(void) {
+    if (!ata_read_sectors(abs_lba(FAT1_REL_SECTOR), FAT_SECTORS, s_fat_buf)) {
+        terminal_puts("fat16: FAT read error\n");
+        return 0;
+    }
+
+    if (!ata_read_sectors(abs_lba(ROOT_REL_SECTOR), ROOT_DIR_SECTORS, s_root_buf)) {
+        terminal_puts("fat16: root dir read error\n");
+        return 0;
+    }
+
+    return 1;
+}
+
+static int write_fat_and_root(void) {
+    if (!ata_write_sectors(abs_lba(FAT1_REL_SECTOR), FAT_SECTORS, s_fat_buf)) {
+        terminal_puts("fat16: FAT write error\n");
+        return 0;
+    }
+    if (!ata_write_sectors(abs_lba(FAT2_REL_SECTOR), FAT_SECTORS, s_fat_buf)) {
+        terminal_puts("fat16: FAT mirror write error\n");
+        return 0;
+    }
+    if (!ata_write_sectors(abs_lba(ROOT_REL_SECTOR), ROOT_DIR_SECTORS, s_root_buf)) {
+        terminal_puts("fat16: root dir write error\n");
+        return 0;
+    }
+    return 1;
+}
+
+static int find_free_chain(const u16* fat, u32 clusters_needed, u32* chain) {
+    u32 found = 0;
+    for (u32 c = FIRST_CLUSTER; c < (u32)FAT_ENTRIES && found < clusters_needed; c++) {
+        if (fat[c] == 0) {
+            chain[found++] = c;
+        }
+    }
+    return found == clusters_needed;
+}
+
+static int write_data_clusters(const u32* chain, u32 clusters, const u8* data, u32 size) {
+    u8 sector[SECTOR_SIZE];
+    u32 offset = 0;
+    u32 remaining = size;
+
+    for (u32 i = 0; i < clusters; i++) {
+        for (u32 s = 0; s < SECTORS_PER_CLUSTER; s++) {
+            k_memset(sector, 0, SECTOR_SIZE);
+            u32 chunk = remaining < SECTOR_SIZE ? remaining : SECTOR_SIZE;
+            if (chunk > 0) {
+                k_memcpy(sector, data + offset, chunk);
+            }
+
+            if (!ata_write_sectors(abs_lba(cluster_to_rel_sector(chain[i]) + s), 1, sector)) {
+                terminal_puts("fat16: data write error\n");
+                return 0;
+            }
+
+            offset += chunk;
+            remaining -= chunk;
+        }
+    }
+
+    return 1;
 }
 
 /*
@@ -372,4 +501,133 @@ search_done:
 
     *out_size = file_size;
     return buf;
+}
+
+int fat16_write(const char* name, const u8* data, u32 size) {
+    if (!s_initialised) {
+        terminal_puts("fat16: not initialised\n");
+        return 0;
+    }
+
+    if (!name || (!data && size > 0)) {
+        return 0;
+    }
+
+    if (size > FAT16_MAX_FILE_BYTES) {
+        terminal_puts("fat16: file too large\n");
+        return 0;
+    }
+
+    u8 name83[11];
+    to_83(name, name83);
+    if (name83[0] == ' ') {
+        return 0;
+    }
+
+    if (!load_fat_and_root()) {
+        return 0;
+    }
+
+    u16* fat = (u16*)s_fat_buf;
+    int existing_entry = -1;
+    int free_entry = -1;
+    u16 old_start_cluster = 0;
+    u32 old_chain[FAT16_MAX_FILE_CLUSTERS];
+    u32 old_clusters = 0;
+
+    for (u32 e = 0; e < ROOT_ENTRY_COUNT; e++) {
+        u8* entry = s_root_buf + e * 32u;
+
+        if (entry[DIR_NAME] == 0x00) {
+            if (free_entry < 0) free_entry = (int)e;
+            break;
+        }
+
+        if (entry[DIR_NAME] == 0xE5) {
+            if (free_entry < 0) free_entry = (int)e;
+            continue;
+        }
+
+        u8 attr = entry[DIR_ATTR];
+        if (attr == ATTR_LONG_NAME || (attr & ATTR_VOLUME_ID)) {
+            continue;
+        }
+
+        if (existing_entry < 0 && match_83(entry + DIR_NAME, name)) {
+            existing_entry = (int)e;
+            old_start_cluster = read_u16_le(entry, DIR_FIRST_CLUSTER);
+        }
+    }
+
+    if (existing_entry < 0 && free_entry < 0) {
+        terminal_puts("fat16: root directory full\n");
+        return 0;
+    }
+
+    u32 clusters_needed = 0;
+    if (size > 0) {
+        clusters_needed = (size + CLUSTER_BYTES - 1u) / CLUSTER_BYTES;
+        if (clusters_needed > FAT16_MAX_FILE_CLUSTERS) {
+            terminal_puts("fat16: file too large\n");
+            return 0;
+        }
+    }
+
+    if (existing_entry >= 0 && old_start_cluster >= FIRST_CLUSTER) {
+        u32 cluster = (u32)old_start_cluster;
+        while (cluster >= FIRST_CLUSTER &&
+               cluster < FAT16_EOC_MIN &&
+               old_clusters < FAT16_MAX_FILE_CLUSTERS) {
+            old_chain[old_clusters++] = cluster;
+            u16 next = fat[cluster];
+            fat[cluster] = 0;
+            if (next >= FAT16_EOC_MIN) {
+                break;
+            }
+            cluster = next;
+        }
+    }
+
+    u32 chain[FAT16_MAX_FILE_CLUSTERS];
+    if (clusters_needed > 0 && !find_free_chain(fat, clusters_needed, chain)) {
+        terminal_puts("fat16: filesystem full\n");
+
+        if (old_clusters > 0) {
+            for (u32 i = 0; i < old_clusters; i++) {
+                u16 next = (i + 1 < old_clusters) ? (u16)old_chain[i + 1] : FAT16_EOC_MIN;
+                fat[old_chain[i]] = next;
+            }
+        }
+
+        return 0;
+    }
+
+    if (clusters_needed > 0 && !write_data_clusters(chain, clusters_needed, data, size)) {
+        return 0;
+    }
+
+    if (clusters_needed > 0) {
+        for (u32 i = 0; i < clusters_needed; i++) {
+            u16 next = (i + 1 < clusters_needed) ? (u16)chain[i + 1] : FAT16_EOC_MIN;
+            fat[chain[i]] = next;
+        }
+    }
+
+    u8* entry = 0;
+    int entry_idx = (existing_entry >= 0) ? existing_entry : free_entry;
+    if (entry_idx < 0) {
+        terminal_puts("fat16: root directory full\n");
+        return 0;
+    }
+
+    entry = s_root_buf + (u32)entry_idx * 32u;
+    write_dirent(entry, name83,
+                 clusters_needed > 0 ? (u16)chain[0] : 0,
+                 size);
+
+    if (!write_fat_and_root()) {
+        return 0;
+    }
+
+    return 1;
 }

@@ -245,6 +245,7 @@ static void cmd_shelltest(command_t* cmd) {
     command_t fsread_cmd = { 2, { "fsread", "hello.elf" } };
     command_t runelf_cmd = { 2, { "runelf", "hello" } };
     command_t runelf_nowait_cmd = { 2, { "runelf_nowait", "ticks" } };
+    command_t compiler_demo_cmd = { 2, { "runelf", "compiler_demo" } };
 
     terminal_puts("shelltest: start\n");
 
@@ -259,6 +260,7 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("fsread", cmd_fsread, &fsread_cmd);
     shelltest_call("runelf", cmd_runelf, &runelf_cmd);
     shelltest_call("runelf_nowait", cmd_runelf_nowait, &runelf_nowait_cmd);
+    shelltest_call("compiler_demo", cmd_runelf, &compiler_demo_cmd);
 
     terminal_puts("shelltest: PASS\n");
 }
@@ -308,6 +310,7 @@ static void cmd_selftest(command_t* cmd) {
     char* readline_argv[] = { "readline.elf", 0 };
     char* exec_argv[] = { "exec_test.elf", 0 };
     char* fileread_argv[] = { "fileread.elf", 0 };
+    char* compiler_demo_argv[] = { "compiler_demo.elf", 0 };
     char* sleep_argv[] = { "sleep_test.elf", 0 };
     char* fault_ud_argv[] = { "fault.elf", "ud", 0 };
     char* fault_gp_argv[] = { "fault.elf", "gp", 0 };
@@ -324,6 +327,7 @@ static void cmd_selftest(command_t* cmd) {
         { "readline",    "readline.elf",    1, readline_argv,    0 },
         { "exec_test",   "exec_test.elf",   1, exec_argv,        0 },
         { "fileread",    "fileread.elf",    1, fileread_argv,    0 },
+        { "compiler_demo","compiler_demo.elf",1, compiler_demo_argv,0 },
         { "sleep_test",  "sleep_test.elf",  1, sleep_argv,       0 },
         { "fault ud",    "fault.elf",       2, fault_ud_argv,    6 },
         { "fault gp",    "fault.elf",       2, fault_gp_argv,   13 },
@@ -383,6 +387,7 @@ static program_entry_t programs[] = {
     { "readline",    "interactive SYS_READ demo" },
     { "exec_test",   "exercise SYS_EXEC semantics" },
     { "fileread",    "exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE" },
+    { "compiler_demo", "exercise SYS_WRITEFILE and readback" },
     { "sleep_test",  "exercise SYS_SLEEP semantics" },
     { "fault",       "fault probe (ud/gp/de/br/pf)" },
 };

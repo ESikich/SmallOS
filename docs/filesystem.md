@@ -2,7 +2,7 @@
 
 This document defines how the system stores, discovers, and reads files from disk.
 
-The current implementation is a **read-only FAT16 volume** appended directly to the OS image. There is no partition table, no write support, no subdirectory traversal, and no VFS layer.
+The current implementation is a **raw FAT16 volume** appended directly to the OS image. There is no partition table, no subdirectory traversal, and no VFS layer. Root-directory file writes are supported for compiler-style output and similar generated artifacts.
 
 ---
 
@@ -177,16 +177,16 @@ The current FAT16 driver is intentionally narrow.
 
 ## Supported
 
-- read-only access
+- read and write access to root-directory files
 - root directory scan
 - case-insensitive 8.3 filename matching
 - FAT chain following for file reads
+- root-directory file creation and overwrite
 - loading one file at a time into a shared static buffer
 - listing root-directory files with `fat16_ls()`
 
 ## Not supported
 
-- writes of any kind
 - subdirectories
 - long filenames (LFN)
 - multiple concurrent file buffers
@@ -293,6 +293,30 @@ fat16: file is empty
 ```
 
 That is a behavior choice in the current code, not a FAT16 requirement.
+
+---
+
+# Writing a File
+
+`fat16_write(name, data, size)` creates or overwrites a root-directory file in one shot.
+
+The write path is intentionally narrow:
+
+- root directory only
+- 8.3 filename matching
+- no subdirectories
+- no long filenames
+- no concurrent writer support
+
+At runtime, the kernel:
+
+1. loads FAT1 and the root directory into temporary working buffers
+2. resolves the destination root entry or finds a free slot
+3. allocates enough free clusters for the new file contents
+4. writes the data clusters to disk
+5. commits the updated FAT copies and root directory entry
+
+This is enough for compiler-style tools to emit generated artifacts such as `compiler.out` without a full VFS or buffered fd write API.
 
 ---
 
