@@ -98,8 +98,8 @@ screenshots (`screendump`).
 
 `make test` boots the image headlessly, runs the shell `selftest`
 command, feeds the interactive `readline` prompt, and checks every
-shipped ELF in one pass.  The per-ELF expectations live under
-`tests/elfs/`.
+shipped ELF in one pass.  The built-in shell command expectations live
+under `tests/shell/` and the ELF expectations live under `tests/elfs/`.
 
 The PowerShell command keeps a GTK window visible while capturing guest output in the console and saving `qemu.log` plus `qemu-console.log` for later debugging.
 
@@ -125,6 +125,7 @@ fsread <name>      dump first 16 bytes of a FAT16 file
 runelf <name> [args] load and run an ELF from the FAT16 partition
 runelf_nowait <name> [args] enqueue an ELF and return immediately
 selftest            run all shipped ELF self-tests
+shelltest           run built-in shell command tests
 ```
 
 Current FAT16 programs:

@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-TEST_PACKAGE = "tests.elfs"
+TEST_PACKAGES = ("tests.shell", "tests.elfs")
 
 
 sys.path.insert(0, str(REPO_ROOT))
@@ -79,15 +79,17 @@ def tee_stdout(text):
 
 
 def load_cases():
-    pkg = importlib.import_module(TEST_PACKAGE)
-    pkg_path = Path(pkg.__file__).resolve().parent
     cases = []
 
-    for modinfo in sorted(pkgutil.iter_modules([str(pkg_path)]), key=lambda m: m.name):
-        if modinfo.name.startswith("_"):
-            continue
-        mod = importlib.import_module(f"{TEST_PACKAGE}.{modinfo.name}")
-        cases.extend(getattr(mod, "CASES", []))
+    for package_name in TEST_PACKAGES:
+        pkg = importlib.import_module(package_name)
+        pkg_path = Path(pkg.__file__).resolve().parent
+
+        for modinfo in sorted(pkgutil.iter_modules([str(pkg_path)]), key=lambda m: m.name):
+            if modinfo.name.startswith("_"):
+                continue
+            mod = importlib.import_module(f"{package_name}.{modinfo.name}")
+            cases.extend(getattr(mod, "CASES", []))
 
     return cases
 
@@ -95,7 +97,6 @@ def load_cases():
 def normalize_case(case):
     normalized = {
         "name": case["name"],
-        "command": case["command"],
         "must_contain": list(case.get("must_contain", [])),
         "interactive": list(case.get("interactive", [])),
         "timeout": float(case.get("timeout", 30.0)),

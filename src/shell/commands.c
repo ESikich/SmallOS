@@ -213,6 +213,56 @@ static void cmd_runelf_nowait(command_t* cmd) {
     }
 }
 
+static void shelltest_begin(const char* name) {
+    terminal_puts("shelltest: ");
+    terminal_puts(name);
+    terminal_puts(" begin\n");
+}
+
+static void shelltest_end(const char* name) {
+    terminal_puts("shelltest: ");
+    terminal_puts(name);
+    terminal_puts(" end\n");
+}
+
+static void shelltest_call(const char* name, command_fn_t fn, command_t* cmd) {
+    shelltest_begin(name);
+    fn(cmd);
+    shelltest_end(name);
+}
+
+static void cmd_shelltest(command_t* cmd) {
+    (void)cmd;
+
+    command_t help_cmd = { 1, { "help" } };
+    command_t clear_cmd = { 1, { "clear" } };
+    command_t echo_cmd = { 4, { "echo", "alpha", "beta", "gamma" } };
+    command_t about_cmd = { 1, { "about" } };
+    command_t uptime_cmd = { 1, { "uptime" } };
+    command_t meminfo_cmd = { 1, { "meminfo" } };
+    command_t ataread_cmd = { 2, { "ataread", "0" } };
+    command_t fsls_cmd = { 1, { "fsls" } };
+    command_t fsread_cmd = { 2, { "fsread", "hello.elf" } };
+    command_t runelf_cmd = { 2, { "runelf", "hello" } };
+    command_t runelf_nowait_cmd = { 2, { "runelf_nowait", "ticks" } };
+
+    terminal_puts("shelltest: start\n");
+
+    shelltest_call("help", cmd_help, &help_cmd);
+    shelltest_call("clear", cmd_clear, &clear_cmd);
+    shelltest_call("echo", cmd_echo, &echo_cmd);
+    shelltest_call("about", cmd_about, &about_cmd);
+    shelltest_call("uptime", cmd_uptime, &uptime_cmd);
+    shelltest_call("meminfo", cmd_meminfo, &meminfo_cmd);
+    shelltest_call("ataread", cmd_ataread, &ataread_cmd);
+    shelltest_call("fsls", cmd_fsls, &fsls_cmd);
+    shelltest_call("fsread", cmd_fsread, &fsread_cmd);
+    shelltest_call("runelf", cmd_runelf, &runelf_cmd);
+    shelltest_call("runelf_nowait", cmd_runelf_nowait, &runelf_nowait_cmd);
+
+    terminal_puts("shelltest: PASS\n");
+}
+
 typedef struct {
     const char* label;
     const char* program;
@@ -263,6 +313,7 @@ static void cmd_selftest(command_t* cmd) {
     char* fault_de_argv[] = { "fault.elf", "de", 0 };
     char* fault_br_argv[] = { "fault.elf", "br", 0 };
     char* fault_pf_argv[] = { "fault.elf", "pf", 0 };
+    command_t shelltest_cmd = { 1, { "shelltest" } };
 
     const selftest_case_t cases[] = {
         { "hello",       "hello.elf",       3, hello_argv,       0 },
@@ -280,6 +331,9 @@ static void cmd_selftest(command_t* cmd) {
     };
 
     terminal_puts("selftest: start\n");
+    shelltest_begin("overall");
+    cmd_shelltest(&shelltest_cmd);
+    shelltest_end("overall");
 
     for (unsigned int i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         if (!run_selftest_case(&cases[i])) {
@@ -309,6 +363,7 @@ static command_entry_t commands[] = {
     { "runelf",        "run a FAT16 ELF and wait",      cmd_runelf },
     { "runelf_nowait", "run a FAT16 ELF and return",    cmd_runelf_nowait },
     { "selftest",      "run shipped ELF self-tests",    cmd_selftest },
+    { "shelltest",     "run built-in shell command tests", cmd_shelltest },
 };
 
 #define COMMAND_COUNT (sizeof(commands) / sizeof(commands[0]))

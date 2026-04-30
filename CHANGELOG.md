@@ -6,8 +6,8 @@
 
 * **Make-time ELF selftest** (`Makefile`, `tools/qemu_selftest.py`, `src/shell/commands.c`)
   * `make test` boots the image headlessly, launches the shell `selftest` command, feeds the interactive `readline` prompt, and checks every shipped ELF
-  * `selftest` runs the full shipped-program matrix from the shell, including the fault cases
-  * Per-ELF expectation files now live under `tests/elfs/`, so the suite is split into small, readable modules
+  * `selftest` runs the full built-in shell command suite and shipped-program matrix from the kernel side, including the fault cases
+  * Per-command expectation files now live under `tests/shell/`, and per-ELF expectation files live under `tests/elfs/`, so the suite is split into small, readable modules
   * The host-side QEMU monitor helper watches the serial log and shuts the VM down after the suite reports `PASS`
 
 * **Dynamic `help` output** (`src/shell/commands.c`)
