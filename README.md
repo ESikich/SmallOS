@@ -121,8 +121,17 @@ runelf <name> [args] load and run an ELF from the FAT16 partition
 runelf_nowait <name> [args] enqueue an ELF and return immediately
 ```
 
-Current FAT16 programs: `hello`, `ticks`, `args`, `runelf_test`, `readline`, `exec_test`, `fileread`, `fault` (fault probe: `ud`, `gp`, `de`, `br`, `pf`)
-`help` renders the built-in shell command list from the command table and the shipped-program list from the program table, with short descriptions for both.
+Current FAT16 programs:
+- `hello` - print argc/argv and tick count
+- `ticks` - print the current tick count
+- `args` - print argc and argv
+- `runelf_test` - verify ELF loading, syscalls, and stack setup
+- `readline` - interactive SYS_READ demo
+- `exec_test` - exercise SYS_EXEC semantics
+- `fileread` - exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE
+- `fault` - fault probe (ud/gp/de/br/pf)
+
+`help` renders the built-in shell command list from the command table and the shipped-program list from the program table, with the same short descriptions.
 
 ---
 

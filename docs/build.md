@@ -248,6 +248,16 @@ build/tools/mkfat16 build/bin/fat16.img \
 
 `mkfat16` produces a raw FAT16 volume containing the user ELFs in the root directory.
 
+Shipped FAT16 programs:
+- `hello` - print argc/argv and tick count
+- `ticks` - print the current tick count
+- `args` - print argc and argv
+- `runelf_test` - verify ELF loading, syscalls, and stack setup
+- `readline` - interactive SYS_READ demo
+- `exec_test` - exercise SYS_EXEC semantics
+- `fileread` - exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE
+- `fault` - fault probe (ud/gp/de/br/pf)
+
 ## Properties
 
 * fixed-size volume defined by `tools/mkfat16.c`
