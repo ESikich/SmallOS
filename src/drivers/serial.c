@@ -20,6 +20,12 @@ static inline unsigned char inb(unsigned short port) {
     return val;
 }
 
+static inline void serial_wait_tx_ready(void) {
+    while ((inb(COM1_LSR) & LSR_TX_EMPTY) == 0) {
+        /* Wait for the UART transmit holding register to empty. */
+    }
+}
+
 void serial_init(void) {
     outb(COM1_IER, 0x00);   /* disable interrupts */
     outb(COM1_LCR, 0x80);   /* enable DLAB to set baud rate */
@@ -31,5 +37,6 @@ void serial_init(void) {
 }
 
 void serial_putc(char c) {
+    serial_wait_tx_ready();
     outb(COM1_DATA, (unsigned char)c);
 }
