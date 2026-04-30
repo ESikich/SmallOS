@@ -98,6 +98,18 @@ Voluntarily surrenders the current scheduler quantum. The calling process is imm
 
 ---
 
+### SYS_SLEEP (11)
+
+```c
+int sys_sleep(uint32_t ticks);
+```
+
+Blocks the calling process for at least `ticks` timer ticks. The task marks itself `PROCESS_STATE_SLEEPING`, yields to the scheduler, and is woken by the timer IRQ once the deadline is reached.
+
+`sys_sleep_impl` uses the same scheduler-owned preemption path as `SYS_YIELD`, but the task remains unrunnable until `timer_get_ticks()` reaches the stored wake deadline. If no other runnable task exists, the kernel still idles in a `hlt` loop until the wake condition is met.
+
+---
+
 ### SYS_EXEC (7)
 
 ```c
@@ -207,6 +219,7 @@ sys_exit(code)
 sys_get_ticks()
 sys_read(buf, len)
 sys_yield()
+sys_sleep(ticks)
 sys_exec(name, argc, argv)
 sys_open(name)
 sys_close(fd)
@@ -237,7 +250,6 @@ u_readline(...)    sys_read + null-terminate + strip newline
 
 ## Future Extensions
 
-* `SYS_SLEEP`
 * `SYS_ALLOC`
 * `SYS_FREAD` read caching to avoid repeated ATA loads for the same file
 

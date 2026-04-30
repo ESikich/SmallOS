@@ -11,7 +11,7 @@
 #define SYSCALL_ERR_INVALID   ((unsigned int)-1)
 #define SYSCALL_MAX_WRITE_LEN 4096u
 #define EXEC_NAME_MAX         32
-#define SCHED_RESUME_RETADDR_OFFSET 8u  /* used by SYS_YIELD only */
+#define SCHED_RESUME_RETADDR_OFFSET 8u  /* push esp + call return address */
 
 /* ------------------------------------------------------------------ */
 /* Copy-from-user validation                                          */
@@ -98,6 +98,39 @@ static unsigned int sys_get_ticks_impl(void) {
 
 static int sys_yield_impl(unsigned int esp) {
     sched_yield_now(esp - SCHED_RESUME_RETADDR_OFFSET);
+    return 0;
+}
+
+/*
+ * sys_sleep_impl(regs, ticks)
+ *
+ * Block the current process until at least ticks timer ticks have elapsed.
+ * The task marks itself SLEEPING, stores a wake deadline, then yields to
+ * the scheduler.  When the timer reaches the deadline the scheduler wakes
+ * the task and this function continues.
+ */
+static int sys_sleep_impl(syscall_regs_t* regs, unsigned int ticks) {
+    if (ticks == 0) return 0;
+
+    process_t* proc = (process_t*)sched_current();
+    if (!proc) return -1;
+
+    proc->sleep_until = timer_get_ticks() + ticks;
+    proc->state = PROCESS_STATE_SLEEPING;
+
+    /*
+     * Yield immediately so other runnable tasks can execute while this
+     * one sleeps.  If there is no other runnable task, sched_yield_now()
+     * simply returns and the local hlt loop keeps the CPU idle.
+     */
+    __asm__ volatile ("sti");
+    sched_yield_now((unsigned int)regs - SCHED_RESUME_RETADDR_OFFSET);
+
+    while (proc->state != PROCESS_STATE_RUNNING) {
+        __asm__ volatile ("hlt");
+    }
+
+    __asm__ volatile ("cli");
     return 0;
 }
 
@@ -363,6 +396,10 @@ void syscall_handler_main(syscall_regs_t* regs) {
 
         case SYS_YIELD:
             regs->eax = (unsigned int)sys_yield_impl((unsigned int)regs);
+            break;
+
+        case SYS_SLEEP:
+            regs->eax = (unsigned int)sys_sleep_impl(regs, regs->ebx);
             break;
 
         case SYS_EXEC:

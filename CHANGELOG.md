@@ -40,6 +40,11 @@
   * `make smoke-reboot` and `make smoke-halt` exercise the shell commands individually
   * The host smoke runner waits for the shell prompt, injects the command through the QEMU monitor, and watches the serial log for the expected reset or halt markers
 
+* **`SYS_SLEEP` timer sleep syscall** (`src/kernel/syscall.c`, `src/kernel/scheduler.c`, `src/user/sleep_test.c`)
+  * `SYS_SLEEP` parks the current task in `PROCESS_STATE_SLEEPING` until its timer deadline is reached
+  * The scheduler wakes sleeping tasks from timer IRQ context and re-enqueues them when their deadline expires
+  * `sleep_test` exercises the new syscall end-to-end through the normal `runelf` path and is covered by the host selftest suite
+
 * **Process exit status plumbing** (`src/kernel/process.c`, `src/kernel/syscall.c`, `src/kernel/idt.c`)
   * Foreground `runelf` calls now preserve the child exit status
   * The shell selftest uses that status to verify normal exits and expected fault terminations

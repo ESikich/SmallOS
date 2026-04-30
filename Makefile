@@ -69,7 +69,7 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/fat16.c \
 	$(DRIVERS_DIR)/serial.c
 
-USER_PROGS=hello ticks args runelf_test readline exec_test fileread fault
+USER_PROGS=hello ticks args runelf_test readline exec_test fileread fault sleep_test
 USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
 
 KERNEL_OBJS=$(patsubst $(SRC_DIR)/%.asm,$(OBJ_DIR)/%.o,$(KERNEL_ASM_SRCS)) \

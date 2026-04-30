@@ -12,7 +12,8 @@ typedef enum {
     PROCESS_STATE_RUNNING = 1,
     PROCESS_STATE_EXITED  = 2,
     PROCESS_STATE_ZOMBIE  = 3,
-    PROCESS_STATE_WAITING = 4   /* blocked in SYS_READ, skipped by scheduler */
+    PROCESS_STATE_WAITING = 4,  /* blocked in SYS_READ, skipped by scheduler */
+    PROCESS_STATE_SLEEPING = 5   /* blocked in SYS_SLEEP, woken by timer */
 } process_state_t;
 
 /* ------------------------------------------------------------------ */
@@ -49,6 +50,7 @@ typedef struct {
     unsigned int    sched_esp;
     process_state_t state;
     int             exit_status;
+    unsigned int    sleep_until;
     void          (*kernel_entry)(void);
     unsigned int    user_entry;
     int             user_argc;

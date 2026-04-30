@@ -33,7 +33,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Per-process page directories — address space isolation; PD itself freed on exit
 * Ring 3 user mode — hardware-enforced privilege separation
 * Per-process kernel stacks — dedicated PMM frame per process; TSS ESP0 set from it; freed on exit
-* Syscall layer via `int 0x80` (DPL=3 gate): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`, `SYS_READ`, `SYS_YIELD`, `SYS_EXEC`
+* Syscall layer via `int 0x80` (DPL=3 gate): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`, `SYS_READ`, `SYS_YIELD`, `SYS_SLEEP`, `SYS_EXEC`
 * `sys_exit()` is scheduler-owned: it switches to the kernel page directory, marks the current task `PROCESS_STATE_ZOMBIE`, and switches to the next runnable task
 * Shell now runs as an explicit kernel task scheduled by `scheduler.c`
 * **Preemptive round-robin scheduler** — timer IRQ (100 Hz) context-switches between kernel tasks; 10-tick (100 ms) quantum
@@ -57,7 +57,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 │   ├── shell/      shell, line_editor, parse, commands
 │   ├── exec/       elf_loader
 │   └── user/       hello.c, ticks.c, args.c, readline.c, exec_test.c,
-│                   fault.c, user_lib.h, user_syscall.h
+│                   fault.c, sleep_test.c, user_lib.h, user_syscall.h
 ├── tools/
 │   ├── mkfat16.c
 │   └── mkimage.c
@@ -140,6 +140,7 @@ Current FAT16 programs:
 - `readline` - interactive SYS_READ demo
 - `exec_test` - exercise SYS_EXEC semantics
 - `fileread` - exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE
+- `sleep_test` - exercise SYS_SLEEP semantics
 - `fault` - fault probe (ud/gp/de/br/pf)
 
 `help` renders the built-in shell command list from the command table and the shipped-program list from the program table, with the same short descriptions.

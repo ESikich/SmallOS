@@ -308,6 +308,7 @@ static void cmd_selftest(command_t* cmd) {
     char* readline_argv[] = { "readline.elf", 0 };
     char* exec_argv[] = { "exec_test.elf", 0 };
     char* fileread_argv[] = { "fileread.elf", 0 };
+    char* sleep_argv[] = { "sleep_test.elf", 0 };
     char* fault_ud_argv[] = { "fault.elf", "ud", 0 };
     char* fault_gp_argv[] = { "fault.elf", "gp", 0 };
     char* fault_de_argv[] = { "fault.elf", "de", 0 };
@@ -323,6 +324,7 @@ static void cmd_selftest(command_t* cmd) {
         { "readline",    "readline.elf",    1, readline_argv,    0 },
         { "exec_test",   "exec_test.elf",   1, exec_argv,        0 },
         { "fileread",    "fileread.elf",    1, fileread_argv,    0 },
+        { "sleep_test",  "sleep_test.elf",  1, sleep_argv,       0 },
         { "fault ud",    "fault.elf",       2, fault_ud_argv,    6 },
         { "fault gp",    "fault.elf",       2, fault_gp_argv,   13 },
         { "fault de",    "fault.elf",       2, fault_de_argv,    0 },
@@ -381,6 +383,7 @@ static program_entry_t programs[] = {
     { "readline",    "interactive SYS_READ demo" },
     { "exec_test",   "exercise SYS_EXEC semantics" },
     { "fileread",    "exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE" },
+    { "sleep_test",  "exercise SYS_SLEEP semantics" },
     { "fault",       "fault probe (ud/gp/de/br/pf)" },
 };
 

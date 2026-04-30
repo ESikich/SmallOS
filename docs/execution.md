@@ -47,7 +47,7 @@ Important current-state facts:
 - consumer ownership transfers via `process_set_foreground()` — shell consumer at boot, process consumer while a user process holds the foreground, shell consumer restored on exit
 - **ELF user programs** are loaded into their own page directory and do execute in ring 3
 - ELF launch and exit are now scheduler-owned: `elf_run_image()` seeds a bootstrap context, enqueues the task, and returns `process_t*`
-- the scheduler supports kernel tasks, ELF tasks, voluntary yielding, and timer-driven switching; `runelf` blocks with `process_wait()`, while `runelf_nowait` returns immediately
+- the scheduler supports kernel tasks, ELF tasks, voluntary yielding, timer-driven sleeping, and timer-driven switching; `runelf` blocks with `process_wait()`, while `runelf_nowait` returns immediately
 
 ---
 

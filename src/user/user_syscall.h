@@ -90,13 +90,21 @@ static inline int sys_yield(void) {
 }
 
 /*
+ * sys_sleep(ticks)
+ *
+ * Block the current process for at least ticks timer ticks.
+ */
+static inline int sys_sleep(uint32_t ticks) {
+    return syscall1(SYS_SLEEP, ticks);
+}
+
+/*
  * sys_exec(name, argc, argv)
  *
- * Load and run the named ELF from the FAT16 partition through the
- * current foreground run-and-wait path.
+ * Load and spawn the named ELF from the FAT16 partition.
  *
- * This is still blocking semantics: the call does not return until the
- * child exits.
+ * The kernel returns immediately after enqueueing the child.  The child
+ * runs independently under the scheduler.
  *
  * name and argv point into the caller's user address space — the kernel
  * reads them while the caller's CR3 is still active.

@@ -4,6 +4,7 @@
 #include "gdt.h"
 #include "terminal.h"
 #include "memory.h"
+#include "timer.h"
 
 extern void sched_switch(unsigned int* save_esp,
                          unsigned int  next_esp,
@@ -80,6 +81,24 @@ static void sched_do_switch(unsigned int esp) {
                  sched_proc_esp0(nxt));
 
     /* Execution resumes here only when this task is switched back to. */
+}
+
+static void sched_wake_sleepers(unsigned int now) {
+    for (int i = 0; i < s_count; i++) {
+        process_t* proc = s_table[i];
+        if (!proc) continue;
+        if (proc->state != PROCESS_STATE_SLEEPING) continue;
+
+        /*
+         * Unsigned wrap-safe deadline check:
+         * once now has reached or passed sleep_until, the signed
+         * difference becomes non-negative.
+         */
+        if ((int)(now - proc->sleep_until) >= 0) {
+            proc->state = PROCESS_STATE_RUNNING;
+            proc->sleep_until = 0;
+        }
+    }
 }
 
 void sched_init(void) {
@@ -166,6 +185,8 @@ void sched_tick(unsigned int esp) {
     if (s_current_idx >= 0 && s_current_idx < s_count) {
         s_table[s_current_idx]->sched_esp = esp;
     }
+
+    sched_wake_sleepers(timer_get_ticks());
 
     if (s_tick_count < SCHED_TICKS_PER_QUANTUM) return;
     s_tick_count = 0;
