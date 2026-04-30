@@ -364,9 +364,16 @@ static void compute_layout(node_t* node) {
         child_count++;
     }
 
-    node->size = (2u + child_count) * 32u;
-    node->cluster_count = (node->size + CLUSTER_BYTES - 1u) / CLUSTER_BYTES;
+    u32 used_size = (2u + child_count) * 32u;
+    /*
+     * Give directories a full cluster-sized backing store instead of
+     * compacting them to the exact used entry count.  That keeps
+     * shipped directories writable at runtime without immediately
+     * reporting "directory full" when a new file is copied into them.
+     */
+    node->cluster_count = (used_size + CLUSTER_BYTES - 1u) / CLUSTER_BYTES;
     if (node->cluster_count == 0) node->cluster_count = 1;
+    node->size = node->cluster_count * CLUSTER_BYTES;
 }
 
 static u32 assign_clusters(node_t* node, u32 next_cluster) {

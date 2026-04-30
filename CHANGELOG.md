@@ -4,6 +4,22 @@
 
 ### Added
 
+* **Shell file management commands** (`src/shell/commands.c`, `src/drivers/fat16.c`, `src/drivers/fat16.h`)
+  * `cp <src> <dst>` copies FAT16 files, including into existing directories
+  * `mv <src> <dst>` renames or moves FAT16 files and directories
+  * `rm <path>` removes FAT16 files in place
+  * The command help text and docs now describe the expanded shell surface
+
+* **Nested-path FAT16 writes** (`src/drivers/fat16.c`, `tools/mkfat16.c`)
+  * File writes now work against nested FAT16 paths instead of being root-only
+  * The image builder keeps directory clusters fully sized so shipped directories have room for new entries
+
+* **Shell regression coverage** (`tests/shell/cp_mv.py`, `tests/shell/help.py`, `src/shell/commands.c`)
+  * New shell selftests cover copy, move, remove, and directory-destination behavior
+  * Help output now asserts the new command list
+
+### Changed
+
 * **Make-time ELF selftest** (`Makefile`, `tools/qemu_selftest.py`, `src/shell/commands.c`)
   * `make test` boots the image headlessly, launches the shell `selftest` command, feeds the interactive `readline` prompt, and checks every shipped ELF
   * `selftest` runs the full built-in shell command suite and shipped-program matrix from the kernel side, including the fault cases

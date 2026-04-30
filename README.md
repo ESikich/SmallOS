@@ -129,6 +129,9 @@ fsls [path]        list a FAT16 directory (root by default)
 fsread <name>      dump first 16 bytes of a FAT16 file
 mkdir <path>       create a FAT16 directory
 rmdir <path>       remove an empty FAT16 directory
+rm <path>          remove a FAT16 file
+cp <src> <dst>     copy a FAT16 file
+mv <src> <dst>     move or rename a FAT16 entry
 runelf <name> [args] load and run an ELF from the FAT16 partition
 runelf_nowait <name> [args] enqueue an ELF and return immediately
 selftest            run all shipped ELF self-tests

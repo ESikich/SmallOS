@@ -343,7 +343,7 @@ keyboard IRQ → keyboard_handle_irq()
   ↓
   [Enter] → parse_command() → commands_execute()
   ↓
-  runelf / fsls / fsread / mkdir / rmdir / ataread / meminfo / ... dispatch
+  runelf / fsls / fsread / mkdir / rmdir / rm / cp / mv / ataread / meminfo / ... dispatch
 ```
 
 The active consumer is managed by `keyboard_set_consumer()`:

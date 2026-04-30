@@ -226,6 +226,58 @@ static void cmd_rmdir(command_t* cmd) {
     terminal_putc('\n');
 }
 
+static void cmd_rm(command_t* cmd) {
+    if (cmd->argc < 2) {
+        terminal_puts("usage: rm <path>\n");
+        return;
+    }
+
+    if (!fat16_rm(cmd->argv[1])) {
+        terminal_puts("rm: failed\n");
+        return;
+    }
+
+    terminal_puts("rm: ");
+    terminal_puts(cmd->argv[1]);
+    terminal_putc('\n');
+}
+
+static void cmd_cp(command_t* cmd) {
+    if (cmd->argc < 3) {
+        terminal_puts("usage: cp <src> <dst>\n");
+        return;
+    }
+
+    if (!fat16_copy(cmd->argv[1], cmd->argv[2])) {
+        terminal_puts("cp: failed\n");
+        return;
+    }
+
+    terminal_puts("cp: ");
+    terminal_puts(cmd->argv[1]);
+    terminal_puts(" -> ");
+    terminal_puts(cmd->argv[2]);
+    terminal_putc('\n');
+}
+
+static void cmd_mv(command_t* cmd) {
+    if (cmd->argc < 3) {
+        terminal_puts("usage: mv <src> <dst>\n");
+        return;
+    }
+
+    if (!fat16_move(cmd->argv[1], cmd->argv[2])) {
+        terminal_puts("mv: failed\n");
+        return;
+    }
+
+    terminal_puts("mv: ");
+    terminal_puts(cmd->argv[1]);
+    terminal_puts(" -> ");
+    terminal_puts(cmd->argv[2]);
+    terminal_putc('\n');
+}
+
 static void cmd_runelf(command_t* cmd) {
     if (cmd->argc < 2) {
         terminal_puts("Usage: runelf <n>\n");
@@ -294,6 +346,16 @@ static void cmd_shelltest(command_t* cmd) {
     command_t rmdir_nested_child_cmd = { 2, { "rmdir", "NESTPARENT/CHILD" } };
     command_t rmdir_nested_parent_cmd = { 2, { "rmdir", "NESTPARENT" } };
     command_t fsls_nested_removed_cmd = { 2, { "fsls", "NESTPARENT" } };
+    command_t cp_cmd = { 3, { "cp", "compiler.out", "compiler.copy" } };
+    command_t fsread_copy_cmd = { 2, { "fsread", "compiler.copy" } };
+    command_t mv_cmd = { 3, { "mv", "compiler.copy", "compiler.moved" } };
+    command_t fsread_moved_cmd = { 2, { "fsread", "compiler.moved" } };
+    command_t cp_dir_cmd = { 3, { "cp", "compiler.out", "apps/demo" } };
+    command_t fsread_dir_copy_cmd = { 2, { "fsread", "apps/demo/compiler.out" } };
+    command_t rm_dir_cmd = { 2, { "rm", "apps/demo/compiler.out" } };
+    command_t fsread_dir_removed_cmd = { 2, { "fsread", "apps/demo/compiler.out" } };
+    command_t mv_dir_cmd = { 3, { "mv", "compiler.moved", "apps/demo" } };
+    command_t fsread_dir_moved_cmd = { 2, { "fsread", "apps/demo/compiler.moved" } };
     command_t runelf_cmd = { 2, { "runelf", "hello" } };
     command_t runelf_path_cmd = { 4, { "runelf", "apps/demo/hello", "alpha", "beta" } };
     command_t runelf_nowait_cmd = { 2, { "runelf_nowait", "ticks" } };
@@ -322,10 +384,20 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("rmdir_nested_child", cmd_rmdir, &rmdir_nested_child_cmd);
     shelltest_call("rmdir_nested_parent", cmd_rmdir, &rmdir_nested_parent_cmd);
     shelltest_call("fsls_nested_removed", cmd_fsls, &fsls_nested_removed_cmd);
+    shelltest_call("compiler_demo", cmd_runelf, &compiler_demo_cmd);
+    shelltest_call("cp", cmd_cp, &cp_cmd);
+    shelltest_call("fsread_copy", cmd_fsread, &fsread_copy_cmd);
+    shelltest_call("mv", cmd_mv, &mv_cmd);
+    shelltest_call("fsread_moved", cmd_fsread, &fsread_moved_cmd);
+    shelltest_call("cp_dir", cmd_cp, &cp_dir_cmd);
+    shelltest_call("fsread_dir_copy", cmd_fsread, &fsread_dir_copy_cmd);
+    shelltest_call("rm_dir", cmd_rm, &rm_dir_cmd);
+    shelltest_call("fsread_dir_removed", cmd_fsread, &fsread_dir_removed_cmd);
+    shelltest_call("mv_dir", cmd_mv, &mv_dir_cmd);
+    shelltest_call("fsread_dir_moved", cmd_fsread, &fsread_dir_moved_cmd);
     shelltest_call("runelf", cmd_runelf, &runelf_cmd);
     shelltest_call("runelf_path", cmd_runelf, &runelf_path_cmd);
     shelltest_call("runelf_nowait", cmd_runelf_nowait, &runelf_nowait_cmd);
-    shelltest_call("compiler_demo", cmd_runelf, &compiler_demo_cmd);
 
     terminal_puts("shelltest: PASS\n");
 }
@@ -437,6 +509,9 @@ static command_entry_t commands[] = {
     { "fsread",        "dump FAT16 file bytes",         cmd_fsread },
     { "mkdir",         "create a FAT16 directory",     cmd_mkdir },
     { "rmdir",         "remove a FAT16 directory",     cmd_rmdir },
+    { "rm",            "remove a FAT16 file",          cmd_rm },
+    { "cp",            "copy a FAT16 file",            cmd_cp },
+    { "mv",            "move or rename a FAT16 entry", cmd_mv },
     { "runelf",        "run a FAT16 ELF and wait",      cmd_runelf },
     { "runelf_nowait", "run a FAT16 ELF and return",    cmd_runelf_nowait },
     { "selftest",      "run shipped ELF self-tests",    cmd_selftest },

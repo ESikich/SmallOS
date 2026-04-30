@@ -12,6 +12,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEST_PACKAGES = ("tests.shell", "tests.elfs")
+TRANSCRIPT_LIMIT = 65536
+TRANSCRIPT_TRIM = 32768
 
 
 sys.path.insert(0, str(REPO_ROOT))
@@ -136,8 +138,8 @@ def collect_selftest_transcript(sock, log, start_offset, deadline, cases):
                 seen_result = True
             if seen_result and "> " in buf:
                 return buf, log_offset
-            if len(buf) > 8192:
-                buf = buf[-4096:]
+            if len(buf) > TRANSCRIPT_LIMIT:
+                buf = buf[-TRANSCRIPT_TRIM:]
         else:
             time.sleep(0.05)
 
@@ -215,8 +217,8 @@ def main():
                 buf += chunk
                 if "> " in buf:
                     break
-                if len(buf) > 8192:
-                    buf = buf[-4096:]
+                if len(buf) > TRANSCRIPT_LIMIT:
+                    buf = buf[-TRANSCRIPT_TRIM:]
             else:
                 time.sleep(0.05)
         else:

@@ -89,6 +89,17 @@ const u8* fat16_load(const char* name, u32* out_size);
 int fat16_write(const char* name, const u8* data, u32 size);
 
 /*
+ * fat16_write_path(path, data, size)
+ *
+ * Create or overwrite a file at a full path.  The destination may be a
+ * nested directory path, unlike fat16_write() which preserves the
+ * historical root-directory-only behavior.
+ *
+ * Returns 1 on success, 0 on failure.
+ */
+int fat16_write_path(const char* path, const u8* data, u32 size);
+
+/*
  * fat16_mkdir(path)
  *
  * Create a new empty directory at `path`.
@@ -107,5 +118,35 @@ int fat16_mkdir(const char* path);
  * Returns 1 on success, 0 on failure.
  */
 int fat16_rmdir(const char* path);
+
+/*
+ * fat16_rm(path)
+ *
+ * Remove an existing file at `path`.
+ * The target must be a file, not a directory.
+ *
+ * Returns 1 on success, 0 on failure.
+ */
+int fat16_rm(const char* path);
+
+/*
+ * fat16_copy(src, dst)
+ *
+ * Copy a file from src to dst.  If dst names an existing directory, the
+ * source leaf name is copied into that directory.
+ *
+ * Returns 1 on success, 0 on failure.
+ */
+int fat16_copy(const char* src, const char* dst);
+
+/*
+ * fat16_move(src, dst)
+ *
+ * Move or rename a file or directory.  If dst names an existing
+ * directory, the source leaf name is moved into that directory.
+ *
+ * Returns 1 on success, 0 on failure.
+ */
+int fat16_move(const char* src, const char* dst);
 
 #endif /* FAT16_H */

@@ -2,7 +2,7 @@
 
 This document defines how the system stores, discovers, and reads files from disk.
 
-The current implementation stores a **raw FAT16 volume inside an MBR-partitioned disk image**. Sector 0 contains the partition table, and the FAT16 partition starts immediately after the kernel region. The runtime now resolves nested FAT16 paths for reads and directory listings, and it can also create/remove directories in place. Regular file writes remain root-only.
+The current implementation stores a **raw FAT16 volume inside an MBR-partitioned disk image**. Sector 0 contains the partition table, and the FAT16 partition starts immediately after the kernel region. The runtime now resolves nested FAT16 paths for reads and directory listings, and it can also create/remove directories in place. Regular file writes now work at nested paths too, and `rm` removes files in place.
 
 ---
 
@@ -180,10 +180,11 @@ The current FAT16 driver is intentionally narrow.
 - read access to root-directory and nested-directory files
 - directory listing by path with `fat16_ls_path(path)` and `fsls [path]`
 - directory creation/removal by path with `fat16_mkdir(path)` / `fat16_rmdir(path)`
+- file removal by path with `fat16_rm(path)`
 - case-insensitive 8.3 filename matching
 - FAT chain following for file reads
 - loading one file at a time into a shared static buffer
-- root-directory file creation and overwrite
+- root-directory file creation and overwrite, plus nested-path file writes via `fat16_write_path(path, ...)`
 
 ## Not supported
 

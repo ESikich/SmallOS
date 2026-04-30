@@ -40,3 +40,5 @@ void serial_putc(char c) {
     serial_wait_tx_ready();
     outb(COM1_DATA, (unsigned char)c);
 }
+
+__asm__(".section .note.GNU-stack,\"\",@progbits");
