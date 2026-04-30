@@ -111,6 +111,18 @@ The boot stages own the disk-layout constants they depend on:
 
 The Makefile reads these declarations during image construction rather than redefining the numbers independently, injects the generated kernel-sector and stack-top values into `loader2.asm`, and passes the resulting layout facts into `mkimage` for final disk-image assembly.
 
+## Layout Check
+
+`make boot-layout-check` verifies the built boot artifacts and the generated loader template before the final image is assembled. It checks:
+
+* `boot.bin` is exactly 512 bytes
+* `loader2.bin` is exactly 2048 bytes
+* loader2 still loads at `0x10000`
+* the generated stage-2 stack and the kernel boot stack match the current contract
+* the kernel still fits below both the loader body and the stage-2 stack
+
+This keeps the hand-rolled boot path explicit: the build fails before QEMU starts if the layout drifts.
+
 **Symptom of violation:** BIOS INT 0x13 hangs silently mid-transfer. The screen shows `Loading...` but never advances. No error is printed because the hang occurs inside the BIOS call.
 
 ---

@@ -164,6 +164,16 @@ $(BIN_DIR)/loader2.bin: $(GEN_DIR)/loader2.gen.asm | dirs
 $(BIN_DIR)/boot.bin: $(BOOT_DIR)/boot.asm | dirs
 	$(ASM) -f bin $< -o $@
 
+boot-layout-check: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(GEN_DIR)/loader2.gen.asm
+	$(PYTHON3) tools/verify_boot_layout.py \
+		--boot-asm $(BOOT_DIR)/boot.asm \
+		--loader2-asm $(BOOT_DIR)/loader2.asm \
+		--memory-h $(KERNEL_DIR)/memory.h \
+		--boot-bin $(BIN_DIR)/boot.bin \
+		--loader2-bin $(BIN_DIR)/loader2.bin \
+		--kernel-bin $(BIN_DIR)/kernel.bin \
+		--loader2-gen $(GEN_DIR)/loader2.gen.asm
+
 #
 # Final disk image
 #
@@ -181,7 +191,7 @@ $(BIN_DIR)/boot.bin: $(BOOT_DIR)/boot.asm | dirs
 # boot-sector field declared by FAT16_LBA_PATCH_OFFSET in boot.asm so the kernel can read
 # it at runtime without any compile-time dependency.
 #
-$(IMG_DIR)/os-image.bin: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(BIN_DIR)/fat16.img $(TOOLS_DIR)/mkimage | dirs
+$(IMG_DIR)/os-image.bin: boot-layout-check $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(BIN_DIR)/fat16.img $(TOOLS_DIR)/mkimage | dirs
 	$(TOOLS_DIR)/mkimage \
 		--boot $(BIN_DIR)/boot.bin \
 		--loader $(BIN_DIR)/loader2.bin \
@@ -205,7 +215,7 @@ PYTHON3=python3
 QEMUFLAGS=-drive format=raw,file=$(IMG_DIR)/os-image.bin -boot c -m 32 \
           -serial file:$(SERIAL_LOG)
 
-.PHONY: all dirs run run-headless test smoke smoke-reboot smoke-halt clean
+.PHONY: all dirs run run-headless test smoke smoke-reboot smoke-halt clean boot-layout-check
 
 run: $(IMG_DIR)/os-image.bin
 	$(QEMU) $(QEMUFLAGS) -display curses

@@ -116,6 +116,8 @@ The required invariant is that `0x1000 + kernel_sectors * BOOT_SECTOR_SIZE` must
 
 **Symptom of violation**: BIOS INT 0x13 hangs silently mid-transfer at `Loading...` with no error message printed.
 
+`make boot-layout-check` is the host-side guard for this contract. It verifies the built loader and kernel artifacts, the generated stage-2 stack values, and the current ceiling before the disk image is assembled.
+
 ---
 
 ## GDT Rules
