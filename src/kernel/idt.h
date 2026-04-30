@@ -22,6 +22,7 @@ struct idt_ptr {
 
 void idt_init(void);
 void idt_set_gate(unsigned char num, unsigned int base, unsigned short sel, unsigned char flags);
+void page_fault_handler_main(unsigned int esp);
 void irq0_handler_main(unsigned int esp);
 void irq1_handler_main(void);
 

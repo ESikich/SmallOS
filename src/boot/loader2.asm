@@ -1,7 +1,7 @@
 ; loader2.asm
 ;
 ; Stage 2 loader contract:
-;   - loaded by boot sector to physical 0xA000
+;   - loaded by boot sector to physical 0xB000
 ;   - occupies exactly 4 sectors (2048 bytes)
 ;   - kernel image begins at disk LBA KERNEL_LBA (0-based)
 ;   - kernel is loaded to physical 0x1000
@@ -9,17 +9,21 @@
 ;   - then jumps to kernel entry at 0x1000
 ;
 ; Safe kernel size:
-;   Loader2 is at 0xA000.  Kernel loads to 0x1000.
-;   Maximum safe kernel size before overwriting loader2:
-;     (0xA000 - 0x1000) / 512 = 72 sectors = 36 KB
-;   If the kernel exceeds this, move loader2 to 0xB000.
+;   Loader2 is at 0xB000.  Kernel loads to 0x1000.
+;   Stage-2 uses a generated stack top so the kernel load area can grow
+;   without colliding with the loader's real-mode/protected-mode stack.
+;   Maximum safe kernel size before the build fails:
+;     (0xF000 - 0x1000) / 512 = 112 sectors = 56 KB
+;   If the kernel exceeds this, the build should fail before image assembly.
 
-[org 0xA000]
+[org 0xB000]
 bits 16
 
 KERNEL_OFFSET        equ 0x1000
 KERNEL_LBA           equ 5
 KERNEL_SECTORS       equ __KERNEL_SECTORS__
+STAGE2_STACK_TOP     equ __STAGE2_STACK_TOP__
+STAGE2_STACK_TOP_32  equ __STAGE2_STACK_TOP_32__
 
 start:
     mov [BOOT_DRIVE], dl
@@ -29,7 +33,7 @@ start:
     mov ds, ax
     mov es, ax
     mov ss, ax
-    mov sp, 0x9000
+    mov sp, STAGE2_STACK_TOP
     sti
 
     ; --- Check INT 0x13 extensions ---
@@ -152,7 +156,7 @@ init_pm:
     mov es, ax
     mov fs, ax
     mov gs, ax
-    mov ebp, 0x90000
+    mov ebp, STAGE2_STACK_TOP_32
     mov esp, ebp
     mov eax, KERNEL_OFFSET
     jmp eax

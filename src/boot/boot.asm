@@ -2,7 +2,7 @@
 [org 0x7C00]
 bits 16
 
-LOADER2_OFFSET   equ 0xA000
+LOADER2_OFFSET   equ 0xB000
 BOOT_SECTOR_SIZE equ 512
 LOADER2_SECTORS  equ 4
 
@@ -14,6 +14,7 @@ start:
     mov ds, ax
     mov es, ax
     mov ss, ax
+    ; Stage 1 only needs a temporary stack while it loads loader2.
     mov sp, 0x9000
     sti
 

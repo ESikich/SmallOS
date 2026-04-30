@@ -21,6 +21,11 @@ TOOLS_DIR=$(BUILD_DIR)/tools
 BOOT_SECTOR_SIZE := $(shell awk '/^BOOT_SECTOR_SIZE[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 BOOT_SECTOR_MASK := $(shell echo $$(( $(BOOT_SECTOR_SIZE) - 1 )))
 KERNEL_LBA := $(shell awk '/^KERNEL_LBA[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/loader2.asm)
+KERNEL_OFFSET := 0x1000
+STAGE2_STACK_TOP := 0xF000
+STAGE2_STACK_TOP_32 := 0xF0000
+# Build-time guard: keep stage 2's stack safely above the loaded kernel image.
+STAGE2_SAFE_KERNEL_SECTORS := $(shell echo $$(( ( $(STAGE2_STACK_TOP) - $(KERNEL_OFFSET) ) / $(BOOT_SECTOR_SIZE) )))
 FAT16_TOTAL_SECTORS := $(shell awk '/^#define[[:space:]]+TOTAL_SECTORS[[:space:]]+/ {print $$3}' tools/mkfat16.c)
 FAT16_TOTAL_SIZE_MB := $(shell awk '/^#define[[:space:]]+TOTAL_SIZE_MB[[:space:]]+/ {print $$3}' tools/mkfat16.c)
 BOOT_FAT16_LBA_PATCH_OFFSET := $(shell awk '/^FAT16_LBA_PATCH_OFFSET[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
@@ -129,9 +134,16 @@ $(BIN_DIR)/fat16.img: $(USER_ELFS) $(TOOLS_DIR)/mkfat16 | dirs
 
 $(GEN_DIR)/loader2.gen.asm: $(BOOT_DIR)/loader2.asm $(BIN_DIR)/kernel.bin | dirs
 	@kernel_sectors=$$(( ($$(wc -c < $(BIN_DIR)/kernel.bin) + $(BOOT_SECTOR_MASK)) / $(BOOT_SECTOR_SIZE) )); \
+	if [ $$kernel_sectors -gt $(STAGE2_SAFE_KERNEL_SECTORS) ]; then \
+		echo "ERROR: kernel needs $$kernel_sectors sectors, but stage2 only allows $(STAGE2_SAFE_KERNEL_SECTORS)"; \
+		echo "       move the stage-2 stack higher or shrink the kernel"; \
+		exit 1; \
+	fi; \
 	echo "kernel:  $$(wc -c < $(BIN_DIR)/kernel.bin) bytes ($$kernel_sectors sectors, LBA $(KERNEL_LBA))"; \
 	sed \
 		-e "s/__KERNEL_SECTORS__/$$kernel_sectors/" \
+		-e "s/__STAGE2_STACK_TOP__/$(STAGE2_STACK_TOP)/" \
+		-e "s/__STAGE2_STACK_TOP_32__/$(STAGE2_STACK_TOP_32)/" \
 		$< > $@
 
 $(BIN_DIR)/loader2.bin: $(GEN_DIR)/loader2.gen.asm | dirs
@@ -153,6 +165,10 @@ $(BIN_DIR)/boot.bin: $(BOOT_DIR)/boot.asm | dirs
 #   loader2.bin          ($(LOADER2_SIZE_BYTES) bytes, LBA 1-($(KERNEL_LBA)-1))
 #   kernel_padded.bin    (sector-aligned, LBA $(KERNEL_LBA)+)
 #   fat16.img            ($(FAT16_TOTAL_SIZE_MB) MB FAT16 partition, LBA $(KERNEL_LBA)+kernel_sectors)
+#
+# The stage-2 stack top and kernel-size ceiling come from the same constants,
+# so a growth that would overlap the loader becomes a build error instead of a
+# boot-time hang.
 #
 # The FAT16 partition start LBA is patched as a little-endian u32 into the
 # boot-sector field declared by FAT16_LBA_PATCH_OFFSET in boot.asm so the kernel can read

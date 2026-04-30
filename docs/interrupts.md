@@ -31,11 +31,14 @@ idt_set_gate(vector, handler, 0x08, flags);
 ## Active Entries
 
 ```text
+14   → page fault
 8    → ISR8 (double fault)
 32   → IRQ0 (timer)
 33   → IRQ1 (keyboard)
 128  → syscall (int 0x80)
 ```
+
+Page faults log `CR2`, the error code, and the interrupted `CS`. User-mode page faults terminate the current process so the shell keeps running; kernel-mode page faults still halt the machine so the last error context is preserved.
 
 ---
 
@@ -170,6 +173,10 @@ outb(0x20, 0x20);
 Required for every IRQ. Without it, the PIC keeps the line in-service and no further interrupts fire.
 
 **Rule**: send EOI at the top of any handler that might not return.
+
+## Double Fault Handling
+
+Vector 8 is treated as an emergency stop. The current stub writes a visible `DF!` marker to VGA and halts because the CPU is already in a compromised state by the time a double fault runs.
 
 ---
 

@@ -4,11 +4,13 @@ global gdt_flush
 global idt_flush
 global irq0_stub
 global irq1_stub
+global isr14_stub
 global isr128_stub
 global isr8_stub
 
 extern irq0_handler_main
 extern irq1_handler_main
+extern page_fault_handler_main
 extern syscall_handler_main
 
 gdt_flush:
@@ -102,9 +104,40 @@ irq1_stub:
     popa
     iretd
 
+isr14_stub:
+    pusha
+    push ds
+    push es
+    push fs
+    push gs
+
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+
+    push esp
+    call page_fault_handler_main
+    add esp, 4
+
+    pop gs
+    pop fs
+    pop es
+    pop ds
+    popa
+    add esp, 4
+    iretd
+
 isr8_stub:
-    mov byte [0xB8000 + (1 * 80 + 12) * 2], '8'
+    ; Double fault is an emergency stop.  Write a visible marker and halt
+    ; because the CPU state is already compromised by the time vector 8 runs.
+    mov byte [0xB8000 + (1 * 80 + 12) * 2], 'D'
     mov byte [0xB8000 + (1 * 80 + 12) * 2 + 1], 0x4F
+    mov byte [0xB8000 + (1 * 80 + 13) * 2], 'F'
+    mov byte [0xB8000 + (1 * 80 + 13) * 2 + 1], 0x4F
+    mov byte [0xB8000 + (1 * 80 + 14) * 2], '!'
+    mov byte [0xB8000 + (1 * 80 + 14) * 2 + 1], 0x4F
 .hang8:
     cli
     hlt

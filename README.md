@@ -19,6 +19,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * x86 paging — identity-mapped first 8 MB
 * BSS zeroing in kernel entry before paging is enabled
 * IDT with PIT timer (IRQ0), keyboard (IRQ1), and syscalls (INT 0x80)
+* Page-fault handler that logs `CR2`, the error code, and user-vs-kernel context; user faults terminate only the offending process
 * COM1 serial driver — mirrors all terminal output to QEMU's serial backend for headless testing
 * VGA text-mode display and terminal abstraction
 * Shell with line editing, history, and command parsing
@@ -121,7 +122,7 @@ Current FAT16 programs: `hello`, `ticks`, `args`, `runelf_test`, `readline`, `ex
 
 ```text
 BIOS
- → boot.asm              load loader2 (CHS, 4 sectors)
+ → boot.asm              load loader2 (CHS, 4 sectors) to `0xB000`
  → loader2.asm           load kernel (LBA) → protected mode
  → kernel_entry.asm      zero BSS → kernel_main()
 
@@ -191,11 +192,11 @@ mkimage   assembles the final bootable disk image
 
 ```text
 0x00007C00   bootloader stage 1
-0x0000A000   loader2 stage 2
+0x0000B000   loader2 stage 2
 0x00001000   kernel image
 0x00006000   kernel .bss start (page tables + PMM bitmap)
-~0x0000A000  kernel .bss end (approx)
-0x00090000   kernel stack top (boot / shell context)
+~0x0000B000  kernel .bss end (approx)
+0x000F0000   kernel stack top (boot / shell context)
 0x00100000   bump allocator — permanent kernel structures
 0x00200000   PMM — reclaimable frames
                process_t structs, process PDs, ELF frames,

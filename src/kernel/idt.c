@@ -1,12 +1,16 @@
 #include "idt.h"
 #include "ports.h"
+#include "terminal.h"
 #include "keyboard.h"
 #include "timer.h"
+#include "paging.h"
+#include "process.h"
 #include "scheduler.h"
 
 extern void idt_flush(unsigned int);
 extern void irq0_stub(void);
 extern void irq1_stub(void);
+extern void isr14_stub(void);
 extern void isr8_stub(void);
 extern void isr128_stub(void);
 
@@ -56,6 +60,7 @@ void idt_init(void) {
 
     pic_remap();
 
+    idt_set_gate(14,  (unsigned int)isr14_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
     idt_set_gate(8,   (unsigned int)isr8_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
     idt_set_gate(32,  (unsigned int)irq0_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
     idt_set_gate(33,  (unsigned int)irq1_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
@@ -81,6 +86,52 @@ void idt_init(void) {
 
     outb(0x21, 0xFC);
     outb(0xA1, 0xFF);
+}
+
+static unsigned int pf_frame_word(unsigned int esp, unsigned int index) {
+    return ((unsigned int*)esp)[index];
+}
+
+static unsigned int pf_get_cr2(void) {
+    unsigned int cr2;
+    __asm__ __volatile__("mov %%cr2, %0" : "=r"(cr2));
+    return cr2;
+}
+
+void page_fault_handler_main(unsigned int esp) {
+    unsigned int err = pf_frame_word(esp, 12);
+    unsigned int cs = pf_frame_word(esp, 14);
+    unsigned int cr2 = pf_get_cr2();
+    process_t* proc = sched_current();
+
+    terminal_puts("pf cr2=");
+    terminal_put_hex(cr2);
+    terminal_puts(" err=");
+    terminal_put_hex(err);
+    terminal_puts(" cs=");
+    terminal_put_hex(cs);
+    terminal_puts(((cs & 3u) == 3u) ? " user" : " kernel");
+    terminal_putc('\n');
+
+    /*
+     * User faults terminate just the current process so the shell and
+     * the rest of the VM stay alive.  Kernel faults still halt hard so
+     * we preserve the last error context instead of trying to recover
+     * from a potentially corrupted kernel stack.
+     */
+    if (proc && proc->pd != 0 && (cs & 3u) == 3u) {
+        terminal_puts("pf term ");
+        terminal_puts(proc->name);
+        terminal_putc('\n');
+
+        paging_switch(paging_get_kernel_pd());
+        sched_exit_current(esp);
+    }
+
+    terminal_puts("pf kernel panic\n");
+    for (;;) {
+        __asm__ __volatile__("cli; hlt");
+    }
 }
 
 /*

@@ -116,8 +116,9 @@ void gdt_init(void) {
     /* index 5 — TSS */
     __builtin_memset(&tss, 0, sizeof(tss));
     tss.ss0  = SEG_KERNEL_DATA;   /* 0x10 */
-    tss.esp0 = 0x90000;           /* kernel stack top — overwritten per-process
-                                     by tss_set_kernel_stack() before iret */
+    tss.esp0 = 0xF0000;           /* boot stack top from loader2's generated
+                                     constants; overwritten per-process by
+                                     tss_set_kernel_stack() before iret */
     tss.iomap_base = sizeof(tss); /* no I/O permission bitmap */
 
     gdt_set_tss(5, (unsigned int)&tss, sizeof(tss) - 1);
