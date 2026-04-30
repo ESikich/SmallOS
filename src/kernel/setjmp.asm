@@ -77,3 +77,5 @@ longjmp:
     mov  eax, ecx
 
     ret                        ; jump to saved eip with eax = val
+
+section .note.GNU-stack noalloc noexec nowrite progbits

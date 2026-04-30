@@ -26,3 +26,5 @@ sched_switch:
     ; Switch to next kernel stack
     mov  esp, ebx
     ret
+
+section .note.GNU-stack noalloc noexec nowrite progbits
