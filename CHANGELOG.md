@@ -1,18 +1,37 @@
 # Changelog
 
-## [Current] — COM1 serial driver + headless QEMU make targets
+## [Current] — Dynamic help + fault probe + exception hardening
 
 ### Added
 
-* **`src/drivers/serial.c` / `serial.h`** — minimal COM1 (0x3F8) UART driver
-  * `serial_init()` — configures 115200 8N1, disables IRQs, enables FIFO
-  * `serial_putc(c)` — writes one byte directly to the TX holding register
-* **Serial mirroring in terminal** (`src/drivers/terminal.c`)
-  * `terminal_init()` now calls `serial_init()` on startup
-  * `terminal_putc()` writes to both VGA and COM1
-  * `terminal_puts()` now iterates through `terminal_putc()` so all output paths reach serial
-* **`make run`** — boots QEMU with VGA rendered in the terminal via curses
-* **`make run-headless`** — daemonizes QEMU, exposes COM1 as `-serial file:/tmp/smallos-serial.log` and monitor as `/tmp/smallos-monitor.sock`
+* **Dynamic `help` output** (`src/shell/commands.c`)
+  * Built-in shell commands now render from the actual command table with short descriptions
+  * Shipped ELF programs now render from a program table with the same short descriptions
+  * The `help` text stays in sync when commands or programs change, instead of being hand-written prose
+
+* **Permanent fault probe ELF** (`src/user/fault.c`)
+  * `fault.elf` provides a repeatable way to trigger `#UD`, `#GP`, `#DE`, `#BR`, and `#PF`
+  * Default mode is `ud` so a bare `runelf fault.elf` still exercises the exception path
+
+* **Exception hardening** (`src/kernel/idt.c`, `src/kernel/interrupts.asm`)
+  * `#UD`, `#GP`, `#DE`, `#BR`, and `#PF` now log consistent crash records
+  * User faults terminate only the offending process and return to the shell
+  * Kernel faults still halt so the last error context is preserved
+  * `#DF` has a visible `DF!` emergency marker before halting
+
+* **Help and docs refresh**
+  * README and build/development docs now describe the built-in command table and shipped program table
+  * Windows / PowerShell debug launch documented with GTK and QEMU logging flags
+  * Boot/layout docs updated for the generated stage-2 stack guard and the `0xB000` loader2 placement
+
+### Changed
+
+* **`reboot` command documentation** — the shell help now labels `reboot` as rebooting the machine, and the docs note the Windows/QEMU debug launch that preserves normal reboot behavior
+
+### Fixed
+
+* **Stale program lists in docs** — the README and build docs now include `fault.elf` and the rest of the shipped ELF catalog
+* **Shell help drift** — the help text now reflects the actual built-in command and ELF program tables instead of a hard-coded list
 
 ---
 
