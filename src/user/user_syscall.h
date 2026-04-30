@@ -163,6 +163,17 @@ static inline int sys_writefile(const char* name, const char* buf, uint32_t len)
     return syscall3(SYS_WRITEFILE, (uint32_t)name, (uint32_t)buf, len);
 }
 
+/*
+ * sys_writefile_path(path, buf, len)
+ *
+ * Create or overwrite a FAT16 file at an arbitrary path.  This is the
+ * preferred write primitive for compilers and build tools because it can
+ * emit directly into nested directories.
+ */
+static inline int sys_writefile_path(const char* path, const char* buf, uint32_t len) {
+    return syscall3(SYS_WRITEFILE_PATH, (uint32_t)path, (uint32_t)buf, len);
+}
+
 static inline int sys_halt(void) {
     return syscall0(SYS_HALT);
 }

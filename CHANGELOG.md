@@ -1,5 +1,24 @@
 # Changelog
 
+## [Current] — Path-aware compiler output writes
+
+### Added
+
+* **`SYS_WRITEFILE_PATH`** (`src/kernel/syscall.c`, `src/kernel/uapi_syscall.h`, `src/user/user_syscall.h`)
+  * New path-aware write syscall for user programs that need to emit artifacts into nested directories
+  * Keeps `SYS_WRITEFILE` as the historical root-only compatibility path
+
+* **Compiler bootstrap coverage** (`src/user/compiler_demo.c`, `tests/elfs/compiler_demo.py`, `src/user/ptrguard.c`, `tests/elfs/ptrguard.py`)
+  * `compiler_demo` now writes and reads back `apps/demo/compiler.out` in addition to the root-level artifact
+  * Pointer-validation regression now covers the new path-aware write syscall
+
+### Changed
+
+* **Docs refresh** (`README.md`, `docs/syscalls.md`, `docs/build.md`, `docs/filesystem.md`, `src/shell/commands.c`)
+  * User-facing docs now describe `SYS_WRITEFILE_PATH` alongside the legacy `SYS_WRITEFILE`
+  * Filesystem docs now state that regular file writes can target nested paths
+  * Shell help text and program descriptions now mention the path-aware compiler write flow
+
 ## [Current] — Make-time selftest + loader fallback + dynamic help
 
 ### Added

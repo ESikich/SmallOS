@@ -25,6 +25,7 @@ void _start(int argc, char** argv) {
         "ADD AX, 2\n"
         "INT 0x80\n";
     static const char file_name[] = "compiler.out";
+    static const char nested_file_name[] = "apps/demo/compiler.out";
 
     u_puts("compiler_demo start\n");
 
@@ -57,6 +58,37 @@ void _start(int argc, char** argv) {
 
     if (sys_close(fd) < 0) {
         u_puts("close failed\n");
+        sys_exit(1);
+    }
+
+    if (sys_writefile_path(nested_file_name, artifact, str_len(artifact)) < 0) {
+        u_puts("writefile_path failed\n");
+        sys_exit(1);
+    }
+    u_puts("writefile_path: ok\n");
+
+    fd = sys_open(nested_file_name);
+    if (fd < 0) {
+        u_puts("nested open failed\n");
+        sys_exit(1);
+    }
+
+    n = sys_fread(fd, buf, (uint32_t)sizeof(buf));
+    if (n < 0 || (unsigned int)n != str_len(artifact)) {
+        u_puts("nested readback failed\n");
+        sys_close(fd);
+        sys_exit(1);
+    }
+
+    if (!bytes_equal(buf, artifact, (unsigned int)n)) {
+        u_puts("nested readback mismatch\n");
+        sys_close(fd);
+        sys_exit(1);
+    }
+    u_puts("nested readback: ok\n");
+
+    if (sys_close(fd) < 0) {
+        u_puts("nested close failed\n");
         sys_exit(1);
     }
 

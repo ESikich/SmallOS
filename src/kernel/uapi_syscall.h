@@ -41,7 +41,8 @@ enum {
     SYS_SLEEP     = 11,  /* block for N timer ticks */
     SYS_WRITEFILE = 12,  /* create/overwrite a root-directory file */
     SYS_HALT      = 13,  /* halt the machine */
-    SYS_REBOOT    = 14   /* reboot the machine */
+    SYS_REBOOT    = 14,  /* reboot the machine */
+    SYS_WRITEFILE_PATH = 15 /* create/overwrite a FAT16 file at any path */
 };
 
 #endif

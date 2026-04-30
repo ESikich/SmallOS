@@ -299,8 +299,7 @@ static int sys_exec_impl(const char* name, int argc, char** argv) {
  * sys_writefile_impl(name, buf, len)
  *
  * Create or overwrite a root-directory FAT16 file in one shot.  This is
- * the simplest output primitive for user-space tools that need to emit a
- * compiler product or generated artifact.
+ * the historical output primitive for user-space tools.
  */
 static int sys_writefile_impl(const char* name, const void* buf, unsigned int len) {
     char kname[EXEC_NAME_MAX];
@@ -308,6 +307,21 @@ static int sys_writefile_impl(const char* name, const void* buf, unsigned int le
     if (len > 0 && !user_buf_ok((unsigned int)buf, len)) return -1;
 
     return fat16_write(kname, (const u8*)buf, len) ? 0 : -1;
+}
+
+/*
+ * sys_writefile_path_impl(path, buf, len)
+ *
+ * Create or overwrite a FAT16 file at an arbitrary path.  This is the
+ * preferred output primitive for compilers because it can emit directly
+ * into nested directories.
+ */
+static int sys_writefile_path_impl(const char* path, const void* buf, unsigned int len) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    if (copy_user_cstr(kpath, sizeof(kpath), path) <= 1) return -1;
+    if (len > 0 && !user_buf_ok((unsigned int)buf, len)) return -1;
+
+    return fat16_write_path(kpath, (const u8*)buf, len) ? 0 : -1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -486,6 +500,13 @@ void syscall_handler_main(syscall_regs_t* regs) {
 
         case SYS_WRITEFILE:
             regs->eax = (unsigned int)sys_writefile_impl(
+                            (const char*)regs->ebx,
+                            (const void*)regs->ecx,
+                            regs->edx);
+            break;
+
+        case SYS_WRITEFILE_PATH:
+            regs->eax = (unsigned int)sys_writefile_path_impl(
                             (const char*)regs->ebx,
                             (const void*)regs->ecx,
                             regs->edx);

@@ -276,7 +276,7 @@ Shipped FAT16 programs:
 - `readline` - interactive SYS_READ demo
 - `exec_test` - exercise SYS_EXEC semantics
 - `fileread` - exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE
-- `compiler_demo` - exercise SYS_WRITEFILE and readback
+- `compiler_demo` - exercise SYS_WRITEFILE, SYS_WRITEFILE_PATH, and readback
 - `sleep_test` - exercise SYS_SLEEP semantics
 - `fault` - fault probe (ud/gp/de/br/pf)
 

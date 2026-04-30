@@ -11,6 +11,8 @@ CASES = [
             "sys_read invalid buf",
             "sys_open invalid name",
             "sys_writefile invalid name",
+            "sys_writefile_path invalid name",
+            "sys_writefile_path invalid buf",
             "sys_open hello",
             "sys_fread invalid buf",
             "sys_exec invalid argv",

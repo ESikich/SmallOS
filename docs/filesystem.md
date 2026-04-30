@@ -184,15 +184,15 @@ The current FAT16 driver is intentionally narrow.
 - directory creation/removal by path with `fat16_mkdir(path)` / `fat16_rmdir(path)`
 - file removal by path with `fat16_rm(path)`
 - empty-file creation / truncation via `touch`
+- root-directory file creation and overwrite via `fat16_write(name, ...)`
+- nested-path file creation and overwrite via `fat16_write_path(path, ...)`
 - case-insensitive 8.3 filename matching
 - FAT chain following for file reads
 - loading one file at a time into a shared static buffer
-- root-directory file creation and overwrite, plus nested-path file writes via `fat16_write_path(path, ...)`
 
 ## Not supported
 
 - long filenames (LFN)
-- file writes outside the root directory
 - multiple concurrent file buffers
 - general-purpose file descriptors
 - mounting arbitrary FAT layouts
@@ -231,7 +231,7 @@ Practical limits:
 - base name truncated to 8 characters for matching
 - extension truncated to 3 characters for matching
 - nested directories are supported for reads and listings, but regular file
-  writes still target the root directory only
+  writes can target either the root directory or a nested path
 
 ---
 
@@ -478,6 +478,6 @@ The following must stay true unless the implementation is changed everywhere:
 - FAT16 geometry in `fat16.c` matches `mkfat16.c`
 - `fat16_load()` returns a pointer into a reused static buffer
 - callers copy data out before another file load occurs
-- nested reads/listings use path-aware 8.3 lookup; regular file writes remain root-only
+- nested reads/listings use path-aware 8.3 lookup; regular file writes can target the root or a nested path
 
 Breaking any of these produces either immediate mount failure or silent file corruption.

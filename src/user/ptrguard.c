@@ -80,6 +80,14 @@ void _start(int argc, char** argv) {
               -1,
               sys_writefile((const char*)0x1234, "x", 1));
 
+    check_int("sys_writefile_path invalid name",
+              -1,
+              sys_writefile_path((const char*)0x1234, "x", 1));
+
+    check_int("sys_writefile_path invalid buf",
+              -1,
+              sys_writefile_path("apps/demo/ptrguard.txt", (const char*)0x1234, 1));
+
     {
         /* A valid fd should still work, but bad read buffers must fail. */
         int fd = sys_open("hello.elf");

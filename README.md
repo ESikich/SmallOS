@@ -33,15 +33,16 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Per-process page directories — address space isolation; PD itself freed on exit
 * Ring 3 user mode — hardware-enforced privilege separation
 * Per-process kernel stacks — dedicated PMM frame per process; TSS ESP0 set from it; freed on exit
-* Syscall layer via `int 0x80` (DPL=3 gate): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`, `SYS_READ`, `SYS_YIELD`, `SYS_SLEEP`, `SYS_EXEC`, `SYS_WRITEFILE`
+* Syscall layer via `int 0x80` (DPL=3 gate): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`, `SYS_READ`, `SYS_YIELD`, `SYS_SLEEP`, `SYS_EXEC`, `SYS_WRITEFILE`, `SYS_WRITEFILE_PATH`
 * `sys_exit()` is scheduler-owned: it switches to the kernel page directory, marks the current task `PROCESS_STATE_ZOMBIE`, and switches to the next runnable task
 * Shell now runs as an explicit kernel task scheduled by `scheduler.c`
 * **Preemptive round-robin scheduler** — timer IRQ (100 Hz) context-switches between kernel tasks; 10-tick (100 ms) quantum
 * **`SYS_YIELD`** — voluntary preemption; process surrenders its remaining quantum immediately
 **`SYS_EXEC`** — user process asynchronously spawns a named child ELF and returns `0` on success / `-1` on failure
 * **`SYS_WRITEFILE`** — user process creates or overwrites a root-directory FAT16 file in one shot
+* **`SYS_WRITEFILE_PATH`** — user process creates or overwrites a FAT16 file at any nested path
 * **ATA PIO driver** — polls the primary IDE channel (`0x1F0`) to read 512-byte sectors from disk in 32-bit protected mode; no DMA or IRQ required
-* **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing all user ELFs; built by `tools/mkfat16.c` with no external dependencies; readable via ATA PIO with nested directory paths, writable at runtime for root-directory files
+* **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing all user ELFs; built by `tools/mkfat16.c` with no external dependencies; readable via ATA PIO with nested directory paths, writable at runtime for root-directory files and nested paths
 
 ---
 
@@ -160,7 +161,7 @@ Current FAT16 programs:
 - `readline` - interactive SYS_READ demo
 - `exec_test` - exercise SYS_EXEC semantics
 - `fileread` - exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE
-- `compiler_demo` - exercise SYS_WRITEFILE and readback
+- `compiler_demo` - exercise SYS_WRITEFILE, SYS_WRITEFILE_PATH, and readback
 - `sleep_test` - exercise SYS_SLEEP semantics
 - `preempt_test` - prove timer-driven preemption between runnable tasks
 - `fault` - fault probe (ud/gp/de/br/pf)
