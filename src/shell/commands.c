@@ -218,6 +218,21 @@ static void cmd_fsls(command_t* cmd) {
     fat16_ls_path(path);
 }
 
+static void cmd_ls(command_t* cmd) {
+    if (cmd->argc < 2) {
+        const char* cwd = shell_get_cwd();
+        if (!cwd || cwd[0] == '\0') {
+            fat16_ls();
+            return;
+        }
+
+        fat16_ls_path(cwd);
+        return;
+    }
+
+    cmd_fsls(cmd);
+}
+
 static void cmd_fsread(command_t* cmd) {
     if (cmd->argc < 2) {
         terminal_puts("usage: fsread <n>\n");
@@ -473,6 +488,7 @@ static void cmd_shelltest(command_t* cmd) {
     command_t meminfo_cmd = { 1, { "meminfo" } };
     command_t cd_demo_cmd = { 2, { "cd", "apps/demo" } };
     command_t pwd_demo_cmd = { 1, { "pwd" } };
+    command_t ls_demo_cmd = { 1, { "ls" } };
     command_t fsread_rel_cmd = { 2, { "fsread", "hello.elf" } };
     command_t cat_rel_cmd = { 2, { "cat", "../../compiler.out" } };
     command_t touch_rel_cmd = { 2, { "touch", "LOCAL.TXT" } };
@@ -480,6 +496,7 @@ static void cmd_shelltest(command_t* cmd) {
     command_t runelf_rel_cmd = { 4, { "runelf", "hello", "alpha", "beta" } };
     command_t cd_root_cmd = { 2, { "cd", "/" } };
     command_t pwd_root_cmd = { 1, { "pwd" } };
+    command_t ls_root_cmd = { 1, { "ls" } };
     command_t ataread_cmd = { 2, { "ataread", "0" } };
     command_t fsls_root_cmd = { 1, { "fsls" } };
     command_t fsls_path_cmd = { 2, { "fsls", "apps/demo" } };
@@ -545,6 +562,7 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("fsread_touch", cmd_fsread, &fsread_touch_cmd);
     shelltest_call("cd", cmd_cd, &cd_demo_cmd);
     shelltest_call("pwd", cmd_pwd, &pwd_demo_cmd);
+    shelltest_call("ls", cmd_ls, &ls_demo_cmd);
     shelltest_call("fsread_rel", cmd_fsread, &fsread_rel_cmd);
     shelltest_call("cat_rel", cmd_cat, &cat_rel_cmd);
     shelltest_call("touch_rel", cmd_touch, &touch_rel_cmd);
@@ -552,6 +570,7 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("runelf_rel", cmd_runelf, &runelf_rel_cmd);
     shelltest_call("cd_root", cmd_cd, &cd_root_cmd);
     shelltest_call("pwd_root", cmd_pwd, &pwd_root_cmd);
+    shelltest_call("ls_root", cmd_ls, &ls_root_cmd);
     shelltest_call("cp", cmd_cp, &cp_cmd);
     shelltest_call("fsread_copy", cmd_fsread, &fsread_copy_cmd);
     shelltest_call("mv", cmd_mv, &mv_cmd);
@@ -673,6 +692,7 @@ static command_entry_t commands[] = {
     { "meminfo",       "show heap and frame usage",     cmd_meminfo },
     { "cd",            "change the shell working directory", cmd_cd },
     { "pwd",           "print the shell working directory", cmd_pwd },
+    { "ls",            "list a FAT16 directory",       cmd_ls },
     { "ataread",       "dump raw sector bytes",         cmd_ataread },
     { "fsls",          "list FAT16 root directory",     cmd_fsls },
     { "fsread",        "dump FAT16 file bytes",         cmd_fsread },

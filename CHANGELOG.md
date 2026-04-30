@@ -11,6 +11,7 @@
   * `mv <src> <dst>` renames or moves FAT16 files and directories
   * `rm <path>` removes FAT16 files in place
   * `touch <path>` creates or truncates FAT16 files
+  * `ls [path]` aliases `fsls [path]` for a friendlier directory listing command
   * The command help text and docs now describe the expanded shell surface
 
 * **Nested-path FAT16 writes** (`src/drivers/fat16.c`, `tools/mkfat16.c`)
