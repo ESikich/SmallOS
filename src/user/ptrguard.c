@@ -1,5 +1,10 @@
 #include "user_lib.h"
 
+/*
+ * ptrguard is a narrow regression test for syscall pointer validation.
+ * It intentionally passes bad user pointers and expects each syscall to
+ * reject them with -1 instead of faulting the kernel.
+ */
 static int g_failures = 0;
 static int g_checks = 0;
 
@@ -58,6 +63,7 @@ void _start(int argc, char** argv) {
     static const char ok_msg[] = "ptrguard: start\n";
     u_puts(ok_msg);
 
+    /* Plain invalid buffers should be rejected before the kernel deref. */
     check_int("sys_write invalid buf",
               -1,
               sys_write((const char*)0x1234, 4));
@@ -75,6 +81,7 @@ void _start(int argc, char** argv) {
               sys_writefile((const char*)0x1234, "x", 1));
 
     {
+        /* A valid fd should still work, but bad read buffers must fail. */
         int fd = sys_open("hello.elf");
         check_true("sys_open hello", fd >= 3);
         if (fd >= 3) {
@@ -86,6 +93,7 @@ void _start(int argc, char** argv) {
     }
 
     {
+        /* sys_exec should copy argv into kernel storage and reject junk. */
         char* bad_argv[] = { (char*)0x1234, 0 };
         check_int("sys_exec invalid argv",
                   -1,

@@ -338,7 +338,7 @@ static void cmd_selftest(command_t* cmd) {
         { "fileread",    "fileread.elf",    1, fileread_argv,    0 },
         { "compiler_demo","compiler_demo.elf",1, compiler_demo_argv,0 },
         { "sleep_test",  "sleep_test.elf",  1, sleep_argv,       0 },
-        { "ptrguard",    "ptrguard.elf",    1, ptrguard_argv,    0 },
+        { "ptrguard",    "ptrguard.elf",    1, ptrguard_argv,    0 }, /* syscall pointer regression */
         { "fault ud",    "fault.elf",       2, fault_ud_argv,    6 },
         { "fault gp",    "fault.elf",       2, fault_gp_argv,   13 },
         { "fault de",    "fault.elf",       2, fault_de_argv,    0 },
