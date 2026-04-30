@@ -31,6 +31,8 @@ idt_set_gate(vector, handler, 0x08, flags);
 ## Active Entries
 
 ```text
+0    → ISR0 (divide error)
+5    → ISR5 (bound range exceeded)
 6    → ISR6 (invalid opcode)
 13   → ISR13 (general protection fault)
 14   → page fault

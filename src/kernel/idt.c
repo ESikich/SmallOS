@@ -10,6 +10,8 @@
 extern void idt_flush(unsigned int);
 extern void irq0_stub(void);
 extern void irq1_stub(void);
+extern void isr0_stub(void);
+extern void isr5_stub(void);
 extern void isr6_stub(void);
 extern void isr13_stub(void);
 extern void isr14_stub(void);
@@ -62,6 +64,8 @@ void idt_init(void) {
 
     pic_remap();
 
+    idt_set_gate(0,   (unsigned int)isr0_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
+    idt_set_gate(5,   (unsigned int)isr5_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
     idt_set_gate(6,   (unsigned int)isr6_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
     idt_set_gate(13,  (unsigned int)isr13_stub,  KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
     idt_set_gate(14,  (unsigned int)isr14_stub,  KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
@@ -150,6 +154,14 @@ static void fault_handler_common(const char* tag, unsigned int esp, unsigned int
 
 void invalid_opcode_handler_main(unsigned int esp) {
     fault_handler_common("ud", esp, 0, 0);
+}
+
+void divide_error_handler_main(unsigned int esp) {
+    fault_handler_common("de", esp, 0, 0);
+}
+
+void bound_range_handler_main(unsigned int esp) {
+    fault_handler_common("br", esp, 0, 0);
 }
 
 void general_protection_handler_main(unsigned int esp) {
