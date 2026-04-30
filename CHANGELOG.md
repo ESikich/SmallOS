@@ -33,7 +33,7 @@
   * README and build/development docs now describe the built-in command table and shipped program table
   * README and build docs now mention `make test` and the shell `selftest` command
   * Windows / PowerShell debug launch documented with GTK and QEMU logging flags
-  * Boot/layout docs updated for the generated stage-2 stack guard and the `0xB000` loader2 placement
+  * Boot/layout docs updated for the generated stage-2 stack guard and the `0x10000` loader2 placement
 
 * **Reboot/halt smoke targets** (`Makefile`, `tools/qemu_smoke.py`)
   * `make smoke` runs dedicated reboot and halt guest checks without folding them into the full selftest suite

@@ -2,7 +2,8 @@
 [org 0x7C00]
 bits 16
 
-LOADER2_OFFSET   equ 0xB000
+LOADER2_SEGMENT  equ 0x1000
+LOADER2_OFFSET   equ 0x0000
 BOOT_SECTOR_SIZE equ 512
 LOADER2_SECTORS  equ 4
 
@@ -27,7 +28,7 @@ start:
     call print_string
 
     mov dl, [BOOT_DRIVE]
-    jmp 0x0000:LOADER2_OFFSET
+    jmp LOADER2_SEGMENT:LOADER2_OFFSET
 
 hang:
     jmp hang
@@ -48,9 +49,9 @@ print_string:
 load_loader2:
     pusha
 
-    xor ax, ax
+    mov ax, LOADER2_SEGMENT
     mov es, ax
-    mov bx, LOADER2_OFFSET
+    xor bx, bx
 
     mov dl, [BOOT_DRIVE]
     xor ax, ax

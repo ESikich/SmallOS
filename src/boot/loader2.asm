@@ -1,7 +1,7 @@
 ; loader2.asm
 ;
 ; Stage 2 loader contract:
-;   - loaded by boot sector to physical 0xB000
+;   - loaded by boot sector to physical 0x10000
 ;   - occupies exactly 4 sectors (2048 bytes)
 ;   - kernel image begins at disk LBA KERNEL_LBA (0-based)
 ;   - kernel is loaded to physical 0x1000
@@ -9,16 +9,14 @@
 ;   - then jumps to kernel entry at 0x1000
 ;
 ; Safe kernel size:
-;   Loader2 is at 0xB000.  Kernel loads to 0x1000.
-;   Stage-2 uses a generated stack top so the kernel load area can grow
-;   without colliding with the loader's real-mode/protected-mode stack.
-;   Maximum safe kernel size before the build fails:
-;     (0xF000 - 0x1000) / 512 = 112 sectors = 56 KB
-;   If the kernel exceeds this, the build should fail before image assembly.
+;   The build guard compares the kernel load span against both this loader's
+;   physical address and the generated stage-2 stack top.
+;   If the kernel exceeds that ceiling, the build fails before image assembly.
 
-[org 0xB000]
+[org 0x10000]
 bits 16
 
+LOADER2_SEGMENT      equ 0x1000
 KERNEL_OFFSET        equ 0x1000
 KERNEL_LBA           equ 5
 KERNEL_SECTORS       equ __KERNEL_SECTORS__
@@ -26,14 +24,13 @@ STAGE2_STACK_TOP     equ __STAGE2_STACK_TOP__
 STAGE2_STACK_TOP_32  equ __STAGE2_STACK_TOP_32__
 
 start:
-    mov [BOOT_DRIVE], dl
-
     cli
-    xor ax, ax
+    mov ax, LOADER2_SEGMENT
     mov ds, ax
     mov es, ax
     mov ss, ax
     mov sp, STAGE2_STACK_TOP
+    mov [BOOT_DRIVE], dl
     sti
 
     ; --- Check INT 0x13 extensions ---
@@ -146,7 +143,10 @@ switch_to_pm:
     mov eax, cr0
     or eax, 0x1
     mov cr0, eax
-    jmp CODE_SEG:init_pm
+    ; loader2 now lives above 64 KiB, so the protected-mode far jump needs a
+    ; 32-bit offset.  A 16-bit far jump would truncate init_pm and land in the
+    ; wrong linear address.
+    jmp dword CODE_SEG:init_pm
 
 [bits 32]
 init_pm:

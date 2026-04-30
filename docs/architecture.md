@@ -54,7 +54,7 @@ kernel_main()
 ## Stage 1 – boot.asm
 
 * Loaded by BIOS at `0x7C00`
-* Loads stage 2 via CHS `INT 0x13 AH=0x02` (4 sectors, fits within one track) to `0xB000`
+* Loads stage 2 via CHS `INT 0x13 AH=0x02` (4 sectors, fits within one track) to `0x10000`
 * Must be exactly **512 bytes**, ending with `dw 0xAA55`
 
 ---
@@ -65,7 +65,8 @@ Runs in **real mode**, then switches to **protected mode**.
 
 * Checks `INT 0x13 AH=0x41` for LBA extension support — halts if not available
 * Loads kernel (`KERNEL_LBA`, currently 5) to `0x1000` via `INT 0x13 AH=0x42`
-* Sets up a generated temporary stack, installs a temporary GDT, enables protected mode, jumps to `0x1000`
+* Sets up a generated temporary stack (`SP=0xFF00`, physical top `0x1FF00`), installs a temporary GDT, enables protected mode, and uses a 32-bit far jump into `init_pm`
+* In protected mode, switches to `0x1FF000` as the boot/kernel stack top and jumps to kernel entry at `0x1000`
 
 One value injected by Makefile at build time: `KERNEL_SECTORS`.
 
@@ -369,11 +370,11 @@ Programs are linked at fixed virtual address `0x400000`, loaded into private use
 
 ```text
 0x00007C00   bootloader stage 1
-0x0000B000   loader2 stage 2 (done after protected-mode jump)
+0x00010000   loader2 stage 2 (done after protected-mode jump)
 0x00001000   kernel image
 0x00006000   kernel .bss start (page tables + PMM bitmap)
 ~0x0000A000  kernel .bss end
-0x000F0000   KERNEL_BOOT_STACK_TOP (defined in `memory.h`) — boot stack top
+0x001FF000   KERNEL_BOOT_STACK_TOP (defined in `memory.h`) — boot stack top
              (grows downward; fallback ESP0 for kernel tasks such as the shell)
 0x00100000   bump allocator base — permanent kernel structures
                kmalloc()      — long-lived kernel-owned data only

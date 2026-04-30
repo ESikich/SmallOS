@@ -6,7 +6,7 @@
  * This is also the fallback ESP0 for kernel tasks that have no per-process
  * kernel stack frame.
  */
-#define KERNEL_BOOT_STACK_TOP 0xF0000u
+#define KERNEL_BOOT_STACK_TOP 0x1FF000u
 
 void          memory_init(unsigned int start);
 void*         kmalloc(unsigned int size);

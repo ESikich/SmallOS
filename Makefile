@@ -22,10 +22,17 @@ BOOT_SECTOR_SIZE := $(shell awk '/^BOOT_SECTOR_SIZE[[:space:]]+equ/ {print $$3}'
 BOOT_SECTOR_MASK := $(shell echo $$(( $(BOOT_SECTOR_SIZE) - 1 )))
 KERNEL_LBA := $(shell awk '/^KERNEL_LBA[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/loader2.asm)
 KERNEL_OFFSET := 0x1000
-STAGE2_STACK_TOP := 0xF000
-STAGE2_STACK_TOP_32 := 0xF0000
-# Build-time guard: keep stage 2's stack safely above the loaded kernel image.
-STAGE2_SAFE_KERNEL_SECTORS := $(shell echo $$(( ( $(STAGE2_STACK_TOP) - $(KERNEL_OFFSET) ) / $(BOOT_SECTOR_SIZE) )))
+LOADER2_SEGMENT := $(shell awk '/^LOADER2_SEGMENT[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
+LOADER2_OFFSET := $(shell awk '/^LOADER2_OFFSET[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
+LOADER2_LOAD_ADDR := $(shell echo $$(( ( $(LOADER2_SEGMENT) << 4 ) + $(LOADER2_OFFSET) )))
+STAGE2_STACK_TOP := 0xFF00
+STAGE2_STACK_TOP_PHYS := 0x1FF00
+STAGE2_STACK_TOP_32 := 0x1FF000
+# Build-time guard: keep stage 2's stack and loader body safely above the loaded kernel image.
+STAGE2_SAFE_KERNEL_SECTORS := $(shell \
+	stack_limit=$$(( ( $(STAGE2_STACK_TOP_PHYS) - $(KERNEL_OFFSET) ) )); \
+	loader_limit=$$(( ( $(LOADER2_LOAD_ADDR) - $(KERNEL_OFFSET) ) )); \
+	if [ $$stack_limit -lt $$loader_limit ]; then echo $$(( $$stack_limit / $(BOOT_SECTOR_SIZE) )); else echo $$(( $$loader_limit / $(BOOT_SECTOR_SIZE) )); fi)
 FAT16_TOTAL_SECTORS := $(shell awk '/^#define[[:space:]]+TOTAL_SECTORS[[:space:]]+/ {print $$3}' tools/mkfat16.c)
 FAT16_TOTAL_SIZE_MB := $(shell awk '/^#define[[:space:]]+TOTAL_SIZE_MB[[:space:]]+/ {print $$3}' tools/mkfat16.c)
 BOOT_FAT16_LBA_PATCH_OFFSET := $(shell awk '/^FAT16_LBA_PATCH_OFFSET[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
@@ -166,9 +173,9 @@ $(BIN_DIR)/boot.bin: $(BOOT_DIR)/boot.asm | dirs
 #   kernel_padded.bin    (sector-aligned, LBA $(KERNEL_LBA)+)
 #   fat16.img            ($(FAT16_TOTAL_SIZE_MB) MB FAT16 partition, LBA $(KERNEL_LBA)+kernel_sectors)
 #
-# The stage-2 stack top and kernel-size ceiling come from the same constants,
-# so a growth that would overlap the loader becomes a build error instead of a
-# boot-time hang.
+# The stage-2 stack top and loader load address both feed the kernel-size
+# ceiling, so a growth that would overlap either one becomes a build error
+# instead of a boot-time hang.
 #
 # The FAT16 partition start LBA is patched as a little-endian u32 into the
 # boot-sector field declared by FAT16_LBA_PATCH_OFFSET in boot.asm so the kernel can read
@@ -195,7 +202,7 @@ MONITOR_SOCK=/tmp/smallos-monitor.sock
 PIDFILE=/tmp/smallos.pid
 SMOKE_TIMEOUT=120.0
 PYTHON3=python3
-QEMUFLAGS=-drive format=raw,file=$(IMG_DIR)/os-image.bin -m 32 \
+QEMUFLAGS=-drive format=raw,file=$(IMG_DIR)/os-image.bin -boot c -m 32 \
           -serial file:$(SERIAL_LOG)
 
 .PHONY: all dirs run run-headless test smoke smoke-reboot smoke-halt clean
