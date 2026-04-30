@@ -284,3 +284,5 @@ tss_flush:
     mov  eax, [esp+4]
     ltr  ax
     ret
+
+section .note.GNU-stack noalloc noexec nowrite progbits

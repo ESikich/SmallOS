@@ -16,3 +16,5 @@ hang:
     cli
     hlt
     jmp hang
+
+section .note.GNU-stack noalloc noexec nowrite progbits
