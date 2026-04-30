@@ -78,6 +78,8 @@ loader2.bin          boot.bin
 
 `make boot-layout-check` verifies the generated boot-chain inputs before that step runs, and `make image-layout-check` verifies the finished `os-image.bin` afterwards.
 
+`make verify` is the one-shot preflight target: it runs both layout checks, then `make test`, then `make smoke`.
+
 ## Automated Guest Test
 
 `make test` boots the finished image headlessly, launches the shell

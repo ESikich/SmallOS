@@ -226,7 +226,7 @@ PYTHON3=python3
 QEMUFLAGS=-drive format=raw,file=$(IMG_DIR)/os-image.bin -boot c -m 32 \
           -serial file:$(SERIAL_LOG)
 
-.PHONY: all dirs run run-headless test smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check
+.PHONY: all dirs run run-headless test smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify
 
 run: image-layout-check
 	$(QEMU) $(QEMUFLAGS) -display curses
@@ -270,6 +270,12 @@ smoke-halt: image-layout-check
 		--serial $(SERIAL_LOG) \
 		--pidfile $(PIDFILE) \
 		--timeout $(SMOKE_TIMEOUT)
+
+verify:
+	$(MAKE) boot-layout-check
+	$(MAKE) image-layout-check
+	$(MAKE) test
+	$(MAKE) smoke
 
 clean:
 	rm -rf $(BUILD_DIR)
