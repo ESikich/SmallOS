@@ -118,6 +118,8 @@ The required invariant is that `0x1000 + kernel_sectors * BOOT_SECTOR_SIZE` must
 
 `make boot-layout-check` is the host-side guard for this contract. It verifies the built loader and kernel artifacts, the generated stage-2 stack values, and the current ceiling before the disk image is assembled.
 
+`make image-layout-check` then validates the finished `os-image.bin`, including the patched FAT16 LBA and the sector placement of each component.
+
 ---
 
 ## GDT Rules

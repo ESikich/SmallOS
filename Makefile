@@ -203,6 +203,17 @@ $(IMG_DIR)/os-image.bin: boot-layout-check $(BIN_DIR)/boot.bin $(BIN_DIR)/loader
 		--loader-size $(LOADER2_SIZE_BYTES) \
 		--boot-fat16-lba-patch-offset $(BOOT_FAT16_LBA_PATCH_OFFSET)
 
+image-layout-check: $(IMG_DIR)/os-image.bin
+	$(PYTHON3) tools/verify_image_layout.py \
+		--image $(IMG_DIR)/os-image.bin \
+		--boot $(BIN_DIR)/boot.bin \
+		--loader2 $(BIN_DIR)/loader2.bin \
+		--kernel $(BIN_DIR)/kernel.bin \
+		--fat16 $(BIN_DIR)/fat16.img \
+		--sector-size $(BOOT_SECTOR_SIZE) \
+		--kernel-lba $(KERNEL_LBA) \
+		--boot-fat16-lba-patch-offset $(BOOT_FAT16_LBA_PATCH_OFFSET)
+
 -include $(wildcard $(OBJ_DIR)/*.d)
 -include $(wildcard $(OBJ_DIR)/*/*.d)
 
@@ -215,17 +226,17 @@ PYTHON3=python3
 QEMUFLAGS=-drive format=raw,file=$(IMG_DIR)/os-image.bin -boot c -m 32 \
           -serial file:$(SERIAL_LOG)
 
-.PHONY: all dirs run run-headless test smoke smoke-reboot smoke-halt clean boot-layout-check
+.PHONY: all dirs run run-headless test smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check
 
-run: $(IMG_DIR)/os-image.bin
+run: image-layout-check
 	$(QEMU) $(QEMUFLAGS) -display curses
 
-run-headless: $(IMG_DIR)/os-image.bin
+run-headless: image-layout-check
 	$(QEMU) $(QEMUFLAGS) -display none \
 	    -monitor unix:/tmp/smallos-monitor.sock,server,nowait \
 	    -daemonize -pidfile /tmp/smallos.pid
 
-test: $(IMG_DIR)/os-image.bin
+test: image-layout-check
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
 	$(MAKE) run-headless
@@ -234,11 +245,11 @@ test: $(IMG_DIR)/os-image.bin
 		--serial $(SERIAL_LOG) \
 		--pidfile $(PIDFILE)
 
-smoke: $(IMG_DIR)/os-image.bin
+smoke: image-layout-check
 	$(MAKE) smoke-reboot
 	$(MAKE) smoke-halt
 
-smoke-reboot: $(IMG_DIR)/os-image.bin
+smoke-reboot: image-layout-check
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
 	$(MAKE) run-headless
@@ -249,7 +260,7 @@ smoke-reboot: $(IMG_DIR)/os-image.bin
 		--pidfile $(PIDFILE) \
 		--timeout $(SMOKE_TIMEOUT)
 
-smoke-halt: $(IMG_DIR)/os-image.bin
+smoke-halt: image-layout-check
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
 	$(MAKE) run-headless

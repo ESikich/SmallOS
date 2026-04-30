@@ -76,6 +76,8 @@ loader2.bin          boot.bin
 
 `mkimage` performs the final disk-image assembly step. It pads `kernel.bin` to a whole number of sectors, computes the FAT16 start LBA, concatenates the component binaries, and patches the FAT16 start LBA into the boot-sector field declared by `boot.asm`.
 
+`make boot-layout-check` verifies the generated boot-chain inputs before that step runs, and `make image-layout-check` verifies the finished `os-image.bin` afterwards.
+
 ## Automated Guest Test
 
 `make test` boots the finished image headlessly, launches the shell
@@ -532,6 +534,8 @@ The Makefile generates `loader2.gen.asm` by text substitution into `loader2.asm`
 ## Host Tool Image Assembly
 
 `mkimage` owns final disk-image assembly. This keeps Make focused on dependency orchestration while moving disk-layout mechanics (padding, LBA calculation, boot-sector patching) into ordinary host-side code.
+
+`make image-layout-check` is the companion verifier for the finished `os-image.bin`. It checks that the assembled image still matches the intended sector map and FAT16 patch.
 
 ## LBA Extended Reads
 

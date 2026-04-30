@@ -123,6 +123,8 @@ The Makefile reads these declarations during image construction rather than rede
 
 This keeps the hand-rolled boot path explicit: the build fails before QEMU starts if the layout drifts.
 
+`make image-layout-check` goes one step further and validates the finished `os-image.bin` itself. It checks the boot-sector patch, the loader and kernel placement, the FAT16 start LBA, and the zero padding between the kernel and FAT16 region.
+
 **Symptom of violation:** BIOS INT 0x13 hangs silently mid-transfer. The screen shows `Loading...` but never advances. No error is printed because the hang occurs inside the BIOS call.
 
 ---

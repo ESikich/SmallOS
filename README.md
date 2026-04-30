@@ -206,6 +206,8 @@ FAT16_LBA = KERNEL_LBA + kernel_sectors
 
 The resulting FAT16 start LBA is patched into the boot-sector field declared by `FAT16_LBA_PATCH_OFFSET` (currently offset 504) after image assembly.
 
+`make boot-layout-check` validates the hand-rolled boot contract before assembly, and `make image-layout-check` validates the finished `os-image.bin` after assembly.
+
 ---
 
 ## Build Tools
