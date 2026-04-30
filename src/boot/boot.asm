@@ -2,10 +2,11 @@
 [org 0x7C00]
 bits 16
 
-LOADER2_SEGMENT  equ 0x1000
+LOADER2_SEGMENT  equ 0x2000
 LOADER2_OFFSET   equ 0x0000
 BOOT_SECTOR_SIZE equ 512
-LOADER2_SECTORS  equ 4
+LOADER2_SECTORS_PATCH_OFFSET equ 488
+FAT16_LBA_PATCH_OFFSET equ 504
 
 start:
     mov [BOOT_DRIVE], dl
@@ -58,8 +59,8 @@ load_loader2:
     int 0x13
     jc disk_error
 
+    mov al, [loader2_sectors]
     mov ah, 0x02
-    mov al, LOADER2_SECTORS
     mov ch, 0
     mov cl, 2
     mov dh, 0
@@ -82,9 +83,11 @@ disk_msg   db " Disk read error!", 0
 
 BOOT_SIGNATURE_SIZE    equ 2
 FAT16_LBA_PATCH_SIZE   equ 4
-FAT16_LBA_PATCH_OFFSET equ 504
 
+times LOADER2_SECTORS_PATCH_OFFSET-($-$$) db 0
+loader2_sectors dd 0
 times FAT16_LBA_PATCH_OFFSET-($-$$) db 0
 fat16_start_lba dd 0
+
 times BOOT_SECTOR_SIZE-BOOT_SIGNATURE_SIZE-($-$$) db 0
 dw 0xAA55

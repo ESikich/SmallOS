@@ -22,8 +22,8 @@ typedef struct {
     const char* fat16_path;
     const char* out_path;
     u32 sector_size;
-    u32 kernel_lba;
     u32 loader_size;
+    u32 boot_loader2_sectors_patch_offset;
     u32 boot_fat16_lba_patch_offset;
 } Options;
 
@@ -87,10 +87,10 @@ static void parse_args(int argc, char** argv, Options* opt) {
             opt->out_path = argv[++i];
         } else if (strcmp(argv[i], "--sector-size") == 0 && i + 1 < argc) {
             opt->sector_size = parse_u32(argv[++i], "sector size");
-        } else if (strcmp(argv[i], "--kernel-lba") == 0 && i + 1 < argc) {
-            opt->kernel_lba = parse_u32(argv[++i], "kernel LBA");
         } else if (strcmp(argv[i], "--loader-size") == 0 && i + 1 < argc) {
             opt->loader_size = parse_u32(argv[++i], "loader size");
+        } else if (strcmp(argv[i], "--boot-loader2-sectors-patch-offset") == 0 && i + 1 < argc) {
+            opt->boot_loader2_sectors_patch_offset = parse_u32(argv[++i], "boot loader2 sectors patch offset");
         } else if (strcmp(argv[i], "--boot-fat16-lba-patch-offset") == 0 && i + 1 < argc) {
             opt->boot_fat16_lba_patch_offset = parse_u32(argv[++i], "boot FAT16 LBA patch offset");
         } else {
@@ -107,11 +107,20 @@ static void parse_args(int argc, char** argv, Options* opt) {
     if (opt->sector_size == 0) {
         die("sector size must be non-zero");
     }
+    if (opt->loader_size == 0) {
+        die("loader size must be non-zero");
+    }
+    if (opt->loader_size % opt->sector_size != 0) {
+        die("loader size must be sector-aligned");
+    }
 
     /*
-     * We patch a 4-byte little-endian FAT16 start LBA into the boot sector.
-     * The patch field must fit entirely inside the first sector.
+     * We patch 4-byte little-endian values into the boot sector.
+     * Each patch field must fit entirely inside the first sector.
      */
+    if (opt->boot_loader2_sectors_patch_offset + 4 > opt->sector_size) {
+        die("boot loader2 sectors patch offset does not fit in boot sector");
+    }
     if (opt->boot_fat16_lba_patch_offset + 4 > opt->sector_size) {
         die("boot FAT16 LBA patch offset does not fit in boot sector");
     }
@@ -227,12 +236,16 @@ int main(int argc, char** argv) {
     size_t kernel_pad = padded_kernel_size - kernel_size;
     u32 kernel_sectors = (u32)(padded_kernel_size / opt.sector_size);
 
-    if (kernel_sectors > 0xFFFFFFFFu - opt.kernel_lba) {
+    u32 loader_sectors = (u32)(opt.loader_size / opt.sector_size);
+    u32 kernel_lba = 1u + loader_sectors;
+
+    if (kernel_sectors > 0xFFFFFFFFu - kernel_lba) {
         die("computed FAT16 LBA overflows u32");
     }
-    u32 fat16_lba = opt.kernel_lba + kernel_sectors;
+    u32 fat16_lba = kernel_lba + kernel_sectors;
 
-    /* Patch FAT16 start LBA into the boot sector before writing output. */
+    /* Patch loader2 size and FAT16 start LBA into the boot sector before writing output. */
+    patch_u32_le(boot, opt.boot_loader2_sectors_patch_offset, loader_sectors);
     patch_u32_le(boot, opt.boot_fat16_lba_patch_offset, fat16_lba);
 
     FILE* out = fopen(opt.out_path, "wb");
@@ -255,13 +268,15 @@ int main(int argc, char** argv) {
     size_t fat16_sectors = fat16_size / opt.sector_size;
 
     printf("kernel:  %zu bytes (%u sectors, LBA %u)\n",
-           kernel_size, kernel_sectors, opt.kernel_lba);
+           kernel_size, kernel_sectors, kernel_lba);
     printf("fat16:   %zu sectors (%zu MB), LBA %u\n",
            fat16_sectors,
            fat16_size / (1024u * 1024u),
            fat16_lba);
     printf("fat16:   LBA %u patched into sector 0 offset %u\n",
            fat16_lba, opt.boot_fat16_lba_patch_offset);
+    printf("boot:    loader2 sectors %u patched into sector 0 offset %u\n",
+           loader_sectors, opt.boot_loader2_sectors_patch_offset);
 
     free(boot);
     free(loader);

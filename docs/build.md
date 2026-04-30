@@ -168,10 +168,10 @@ Current ownership:
 ```text
 src/boot/boot.asm
   BOOT_SECTOR_SIZE
+  LOADER2_SECTORS_PATCH_OFFSET
   FAT16_LBA_PATCH_OFFSET
 
 src/boot/loader2.asm
-  KERNEL_LBA
   LOADER2_SIZE_BYTES
 
 tools/mkfat16.c
@@ -324,13 +324,15 @@ That padding is now performed by `mkimage`, not by a separate Makefile-generated
 **Why this is required:** The final FAT16 start LBA is computed as:
 
 ```text
-FAT16_LBA = KERNEL_LBA + kernel_sectors
+kernel_lba     = 1 + loader2_sectors
+FAT16_LBA      = kernel_lba + kernel_sectors
 ```
 
 where:
 
 ```text
-kernel_sectors = ceil(kernel.bin / BOOT_SECTOR_SIZE)
+loader2_sectors = loader2.bin / BOOT_SECTOR_SIZE
+kernel_sectors  = ceil(kernel.bin / BOOT_SECTOR_SIZE)
 ```
 
 If `kernel.bin` is not padded to a sector boundary before `fat16.img` is appended, the FAT volume would begin mid-sector in the final image while the kernel would still try to read it from the next full LBA. FAT16 reads would then return incorrect data.
@@ -360,8 +362,8 @@ build/tools/mkimage \
     --fat16 build/bin/fat16.img \
     --out build/img/os-image.bin \
     --sector-size 512 \
-    --kernel-lba 5 \
     --loader-size 2048 \
+    --boot-loader2-sectors-patch-offset 488 \
     --boot-fat16-lba-patch-offset 504
 ```
 
@@ -380,18 +382,20 @@ fat16.img
 It computes:
 
 ```text
-kernel_sectors = ceil(kernel.bin / BOOT_SECTOR_SIZE)
-FAT16_LBA      = KERNEL_LBA + kernel_sectors
+loader2_sectors = loader2.bin / BOOT_SECTOR_SIZE
+kernel_lba      = 1 + loader2_sectors
+kernel_sectors  = ceil(kernel.bin / BOOT_SECTOR_SIZE)
+FAT16_LBA       = kernel_lba + kernel_sectors
 ```
 
-It then patches `FAT16_LBA` as a little-endian `u32` into the boot-sector field declared by `FAT16_LBA_PATCH_OFFSET` in `boot.asm`.
+It then patches `loader2_sectors` and `FAT16_LBA` as little-endian `u32` values into the boot-sector fields declared by `LOADER2_SECTORS_PATCH_OFFSET` and `FAT16_LBA_PATCH_OFFSET` in `boot.asm`.
 
 ## Layout
 
 ```text
 LBA 0                     boot.bin
-LBA 1 ... KERNEL_LBA-1    loader2.bin
-LBA KERNEL_LBA ... N      padded kernel region
+LBA 1 ... 4               loader2.bin
+LBA 5 ... N               padded kernel region
 LBA N+1 ...               fat16.img
 ```
 

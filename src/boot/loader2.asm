@@ -1,9 +1,9 @@
 ; loader2.asm
 ;
 ; Stage 2 loader contract:
-;   - loaded by boot sector to physical 0x10000
+;   - loaded by boot sector to physical 0x20000
 ;   - occupies exactly 4 sectors (2048 bytes)
-;   - kernel image begins at disk LBA KERNEL_LBA (0-based)
+;   - kernel image begins immediately before the FAT16 partition
 ;   - kernel is loaded to physical 0x1000
 ;   - after loading, stage 2 enters 32-bit protected mode
 ;   - then jumps to kernel entry at 0x1000
@@ -13,15 +13,16 @@
 ;   physical address and the generated stage-2 stack top.
 ;   If the kernel exceeds that ceiling, the build fails before image assembly.
 
-[org 0x10000]
+[org 0x20000]
 bits 16
 
-LOADER2_SEGMENT      equ 0x1000
+LOADER2_SEGMENT      equ 0x2000
 KERNEL_OFFSET        equ 0x1000
-KERNEL_LBA           equ 5
 KERNEL_SECTORS       equ __KERNEL_SECTORS__
 STAGE2_STACK_TOP     equ __STAGE2_STACK_TOP__
 STAGE2_STACK_TOP_32  equ __STAGE2_STACK_TOP_32__
+BOOT_SECTOR_ADDR     equ 0x7C00
+FAT16_LBA_PATCH_OFFSET equ 504
 
 start:
     cli
@@ -93,7 +94,13 @@ load_kernel:
     mov word  [dap_count], KERNEL_SECTORS
     mov word  [dap_off],   KERNEL_OFFSET
     mov word  [dap_seg],   0x0000
-    mov dword [dap_lba],   KERNEL_LBA
+    push ds
+    xor ax, ax
+    mov ds, ax
+    mov eax, [BOOT_SECTOR_ADDR + FAT16_LBA_PATCH_OFFSET]
+    pop ds
+    sub eax, KERNEL_SECTORS
+    mov dword [dap_lba],   eax
     mov dword [dap_lba+4], 0
     call lba_read
     popa
@@ -143,7 +150,7 @@ switch_to_pm:
     mov eax, cr0
     or eax, 0x1
     mov cr0, eax
-    ; loader2 now lives above 64 KiB, so the protected-mode far jump needs a
+    ; loader2 now lives above 128 KiB, so the protected-mode far jump needs a
     ; 32-bit offset.  A 16-bit far jump would truncate init_pm and land in the
     ; wrong linear address.
     jmp dword CODE_SEG:init_pm

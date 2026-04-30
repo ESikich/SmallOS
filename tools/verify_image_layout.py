@@ -38,7 +38,7 @@ def main() -> int:
     parser.add_argument("--kernel", type=Path, required=True)
     parser.add_argument("--fat16", type=Path, required=True)
     parser.add_argument("--sector-size", type=int, required=True)
-    parser.add_argument("--kernel-lba", type=int, required=True)
+    parser.add_argument("--boot-loader2-sectors-patch-offset", type=int, required=True)
     parser.add_argument("--boot-fat16-lba-patch-offset", type=int, required=True)
     args = parser.parse_args()
 
@@ -50,27 +50,33 @@ def main() -> int:
 
     expect(len(boot) == args.sector_size, f"boot.bin must be {args.sector_size} bytes")
     expect(len(loader2) == 2048, "loader2.bin must be 2048 bytes")
+    expect(len(loader2) % args.sector_size == 0, "loader2.bin must be sector-aligned")
+    expect(args.boot_loader2_sectors_patch_offset + 4 <= args.sector_size,
+           "boot loader2 sector-count patch field must fit inside the boot sector")
     expect(args.boot_fat16_lba_patch_offset + 4 <= args.sector_size,
            "boot FAT16 patch field must fit inside the boot sector")
 
+    loader2_sectors = len(loader2) // args.sector_size
+    kernel_lba = 1 + loader2_sectors
     kernel_padded_size = ((len(kernel) + args.sector_size - 1) // args.sector_size) * args.sector_size
     kernel_pad = kernel_padded_size - len(kernel)
     kernel_sectors = kernel_padded_size // args.sector_size
-    fat16_lba = args.kernel_lba + kernel_sectors
+    fat16_lba = kernel_lba + kernel_sectors
 
     expected_size = args.sector_size + len(loader2) + kernel_padded_size + len(fat16)
     expect(len(image) == expected_size,
            f"image size mismatch: expected {expected_size}, got {len(image)}")
 
+    patch_u32_le(boot, args.boot_loader2_sectors_patch_offset, loader2_sectors)
     patch_u32_le(boot, args.boot_fat16_lba_patch_offset, fat16_lba)
     expect(image[:len(boot)] == boot, "boot sector bytes do not match patched boot.bin")
     expect(image[args.sector_size:args.sector_size + len(loader2)] == loader2,
            "loader2 bytes do not match loader2.bin")
-    expect(image[args.kernel_lba * args.sector_size:
-                 args.kernel_lba * args.sector_size + len(kernel)] == kernel,
+    expect(image[kernel_lba * args.sector_size:
+                 kernel_lba * args.sector_size + len(kernel)] == kernel,
            "kernel bytes do not match kernel.bin at the expected LBA")
-    expect(image[args.kernel_lba * args.sector_size + len(kernel):
-                 args.kernel_lba * args.sector_size + kernel_padded_size] == b"\x00" * kernel_pad,
+    expect(image[kernel_lba * args.sector_size + len(kernel):
+                 kernel_lba * args.sector_size + kernel_padded_size] == b"\x00" * kernel_pad,
            "kernel padding bytes are not zero")
 
     fat16_offset = fat16_lba * args.sector_size
@@ -83,6 +89,8 @@ def main() -> int:
 
     print("image layout ok")
     print(f"  image size          = {len(image)} bytes")
+    print(f"  loader2 sectors     = {loader2_sectors}")
+    print(f"  kernel start LBA    = {kernel_lba}")
     print(f"  kernel sectors      = {kernel_sectors}")
     print(f"  FAT16 start LBA     = {fat16_lba}")
     print(f"  kernel padded bytes = {kernel_padded_size}")

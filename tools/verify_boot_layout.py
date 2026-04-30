@@ -52,13 +52,15 @@ def main() -> int:
     boot_sector_size = parse_equ(boot_asm, "BOOT_SECTOR_SIZE")
     loader2_segment = parse_equ(boot_asm, "LOADER2_SEGMENT")
     loader2_offset = parse_equ(boot_asm, "LOADER2_OFFSET")
+    loader2_sectors_patch_offset = parse_equ(boot_asm, "LOADER2_SECTORS_PATCH_OFFSET")
+    fat16_lba_patch_offset = parse_equ(boot_asm, "FAT16_LBA_PATCH_OFFSET")
     kernel_offset = parse_equ(loader2_asm, "KERNEL_OFFSET")
     stage2_stack_top = parse_equ(loader2_gen, "STAGE2_STACK_TOP")
     stage2_stack_top_32 = parse_equ(loader2_gen, "STAGE2_STACK_TOP_32")
     kernel_boot_stack_top = parse_equ(memory_h, "KERNEL_BOOT_STACK_TOP")
 
     loader2_load_addr = (loader2_segment << 4) + loader2_offset
-    stage2_stack_top_phys = 0x1FF00
+    stage2_stack_top_phys = loader2_load_addr + stage2_stack_top
     expected_stage2_stack_top = 0xFF00
     expected_stage2_stack_top_32 = 0x1FF000
     expected_kernel_boot_stack_top = 0x1FF000
@@ -69,10 +71,13 @@ def main() -> int:
     )
 
     expect(boot_sector_size == 512, f"BOOT_SECTOR_SIZE must be 512, got {boot_sector_size}")
-    expect(loader2_load_addr == 0x10000, f"loader2 must load at 0x10000, got 0x{loader2_load_addr:x}")
     expect(kernel_offset == 0x1000, f"KERNEL_OFFSET must be 0x1000, got 0x{kernel_offset:x}")
     expect(kernel_boot_stack_top == expected_kernel_boot_stack_top,
            f"KERNEL_BOOT_STACK_TOP must be 0x{expected_kernel_boot_stack_top:x}, got 0x{kernel_boot_stack_top:x}")
+    expect(loader2_sectors_patch_offset + 4 <= boot_sector_size,
+           "loader2 sector-count patch field must fit inside the boot sector")
+    expect(fat16_lba_patch_offset + 4 <= boot_sector_size,
+           "FAT16 patch field must fit inside the boot sector")
     expect(stage2_stack_top is None or stage2_stack_top == expected_stage2_stack_top,
            f"stage2 stack top must be 0x{expected_stage2_stack_top:x}")
     expect(stage2_stack_top_32 is None or stage2_stack_top_32 == expected_stage2_stack_top_32,
@@ -86,8 +91,8 @@ def main() -> int:
     expect(loader2_bin_size == 2048, f"loader2.bin must be 2048 bytes, got {loader2_bin_size}")
     expect("jmp dword CODE_SEG:init_pm" in loader2_asm,
            "loader2.asm must use a 32-bit far jump into init_pm")
-    expect("[org 0x10000]" in loader2_asm,
-           "loader2.asm must be assembled with org 0x10000")
+    expect(f"[org 0x{loader2_load_addr:x}]" in loader2_asm,
+           f"loader2.asm must be assembled with org 0x{loader2_load_addr:x}")
 
     print("boot layout ok")
     print(f"  boot sector size    = {boot_sector_size}")
@@ -97,6 +102,8 @@ def main() -> int:
     print(f"  safe kernel ceiling = {safe_sectors} sectors")
     print(f"  stage2 stack top    = 0x{stage2_stack_top:x} (phys 0x{stage2_stack_top_phys:x})")
     print(f"  kernel boot stack   = 0x{kernel_boot_stack_top:x}")
+    print(f"  loader2 patch off   = {loader2_sectors_patch_offset}")
+    print(f"  fat16 patch off     = {fat16_lba_patch_offset}")
     return 0
 
 

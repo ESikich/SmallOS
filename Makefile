@@ -20,13 +20,12 @@ TOOLS_DIR=$(BUILD_DIR)/tools
 
 BOOT_SECTOR_SIZE := $(shell awk '/^BOOT_SECTOR_SIZE[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 BOOT_SECTOR_MASK := $(shell echo $$(( $(BOOT_SECTOR_SIZE) - 1 )))
-KERNEL_LBA := $(shell awk '/^KERNEL_LBA[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/loader2.asm)
 KERNEL_OFFSET := 0x1000
 LOADER2_SEGMENT := $(shell awk '/^LOADER2_SEGMENT[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 LOADER2_OFFSET := $(shell awk '/^LOADER2_OFFSET[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 LOADER2_LOAD_ADDR := $(shell echo $$(( ( $(LOADER2_SEGMENT) << 4 ) + $(LOADER2_OFFSET) )))
 STAGE2_STACK_TOP := 0xFF00
-STAGE2_STACK_TOP_PHYS := 0x1FF00
+STAGE2_STACK_TOP_PHYS := $(shell printf '0x%X' $$(( $(LOADER2_LOAD_ADDR) + $(STAGE2_STACK_TOP) )))
 STAGE2_STACK_TOP_32 := 0x1FF000
 # Build-time guard: keep stage 2's stack and loader body safely above the loaded kernel image.
 STAGE2_SAFE_KERNEL_SECTORS := $(shell \
@@ -36,6 +35,7 @@ STAGE2_SAFE_KERNEL_SECTORS := $(shell \
 FAT16_TOTAL_SECTORS := $(shell awk '/^#define[[:space:]]+TOTAL_SECTORS[[:space:]]+/ {print $$3}' tools/mkfat16.c)
 FAT16_TOTAL_SIZE_MB := $(shell awk '/^#define[[:space:]]+TOTAL_SIZE_MB[[:space:]]+/ {print $$3}' tools/mkfat16.c)
 BOOT_FAT16_LBA_PATCH_OFFSET := $(shell awk '/^FAT16_LBA_PATCH_OFFSET[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
+BOOT_LOADER2_SECTORS_PATCH_OFFSET := $(shell awk '/^LOADER2_SECTORS_PATCH_OFFSET[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 LOADER2_SIZE_BYTES := $(shell awk '/^LOADER2_SIZE_BYTES[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/loader2.asm)
 
 CPPFLAGS=-I$(KERNEL_DIR) -I$(DRIVERS_DIR) -I$(SHELL_DIR) -I$(EXEC_DIR) -I$(USER_DIR)
@@ -146,7 +146,8 @@ $(GEN_DIR)/loader2.gen.asm: $(BOOT_DIR)/loader2.asm $(BIN_DIR)/kernel.bin | dirs
 		echo "       move the stage-2 stack higher or shrink the kernel"; \
 		exit 1; \
 	fi; \
-	echo "kernel:  $$(wc -c < $(BIN_DIR)/kernel.bin) bytes ($$kernel_sectors sectors, LBA $(KERNEL_LBA))"; \
+	kernel_lba=$$(( 1 + $$(wc -c < $(BIN_DIR)/loader2.bin) / $(BOOT_SECTOR_SIZE) )); \
+	echo "kernel:  $$(wc -c < $(BIN_DIR)/kernel.bin) bytes ($$kernel_sectors sectors, LBA $$kernel_lba)"; \
 	sed \
 		-e "s/__KERNEL_SECTORS__/$$kernel_sectors/" \
 		-e "s/__STAGE2_STACK_TOP__/$(STAGE2_STACK_TOP)/" \
@@ -179,9 +180,9 @@ boot-layout-check: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.
 #
 # Layout:
 #   boot.bin             ($(BOOT_SECTOR_SIZE) bytes,   LBA 0)
-#   loader2.bin          ($(LOADER2_SIZE_BYTES) bytes, LBA 1-($(KERNEL_LBA)-1))
-#   kernel_padded.bin    (sector-aligned, LBA $(KERNEL_LBA)+)
-#   fat16.img            ($(FAT16_TOTAL_SIZE_MB) MB FAT16 partition, LBA $(KERNEL_LBA)+kernel_sectors)
+#   loader2.bin          ($(LOADER2_SIZE_BYTES) bytes, LBA 1-$(shell echo $$(( $(LOADER2_SIZE_BYTES) / $(BOOT_SECTOR_SIZE) ))))
+#   kernel_padded.bin    (sector-aligned, immediately after loader2.bin)
+#   fat16.img            ($(FAT16_TOTAL_SIZE_MB) MB FAT16 partition, after the padded kernel)
 #
 # The stage-2 stack top and loader load address both feed the kernel-size
 # ceiling, so a growth that would overlap either one becomes a build error
@@ -199,8 +200,8 @@ $(IMG_DIR)/os-image.bin: boot-layout-check $(BIN_DIR)/boot.bin $(BIN_DIR)/loader
 		--fat16 $(BIN_DIR)/fat16.img \
 		--out $@ \
 		--sector-size $(BOOT_SECTOR_SIZE) \
-		--kernel-lba $(KERNEL_LBA) \
 		--loader-size $(LOADER2_SIZE_BYTES) \
+		--boot-loader2-sectors-patch-offset $(BOOT_LOADER2_SECTORS_PATCH_OFFSET) \
 		--boot-fat16-lba-patch-offset $(BOOT_FAT16_LBA_PATCH_OFFSET)
 
 image-layout-check: $(IMG_DIR)/os-image.bin
@@ -211,7 +212,7 @@ image-layout-check: $(IMG_DIR)/os-image.bin
 		--kernel $(BIN_DIR)/kernel.bin \
 		--fat16 $(BIN_DIR)/fat16.img \
 		--sector-size $(BOOT_SECTOR_SIZE) \
-		--kernel-lba $(KERNEL_LBA) \
+		--boot-loader2-sectors-patch-offset $(BOOT_LOADER2_SECTORS_PATCH_OFFSET) \
 		--boot-fat16-lba-patch-offset $(BOOT_FAT16_LBA_PATCH_OFFSET)
 
 -include $(wildcard $(OBJ_DIR)/*.d)

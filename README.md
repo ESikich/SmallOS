@@ -153,7 +153,7 @@ Current FAT16 programs:
 
 ```text
 BIOS
- → boot.asm              load loader2 (CHS, 4 sectors) to `0x10000`
+ → boot.asm              load loader2 (CHS, 4 sectors) to `0x20000`
  → loader2.asm           load kernel (LBA) → protected mode
  → kernel_entry.asm      zero BSS → kernel_main()
 
@@ -194,20 +194,21 @@ runelf hello
 ```text
 LBA 0           boot.bin              (512 bytes)
 LBA 1–4         loader2.bin           (currently 2048 bytes)
-LBA KERNEL_LBA+ padded kernel region  (sector-aligned)
-LBA KERNEL_LBA+ks
+LBA 5+          padded kernel region  (sector-aligned)
+LBA 5+ks
                fat16.img             (16 MB FAT16 partition)
 ```
 
-`KERNEL_LBA` is declared in `src/boot/loader2.asm`. `FAT16_LBA_PATCH_OFFSET` is declared in `src/boot/boot.asm`.
+`LOADER2_SECTORS_PATCH_OFFSET` and `FAT16_LBA_PATCH_OFFSET` are declared in `src/boot/boot.asm`. The kernel start LBA is derived from the loader2 size, not hardcoded in stage 2.
 
 During image assembly, the Makefile reads those declarations and passes them to `mkimage`, which computes:
 
 ```text
-FAT16_LBA = KERNEL_LBA + kernel_sectors
+kernel_lba = 1 + loader2_sectors
+FAT16_LBA = kernel_lba + kernel_sectors
 ```
 
-The resulting FAT16 start LBA is patched into the boot-sector field declared by `FAT16_LBA_PATCH_OFFSET` (currently offset 504) after image assembly.
+The resulting loader2 sector count and FAT16 start LBA are patched into the boot-sector fields declared by `LOADER2_SECTORS_PATCH_OFFSET` and `FAT16_LBA_PATCH_OFFSET` (currently offsets 488 and 504) after image assembly.
 
 `make verify` runs the full preflight: boot-layout check, image-layout check, guest `test`, and `smoke`. Use `make boot-layout-check` or `make image-layout-check` when you want to isolate a specific layer.
 
@@ -226,7 +227,7 @@ mkimage   assembles the final bootable disk image
 
 ```text
 0x00007C00   bootloader stage 1
-0x00010000   loader2 stage 2
+0x00020000   loader2 stage 2
 0x00001000   kernel image
 0x00006000   kernel .bss start (page tables + PMM bitmap)
 ~0x0000A000  kernel .bss end (approx)
