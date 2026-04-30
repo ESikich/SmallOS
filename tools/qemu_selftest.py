@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
 
 import argparse
+import importlib
 import os
+import pkgutil
 import socket
 import sys
 import time
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+TEST_PACKAGE = "tests.elfs"
+
+
+sys.path.insert(0, str(REPO_ROOT))
 
 
 def wait_for_path(path, timeout_s):
@@ -43,16 +53,135 @@ def send_text(sock, text):
             send_key(sock, "spc")
         elif ch == "\n":
             send_key(sock, "ret")
+        elif ch == "_":
+            send_key(sock, "shift-minus")
+        elif ch == ".":
+            send_key(sock, "dot")
+        elif ch == "-":
+            send_key(sock, "minus")
         elif "a" <= ch <= "z" or "0" <= ch <= "9":
             send_key(sock, ch)
         else:
             raise RuntimeError(f"unsupported key for send_text: {ch!r}")
+        time.sleep(0.05)
 
 
 def read_new(log, offset):
     log.seek(offset)
     chunk = log.read()
     return chunk, log.tell()
+
+
+def tee_stdout(text):
+    if text:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+
+
+def load_cases():
+    pkg = importlib.import_module(TEST_PACKAGE)
+    pkg_path = Path(pkg.__file__).resolve().parent
+    cases = []
+
+    for modinfo in sorted(pkgutil.iter_modules([str(pkg_path)]), key=lambda m: m.name):
+        if modinfo.name.startswith("_"):
+            continue
+        mod = importlib.import_module(f"{TEST_PACKAGE}.{modinfo.name}")
+        cases.extend(getattr(mod, "CASES", []))
+
+    return cases
+
+
+def normalize_case(case):
+    normalized = {
+        "name": case["name"],
+        "command": case["command"],
+        "must_contain": list(case.get("must_contain", [])),
+        "interactive": list(case.get("interactive", [])),
+        "timeout": float(case.get("timeout", 30.0)),
+    }
+    return normalized
+
+
+def collect_selftest_transcript(sock, log, start_offset, deadline, cases):
+    buf = ""
+    log_offset = start_offset
+
+    tee_stdout("\n[selftest] ")
+    send_text(sock, "selftest")
+    send_key(sock, "ret")
+
+    interactive = []
+    for case in cases:
+        interactive.extend(case["interactive"])
+    responded = set()
+
+    seen_result = False
+    while time.time() < deadline:
+        chunk, log_offset = read_new(log, log_offset)
+        if chunk:
+            tee_stdout(chunk)
+            buf += chunk
+
+            for marker, response in interactive:
+                if marker in buf and marker not in responded:
+                    send_text(sock, response)
+                    send_key(sock, "ret")
+                    responded.add(marker)
+
+            if "selftest: PASS" in buf:
+                seen_result = True
+            if "selftest: FAIL" in buf:
+                seen_result = True
+            if seen_result and "> " in buf:
+                return buf, log_offset
+            if len(buf) > 8192:
+                buf = buf[-4096:]
+        else:
+            time.sleep(0.05)
+
+    raise RuntimeError("timed out waiting for guest selftest")
+
+
+def verify_cases(cases, transcript):
+    overall_pass = True
+    for case in cases:
+        missing = [marker for marker in case["must_contain"] if marker not in transcript]
+        if missing:
+            print(f"[{case['name']}] FAIL")
+            for marker in missing:
+                print(f"  missing: {marker}")
+            overall_pass = False
+        else:
+            print(f"[{case['name']}] PASS")
+    return overall_pass
+
+
+def shutdown_qemu(sock, pidfile, result_pass):
+    try:
+        monitor_send(sock, "quit")
+    except OSError:
+        pass
+
+    if not wait_for_path(pidfile, 1.0):
+        return 0 if result_pass else 1
+
+    deadline = time.time() + 5.0
+    try:
+        with open(pidfile, "r", encoding="utf-8") as f:
+            pid = int(f.read().strip())
+    except Exception:
+        return 0 if result_pass else 1
+
+    while time.time() < deadline:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return 0 if result_pass else 1
+        time.sleep(0.05)
+
+    print("qemu did not exit after quit", file=sys.stderr)
+    return 1
 
 
 def main():
@@ -71,6 +200,7 @@ def main():
         return 1
 
     sock = connect_monitor(args.monitor, args.timeout)
+    cases = [normalize_case(case) for case in load_cases()]
 
     log_offset = 0
     deadline = time.time() + args.timeout
@@ -80,6 +210,7 @@ def main():
         while time.time() < deadline:
             chunk, log_offset = read_new(log, log_offset)
             if chunk:
+                tee_stdout(chunk)
                 buf += chunk
                 if "> " in buf:
                     break
@@ -91,72 +222,10 @@ def main():
             print("timed out waiting for shell prompt", file=sys.stderr)
             return 1
 
-    send_text(sock, "selftest")
-    send_key(sock, "ret")
+        transcript, log_offset = collect_selftest_transcript(sock, log, log_offset, deadline, cases)
+        overall_pass = verify_cases(cases, transcript)
 
-    seen_first_readline = False
-    seen_second_readline = False
-    seen_result = False
-    result_pass = False
-
-    with open(args.serial, "r", encoding="utf-8", errors="replace") as log:
-        while time.time() < deadline:
-            chunk, log_offset = read_new(log, log_offset)
-            if chunk:
-                buf += chunk
-                if "Enter your name:" in buf and not seen_first_readline:
-                    send_text(sock, "erik")
-                    send_key(sock, "ret")
-                    seen_first_readline = True
-                if "Type a line (max 127 chars):" in buf and not seen_second_readline:
-                    send_text(sock, "smallos")
-                    send_key(sock, "ret")
-                    seen_second_readline = True
-                if "selftest: PASS" in buf:
-                    seen_result = True
-                    result_pass = True
-                    break
-                if "selftest: FAIL" in buf:
-                    seen_result = True
-                    result_pass = False
-                    break
-                if len(buf) > 8192:
-                    buf = buf[-4096:]
-            else:
-                time.sleep(0.05)
-
-    if not seen_result:
-        print("timed out waiting for selftest result", file=sys.stderr)
-        try:
-            monitor_send(sock, "quit")
-        except OSError:
-            pass
-        return 1
-
-    try:
-        monitor_send(sock, "quit")
-    except OSError:
-        pass
-
-    if not wait_for_path(args.pidfile, 1.0):
-        return 0 if result_pass else 1
-
-    deadline = time.time() + 5.0
-    try:
-        with open(args.pidfile, "r", encoding="utf-8") as f:
-            pid = int(f.read().strip())
-    except Exception:
-        return 0 if result_pass else 1
-
-    while time.time() < deadline:
-        try:
-            os.kill(pid, 0)
-        except OSError:
-            return 0 if result_pass else 1
-        time.sleep(0.05)
-
-    print("qemu did not exit after quit", file=sys.stderr)
-    return 1
+    return shutdown_qemu(sock, args.pidfile, overall_pass)
 
 
 if __name__ == "__main__":

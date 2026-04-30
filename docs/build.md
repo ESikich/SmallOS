@@ -79,7 +79,8 @@ loader2.bin          boot.bin
 
 `make test` boots the finished image headlessly, launches the shell
 `selftest` command, feeds the interactive `readline` prompt, and
-verifies that every shipped ELF exits with the expected status.
+verifies every shipped ELF against the per-program expectation files in
+`tests/elfs/`.
 
 ---
 

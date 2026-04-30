@@ -19,7 +19,7 @@ qemu-system-i386 -drive format=raw,file=os-image.bin -m 32 -serial stdio -d int,
 
 `make test` runs the same image headlessly, launches the shell `selftest`
 command, feeds the interactive `readline` prompt, and verifies every
-shipped ELF returns the expected status.
+shipped ELF using the per-program expectations in `tests/elfs/`.
 
 Do not use `-fda` (floppy). LBA extended reads require hard disk mode.
 

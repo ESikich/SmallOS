@@ -98,7 +98,8 @@ screenshots (`screendump`).
 
 `make test` boots the image headlessly, runs the shell `selftest`
 command, feeds the interactive `readline` prompt, and checks every
-shipped ELF in one pass.
+shipped ELF in one pass.  The per-ELF expectations live under
+`tests/elfs/`.
 
 The PowerShell command keeps a GTK window visible while capturing guest output in the console and saving `qemu.log` plus `qemu-console.log` for later debugging.
 
