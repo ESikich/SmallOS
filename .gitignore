@@ -6,6 +6,8 @@ build/
 *.bin
 *.elf
 *.gen.asm
+__pycache__/
+*.pyc
 
 # Editor
 .vscode/
