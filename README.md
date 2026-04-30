@@ -161,6 +161,7 @@ kernel_main()
  → paging_init()         enable paging, identity-map 8 MB
  → memory_init()         bump allocator at 0x100000
  → pmm_init()            bitmap allocator at 0x200000
+ → kernel_selfcheck()    verify TSS, stack, heap, and PMM baselines
  → keyboard/timer/idt    drivers and interrupt table
  → sched_init()          initialise runnable task table
  → ata_init()            initialise ATA primary channel

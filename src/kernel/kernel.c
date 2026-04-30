@@ -12,6 +12,59 @@
 #include "ata.h"
 #include "fat16.h"
 
+static unsigned short kernel_read_tr(void) {
+    unsigned short tr;
+    __asm__ __volatile__("str %0" : "=r"(tr));
+    return tr;
+}
+
+static unsigned int kernel_read_esp(void) {
+    unsigned int esp;
+    __asm__ __volatile__("mov %%esp, %0" : "=r"(esp));
+    return esp;
+}
+
+static void kernel_selfcheck_fail(const char* msg) {
+    terminal_puts("kernel: selfcheck FAIL: ");
+    terminal_puts(msg);
+    terminal_putc('\n');
+
+    for (;;) {
+        __asm__ __volatile__("cli; hlt");
+    }
+}
+
+static void kernel_selfcheck_expect(int cond, const char* msg) {
+    if (!cond) {
+        kernel_selfcheck_fail(msg);
+    }
+}
+
+static void kernel_selfcheck(void) {
+    unsigned int esp = kernel_read_esp();
+
+    terminal_puts("kernel: selfcheck\n");
+
+    /*
+     * These are the startup invariants the hand-rolled boot path must
+     * already have established before we let the shell come up.
+     */
+    kernel_selfcheck_expect(kernel_read_tr() == SEG_TSS,
+                            "task register not loaded with the TSS selector");
+    kernel_selfcheck_expect(tss_get_kernel_stack() == KERNEL_BOOT_STACK_TOP,
+                            "TSS kernel stack top mismatch");
+    kernel_selfcheck_expect(memory_get_heap_top() == 0x100000u,
+                            "heap top moved before startup allocations");
+    kernel_selfcheck_expect(pmm_free_count() == PMM_NUM_FRAMES,
+                            "PMM free frame count mismatch");
+    kernel_selfcheck_expect(esp <= KERNEL_BOOT_STACK_TOP,
+                            "kernel stack pointer above boot stack top");
+    kernel_selfcheck_expect(esp > KERNEL_BOOT_STACK_TOP - 0x1000u,
+                            "kernel stack pointer left the boot stack page");
+
+    terminal_puts("kernel: selfcheck PASS\n");
+}
+
 void kernel_main(void) {
     terminal_init();
     terminal_puts("SmallOS\n");
@@ -21,6 +74,7 @@ void kernel_main(void) {
 
     memory_init(0x100000);
     pmm_init();
+    kernel_selfcheck();
 
     keyboard_init();
     timer_init(100);

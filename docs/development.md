@@ -26,6 +26,11 @@ built-in shell commands (`tests/shell/`) and shipped ELFs
 `make smoke-reboot` or `make smoke-halt` when you want to verify those
 commands without running the full guest suite.
 
+`kernel_main()` now runs a small startup selfcheck right after `pmm_init()`.
+It prints `kernel: selfcheck PASS` when the live TSS selector, boot stack,
+heap base, and PMM free-frame baseline all match the boot contract. If any of
+those invariants drift, the kernel halts before the shell starts.
+
 Do not use `-fda` (floppy). LBA extended reads require hard disk mode.
 
 `help` is table-driven:
