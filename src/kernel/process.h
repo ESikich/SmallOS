@@ -48,6 +48,7 @@ typedef struct {
     u32             kernel_stack_frame;
     unsigned int    sched_esp;
     process_state_t state;
+    int             exit_status;
     void          (*kernel_entry)(void);
     unsigned int    user_entry;
     int             user_argc;
@@ -79,9 +80,9 @@ process_t* process_get_foreground(void);
 
 /*
  * Wait for a process to reach ZOMBIE, then destroy it from the current
- * safe stack and return.
+ * safe stack and return its exit status.
  */
-void       process_wait(process_t* proc);
+int        process_wait(process_t* proc);
 
 /*
  * process_start_reaper()

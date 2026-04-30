@@ -106,7 +106,11 @@ static unsigned int pf_get_cr2(void) {
     return cr2;
 }
 
-static void fault_handler_common(const char* tag, unsigned int esp, unsigned int has_err, unsigned int has_cr2) {
+static void fault_handler_common(const char* tag,
+                                 unsigned int esp,
+                                 unsigned int has_err,
+                                 unsigned int has_cr2,
+                                 int exit_status) {
     unsigned int err = has_err ? fault_frame_word(esp, 12) : 0;
     unsigned int eip = fault_frame_word(esp, has_err ? 13 : 12);
     unsigned int cs = fault_frame_word(esp, has_err ? 14 : 13);
@@ -141,6 +145,7 @@ static void fault_handler_common(const char* tag, unsigned int esp, unsigned int
         terminal_puts(proc->name);
         terminal_putc('\n');
 
+        proc->exit_status = exit_status;
         paging_switch(paging_get_kernel_pd());
         sched_exit_current(esp);
     }
@@ -153,23 +158,23 @@ static void fault_handler_common(const char* tag, unsigned int esp, unsigned int
 }
 
 void invalid_opcode_handler_main(unsigned int esp) {
-    fault_handler_common("ud", esp, 0, 0);
+    fault_handler_common("ud", esp, 0, 0, 6);
 }
 
 void divide_error_handler_main(unsigned int esp) {
-    fault_handler_common("de", esp, 0, 0);
+    fault_handler_common("de", esp, 0, 0, 0);
 }
 
 void bound_range_handler_main(unsigned int esp) {
-    fault_handler_common("br", esp, 0, 0);
+    fault_handler_common("br", esp, 0, 0, 5);
 }
 
 void general_protection_handler_main(unsigned int esp) {
-    fault_handler_common("gp", esp, 1, 0);
+    fault_handler_common("gp", esp, 1, 0, 13);
 }
 
 void page_fault_handler_main(unsigned int esp) {
-    fault_handler_common("pf", esp, 1, 1);
+    fault_handler_common("pf", esp, 1, 1, 14);
 }
 
 /*

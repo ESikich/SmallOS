@@ -17,6 +17,10 @@ On Windows / PowerShell, this pattern keeps a GTK window open and captures both 
 qemu-system-i386 -drive format=raw,file=os-image.bin -m 32 -serial stdio -d int,cpu_reset,guest_errors -D qemu.log -display gtk 2>&1 | Tee-Object -FilePath qemu-console.log
 ```
 
+`make test` runs the same image headlessly, launches the shell `selftest`
+command, feeds the interactive `readline` prompt, and verifies every
+shipped ELF returns the expected status.
+
 Do not use `-fda` (floppy). LBA extended reads require hard disk mode.
 
 `help` is table-driven:

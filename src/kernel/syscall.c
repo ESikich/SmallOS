@@ -81,7 +81,10 @@ static int sys_putc_impl(unsigned int ch) {
 }
 
 static void sys_exit_impl(syscall_regs_t* regs) {
-    (void)regs->ebx;
+    process_t* proc = (process_t*)sched_current();
+    if (proc) {
+        proc->exit_status = (int)regs->ebx;
+    }
     paging_switch(paging_get_kernel_pd());
     sched_exit_current((unsigned int)regs);
     for (;;) {

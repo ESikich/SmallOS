@@ -171,8 +171,8 @@ process_t* process_get_foreground(void) {
     return s_foreground;
 }
 
-void process_wait(process_t* proc) {
-    if (!proc) return;
+int process_wait(process_t* proc) {
+    if (!proc) return -1;
 
     process_set_foreground(proc);
 
@@ -181,7 +181,9 @@ void process_wait(process_t* proc) {
     }
 
     process_set_foreground(0);
+    int status = proc->exit_status;
     process_destroy(proc);
+    return status;
 }
 
 /* ------------------------------------------------------------------ */

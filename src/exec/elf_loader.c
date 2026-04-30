@@ -240,7 +240,35 @@ process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
 
 process_t* elf_run_named(const char* name, int argc, char** argv) {
     u32 size = 0;
-    const u8* data = fat16_load(name, &size);
+    const u8* data = 0;
+    char alt_name[40];
+
+    if (name) {
+        int has_dot = 0;
+        for (const char* p = name; *p; p++) {
+            if (*p == '.') {
+                has_dot = 1;
+                break;
+            }
+        }
+
+        if (!has_dot) {
+            u32 len = (u32)k_strlen(name);
+            if (len + 4u < sizeof(alt_name)) {
+                k_memcpy(alt_name, name, len);
+                k_memcpy(alt_name + len, ".elf", 5);
+                data = fat16_load(alt_name, &size);
+                if (data) {
+                    name = alt_name;
+                }
+            }
+        }
+
+        if (!data) {
+            data = fat16_load(name, &size);
+        }
+    }
+
     if (!data) {
         terminal_puts("elf: not found: ");
         terminal_puts(name);

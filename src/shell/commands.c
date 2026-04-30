@@ -213,6 +213,87 @@ static void cmd_runelf_nowait(command_t* cmd) {
     }
 }
 
+typedef struct {
+    const char* label;
+    const char* program;
+    int argc;
+    char** argv;
+    int expected_status;
+} selftest_case_t;
+
+static int run_selftest_case(const selftest_case_t* tc) {
+    terminal_puts("selftest: ");
+    terminal_puts(tc->label);
+    terminal_puts(" ... ");
+
+    process_t* proc = elf_run_named(tc->program, tc->argc, tc->argv);
+    if (!proc) {
+        terminal_puts("FAIL (launch)\n");
+        return 0;
+    }
+
+    int status = process_wait(proc);
+    if (status != tc->expected_status) {
+        terminal_puts("FAIL (status=");
+        terminal_put_uint((unsigned int)status);
+        terminal_puts(", expected=");
+        terminal_put_uint((unsigned int)tc->expected_status);
+        terminal_puts(")\n");
+        return 0;
+    }
+
+    terminal_puts("PASS\n");
+    return 1;
+}
+
+static void cmd_selftest(command_t* cmd) {
+    (void)cmd;
+
+    int ok = 1;
+
+    char* hello_argv[] = { "hello", "alpha", "beta", 0 };
+    char* ticks_argv[] = { "ticks.elf", 0 };
+    char* args_argv[] = { "args", "alpha", "beta", 0 };
+    char* runelf_argv[] = { "runelf_test.elf", "alpha", "beta", "gamma", 0 };
+    char* readline_argv[] = { "readline.elf", 0 };
+    char* exec_argv[] = { "exec_test.elf", 0 };
+    char* fileread_argv[] = { "fileread.elf", 0 };
+    char* fault_ud_argv[] = { "fault.elf", "ud", 0 };
+    char* fault_gp_argv[] = { "fault.elf", "gp", 0 };
+    char* fault_de_argv[] = { "fault.elf", "de", 0 };
+    char* fault_br_argv[] = { "fault.elf", "br", 0 };
+    char* fault_pf_argv[] = { "fault.elf", "pf", 0 };
+
+    const selftest_case_t cases[] = {
+        { "hello",       "hello.elf",       3, hello_argv,       0 },
+        { "ticks",       "ticks.elf",       1, ticks_argv,       0 },
+        { "args",        "args.elf",        3, args_argv,        0 },
+        { "runelf_test", "runelf_test.elf", 4, runelf_argv,      0 },
+        { "readline",    "readline.elf",    1, readline_argv,    0 },
+        { "exec_test",   "exec_test.elf",   1, exec_argv,        0 },
+        { "fileread",    "fileread.elf",    1, fileread_argv,    0 },
+        { "fault ud",    "fault.elf",       2, fault_ud_argv,    6 },
+        { "fault gp",    "fault.elf",       2, fault_gp_argv,   13 },
+        { "fault de",    "fault.elf",       2, fault_de_argv,    0 },
+        { "fault br",    "fault.elf",       2, fault_br_argv,    5 },
+        { "fault pf",    "fault.elf",       2, fault_pf_argv,   14 },
+    };
+
+    terminal_puts("selftest: start\n");
+
+    for (unsigned int i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        if (!run_selftest_case(&cases[i])) {
+            ok = 0;
+        }
+    }
+
+    if (ok) {
+        terminal_puts("selftest: PASS\n");
+    } else {
+        terminal_puts("selftest: FAIL\n");
+    }
+}
+
 static command_entry_t commands[] = {
     { "help",          "show commands and program list", cmd_help },
     { "clear",         "clear the screen",              cmd_clear },
@@ -227,6 +308,7 @@ static command_entry_t commands[] = {
     { "fsread",        "dump FAT16 file bytes",         cmd_fsread },
     { "runelf",        "run a FAT16 ELF and wait",      cmd_runelf },
     { "runelf_nowait", "run a FAT16 ELF and return",    cmd_runelf_nowait },
+    { "selftest",      "run shipped ELF self-tests",    cmd_selftest },
 };
 
 #define COMMAND_COUNT (sizeof(commands) / sizeof(commands[0]))

@@ -75,6 +75,12 @@ loader2.bin          boot.bin
 
 `mkimage` performs the final disk-image assembly step. It pads `kernel.bin` to a whole number of sectors, computes the FAT16 start LBA, concatenates the component binaries, and patches the FAT16 start LBA into the boot-sector field declared by `boot.asm`.
 
+## Automated Guest Test
+
+`make test` boots the finished image headlessly, launches the shell
+`selftest` command, feeds the interactive `readline` prompt, and
+verifies that every shipped ELF exits with the expected status.
+
 ---
 
 # Kernel Build

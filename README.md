@@ -96,6 +96,10 @@ serial driver.  Use the QEMU monitor socket at
 `/tmp/smallos-monitor.sock` to send keystrokes (`sendkey`) or take
 screenshots (`screendump`).
 
+`make test` boots the image headlessly, runs the shell `selftest`
+command, feeds the interactive `readline` prompt, and checks every
+shipped ELF in one pass.
+
 The PowerShell command keeps a GTK window visible while capturing guest output in the console and saving `qemu.log` plus `qemu-console.log` for later debugging.
 
 Use `-drive format=raw` (hard disk mode). Do not use `-fda` (floppy).
@@ -119,6 +123,7 @@ fsls               list FAT16 root directory
 fsread <name>      dump first 16 bytes of a FAT16 file
 runelf <name> [args] load and run an ELF from the FAT16 partition
 runelf_nowait <name> [args] enqueue an ELF and return immediately
+selftest            run all shipped ELF self-tests
 ```
 
 Current FAT16 programs:

@@ -12,6 +12,8 @@ void _start(int argc, char** argv) {
     (void)argc;
     (void)argv;
 
+    int ok = 1;
+
     u_puts("[1] exec_test alive\n");
 
     u_puts("[2] calling sys_exec hello\n");
@@ -25,6 +27,9 @@ void _start(int argc, char** argv) {
         u_put_uint((uint32_t)r);
     }
     u_putc('\n');
+    if (r != 0) {
+        ok = 0;
+    }
 
     u_puts("[4] calling sys_exec with bad name\n");
     int r2 = sys_exec("no_such_prog", 0, 0);
@@ -36,7 +41,10 @@ void _start(int argc, char** argv) {
         u_put_uint((uint32_t)r2);
     }
     u_putc('\n');
+    if (r2 >= 0) {
+        ok = 0;
+    }
 
     u_puts("[6] exec_test done\n");
-    sys_exit(0);
+    sys_exit(ok ? 0 : 1);
 }

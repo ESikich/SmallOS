@@ -1,13 +1,22 @@
 # Changelog
 
-## [Current] — Dynamic help + fault probe + exception hardening
+## [Current] — Make-time selftest + loader fallback + dynamic help
 
 ### Added
+
+* **Make-time ELF selftest** (`Makefile`, `tools/qemu_selftest.py`, `src/shell/commands.c`)
+  * `make test` boots the image headlessly, launches the shell `selftest` command, feeds the interactive `readline` prompt, and checks every shipped ELF
+  * `selftest` runs the full shipped-program matrix from the shell, including the fault cases
+  * The host-side QEMU monitor helper watches the serial log and shuts the VM down after the suite reports `PASS`
 
 * **Dynamic `help` output** (`src/shell/commands.c`)
   * Built-in shell commands now render from the actual command table with short descriptions
   * Shipped ELF programs now render from a program table with the same short descriptions
   * The `help` text stays in sync when commands or programs change, instead of being hand-written prose
+
+* **ELF name fallback** (`src/exec/elf_loader.c`)
+  * `runelf` / `SYS_EXEC` now accept bare program names and fall back to `name.elf` when needed
+  * That keeps the shell examples ergonomic while still loading the real FAT16 `*.ELF` files
 
 * **Permanent fault probe ELF** (`src/user/fault.c`)
   * `fault.elf` provides a repeatable way to trigger `#UD`, `#GP`, `#DE`, `#BR`, and `#PF`
@@ -21,8 +30,13 @@
 
 * **Help and docs refresh**
   * README and build/development docs now describe the built-in command table and shipped program table
+  * README and build docs now mention `make test` and the shell `selftest` command
   * Windows / PowerShell debug launch documented with GTK and QEMU logging flags
   * Boot/layout docs updated for the generated stage-2 stack guard and the `0xB000` loader2 placement
+
+* **Process exit status plumbing** (`src/kernel/process.c`, `src/kernel/syscall.c`, `src/kernel/idt.c`)
+  * Foreground `runelf` calls now preserve the child exit status
+  * The shell selftest uses that status to verify normal exits and expected fault terminations
 
 ### Changed
 
