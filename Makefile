@@ -61,7 +61,8 @@ KERNEL_C_SRCS=\
 	$(KERNEL_DIR)/gdt.c \
 	$(KERNEL_DIR)/paging.c \
 	$(DRIVERS_DIR)/ata.c \
-	$(DRIVERS_DIR)/fat16.c
+	$(DRIVERS_DIR)/fat16.c \
+	$(DRIVERS_DIR)/serial.c
 
 USER_PROGS=hello ticks args runelf_test readline exec_test fileread
 USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
@@ -171,6 +172,19 @@ $(IMG_DIR)/os-image.bin: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/k
 
 -include $(wildcard $(OBJ_DIR)/*.d)
 -include $(wildcard $(OBJ_DIR)/*/*.d)
+
+QEMU=qemu-system-i386
+SERIAL_LOG=/tmp/smallos-serial.log
+QEMUFLAGS=-drive format=raw,file=$(IMG_DIR)/os-image.bin -m 32 \
+          -serial file:$(SERIAL_LOG)
+
+run: $(IMG_DIR)/os-image.bin
+	$(QEMU) $(QEMUFLAGS) -display curses
+
+run-headless: $(IMG_DIR)/os-image.bin
+	$(QEMU) $(QEMUFLAGS) -display none \
+	    -monitor unix:/tmp/smallos-monitor.sock,server,nowait \
+	    -daemonize -pidfile /tmp/smallos.pid
 
 clean:
 	rm -rf $(BUILD_DIR)

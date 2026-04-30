@@ -1,6 +1,22 @@
 # Changelog
- 
-## [Current] — SYS_OPEN / SYS_CLOSE / SYS_FREAD + copy-from-user validation
+
+## [Current] — COM1 serial driver + headless QEMU make targets
+
+### Added
+
+* **`src/drivers/serial.c` / `serial.h`** — minimal COM1 (0x3F8) UART driver
+  * `serial_init()` — configures 115200 8N1, disables IRQs, enables FIFO
+  * `serial_putc(c)` — writes one byte directly to the TX holding register
+* **Serial mirroring in terminal** (`src/drivers/terminal.c`)
+  * `terminal_init()` now calls `serial_init()` on startup
+  * `terminal_putc()` writes to both VGA and COM1
+  * `terminal_puts()` now iterates through `terminal_putc()` so all output paths reach serial
+* **`make run`** — boots QEMU with VGA rendered in the terminal via curses
+* **`make run-headless`** — daemonizes QEMU, exposes COM1 as `-serial file:/tmp/smallos-serial.log` and monitor as `/tmp/smallos-monitor.sock`
+
+---
+
+## [Previous] — SYS_OPEN / SYS_CLOSE / SYS_FREAD + copy-from-user validation
  
 ### Added
  

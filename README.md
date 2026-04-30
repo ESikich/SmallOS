@@ -19,6 +19,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * x86 paging — identity-mapped first 8 MB
 * BSS zeroing in kernel entry before paging is enabled
 * IDT with PIT timer (IRQ0), keyboard (IRQ1), and syscalls (INT 0x80)
+* COM1 serial driver — mirrors all terminal output to QEMU's serial backend for headless testing
 * VGA text-mode display and terminal abstraction
 * Shell with line editing, history, and command parsing
 * Shell input processing decoupled from IRQ1 via a small event queue
@@ -70,8 +71,24 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 
 ```bash
 make clean && make
-qemu-system-i386 -drive format=raw,file=build/img/os-image.bin
 ```
+
+**Interactive (VGA in terminal):**
+```bash
+make run          # requires a terminal that supports curses
+```
+
+**Headless (background, serial log):**
+```bash
+make run-headless           # starts QEMU as a daemon
+tail -f /tmp/smallos-serial.log   # read all kernel output
+```
+
+`run-headless` daemonizes QEMU, writes a PID to `/tmp/smallos.pid`, and
+mirrors all terminal output to `/tmp/smallos-serial.log` via the COM1
+serial driver.  Use the QEMU monitor socket at
+`/tmp/smallos-monitor.sock` to send keystrokes (`sendkey`) or take
+screenshots (`screendump`).
 
 Use `-drive format=raw` (hard disk mode). Do not use `-fda` (floppy).
 

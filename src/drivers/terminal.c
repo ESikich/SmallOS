@@ -1,7 +1,9 @@
 #include "terminal.h"
 #include "screen.h"
+#include "serial.h"
 
 void terminal_init(void) {
+    serial_init();
     terminal_clear();
 }
 
@@ -11,10 +13,12 @@ void terminal_clear(void) {
 
 void terminal_putc(char c) {
     screen_putc(c);
+    serial_putc(c);
 }
 
 void terminal_puts(const char* s) {
-    screen_puts(s);
+    while (*s)
+        terminal_putc(*s++);
 }
 
 /*
