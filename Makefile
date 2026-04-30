@@ -146,7 +146,7 @@ $(GEN_DIR)/loader2.gen.asm: $(BOOT_DIR)/loader2.asm $(BIN_DIR)/kernel.bin | dirs
 		echo "       move the stage-2 stack higher or shrink the kernel"; \
 		exit 1; \
 	fi; \
-	kernel_lba=$$(( 1 + $$(wc -c < $(BIN_DIR)/loader2.bin) / $(BOOT_SECTOR_SIZE) )); \
+	kernel_lba=$$(( 1 + $(LOADER2_SIZE_BYTES) / $(BOOT_SECTOR_SIZE) )); \
 	echo "kernel:  $$(wc -c < $(BIN_DIR)/kernel.bin) bytes ($$kernel_sectors sectors, LBA $$kernel_lba)"; \
 	sed \
 		-e "s/__KERNEL_SECTORS__/$$kernel_sectors/" \

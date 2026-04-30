@@ -55,7 +55,7 @@ kernel_main()
 ## Stage 1 – boot.asm
 
 * Loaded by BIOS at `0x7C00`
-* Loads stage 2 via CHS `INT 0x13 AH=0x02` (4 sectors, fits within one track) to `0x20000`
+* Loads stage 2 via CHS `INT 0x13 AH=0x02` (4 sectors, fits within one track) to `0x40000`
 * Must be exactly **512 bytes**, ending with `dw 0xAA55`
 
 ---
@@ -66,7 +66,7 @@ Runs in **real mode**, then switches to **protected mode**.
 
 * Checks `INT 0x13 AH=0x41` for LBA extension support — halts if not available
 * Reads the boot-sector metadata patched by `mkimage`, derives `kernel_lba = fat16_lba - KERNEL_SECTORS`, and loads the kernel to `0x1000` via `INT 0x13 AH=0x42`
-* Sets up a generated temporary stack (`SP=0xFF00`, physical top `0x2FF00`), installs a temporary GDT, enables protected mode, and uses a 32-bit far jump into `init_pm`
+* Sets up a generated temporary stack (`SP=0xFF00`, physical top `0x4FF00`), installs a temporary GDT, enables protected mode, and uses a 32-bit far jump into `init_pm`
 * In protected mode, switches to `0x1FF000` as the boot/kernel stack top and jumps to kernel entry at `0x1000`
 
 One value injected by Makefile at build time: `KERNEL_SECTORS`.
@@ -372,7 +372,7 @@ Programs are linked at fixed virtual address `0x400000`, loaded into private use
 
 ```text
 0x00007C00   bootloader stage 1
-0x00020000   loader2 stage 2 (done after protected-mode jump)
+0x00040000   loader2 stage 2 (done after protected-mode jump)
 0x00001000   kernel image
 0x00006000   kernel .bss start (page tables + PMM bitmap)
 ~0x0000A000  kernel .bss end

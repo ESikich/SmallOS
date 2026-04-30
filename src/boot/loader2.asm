@@ -1,7 +1,7 @@
 ; loader2.asm
 ;
 ; Stage 2 loader contract:
-;   - loaded by boot sector to physical 0x20000
+;   - loaded by boot sector to physical 0x40000
 ;   - occupies exactly 4 sectors (2048 bytes)
 ;   - kernel image begins immediately before the FAT16 partition
 ;   - kernel is loaded to physical 0x1000
@@ -13,10 +13,10 @@
 ;   physical address and the generated stage-2 stack top.
 ;   If the kernel exceeds that ceiling, the build fails before image assembly.
 
-[org 0x20000]
+[org 0x40000]
 bits 16
 
-LOADER2_SEGMENT      equ 0x2000
+LOADER2_SEGMENT      equ 0x4000
 KERNEL_OFFSET        equ 0x1000
 KERNEL_SECTORS       equ __KERNEL_SECTORS__
 STAGE2_STACK_TOP     equ __STAGE2_STACK_TOP__

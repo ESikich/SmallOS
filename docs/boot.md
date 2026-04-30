@@ -53,7 +53,7 @@ Loaded by BIOS at `0x0000:0x7C00`.
 
 * Initialize segment registers and a temporary stage-1 stack at `0x9000`
 * Print debug messages via BIOS `int 0x10`
-* Load stage 2 from disk to `0x20000`
+* Load stage 2 from disk to `0x40000`
 * Transfer control to stage 2
 
 ## BIOS Disk Read
@@ -80,7 +80,7 @@ Must fit in 512 bytes. No room for LBA logic, extension checks, or complex error
 
 ## Location
 
-Loaded to `0x2000:0x0000` (physical `0x20000`).
+Loaded to `0x4000:0x0000` (physical `0x40000`).
 
 ## Responsibilities
 
@@ -92,13 +92,13 @@ Loaded to `0x2000:0x0000` (physical `0x20000`).
 
 ## Safe Kernel Size
 
-Loader2 now sits at `0x20000`. The kernel loads to `0x1000`. Stage 2 now uses a loader-segment stack, so the real-mode `SP` is `0xFF00` while the physical stack top is `0x2FF00`. The kernel must not grow large enough to overwrite the loader during the INT 0x13 read:
+Loader2 now sits at `0x40000`. The kernel loads to `0x1000`. Stage 2 now uses a loader-segment stack, so the real-mode `SP` is `0xFF00` while the physical stack top is `0x4FF00`. The kernel must not grow large enough to overwrite the loader during the INT 0x13 read:
 
 ```text
-safe kernel size = (0x20000 - 0x1000) / 512 = 248 sectors = 124 KiB
+safe kernel size = (0x40000 - 0x1000) / 512 = 504 sectors = 252 KiB
 ```
 
-If the kernel exceeds 248 sectors, the build fails before image assembly. The ceiling is computed from the loader2 load address and the generated stage-2 stack top, so any future layout bump must update both in `Makefile` and `loader2.asm`.
+If the kernel exceeds 504 sectors, the build fails before image assembly. The ceiling is computed from the loader2 load address and the generated stage-2 stack top, so any future layout bump must update both in `Makefile` and `loader2.asm`.
 
 ## Layout Ownership
 
@@ -117,7 +117,7 @@ The Makefile reads these declarations during image construction rather than rede
 
 * `boot.bin` is exactly 512 bytes
 * `loader2.bin` is exactly 2048 bytes
-* loader2 still loads at `0x20000`
+* loader2 still loads at `0x40000`
 * the generated stage-2 stack and the kernel boot stack match the current contract
 * the kernel still fits below both the loader body and the stage-2 stack
 
@@ -287,8 +287,8 @@ BSS zeroing is the first thing that happens in protected mode. The kernel's thre
 # Memory Map During Boot
 
 ```text
-0x00007C00   stage 1 (boot.asm) — done after jump to 0x20000
-0x00020000   stage 2 (loader2.asm) — done after jump to 0x1000
+0x00007C00   stage 1 (boot.asm) — done after jump to 0x40000
+0x00040000   stage 2 (loader2.asm) — done after jump to 0x1000
 0x00001000   kernel entry point (_start in kernel_entry.asm)
 0x001FF000   stack top (set up by loader2's init_pm)
 ```
@@ -445,7 +445,7 @@ Programs are loaded from the FAT16 partition at runtime via ATA PIO. The ramdisk
 # Summary
 
 ```text
-Stage 1  →  load stage 2 (CHS, fixed-size loader, to 0x20000)
+Stage 1  →  load stage 2 (CHS, fixed-size loader, to 0x40000)
 Stage 2  →  LBA extension check
          →  read boot-sector metadata at 0x7C00
          →  derive kernel_lba = fat16_lba - KERNEL_SECTORS
@@ -465,5 +465,5 @@ Boot code is the most fragile part of the system. Failures here are often silent
 # Future Work
 
 * Replace fixed disk layout with a partition table or boot protocol
-* Support kernels larger than 248 sectors
+* Support kernels larger than 504 sectors
 * Multiboot-style boot protocol for GRUB compatibility

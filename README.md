@@ -153,7 +153,7 @@ Current FAT16 programs:
 
 ```text
 BIOS
- → boot.asm              load loader2 (CHS, 4 sectors) to `0x20000`
+ → boot.asm              load loader2 (CHS, 4 sectors) to `0x40000`
  → loader2.asm           load kernel (LBA) → protected mode
  → kernel_entry.asm      zero BSS → kernel_main()
 
@@ -227,7 +227,7 @@ mkimage   assembles the final bootable disk image
 
 ```text
 0x00007C00   bootloader stage 1
-0x00020000   loader2 stage 2
+0x00040000   loader2 stage 2
 0x00001000   kernel image
 0x00006000   kernel .bss start (page tables + PMM bitmap)
 ~0x0000A000  kernel .bss end (approx)
