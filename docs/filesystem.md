@@ -2,7 +2,7 @@
 
 This document defines how the system stores, discovers, and reads files from disk.
 
-The current implementation stores a **raw FAT16 volume inside an MBR-partitioned disk image**. Sector 0 contains the partition table, and the FAT16 partition starts immediately after the kernel region. The runtime now resolves nested FAT16 paths for reads and directory listings, while root-directory file writes remain the only write path.
+The current implementation stores a **raw FAT16 volume inside an MBR-partitioned disk image**. Sector 0 contains the partition table, and the FAT16 partition starts immediately after the kernel region. The runtime now resolves nested FAT16 paths for reads and directory listings, and it can also create/remove directories in place. Regular file writes remain root-only.
 
 ---
 
@@ -179,6 +179,7 @@ The current FAT16 driver is intentionally narrow.
 
 - read access to root-directory and nested-directory files
 - directory listing by path with `fat16_ls_path(path)` and `fsls [path]`
+- directory creation/removal by path with `fat16_mkdir(path)` / `fat16_rmdir(path)`
 - case-insensitive 8.3 filename matching
 - FAT chain following for file reads
 - loading one file at a time into a shared static buffer
@@ -187,7 +188,7 @@ The current FAT16 driver is intentionally narrow.
 ## Not supported
 
 - long filenames (LFN)
-- directory creation or writes outside the root directory
+- file writes outside the root directory
 - multiple concurrent file buffers
 - general-purpose file descriptors
 - mounting arbitrary FAT layouts
@@ -225,8 +226,8 @@ component is still matched with FAT16 8.3 rules.
 Practical limits:
 - base name truncated to 8 characters for matching
 - extension truncated to 3 characters for matching
-- nested directories are supported for reads and listings, but writes still
-  target the root directory only
+- nested directories are supported for reads and listings, but regular file
+  writes still target the root directory only
 
 ---
 
@@ -308,7 +309,7 @@ The write path is intentionally narrow:
 
 - root directory only
 - 8.3 filename matching
-- no subdirectory creation
+- no general buffered fd write API
 - no long filenames
 - no concurrent writer support
 
@@ -321,6 +322,20 @@ At runtime, the kernel:
 5. commits the updated FAT copies and root directory entry
 
 This is enough for compiler-style tools to emit generated artifacts such as `compiler.out` without a full VFS or buffered fd write API.
+
+## Creating and Removing Directories
+
+`fat16_mkdir(path)` creates a new empty directory entry and writes the
+initial `.` / `..` records into a fresh data cluster. `fat16_rmdir(path)`
+removes an existing empty directory entry.
+
+Rules:
+
+- directories use the same path-aware 8.3 lookup as reads and listings
+- the target must not already exist for `mkdir`
+- `rmdir` only succeeds on empty directories
+- the root directory cannot be removed
+- directory entries are deleted with the standard FAT16 `0xE5` marker
 
 ---
 
@@ -404,6 +419,26 @@ The FAT16 image was built with geometry that does not match `fat16.c`.
 
 No matching 8.3 entry exists for the requested path component chain.
 
+## `fat16: already exists: <name>`
+
+`mkdir` was asked to create a directory that is already present.
+
+## `fat16: directory full`
+
+The parent directory has no free slot for a new entry.
+
+## `fat16: directory not empty`
+
+`rmdir` was asked to remove a directory that still contains files or subdirectories.
+
+## `fat16: cannot remove root`
+
+`rmdir` was asked to remove the root directory or a root-like path.
+
+## `fat16: invalid directory name`
+
+The final path component is not a valid 8.3 directory name.
+
 ## `fat16: dir read error` / `fat16: cluster read error` / `fat16: FAT read error`
 
 ATA read failed during directory scan, cluster read, or FAT traversal.
@@ -439,6 +474,6 @@ The following must stay true unless the implementation is changed everywhere:
 - FAT16 geometry in `fat16.c` matches `mkfat16.c`
 - `fat16_load()` returns a pointer into a reused static buffer
 - callers copy data out before another file load occurs
-- nested reads/listings use path-aware 8.3 lookup; writes remain root-only
+- nested reads/listings use path-aware 8.3 lookup; regular file writes remain root-only
 
 Breaking any of these produces either immediate mount failure or silent file corruption.

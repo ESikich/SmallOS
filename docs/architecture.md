@@ -343,7 +343,7 @@ keyboard IRQ → keyboard_handle_irq()
   ↓
   [Enter] → parse_command() → commands_execute()
   ↓
-  runelf / fsls / fsread / ataread / meminfo / ... dispatch
+  runelf / fsls / fsread / mkdir / rmdir / ataread / meminfo / ... dispatch
 ```
 
 The active consumer is managed by `keyboard_set_consumer()`:
@@ -599,7 +599,7 @@ preemptive round-robin scheduler — timer IRQ context switch, 100 ms quantum
 ATA PIO driver — 28-bit LBA polling reads from primary IDE channel (0x1F0)
 FAT16 filesystem — ELF programs loaded from 16 MB FAT16 partition on disk
 run/runimg infrastructure removed — `runelf` is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
-interactive shell with meminfo / ataread / fsls / fsread / runelf commands
+interactive shell with meminfo / ataread / fsls / fsread / mkdir / rmdir / runelf commands
 ```
 
 Foundation for:

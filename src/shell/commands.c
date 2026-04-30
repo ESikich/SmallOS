@@ -194,6 +194,38 @@ static void cmd_fsread(command_t* cmd) {
     terminal_putc('\n');
 }
 
+static void cmd_mkdir(command_t* cmd) {
+    if (cmd->argc < 2) {
+        terminal_puts("usage: mkdir <path>\n");
+        return;
+    }
+
+    if (!fat16_mkdir(cmd->argv[1])) {
+        terminal_puts("mkdir: failed\n");
+        return;
+    }
+
+    terminal_puts("mkdir: ");
+    terminal_puts(cmd->argv[1]);
+    terminal_putc('\n');
+}
+
+static void cmd_rmdir(command_t* cmd) {
+    if (cmd->argc < 2) {
+        terminal_puts("usage: rmdir <path>\n");
+        return;
+    }
+
+    if (!fat16_rmdir(cmd->argv[1])) {
+        terminal_puts("rmdir: failed\n");
+        return;
+    }
+
+    terminal_puts("rmdir: ");
+    terminal_puts(cmd->argv[1]);
+    terminal_putc('\n');
+}
+
 static void cmd_runelf(command_t* cmd) {
     if (cmd->argc < 2) {
         terminal_puts("Usage: runelf <n>\n");
@@ -252,6 +284,16 @@ static void cmd_shelltest(command_t* cmd) {
     command_t fsls_path_cmd = { 2, { "fsls", "apps/demo" } };
     command_t fsread_cmd = { 2, { "fsread", "hello.elf" } };
     command_t fsread_path_cmd = { 2, { "fsread", "apps/demo/hello.elf" } };
+    command_t mkdir_cmd = { 2, { "mkdir", "TESTDIR" } };
+    command_t fsls_newdir_cmd = { 2, { "fsls", "TESTDIR" } };
+    command_t rmdir_cmd = { 2, { "rmdir", "TESTDIR" } };
+    command_t fsls_removed_cmd = { 2, { "fsls", "TESTDIR" } };
+    command_t mkdir_nested_parent_cmd = { 2, { "mkdir", "NESTPARENT" } };
+    command_t mkdir_nested_child_cmd = { 2, { "mkdir", "NESTPARENT/CHILD" } };
+    command_t fsls_nested_cmd = { 2, { "fsls", "NESTPARENT" } };
+    command_t rmdir_nested_child_cmd = { 2, { "rmdir", "NESTPARENT/CHILD" } };
+    command_t rmdir_nested_parent_cmd = { 2, { "rmdir", "NESTPARENT" } };
+    command_t fsls_nested_removed_cmd = { 2, { "fsls", "NESTPARENT" } };
     command_t runelf_cmd = { 2, { "runelf", "hello" } };
     command_t runelf_path_cmd = { 4, { "runelf", "apps/demo/hello", "alpha", "beta" } };
     command_t runelf_nowait_cmd = { 2, { "runelf_nowait", "ticks" } };
@@ -270,6 +312,16 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("fsls_path", cmd_fsls, &fsls_path_cmd);
     shelltest_call("fsread", cmd_fsread, &fsread_cmd);
     shelltest_call("fsread_path", cmd_fsread, &fsread_path_cmd);
+    shelltest_call("mkdir", cmd_mkdir, &mkdir_cmd);
+    shelltest_call("fsls_newdir", cmd_fsls, &fsls_newdir_cmd);
+    shelltest_call("rmdir", cmd_rmdir, &rmdir_cmd);
+    shelltest_call("fsls_removed", cmd_fsls, &fsls_removed_cmd);
+    shelltest_call("mkdir_nested_parent", cmd_mkdir, &mkdir_nested_parent_cmd);
+    shelltest_call("mkdir_nested_child", cmd_mkdir, &mkdir_nested_child_cmd);
+    shelltest_call("fsls_nested", cmd_fsls, &fsls_nested_cmd);
+    shelltest_call("rmdir_nested_child", cmd_rmdir, &rmdir_nested_child_cmd);
+    shelltest_call("rmdir_nested_parent", cmd_rmdir, &rmdir_nested_parent_cmd);
+    shelltest_call("fsls_nested_removed", cmd_fsls, &fsls_nested_removed_cmd);
     shelltest_call("runelf", cmd_runelf, &runelf_cmd);
     shelltest_call("runelf_path", cmd_runelf, &runelf_path_cmd);
     shelltest_call("runelf_nowait", cmd_runelf_nowait, &runelf_nowait_cmd);
@@ -383,6 +435,8 @@ static command_entry_t commands[] = {
     { "ataread",       "dump raw sector bytes",         cmd_ataread },
     { "fsls",          "list FAT16 root directory",     cmd_fsls },
     { "fsread",        "dump FAT16 file bytes",         cmd_fsread },
+    { "mkdir",         "create a FAT16 directory",     cmd_mkdir },
+    { "rmdir",         "remove a FAT16 directory",     cmd_rmdir },
     { "runelf",        "run a FAT16 ELF and wait",      cmd_runelf },
     { "runelf_nowait", "run a FAT16 ELF and return",    cmd_runelf_nowait },
     { "selftest",      "run shipped ELF self-tests",    cmd_selftest },

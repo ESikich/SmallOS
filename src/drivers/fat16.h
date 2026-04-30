@@ -88,4 +88,24 @@ const u8* fat16_load(const char* name, u32* out_size);
  */
 int fat16_write(const char* name, const u8* data, u32 size);
 
+/*
+ * fat16_mkdir(path)
+ *
+ * Create a new empty directory at `path`.
+ * The target must not already exist.
+ *
+ * Returns 1 on success, 0 on failure.
+ */
+int fat16_mkdir(const char* path);
+
+/*
+ * fat16_rmdir(path)
+ *
+ * Remove an existing empty directory at `path`.
+ * The root directory cannot be removed.
+ *
+ * Returns 1 on success, 0 on failure.
+ */
+int fat16_rmdir(const char* path);
+
 #endif /* FAT16_H */
