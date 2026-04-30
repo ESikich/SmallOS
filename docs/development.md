@@ -384,7 +384,7 @@ Useful signals:
 
 ## Current Next Steps
 
-* Boot/layout work — the fixed disk layout is still intentionally explicit; the loader now sits at `0x40000`, and the partition-table path is the main boot contract to extend next
+* Clean up the remaining RWX linker warning from `sched_switch.o`
 
 ---
 

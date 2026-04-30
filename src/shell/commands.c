@@ -320,6 +320,7 @@ static void cmd_selftest(command_t* cmd) {
     char* fileread_argv[] = { "fileread.elf", 0 };
     char* compiler_demo_argv[] = { "compiler_demo.elf", 0 };
     char* sleep_argv[] = { "sleep_test.elf", 0 };
+    char* ptrguard_argv[] = { "ptrguard.elf", 0 };
     char* fault_ud_argv[] = { "fault.elf", "ud", 0 };
     char* fault_gp_argv[] = { "fault.elf", "gp", 0 };
     char* fault_de_argv[] = { "fault.elf", "de", 0 };
@@ -337,6 +338,7 @@ static void cmd_selftest(command_t* cmd) {
         { "fileread",    "fileread.elf",    1, fileread_argv,    0 },
         { "compiler_demo","compiler_demo.elf",1, compiler_demo_argv,0 },
         { "sleep_test",  "sleep_test.elf",  1, sleep_argv,       0 },
+        { "ptrguard",    "ptrguard.elf",    1, ptrguard_argv,    0 },
         { "fault ud",    "fault.elf",       2, fault_ud_argv,    6 },
         { "fault gp",    "fault.elf",       2, fault_gp_argv,   13 },
         { "fault de",    "fault.elf",       2, fault_de_argv,    0 },
@@ -397,6 +399,7 @@ static program_entry_t programs[] = {
     { "fileread",    "exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE" },
     { "compiler_demo", "exercise SYS_WRITEFILE and readback" },
     { "sleep_test",  "exercise SYS_SLEEP semantics" },
+    { "ptrguard",    "exercise syscall pointer validation" },
     { "fault",       "fault probe (ud/gp/de/br/pf)" },
 };
 

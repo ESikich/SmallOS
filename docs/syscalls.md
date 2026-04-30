@@ -144,7 +144,7 @@ Opens a file from the FAT16 root directory by name (case-insensitive 8.3 matchin
 
 Returns the fd (≥ 3) on success, or `-1` if the file is not found, the fd table is full (`PROCESS_FD_MAX = 8`), or the name pointer fails user-space validation.
 
-`sys_open_impl` validates the name pointer with `user_str_ok()`, copies the name into a kernel buffer bounded by `PROCESS_FD_NAME_MAX` (16 bytes), then calls `fat16_stat()` to confirm the file exists without loading its data.
+`sys_open_impl` validates the name with page-aware user checks, copies it into a kernel buffer bounded by `PROCESS_FD_NAME_MAX` (16 bytes), then calls `fat16_stat()` to confirm the file exists without loading its data.
 
 ---
 
@@ -253,7 +253,8 @@ u_readline(...)    sys_read + null-terminate + strip newline
 ## Design Notes
 
 * Programs run in ring 3 — hardware-enforced privilege separation
-* All pointer arguments to syscalls are validated with `user_buf_ok()` / `user_str_ok()` before kernel dereference — pointers below `USER_CODE_BASE` (0x400000) or spanning above `USER_STACK_TOP` (0xC0000000) are rejected with `-1`
+* All pointer arguments to syscalls are validated with page-aware user checks before kernel dereference — pointers below `USER_CODE_BASE` (0x400000), spanning above `USER_STACK_TOP` (0xC0000000), or touching an unmapped user page are rejected with `-1`
+* `SYS_EXEC` copies the user `name` and `argv[]` strings into kernel buffers before handing them to the ELF loader, so the loader never depends on caller memory staying stable after validation
 * `SYS_YIELD` and the timer path use the same stub layout, but the real scheduler resume ESP is `esp - 8`, not raw `esp`
 * EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`
 * The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.

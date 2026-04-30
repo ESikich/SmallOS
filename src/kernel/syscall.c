@@ -6,6 +6,7 @@
 #include "scheduler.h"
 #include "process.h"
 #include "pmm.h"
+#include "klib.h"
 #include "../exec/elf_loader.h"
 #include "fat16.h"
 
@@ -19,47 +20,87 @@
 /* Copy-from-user validation                                          */
 /* ------------------------------------------------------------------ */
 
+static u32* current_user_pd(void) {
+    process_t* proc = (process_t*)sched_current();
+    if (!proc) return 0;
+    return proc->pd;
+}
+
 /*
- * User virtual address space: [USER_CODE_BASE, USER_STACK_TOP)
+ * user_page_mapped(pd, addr)
  *
- *   0x400000   USER_CODE_BASE  — lowest mapped user address (ELF load base)
- *   0xC0000000 USER_STACK_TOP  — top of user virtual space (exclusive)
- *
- * user_buf_ok(ptr, len) returns 1 if the byte range [ptr, ptr+len) lies
- * entirely within user space, 0 otherwise.
- *
- * Rules:
- *   - ptr must be non-null and >= USER_CODE_BASE
- *   - ptr+len must be <= USER_STACK_TOP (checked without overflow)
- *   - len must be > 0 (callers handle len==0 before calling)
- *
- * This is an address-range check only — it does not walk page tables.
- * A user process could pass a valid-range address that is not backed by a
- * present PTE, which would page-fault in the kernel.  That fault path is
- * not handled today; this check closes the easier attack of passing an
- * explicit kernel address to read or corrupt kernel memory.
+ * Return 1 if the 4 KB page containing addr is present and user-accessible
+ * in the given page directory.
  */
-static int user_buf_ok(unsigned int ptr, unsigned int len) {
-    if (ptr < USER_CODE_BASE)       return 0;   /* catches null and kernel addrs */
-    if (len == 0)                   return 0;
-    /* Overflow-safe upper bound check: */
-    if (len > USER_STACK_TOP - ptr) return 0;
+static int user_page_mapped(u32* pd, unsigned int addr) {
+    u32 pde = pd[addr >> 22];
+    if (!(pde & PAGE_PRESENT)) return 0;
+    if (!(pde & PAGE_USER))    return 0;
+
+    u32* pt = (u32*)(pde & ~0xFFFu);
+    u32 pte = pt[(addr >> 12) & 0x3FF];
+    if (!(pte & PAGE_PRESENT)) return 0;
+    if (!(pte & PAGE_USER))    return 0;
     return 1;
 }
 
 /*
- * user_str_ok(ptr) — validate a user-supplied string pointer base.
+ * user_buf_ok(ptr, len)
  *
- * Only checks that the pointer itself falls inside user space.  The full
- * string length is unknown before scanning, so we cannot do a complete
- * range check.  Callers that copy the string (sys_exec_impl) bound the
- * copy explicitly and stop at '\0', so a base check is sufficient to
- * block kernel-address attacks.
+ * Return 1 only if [ptr, ptr + len) lies entirely in mapped user memory.
+ * This validates both address range and page-table presence so kernel code
+ * never dereferences an unmapped user page by accident.
  */
-static int user_str_ok(unsigned int ptr) {
-    if (ptr < USER_CODE_BASE)  return 0;
-    if (ptr >= USER_STACK_TOP) return 0;
+static int user_buf_ok(unsigned int ptr, unsigned int len) {
+    if (ptr < USER_CODE_BASE)       return 0;
+    if (ptr >= USER_STACK_TOP)      return 0;
+    if (len == 0)                   return 0;
+    if (len > USER_STACK_TOP - ptr) return 0;
+
+    u32* pd = current_user_pd();
+    if (!pd) return 0;
+
+    unsigned int start_page = ptr & ~(PAGE_SIZE - 1u);
+    unsigned int end_page = (ptr + len - 1u) & ~(PAGE_SIZE - 1u);
+    unsigned int page = start_page;
+
+    while (1) {
+        if (!user_page_mapped(pd, page)) return 0;
+        if (page == end_page) break;
+        page += PAGE_SIZE;
+    }
+
     return 1;
+}
+
+/*
+ * copy_user_cstr(dst, dst_size, src)
+ *
+ * Copy a NUL-terminated string from user space into a kernel buffer.
+ * The copy stops at the first '\0'.  Returns the number of bytes copied,
+ * including the terminator, or -1 on validation failure or truncation.
+ */
+static int copy_user_cstr(char* dst, unsigned int dst_size, const char* src) {
+    if (!dst || !src || dst_size == 0) return -1;
+
+    unsigned int ptr = (unsigned int)src;
+    if (ptr < USER_CODE_BASE || ptr >= USER_STACK_TOP) return -1;
+
+    u32* pd = current_user_pd();
+    if (!pd) return -1;
+
+    for (unsigned int i = 0; i < dst_size; i++) {
+        unsigned int addr = ptr + i;
+        if (addr < USER_CODE_BASE || addr >= USER_STACK_TOP) return -1;
+        if (!user_page_mapped(pd, addr)) return -1;
+
+        dst[i] = src[i];
+        if (dst[i] == '\0') {
+            return (int)(i + 1);
+        }
+    }
+
+    return -1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -213,19 +254,24 @@ static int sys_read_impl(char* buf, unsigned int len) {
  *
  * argv validation:
  *   1. The argv array base is checked with user_buf_ok() to ensure the
- *      pointer array itself is within user space.
- *   2. Each argv[i] string pointer is checked with user_str_ok() before
- *      elf_seed_sched_context() calls k_strlen/k_memcpy on it.  Without
- *      this, a user process could pass a kernel-address string pointer
- *      that would dereference silently in ring-0 during the copy.
+ *      pointer array itself is mapped in user space.
+ *   2. Each argv[i] string is copied into a kernel buffer with
+ *      copy_user_cstr(), which validates every page it touches and stops
+ *      at the first '\0'.  That means elf_run_named() only sees kernel
+ *      memory, never caller-owned pointers.
  *   3. The checks happen here, while the caller's CR3 is still active,
- *      so the argv array and its strings are readable.
+ *      so invalid pointers fail before any ELF work begins.
  *
  * Returns 0 on success, -1 if any validation fails or the program was
  * not found.
  */
 static int sys_exec_impl(const char* name, int argc, char** argv) {
-    if (!user_str_ok((unsigned int)name)) return -1;
+    char kname[EXEC_NAME_MAX];
+    char kargv_data[PROCESS_ARG_BYTES];
+    char* kargv[PROCESS_MAX_ARGS + 1];
+    unsigned int used = 0;
+
+    if (copy_user_cstr(kname, sizeof(kname), name) <= 1) return -1;
 
     if (argc < 0 || argc > PROCESS_MAX_ARGS) return -1;
 
@@ -235,22 +281,17 @@ static int sys_exec_impl(const char* name, int argc, char** argv) {
         return -1;
     }
 
-    /* Validate each individual argv[i] string pointer */
     for (int i = 0; i < argc; i++) {
-        if (!user_str_ok((unsigned int)argv[i])) return -1;
+        int copied = copy_user_cstr(&kargv_data[used],
+                                    PROCESS_ARG_BYTES - used,
+                                    argv[i]);
+        if (copied < 0) return -1;
+        kargv[i] = &kargv_data[used];
+        used += (unsigned int)copied;
     }
+    kargv[argc] = 0;
 
-    char kname[EXEC_NAME_MAX];
-    unsigned int i = 0;
-    while (i < EXEC_NAME_MAX - 1 && name[i] != '\0') {
-        kname[i] = name[i];
-        i++;
-    }
-    kname[i] = '\0';
-
-    if (i == 0) return -1;
-
-    return elf_run_named(kname, argc, argv) ? 0 : -1;
+    return elf_run_named(kname, argc, kargv) ? 0 : -1;
 }
 
 /*
@@ -261,17 +302,9 @@ static int sys_exec_impl(const char* name, int argc, char** argv) {
  * compiler product or generated artifact.
  */
 static int sys_writefile_impl(const char* name, const void* buf, unsigned int len) {
-    if (!user_str_ok((unsigned int)name)) return -1;
-    if (len > 0 && !user_buf_ok((unsigned int)buf, len)) return -1;
-
     char kname[EXEC_NAME_MAX];
-    unsigned int i = 0;
-    while (i < EXEC_NAME_MAX - 1 && name[i] != '\0') {
-        kname[i] = name[i];
-        i++;
-    }
-    kname[i] = '\0';
-    if (i == 0) return -1;
+    if (copy_user_cstr(kname, sizeof(kname), name) <= 1) return -1;
+    if (len > 0 && !user_buf_ok((unsigned int)buf, len)) return -1;
 
     return fat16_write(kname, (const u8*)buf, len) ? 0 : -1;
 }
@@ -290,17 +323,8 @@ static int sys_writefile_impl(const char* name, const void* buf, unsigned int le
  * Returns the fd (>= 3) on success, -1 on any failure.
  */
 static int sys_open_impl(const char* name) {
-    if (!user_str_ok((unsigned int)name)) return -1;
-
-    /* Copy name into kernel buffer — bounded by PROCESS_FD_NAME_MAX */
     char kname[PROCESS_FD_NAME_MAX];
-    unsigned int i = 0;
-    while (i < PROCESS_FD_NAME_MAX - 1 && name[i] != '\0') {
-        kname[i] = name[i];
-        i++;
-    }
-    kname[i] = '\0';
-    if (i == 0) return -1;
+    if (copy_user_cstr(kname, sizeof(kname), name) <= 1) return -1;
 
     /* Check the file exists and get its size */
     u32 file_size = 0;
@@ -315,8 +339,7 @@ static int sys_open_impl(const char* name) {
             proc->fds[fd].valid  = 1;
             proc->fds[fd].size   = file_size;
             proc->fds[fd].offset = 0;
-            for (unsigned int j = 0; j <= i; j++)
-                proc->fds[fd].name[j] = kname[j];
+            k_memcpy(proc->fds[fd].name, kname, (k_size_t)k_strlen(kname) + 1u);
             return fd;
         }
     }
