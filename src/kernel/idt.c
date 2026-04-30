@@ -10,6 +10,8 @@
 extern void idt_flush(unsigned int);
 extern void irq0_stub(void);
 extern void irq1_stub(void);
+extern void isr6_stub(void);
+extern void isr13_stub(void);
 extern void isr14_stub(void);
 extern void isr8_stub(void);
 extern void isr128_stub(void);
@@ -60,7 +62,9 @@ void idt_init(void) {
 
     pic_remap();
 
-    idt_set_gate(14,  (unsigned int)isr14_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
+    idt_set_gate(6,   (unsigned int)isr6_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
+    idt_set_gate(13,  (unsigned int)isr13_stub,  KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
+    idt_set_gate(14,  (unsigned int)isr14_stub,  KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
     idt_set_gate(8,   (unsigned int)isr8_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
     idt_set_gate(32,  (unsigned int)irq0_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
     idt_set_gate(33,  (unsigned int)irq1_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
@@ -88,7 +92,7 @@ void idt_init(void) {
     outb(0xA1, 0xFF);
 }
 
-static unsigned int pf_frame_word(unsigned int esp, unsigned int index) {
+static unsigned int fault_frame_word(unsigned int esp, unsigned int index) {
     return ((unsigned int*)esp)[index];
 }
 
@@ -98,19 +102,27 @@ static unsigned int pf_get_cr2(void) {
     return cr2;
 }
 
-void page_fault_handler_main(unsigned int esp) {
-    unsigned int err = pf_frame_word(esp, 12);
-    unsigned int cs = pf_frame_word(esp, 14);
-    unsigned int cr2 = pf_get_cr2();
+static void fault_handler_common(const char* tag, unsigned int esp, unsigned int has_err, unsigned int has_cr2) {
+    unsigned int err = has_err ? fault_frame_word(esp, 12) : 0;
+    unsigned int eip = fault_frame_word(esp, has_err ? 13 : 12);
+    unsigned int cs = fault_frame_word(esp, has_err ? 14 : 13);
+    unsigned int cr2 = has_cr2 ? pf_get_cr2() : 0;
     process_t* proc = sched_current();
 
-    terminal_puts("pf cr2=");
-    terminal_put_hex(cr2);
-    terminal_puts(" err=");
-    terminal_put_hex(err);
+    terminal_puts(tag);
+    terminal_puts(" eip=");
+    terminal_put_hex(eip);
     terminal_puts(" cs=");
     terminal_put_hex(cs);
     terminal_puts(((cs & 3u) == 3u) ? " user" : " kernel");
+    if (has_err) {
+        terminal_puts(" err=");
+        terminal_put_hex(err);
+    }
+    if (has_cr2) {
+        terminal_puts(" cr2=");
+        terminal_put_hex(cr2);
+    }
     terminal_putc('\n');
 
     /*
@@ -120,7 +132,8 @@ void page_fault_handler_main(unsigned int esp) {
      * from a potentially corrupted kernel stack.
      */
     if (proc && proc->pd != 0 && (cs & 3u) == 3u) {
-        terminal_puts("pf term ");
+        terminal_puts(tag);
+        terminal_puts(" term ");
         terminal_puts(proc->name);
         terminal_putc('\n');
 
@@ -128,10 +141,23 @@ void page_fault_handler_main(unsigned int esp) {
         sched_exit_current(esp);
     }
 
-    terminal_puts("pf kernel panic\n");
+    terminal_puts(tag);
+    terminal_puts(" kernel panic\n");
     for (;;) {
         __asm__ __volatile__("cli; hlt");
     }
+}
+
+void invalid_opcode_handler_main(unsigned int esp) {
+    fault_handler_common("ud", esp, 0, 0);
+}
+
+void general_protection_handler_main(unsigned int esp) {
+    fault_handler_common("gp", esp, 1, 0);
+}
+
+void page_fault_handler_main(unsigned int esp) {
+    fault_handler_common("pf", esp, 1, 1);
 }
 
 /*

@@ -4,12 +4,16 @@ global gdt_flush
 global idt_flush
 global irq0_stub
 global irq1_stub
+global isr6_stub
+global isr13_stub
 global isr14_stub
 global isr128_stub
 global isr8_stub
 
 extern irq0_handler_main
 extern irq1_handler_main
+extern invalid_opcode_handler_main
+extern general_protection_handler_main
 extern page_fault_handler_main
 extern syscall_handler_main
 
@@ -102,6 +106,55 @@ irq1_stub:
     pop es
     pop ds
     popa
+    iretd
+
+isr6_stub:
+    pusha
+    push ds
+    push es
+    push fs
+    push gs
+
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+
+    push esp
+    call invalid_opcode_handler_main
+    add esp, 4
+
+    pop gs
+    pop fs
+    pop es
+    pop ds
+    popa
+    iretd
+
+isr13_stub:
+    pusha
+    push ds
+    push es
+    push fs
+    push gs
+
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+
+    push esp
+    call general_protection_handler_main
+    add esp, 4
+
+    pop gs
+    pop fs
+    pop es
+    pop ds
+    popa
+    add esp, 4
     iretd
 
 isr14_stub:

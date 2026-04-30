@@ -31,6 +31,8 @@ idt_set_gate(vector, handler, 0x08, flags);
 ## Active Entries
 
 ```text
+6    → ISR6 (invalid opcode)
+13   → ISR13 (general protection fault)
 14   → page fault
 8    → ISR8 (double fault)
 32   → IRQ0 (timer)
@@ -38,7 +40,7 @@ idt_set_gate(vector, handler, 0x08, flags);
 128  → syscall (int 0x80)
 ```
 
-Page faults log `CR2`, the error code, and the interrupted `CS`. User-mode page faults terminate the current process so the shell keeps running; kernel-mode page faults still halt the machine so the last error context is preserved.
+Exception handlers log the faulting `EIP`, the interrupted `CS`, and mode (`user` vs `kernel`). Page faults also log `CR2`. User-mode faults terminate the current process so the shell keeps running; kernel-mode faults still halt the machine so the last error context is preserved.
 
 ---
 
