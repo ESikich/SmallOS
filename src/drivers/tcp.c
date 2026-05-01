@@ -506,14 +506,6 @@ int tcp_socket_send(const void* buf, unsigned int len) {
         if (chunk > TCP_MAX_PAYLOAD) {
             chunk = TCP_MAX_PAYLOAD;
         }
-
-        terminal_puts("tcp: send ");
-        terminal_put_uint(chunk);
-        terminal_puts(" seq=");
-        terminal_put_uint(s_conn.local_seq_next);
-        terminal_puts(" ack=");
-        terminal_put_uint(s_conn.remote_seq_next);
-        terminal_putc('\n');
         tcp_send_segment(TCP_LOCAL_IP,
                          s_conn.remote_ip,
                          s_conn.remote_mac,
@@ -570,9 +562,7 @@ static void tcp_send_segment(u32 src_ip,
     u32 frame_len = tcp_build_frame(s_tx_frame, dst_mac, src_ip, dst_ip,
                                     src_port, dst_port, seq, ack,
                                     flags, payload, payload_len);
-    if (!e1000_send(s_tx_frame, frame_len)) {
-        terminal_puts("tcp: send failed\n");
-    }
+    (void)e1000_send(s_tx_frame, frame_len);
 }
 
 static void tcp_accept_syn(const u8* frame,
@@ -627,10 +617,6 @@ static void tcp_accept_syn(const u8* frame,
     s_conn.retransmit_at = s_conn.last_activity + TCP_RETRY_TICKS;
     s_conn.retries = 0;
 
-    terminal_puts("tcp: SYN from ");
-    ipv4_print_ip(s_conn.remote_ip);
-    terminal_puts("\n");
-
     tcp_send_segment(TCP_LOCAL_IP,
                      s_conn.remote_ip,
                      s_conn.remote_mac,
@@ -683,7 +669,6 @@ static void tcp_echo_payload(const u8* frame,
     }
 
     if (flags & TCP_RST) {
-        terminal_puts("tcp: reset\n");
         tcp_reset_connection();
         return;
     }
@@ -708,7 +693,6 @@ static void tcp_echo_payload(const u8* frame,
                              TCP_ACK,
                              0,
                              0);
-            terminal_puts("tcp: close\n");
             tcp_reset_connection();
         }
         return;
@@ -724,7 +708,6 @@ static void tcp_echo_payload(const u8* frame,
         s_conn.state = TCP_STATE_ESTABLISHED;
         s_conn.local_seq_next += 1u;
         s_conn.last_activity = timer_get_ticks();
-        terminal_puts("tcp: established\n");
         tcp_wake_waiter();
 
         if (payload_len == 0u) {
@@ -742,12 +725,6 @@ static void tcp_echo_payload(const u8* frame,
 
     if (seq != s_conn.remote_seq_next) {
         return;
-    }
-
-    if (payload_len > 0u) {
-        terminal_puts("tcp: payload ");
-        terminal_put_uint(payload_len);
-        terminal_putc('\n');
     }
 
     s_conn.last_activity = timer_get_ticks();
@@ -818,7 +795,6 @@ static void tcp_echo_payload(const u8* frame,
                          0,
                          0);
         s_conn.local_seq_next += 1u;
-        terminal_puts("tcp: close\n");
         tcp_reset_connection();
     }
 }
@@ -840,14 +816,12 @@ static void tcp_maybe_retransmit(void) {
                 continue;
             }
             if (s_conn.retries >= TCP_MAX_RETRIES) {
-                terminal_puts("tcp: handshake timeout\n");
                 tcp_reset_connection();
                 continue;
             }
 
             s_conn.retries++;
             s_conn.retransmit_at = now + TCP_RETRY_TICKS;
-            terminal_puts("tcp: retransmit SYN-ACK\n");
             tcp_send_segment(TCP_LOCAL_IP,
                              s_conn.remote_ip,
                              s_conn.remote_mac,
@@ -864,12 +838,10 @@ static void tcp_maybe_retransmit(void) {
         if (s_conn.state == TCP_STATE_ESTABLISHED) {
             if (slot->local_port != TCP_CONTROL_PORT &&
                 now - s_conn.last_activity > TCP_IDLE_TICKS) {
-                terminal_puts("tcp: idle timeout\n");
                 tcp_begin_close();
             }
         } else if (s_conn.state == TCP_STATE_FIN_WAIT) {
             if (now - s_conn.last_activity > TCP_IDLE_TICKS) {
-                terminal_puts("tcp: close timeout\n");
                 tcp_reset_connection();
             }
         }
@@ -878,12 +850,6 @@ static void tcp_maybe_retransmit(void) {
 
 static void tcp_service_main(void) {
     u32 len = 0;
-
-    terminal_puts("tcp: listener on ");
-    ipv4_print_ip(TCP_LOCAL_IP);
-    terminal_puts(":");
-    terminal_put_uint(s_socket_listener_port);
-    terminal_putc('\n');
 
     for (;;) {
         while (e1000_recv(s_rx_frame, sizeof(s_rx_frame), &len)) {
@@ -908,13 +874,11 @@ static void tcp_service_main(void) {
 void tcp_init(void) {
     process_t* proc = process_create_kernel_task("tcp", tcp_service_main);
     if (!proc) {
-        terminal_puts("tcp: failed to create task\n");
         return;
     }
 
     k_memset(s_slots, 0, sizeof(s_slots));
     if (!tcp_slot_for_port_create(TCP_LISTEN_PORT)) {
-        terminal_puts("tcp: failed to create default slot\n");
         process_destroy(proc);
         return;
     }
@@ -923,7 +887,6 @@ void tcp_init(void) {
     tcp_reset_connection();
 
     if (!sched_enqueue(proc)) {
-        terminal_puts("tcp: failed to enqueue task\n");
         process_destroy(proc);
     }
 }

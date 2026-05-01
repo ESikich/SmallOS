@@ -589,10 +589,6 @@ static int sys_accept_impl(syscall_regs_t* regs,
 
     new_fd = process_fd_open_socket(proc, "socket");
     if (new_fd < 0) return -1;
-    terminal_puts("sys_accept allocated fd=");
-    terminal_put_uint((unsigned int)new_fd);
-    terminal_putc('\n');
-
     {
         fd_entry_t* new_ent = process_fd_get(proc, new_fd);
         if (!socket_fd_is_socket(new_ent)) {
@@ -629,12 +625,6 @@ static int sys_accept_impl(syscall_regs_t* regs,
     }
 
     tcp_socket_wake_waiter();
-    terminal_puts("sys_accept final fd=");
-    terminal_put_uint((unsigned int)new_fd);
-    terminal_putc('\n');
-    terminal_puts("sys_accept returning fd=");
-    terminal_put_uint((unsigned int)new_fd);
-    terminal_putc('\n');
     return new_fd;
 }
 
@@ -939,35 +929,19 @@ static int sys_fread_impl(int fd, char* buf, unsigned int len) {
     if (!proc) return -1;
     fd_entry_t* ent = process_fd_get(proc, fd);
     if (!ent) return -1;
-    terminal_puts("sys_fread fd=");
-    terminal_put_uint((unsigned int)fd);
-    terminal_puts(" kind=");
-    terminal_put_uint((unsigned int)ent->kind);
-    terminal_puts(" state=");
-    terminal_put_uint((unsigned int)ent->socket_state);
-    terminal_putc('\n');
     if (socket_fd_is_socket(ent)) {
         tcp_socket_use_port(ent->socket_port);
         if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -1;
-        terminal_puts("sys_fread socket wait\n");
         __asm__ __volatile__("sti");
         while (!tcp_socket_recv_ready()) {
             if (!tcp_socket_connection_established()) {
-                terminal_puts("sys_fread socket closed\n");
                 __asm__ __volatile__("cli");
                 return 0;
             }
             __asm__ __volatile__("hlt");
         }
-        terminal_puts("sys_fread socket ready\n");
         __asm__ __volatile__("cli");
-        {
-            int n = tcp_socket_recv(buf, len);
-            terminal_puts("sys_fread socket read=");
-            terminal_put_uint((unsigned int)(n < 0 ? 0 : n));
-            terminal_putc('\n');
-            return n;
-        }
+        return tcp_socket_recv(buf, len);
     }
     return process_fd_read_file(ent, buf, len);
 }
