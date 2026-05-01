@@ -220,14 +220,14 @@ static int ipv4_parse_echo_reply(const u8* frame,
     return 1;
 }
 
-int ipv4_ping(u32 sender_ip, u32 target_ip) {
+int ipv4_ping_via_gateway(u32 sender_ip, u32 target_ip, u32 gateway_ip) {
     u8 target_mac[6];
     u8 frame[1600];
     u32 len = 0;
     u16 ident = 0x4A50u; /* "JP" for ping bookkeeping */
     u16 seq = 1u;
 
-    if (!arp_resolve(sender_ip, target_ip, target_mac)) {
+    if (!arp_resolve(sender_ip, gateway_ip, target_mac)) {
         terminal_puts("ping: arp failed\n");
         return 0;
     }
@@ -255,4 +255,8 @@ int ipv4_ping(u32 sender_ip, u32 target_ip) {
 
     terminal_puts("ping: timeout\n");
     return 0;
+}
+
+int ipv4_ping(u32 sender_ip, u32 target_ip) {
+    return ipv4_ping_via_gateway(sender_ip, target_ip, target_ip);
 }

@@ -232,7 +232,7 @@ static void cmd_arpgw(command_t* cmd) {
     terminal_putc('\n');
 }
 
-static void cmd_ping_target(const char* label, u32 sender_ip, u32 target_ip) {
+static void cmd_ping_target(const char* label, u32 sender_ip, u32 target_ip, u32 gateway_ip) {
     terminal_puts(label);
     terminal_puts(": ");
     ipv4_print_ip(target_ip);
@@ -240,7 +240,7 @@ static void cmd_ping_target(const char* label, u32 sender_ip, u32 target_ip) {
     ipv4_print_ip(sender_ip);
     terminal_putc('\n');
 
-    if (!ipv4_ping(sender_ip, target_ip)) {
+    if (!ipv4_ping_via_gateway(sender_ip, target_ip, gateway_ip)) {
         terminal_puts(label);
         terminal_puts(": failed\n");
         return;
@@ -263,14 +263,49 @@ static void cmd_ping(command_t* cmd) {
     }
 
     /* QEMU user networking defaults to 10.0.2.15/24. */
-    cmd_ping_target("ping", 0x0A00020Fu, target_ip);
+    cmd_ping_target("ping", 0x0A00020Fu, target_ip, target_ip);
 }
 
 static void cmd_pinggw(command_t* cmd) {
     (void)cmd;
 
     /* QEMU user networking defaults to 10.0.2.15/24 with gateway 10.0.2.2. */
-    cmd_ping_target("pinggw", 0x0A00020Fu, 0x0A000202u);
+    cmd_ping_target("pinggw", 0x0A00020Fu, 0x0A000202u, 0x0A000202u);
+}
+
+static void cmd_pingpublic(command_t* cmd) {
+    (void)cmd;
+
+    /* Public ICMP probe to separate "gateway works" from "internet works". */
+    cmd_ping_target("pingpublic", 0x0A00020Fu, 0x01010101u, 0x0A000202u);
+}
+
+static void cmd_netcheck(command_t* cmd) {
+    (void)cmd;
+
+    u8 mac[6];
+
+    terminal_puts("netcheck: gateway arp\n");
+    if (!arp_resolve(0x0A00020Fu, 0x0A000202u, mac)) {
+        terminal_puts("netcheck: gateway arp failed\n");
+        return;
+    }
+    terminal_puts("netcheck: gateway arp ok\n");
+
+    terminal_puts("netcheck: gateway ping\n");
+    if (!ipv4_ping(0x0A00020Fu, 0x0A000202u)) {
+        terminal_puts("netcheck: gateway ping failed\n");
+        return;
+    }
+    terminal_puts("netcheck: gateway ping ok\n");
+
+    terminal_puts("netcheck: public ping\n");
+    if (!ipv4_ping_via_gateway(0x0A00020Fu, 0x01010101u, 0x0A000202u)) {
+        terminal_puts("netcheck: public ping failed\n");
+        terminal_puts("netcheck: note: some hosts block ICMP beyond the gateway\n");
+        return;
+    }
+    terminal_puts("netcheck: public ping ok\n");
 }
 
 /*
@@ -703,6 +738,8 @@ static void cmd_shelltest(command_t* cmd) {
     command_t arpgw_cmd = { 1, { "arpgw" } };
     static command_t ping_cmd = { 2, { "ping", "10.0.2.2" } };
     static command_t pinggw_cmd = { 1, { "pinggw" } };
+    static command_t pingpublic_cmd = { 1, { "pingpublic" } };
+    static command_t netcheck_cmd = { 1, { "netcheck" } };
     static command_t cd_demo_cmd = { 2, { "cd", "apps/demo" } };
     static command_t pwd_demo_cmd = { 1, { "pwd" } };
     static command_t ls_demo_cmd = { 1, { "ls" } };
@@ -776,6 +813,8 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("arpgw", cmd_arpgw, &arpgw_cmd);
     shelltest_call("ping", cmd_ping, &ping_cmd);
     shelltest_call("pinggw", cmd_pinggw, &pinggw_cmd);
+    shelltest_call("pingpublic", cmd_pingpublic, &pingpublic_cmd);
+    shelltest_call("netcheck", cmd_netcheck, &netcheck_cmd);
     shelltest_call("ataread", cmd_ataread, &ataread_cmd);
     shelltest_call("fsls", cmd_fsls, &fsls_root_cmd);
     shelltest_call("fsls_path", cmd_fsls, &fsls_path_cmd);
@@ -975,6 +1014,8 @@ static command_entry_t commands[] = {
     { "arpgw",         "resolve the QEMU gateway via ARP", cmd_arpgw },
     { "ping",          "ping an IPv4 address",        cmd_ping },
     { "pinggw",        "ping the QEMU gateway",         cmd_pinggw },
+    { "pingpublic",    "ping 1.1.1.1 to probe internet reachability", cmd_pingpublic },
+    { "netcheck",      "check gateway and public connectivity", cmd_netcheck },
     { "cd",            "change the shell working directory", cmd_cd },
     { "pwd",           "print the shell working directory", cmd_pwd },
     { "ls",            "list a FAT16 directory",       cmd_ls },
@@ -1013,6 +1054,8 @@ static program_entry_t programs[] = {
     { "arpgw",        "resolve the QEMU gateway via ARP" },
     { "ping",         "ping an IPv4 address" },
     { "pinggw",       "ping the QEMU gateway" },
+    { "pingpublic",   "ping 1.1.1.1 to probe internet reachability" },
+    { "netcheck",     "check gateway and public connectivity" },
     { "apps/demo/hello",       "print argc/argv and tick count" },
     { "apps/tests/ticks",      "print the current tick count" },
     { "apps/tests/args",       "print argc and argv" },

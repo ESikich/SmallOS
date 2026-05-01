@@ -173,6 +173,8 @@ netrecv             poll and dump one Ethernet frame
 arpgw               resolve the QEMU gateway via ARP
 ping <ip>           ping an IPv4 address
 pinggw              ping the QEMU gateway
+pingpublic          ping 1.1.1.1 to probe internet reachability
+netcheck            check gateway and public connectivity
 mkdir <path>       create a FAT16 directory
 rmdir <path>       remove an empty FAT16 directory
 rm <path>          remove a FAT16 file
@@ -206,6 +208,10 @@ Seeded FAT16 layout:
 - `samples/tccmath.c`, `samples/tccagg.c`, `samples/tcctree.c`, `samples/tccmini.c` at the image root for the guest compiler demo
 
 `help` renders the built-in shell command list from the command table and the shipped-program list from the program table, with the same short descriptions.
+
+`pinggw` only proves the QEMU NAT gateway works. `pingpublic` routes the echo
+request through that gateway to a public IP, and `netcheck` prints each step so
+you can see whether the failure is local to the gateway or beyond it.
 
 ---
 

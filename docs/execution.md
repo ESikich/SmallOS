@@ -51,6 +51,8 @@ Important current-state facts:
 - user ELFs now have a small freestanding runtime layer with a heap allocator, buffered writable file descriptors, `stat`/`rename`/`unlink`, and `lseek`, which is enough for compiler-style tools
 - the shipped `tools/tcc.elf` compiler binary can run inside SmallOS, compile guest C sources from FAT16, write the results back to disk, and then those generated ELFs can be executed immediately
 - QEMU user networking is still the default for `make run` / `make test`, but `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT
+- `pinggw` only proves the QEMU gateway works; `pingpublic` and `netcheck` are the manual probes for "can I reach beyond the gateway?"
+- `pingpublic` now routes the echo request through the QEMU gateway instead of ARPing the public IP directly
 
 ---
 

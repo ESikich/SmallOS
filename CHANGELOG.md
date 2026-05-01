@@ -1,5 +1,15 @@
 # Changelog
 
+## [Current] — Internet reachability probes
+
+### Added
+
+* **`pingpublic` and `netcheck`** (`src/shell/commands.c`, `README.md`, `docs/execution.md`)
+  * `pingpublic` pings `1.1.1.1` so you can distinguish gateway-only success from actual outbound reachability
+  * `netcheck` runs ARP, gateway ping, and public ping in one pass and prints where the chain fails
+  * Public pings are routed through QEMU's gateway instead of ARPing the public IP directly, so the probe matches NAT-mode networking
+  * The README and execution docs now explain that `pinggw` only validates QEMU's local NAT gateway
+
 ## [Current] — TAP networking option
 
 ### Added
