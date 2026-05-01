@@ -85,6 +85,11 @@ loader2.bin          boot.bin
 verifies the built-in shell command suite in `tests/shell/` plus every
 shipped ELF against the per-program expectation files in `tests/elfs/`.
 
+The scripted shell/selftest command tables are stored statically in the
+kernel because the shell task's kernel stack is only 4 KB wide. That keeps
+the long regression run from corrupting process state while the guest test
+harness is exercising the full matrix.
+
 The guest suite also exercises the SmallOS-hosted TinyCC compiler
 (`tools/tcc.elf`) by compiling several sample C files inside the guest
 and immediately running the generated ELFs. Those generated binaries are

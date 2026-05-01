@@ -22,6 +22,11 @@ command, feeds the interactive `readline` prompt, and verifies both the
 built-in shell commands (`tests/shell/`) and shipped ELFs
 (`tests/elfs/`).
 
+The scripted shell/selftest tables are kept in static storage because the
+shell task only has a 4 KB kernel stack. If you add more scripted command
+cases, keep the large tables off the stack so the process state stays safe
+during the full regression run.
+
 `make smoke` runs the dedicated reboot/halt checks.  Use
 `make smoke-reboot` or `make smoke-halt` when you want to verify those
 commands without running the full guest suite.

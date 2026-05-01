@@ -196,6 +196,11 @@ The code currently does all of the following:
 
 For `runelf`, the shell then calls `process_wait(proc)` and blocks until the child reaches `PROCESS_STATE_ZOMBIE`. For `runelf_nowait`, the shell returns immediately after enqueue.
 
+The shell-side launch helpers keep their larger scripted command tables out of
+the shell task's 4 KB kernel stack. That matters for `shelltest`, `selftest`,
+and `runelf_nowait`, which run through the same foreground shell context while
+launching and waiting on many child tasks.
+
 `elf_enter_ring3()` then:
 
 - copies argv strings onto the user stack

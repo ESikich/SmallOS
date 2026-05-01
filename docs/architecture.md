@@ -162,6 +162,11 @@ For runnable tasks, `sched_esp` is the saved kernel resume stack pointer used by
 
 `user_arg_data` / `user_argv` hold copies of the argv strings inside the `process_t` PMM frame — independent of the shell input buffer and valid after CR3 switches.
 
+The shell task itself is just another kernel task with a small 4 KB kernel stack,
+so the scripted `shelltest` / `selftest` command tables are kept in static
+storage rather than on the stack. That avoids trampling `process_t` state during
+the longest regression paths.
+
 ---
 
 # Scheduler
