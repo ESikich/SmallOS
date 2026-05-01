@@ -189,7 +189,7 @@ The current FAT16 driver is intentionally narrow.
 - empty-file creation / truncation via `touch`
 - root-directory file creation and overwrite via `fat16_write(name, ...)`
 - nested-path file creation and overwrite via `fat16_write_path(path, ...)`
-- writable file descriptors with buffered output via `SYS_OPEN_WRITE`, `SYS_WRITEFD`, and `SYS_LSEEK`
+- writable file-backed handles with buffered output via `SYS_OPEN_WRITE`, `SYS_WRITEFD`, and `SYS_LSEEK`
 - file removal and rename/move through `SYS_UNLINK` and `SYS_RENAME`
 - case-insensitive 8.3 filename matching
 - FAT chain following for file reads
@@ -199,7 +199,7 @@ The current FAT16 driver is intentionally narrow.
 
 - long filenames (LFN)
 - multiple concurrent file buffers
-- general-purpose file descriptors
+- general-purpose socket-backed handles
 - mounting arbitrary FAT layouts
 
 Directory scan code explicitly skips:

@@ -36,6 +36,10 @@ It prints `kernel: selfcheck PASS` when the live TSS selector, boot stack,
 heap base, and PMM free-frame baseline all match the boot contract. If any of
 those invariants drift, the kernel halts before the shell starts.
 
+File-backed handles are owned by `process.c`, not the syscall dispatcher.
+If we add a new resource type later, it should get a handle kind and ops table
+so close/flush lifetime stays local to the owning module.
+
 Do not use `-fda` (floppy). LBA extended reads require hard disk mode.
 
 `help` is table-driven:
@@ -182,7 +186,7 @@ pmm_alloc_frame          0x200000 – 0x7FFFFF   reclaimable on process exit
 
 `kmalloc` / `kmalloc_page` are for permanent kernel structures only. Do not use them for transient buffers — the bump allocator has no free path and heap used will grow permanently with each call.
 
-`pmm_alloc_frame` is for everything reclaimed on exit: `process_t` structs, process page directories, ELF frames, stack frames, all process-private page tables, and kernel stack frames.
+`pmm_alloc_frame` is for everything reclaimed on exit: `process_t` structs, process page directories, ELF frames, stack frames, all process-private page tables, kernel stack frames, and embedded per-process handle tables.
 
 ### FAT16 load buffer rule
 
@@ -207,6 +211,7 @@ meminfo              ← still identical after second run
 * Do not rely on shell input buffers for process data.
 * All user-process arguments must be copied into process-owned storage before execution.
 * Pointers passed into a process must remain valid for the entire lifetime of that process.
+* File-backed handles are lifetime-owned by `process.c`; `syscall.c` should only validate arguments and dispatch.
 
 ---
 

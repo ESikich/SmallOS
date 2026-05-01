@@ -35,7 +35,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Per-process page directories — address space isolation; PD itself freed on exit
 * Ring 3 user mode — hardware-enforced privilege separation
 * Per-process kernel stacks — dedicated PMM frame per process; TSS ESP0 set from it; freed on exit
-* Syscall layer via `int 0x80` (DPL=3 gate): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`, `SYS_READ`, `SYS_YIELD`, `SYS_SLEEP`, `SYS_EXEC`, `SYS_WRITEFILE`, `SYS_WRITEFILE_PATH`
+* Syscall layer via `int 0x80` (DPL=3 gate): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`, `SYS_READ`, `SYS_YIELD`, `SYS_SLEEP`, `SYS_EXEC`, `SYS_WRITEFILE`, `SYS_WRITEFILE_PATH`, plus file-handle helpers (`SYS_OPEN_WRITE`, `SYS_WRITEFD`, `SYS_LSEEK`, `SYS_UNLINK`, `SYS_RENAME`, `SYS_STAT`)
 * `sys_exit()` is scheduler-owned: it switches to the kernel page directory, marks the current task `PROCESS_STATE_ZOMBIE`, and switches to the next runnable task
 * Shell now runs as an explicit kernel task scheduled by `scheduler.c`
 * **Preemptive round-robin scheduler** — timer IRQ (100 Hz) context-switches between kernel tasks; 10-tick (100 ms) quantum
@@ -45,6 +45,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * **`SYS_WRITEFILE_PATH`** — user process creates or overwrites a FAT16 file at any nested path
 * **ATA PIO driver** — polls the primary IDE channel (`0x1F0`) to read 512-byte sectors from disk in 32-bit protected mode; no DMA or IRQ required
 * **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing all user ELFs; built by `tools/mkfat16.c` with no external dependencies; readable via ATA PIO with nested directory paths, writable at runtime for root-directory files and nested paths
+* **TCP bring-up task** — minimal kernel-side TCP listener/echo path for end-to-end networking validation before the socket ABI is exposed to user space
 
 ---
 
@@ -195,7 +196,7 @@ Seeded FAT16 layout:
 - `apps/tests/runelf_test` - verify ELF loading, syscalls, and stack setup
 - `apps/tests/readline` - interactive SYS_READ demo
 - `apps/tests/exec_test` - exercise SYS_EXEC semantics
-- `apps/tests/fileread` - exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE
+- `apps/tests/fileread` - exercise process-owned file handles via SYS_OPEN / SYS_FREAD / SYS_CLOSE
 - `apps/tests/compiler_demo` - exercise SYS_WRITEFILE, SYS_WRITEFILE_PATH, and readback
 - `apps/tests/heapprobe` - exercise malloc/free/realloc/calloc
 - `apps/tests/statprobe` - exercise SYS_STAT and path probing

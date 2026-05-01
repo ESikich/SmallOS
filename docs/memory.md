@@ -54,6 +54,7 @@ Use PMM frames for:
 - kernel stack frames for processes
 - ELF segment frames
 - other memory that should be freed on process exit
+- embedded per-process handle tables that live inside `process_t`
 
 Do not allocate process-owned paging structures with `kmalloc_page()`. They must come from PMM so the process can be torn down cleanly.
 
@@ -124,7 +125,7 @@ The loader copies ELF segment data out of this buffer into PMM-backed frames bef
 The following programs exercise the current memory model:
 
 - `heapprobe` - allocator behavior and reuse
-- `fileprobe` - file descriptor and path write helpers
+- `fileprobe` - file-handle and path write helpers
 - `statprobe` - path probing and file metadata
 - `compiler_demo` - file write/readback flows
 - the TinyCC guest tests - compiler-style allocation and file output

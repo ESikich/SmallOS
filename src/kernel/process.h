@@ -30,15 +30,30 @@ typedef enum {
 #define PROCESS_FD_NAME_MAX 128      /* max path length stored in fd entry */
 #define PROCESS_FD_CACHE_PAGES 64    /* 256 KB max file / 4 KB per page */
 
-typedef struct {
+typedef struct fd_entry fd_entry_t;
+
+typedef enum {
+    PROCESS_HANDLE_KIND_NONE  = 0,
+    PROCESS_HANDLE_KIND_FILE  = 1,
+    PROCESS_HANDLE_KIND_SOCKET = 2
+} process_handle_kind_t;
+
+typedef struct process_handle_ops {
+    int  (*flush)(fd_entry_t* ent);
+    void (*close)(fd_entry_t* ent);
+} process_handle_ops_t;
+
+struct fd_entry {
     int  valid;                            /* 1 if this slot is open */
+    int  kind;                             /* PROCESS_HANDLE_KIND_* */
+    const process_handle_ops_t* ops;       /* resource-specific lifetime hooks */
     int  writable;                         /* 1 if writes should buffer */
     char name[PROCESS_FD_NAME_MAX];        /* filename as passed to SYS_OPEN */
     u32  size;                             /* file size in bytes */
     u32  offset;                           /* current read position */
     u32  cache_page_count;                 /* number of cached 4 KB pages */
     u32  cache_pages[PROCESS_FD_CACHE_PAGES]; /* PMM frames holding cached data */
-} fd_entry_t;
+};
 
 /* ------------------------------------------------------------------ */
 /* process_t                                                          */
@@ -75,6 +90,16 @@ process_t* process_create(const char* name);
 process_t* process_create_kernel_task(const char* name, void (*entry)(void));
 void       process_destroy(process_t* proc);
 void       process_fd_cache_free(fd_entry_t* ent);
+fd_entry_t* process_fd_get(process_t* proc, int fd);
+int        process_fd_open_file(process_t* proc,
+                                const char* name,
+                                u32 size,
+                                int writable);
+void       process_fd_close(fd_entry_t* ent);
+int        process_fd_flush(fd_entry_t* ent);
+int        process_fd_seek(fd_entry_t* ent, int offset, int whence);
+int        process_fd_read_file(fd_entry_t* ent, char* buf, unsigned int len);
+int        process_fd_write_file(fd_entry_t* ent, const char* buf, unsigned int len);
 void       process_claim_for_wait(process_t* proc);
 
 process_t* process_get_current(void);

@@ -1,10 +1,17 @@
 #include "process.h"
 #include "pmm.h"
 #include "paging.h"
+#include "klib.h"
+#include "fat16.h"
 #include "terminal.h"
 #include "scheduler.h"
 #include "keyboard.h"
 #include "shell.h"
+
+#define FREAD_CACHE_MAX_BYTES (PROCESS_FD_CACHE_PAGES * 4096u)
+#define FWRITE_CACHE_MAX_BYTES (PROCESS_FD_CACHE_PAGES * 4096u)
+
+static u8 s_write_flush_buf[FWRITE_CACHE_MAX_BYTES];
 
 /* ------------------------------------------------------------------ */
 /* Internal helpers                                                   */
@@ -62,6 +69,206 @@ void process_fd_cache_free(fd_entry_t* ent) {
         }
     }
     ent->cache_page_count = 0;
+}
+
+static int process_handle_file_flush(fd_entry_t* ent);
+static void process_handle_file_close(fd_entry_t* ent);
+
+static const process_handle_ops_t s_file_handle_ops = {
+    .flush = process_handle_file_flush,
+    .close = process_handle_file_close,
+};
+
+fd_entry_t* process_fd_get(process_t* proc, int fd) {
+    if (!proc) return 0;
+    if (fd < PROCESS_FD_FIRST || fd >= PROCESS_FD_MAX) return 0;
+    if (!proc->fds[fd].valid) return 0;
+    return &proc->fds[fd];
+}
+
+int process_fd_open_file(process_t* proc, const char* name, u32 size, int writable) {
+    if (!proc || !name) return -1;
+
+    for (int fd = PROCESS_FD_FIRST; fd < PROCESS_FD_MAX; fd++) {
+        if (!proc->fds[fd].valid) {
+            fd_entry_t* ent = &proc->fds[fd];
+            k_memset(ent, 0, sizeof(*ent));
+            ent->valid = 1;
+            ent->kind = PROCESS_HANDLE_KIND_FILE;
+            ent->ops = &s_file_handle_ops;
+            ent->writable = writable ? 1 : 0;
+            ent->size = size;
+            ent->offset = 0;
+            ent->cache_page_count = 0;
+            k_memcpy(ent->name, name, (k_size_t)k_strlen(name) + 1u);
+            return fd;
+        }
+    }
+
+    return -1;
+}
+
+void process_fd_close(fd_entry_t* ent) {
+    if (!ent) return;
+
+    if (ent->ops && ent->ops->close) {
+        ent->ops->close(ent);
+        return;
+    }
+
+    process_fd_cache_free(ent);
+    k_memset(ent, 0, sizeof(*ent));
+}
+
+static int process_fd_ensure_capacity(fd_entry_t* ent, unsigned int bytes) {
+    unsigned int needed_pages = (bytes + 4095u) / 4096u;
+    while (ent->cache_page_count < needed_pages) {
+        if (ent->cache_page_count >= PROCESS_FD_CACHE_PAGES) {
+            return 0;
+        }
+        u32 frame = pmm_alloc_frame();
+        if (!frame) {
+            return 0;
+        }
+        k_memset((void*)frame, 0, 4096u);
+        ent->cache_pages[ent->cache_page_count++] = frame;
+    }
+    return 1;
+}
+
+static int process_fd_load_cache(fd_entry_t* ent) {
+    if (!ent) return 0;
+    if (ent->cache_page_count != 0) return 1;
+    if (ent->size == 0) return 1;
+    if (ent->size > FREAD_CACHE_MAX_BYTES) return 0;
+
+    u32 loaded_size = 0;
+    const u8* data = fat16_load(ent->name, &loaded_size);
+    if (!data) return 0;
+    if (loaded_size != ent->size) return 0;
+
+    u32 pages = (ent->size + 4095u) / 4096u;
+    ent->cache_page_count = 0;
+    for (u32 i = 0; i < pages; i++) {
+        u32 frame = pmm_alloc_frame();
+        if (!frame) {
+            process_fd_cache_free(ent);
+            return 0;
+        }
+        ent->cache_pages[i] = frame;
+        ent->cache_page_count++;
+    }
+
+    for (u32 i = 0; i < pages; i++) {
+        u32 remaining = ent->size - (i * 4096u);
+        u32 chunk = remaining < 4096u ? remaining : 4096u;
+        u8* dst = (u8*)ent->cache_pages[i];
+        const u8* src = data + (i * 4096u);
+        for (u32 j = 0; j < chunk; j++) {
+            dst[j] = src[j];
+        }
+    }
+
+    return 1;
+}
+
+static int process_handle_file_flush(fd_entry_t* ent) {
+    if (!ent || !ent->valid || !ent->writable) {
+        return 0;
+    }
+    if (ent->size > FWRITE_CACHE_MAX_BYTES) {
+        return 0;
+    }
+
+    for (u32 i = 0; i < ent->size; i++) {
+        u32 page_idx = i / 4096u;
+        u32 page_off = i % 4096u;
+        s_write_flush_buf[i] = ((u8*)ent->cache_pages[page_idx])[page_off];
+    }
+
+    return fat16_write_path(ent->name, s_write_flush_buf, ent->size);
+}
+
+static void process_handle_file_close(fd_entry_t* ent) {
+    if (!ent) return;
+    process_fd_cache_free(ent);
+    k_memset(ent, 0, sizeof(*ent));
+}
+
+int process_fd_flush(fd_entry_t* ent) {
+    if (!ent || !ent->ops || !ent->ops->flush) return 0;
+    return ent->ops->flush(ent);
+}
+
+int process_fd_write_file(fd_entry_t* ent, const char* buf, unsigned int len) {
+    if (!ent || !ent->valid || !ent->writable) return -1;
+    if (len == 0) return 0;
+
+    unsigned int end = ent->offset + len;
+    if (end < ent->offset) return -1;
+    if (!process_fd_ensure_capacity(ent, end)) return -1;
+
+    for (unsigned int i = 0; i < len; i++) {
+        unsigned int pos = ent->offset + i;
+        unsigned int page_idx = pos / 4096u;
+        unsigned int page_off = pos % 4096u;
+        u8* dst = (u8*)ent->cache_pages[page_idx];
+        dst[page_off] = (u8)buf[i];
+    }
+
+    ent->offset = end;
+    if (ent->offset > ent->size) {
+        ent->size = ent->offset;
+    }
+    return (int)len;
+}
+
+int process_fd_seek(fd_entry_t* ent, int offset, int whence) {
+    unsigned int base;
+    int new_off;
+
+    if (!ent || !ent->valid) return -1;
+
+    if (whence == 0) {
+        base = 0;
+    } else if (whence == 1) {
+        base = ent->offset;
+    } else if (whence == 2) {
+        base = ent->size;
+    } else {
+        return -1;
+    }
+
+    new_off = (int)base + offset;
+    if (new_off < 0) return -1;
+    ent->offset = (unsigned int)new_off;
+    return new_off;
+}
+
+int process_fd_read_file(fd_entry_t* ent, char* buf, unsigned int len) {
+    unsigned int remaining;
+    unsigned int to_copy;
+    unsigned int src_off;
+
+    if (!ent || !ent->valid) return -1;
+    if (len == 0) return 0;
+    if (ent->offset >= ent->size) return 0;
+
+    if (!process_fd_load_cache(ent)) return -1;
+
+    remaining = ent->size - ent->offset;
+    to_copy = (len < remaining) ? len : remaining;
+    src_off = ent->offset;
+
+    for (u32 i = 0; i < to_copy; i++) {
+        u32 page_idx = (src_off + i) / 4096u;
+        u32 page_off = (src_off + i) % 4096u;
+        const u8* src = (const u8*)ent->cache_pages[page_idx];
+        buf[i] = (char)src[page_off];
+    }
+
+    ent->offset += to_copy;
+    return (int)to_copy;
 }
 
 void process_claim_for_wait(process_t* proc) {

@@ -128,7 +128,7 @@ The user-space allocator in `src/user/user_alloc.c` is layered on top of this sy
 int sys_open_write(const char* name);
 ```
 
-Opens a FAT16 file for buffered write/truncate and returns a writable fd. This is the file-descriptor-oriented companion to `SYS_WRITEFILE_PATH`.
+Opens a FAT16 file for buffered write/truncate and returns a writable file-backed handle. This is the handle-oriented companion to `SYS_WRITEFILE_PATH`.
 
 ---
 
@@ -138,7 +138,7 @@ Opens a FAT16 file for buffered write/truncate and returns a writable fd. This i
 int sys_writefd(int fd, const char* buf, uint32_t len);
 ```
 
-Writes bytes to an open writable fd. Returns bytes written or `-1` on error.
+Writes bytes to an open writable handle. Returns bytes written or `-1` on error.
 
 ---
 
@@ -148,7 +148,7 @@ Writes bytes to an open writable fd. Returns bytes written or `-1` on error.
 int sys_lseek(int fd, int offset, int whence);
 ```
 
-Repositions a writable fd.
+Repositions a writable handle.
 
 ---
 
@@ -224,9 +224,9 @@ Loads and asynchronously spawns a named ELF program from the FAT16 partition. Re
 int sys_open(const char* name);
 ```
 
-Opens a file from the FAT16 root directory by name (case-insensitive 8.3 matching). Allocates the lowest free slot in the calling process's fd table (fd ≥ 3) and records the filename, file size, and an initial read offset of 0. fds 0/1/2 are reserved.
+Opens a file from the FAT16 root directory by name (case-insensitive 8.3 matching). Allocates the lowest free slot in the calling process's handle table (fd ≥ 3) and records the filename, file size, and an initial read offset of 0. fds 0/1/2 are reserved.
 
-Returns the fd (≥ 3) on success, or `-1` if the file is not found, the fd table is full (`PROCESS_FD_MAX = 8`), or the name pointer fails user-space validation.
+Returns the fd (≥ 3) on success, or `-1` if the file is not found, the handle table is full (`PROCESS_FD_MAX = 8`), or the name pointer fails user-space validation.
 
 `sys_open_impl` validates the name with page-aware user checks, copies it into a kernel buffer bounded by `PROCESS_FD_NAME_MAX` (128 bytes), then calls `fat16_stat()` to confirm the file exists without loading its data.
 
@@ -238,7 +238,7 @@ Returns the fd (≥ 3) on success, or `-1` if the file is not found, the fd tabl
 int sys_close(int fd);
 ```
 
-Closes an open file descriptor, freeing its slot for reuse. Returns `0` on success, `-1` if the fd is out of range or not currently open.
+Closes an open handle, freeing its slot for reuse. Returns `0` on success, `-1` if the fd is out of range or not currently open.
 
 ---
 
@@ -248,7 +248,7 @@ Closes an open file descriptor, freeing its slot for reuse. Returns `0` on succe
 int sys_fread(int fd, char* buf, uint32_t len);
 ```
 
-Reads up to `len` bytes from the open file at `fd` into `buf`, starting at the current file position. Advances the position by the number of bytes actually read. Returns the number of bytes read, `0` at end-of-file, or `-1` on error (bad fd, invalid buffer, read failure).
+Reads up to `len` bytes from the open file-backed handle at `fd` into `buf`, starting at the current file position. Advances the position by the number of bytes actually read. Returns the number of bytes read, `0` at end-of-file, or `-1` on error (bad handle, invalid buffer, read failure).
 
 `sys_fread_impl` loads the file once into PMM-backed per-fd cache pages on first use, then copies the requested slice from that cache into the validated user buffer. The cache stays live until `sys_close()` or process teardown, so repeated reads from the same descriptor avoid extra ATA traffic.
 
@@ -339,8 +339,8 @@ u_putc(...)        sys_putc wrapper
 u_put_uint(...)    decimal integer output
 u_readline(...)    sys_read + null-terminate + strip newline
 u_open_write(...)  buffered write/truncate open
-u_writefd(...)     write to writable fd
-u_lseek(...)       reposition writable fd
+u_writefd(...)     write to writable handle
+u_lseek(...)       reposition writable handle
 u_unlink(...)      remove FAT16 file
 u_rename(...)      rename or move FAT16 entry
 u_stat(...)        query path metadata
@@ -356,7 +356,7 @@ u_stat(...)        query path metadata
 * `SYS_YIELD` and the timer path use the same stub layout, but the real scheduler resume ESP is `esp - 8`, not raw `esp`
 * EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`
 * The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.
-* fd 0/1/2 are reserved by convention; user-opened files start at fd 3. The fd table (`fd_entry_t fds[PROCESS_FD_MAX]`) lives inside `process_t` and is zero-initialized by `process_create()`; no explicit close-on-exit is needed since the entire frame is freed by `pmm_free_frame` on process destruction.
+* fd 0/1/2 are reserved by convention; user-opened files start at fd 3. The handle table (`fd_entry_t fds[PROCESS_FD_MAX]`) lives inside `process_t` and is zero-initialized by `process_create()`; file-backed entries carry their own ops table, so close/flush behavior stays owned by `process.c` rather than the syscall dispatcher.
 * `SYS_WRITEFILE` is the simplest root-only persistence path for user tools that want to emit a generated artifact without managing an fd-based write stream.
 * `SYS_WRITEFILE_PATH` is the preferred path-aware persistence primitive for compilers and build tools, especially when writing into nested directories.
 

@@ -15,10 +15,6 @@
 #define SYSCALL_MAX_WRITE_LEN 4096u
 #define EXEC_NAME_MAX         PROCESS_FD_NAME_MAX
 #define SCHED_RESUME_RETADDR_OFFSET 8u  /* push esp + call return address */
-#define FREAD_CACHE_MAX_BYTES (PROCESS_FD_CACHE_PAGES * 4096u)
-#define FWRITE_CACHE_MAX_BYTES (PROCESS_FD_CACHE_PAGES * 4096u)
-
-static u8 s_write_flush_buf[FWRITE_CACHE_MAX_BYTES];
 
 /* ------------------------------------------------------------------ */
 /* Copy-from-user validation                                          */
@@ -462,18 +458,7 @@ static int sys_open_impl(const char* name) {
     process_t* proc = (process_t*)sched_current();
     if (!proc) return -1;
 
-    for (int fd = PROCESS_FD_FIRST; fd < PROCESS_FD_MAX; fd++) {
-        if (!proc->fds[fd].valid) {
-            proc->fds[fd].valid  = 1;
-            proc->fds[fd].writable = 0;
-            proc->fds[fd].size   = file_size;
-            proc->fds[fd].offset = 0;
-            k_memcpy(proc->fds[fd].name, kname, (k_size_t)k_strlen(kname) + 1u);
-            return fd;
-        }
-    }
-
-    return -1;   /* fd table full */
+    return process_fd_open_file(proc, kname, file_size, 0);
 }
 
 /*
@@ -482,35 +467,13 @@ static int sys_open_impl(const char* name) {
  * Mark the fd slot as free.  Returns 0 on success, -1 on bad fd.
  */
 static int sys_close_impl(int fd) {
-    if (fd < PROCESS_FD_FIRST || fd >= PROCESS_FD_MAX) return -1;
-
     process_t* proc = (process_t*)sched_current();
     if (!proc) return -1;
-    if (!proc->fds[fd].valid) return -1;
+    fd_entry_t* ent = process_fd_get(proc, fd);
+    if (!ent) return -1;
 
-    process_fd_cache_free(&proc->fds[fd]);
-    proc->fds[fd].valid  = 0;
-    proc->fds[fd].writable = 0;
-    proc->fds[fd].offset = 0;
-    proc->fds[fd].size   = 0;
-    proc->fds[fd].name[0] = '\0';
+    process_fd_close(ent);
     return 0;
-}
-
-static int ensure_fd_capacity(fd_entry_t* ent, unsigned int bytes) {
-    unsigned int needed_pages = (bytes + 4095u) / 4096u;
-    while (ent->cache_page_count < needed_pages) {
-        if (ent->cache_page_count >= PROCESS_FD_CACHE_PAGES) {
-            return 0;
-        }
-        u32 frame = pmm_alloc_frame();
-        if (!frame) {
-            return 0;
-        }
-        k_memset((void*)frame, 0, 4096u);
-        ent->cache_pages[ent->cache_page_count++] = frame;
-    }
-    return 1;
 }
 
 static int sys_open_write_impl(const char* name) {
@@ -520,20 +483,7 @@ static int sys_open_write_impl(const char* name) {
     process_t* proc = (process_t*)sched_current();
     if (!proc) return -1;
 
-    for (int fd = PROCESS_FD_FIRST; fd < PROCESS_FD_MAX; fd++) {
-        if (!proc->fds[fd].valid) {
-            proc->fds[fd].valid = 1;
-            proc->fds[fd].writable = 1;
-            proc->fds[fd].size = 0;
-            proc->fds[fd].offset = 0;
-            proc->fds[fd].cache_page_count = 0;
-            k_memset(proc->fds[fd].name, 0, sizeof(proc->fds[fd].name));
-            k_memcpy(proc->fds[fd].name, kname, (k_size_t)k_strlen(kname) + 1u);
-            return fd;
-        }
-    }
-
-    return -1;
+    return process_fd_open_file(proc, kname, 0, 1);
 }
 
 static int sys_writefd_impl(int fd, const char* buf, unsigned int len) {
@@ -544,26 +494,9 @@ static int sys_writefd_impl(int fd, const char* buf, unsigned int len) {
     process_t* proc = (process_t*)sched_current();
     if (!proc) return -1;
 
-    fd_entry_t* ent = &proc->fds[fd];
-    if (!ent->valid || !ent->writable) return -1;
-
-    unsigned int end = ent->offset + len;
-    if (end < ent->offset) return -1;
-    if (!ensure_fd_capacity(ent, end)) return -1;
-
-    for (unsigned int i = 0; i < len; i++) {
-        unsigned int pos = ent->offset + i;
-        unsigned int page_idx = pos / 4096u;
-        unsigned int page_off = pos % 4096u;
-        u8* dst = (u8*)ent->cache_pages[page_idx];
-        dst[page_off] = (u8)buf[i];
-    }
-
-    ent->offset = end;
-    if (ent->offset > ent->size) {
-        ent->size = ent->offset;
-    }
-    return (int)len;
+    fd_entry_t* ent = process_fd_get(proc, fd);
+    if (!ent || !ent->writable) return -1;
+    return process_fd_write_file(ent, buf, len);
 }
 
 static int sys_lseek_impl(int fd, int offset, int whence) {
@@ -572,24 +505,9 @@ static int sys_lseek_impl(int fd, int offset, int whence) {
     process_t* proc = (process_t*)sched_current();
     if (!proc) return -1;
 
-    fd_entry_t* ent = &proc->fds[fd];
-    if (!ent->valid) return -1;
-
-    unsigned int base;
-    if (whence == 0) {
-        base = 0;
-    } else if (whence == 1) {
-        base = ent->offset;
-    } else if (whence == 2) {
-        base = ent->size;
-    } else {
-        return -1;
-    }
-
-    int new_off = (int)base + offset;
-    if (new_off < 0) return -1;
-    ent->offset = (unsigned int)new_off;
-    return new_off;
+    fd_entry_t* ent = process_fd_get(proc, fd);
+    if (!ent) return -1;
+    return process_fd_seek(ent, offset, whence);
 }
 
 static int sys_unlink_impl(const char* path) {
@@ -638,71 +556,6 @@ static int sys_stat_impl(const char* path, unsigned int* out_size, int* out_is_d
     return 0;
 }
 
-static int sys_flush_writable_fd(fd_entry_t* ent) {
-    if (!ent || !ent->valid || !ent->writable) {
-        return 0;
-    }
-    if (ent->size > FWRITE_CACHE_MAX_BYTES) {
-        return 0;
-    }
-
-    for (u32 i = 0; i < ent->size; i++) {
-        u32 page_idx = i / 4096u;
-        u32 page_off = i % 4096u;
-        s_write_flush_buf[i] = ((u8*)ent->cache_pages[page_idx])[page_off];
-    }
-
-    return fat16_write_path(ent->name, s_write_flush_buf, ent->size);
-}
-
-static int fd_cache_load(process_t* proc, fd_entry_t* ent) {
-    if (!proc || !ent) return 0;
-    if (ent->cache_page_count != 0) return 1;
-    if (ent->size == 0) return 1;
-    if (ent->size > FREAD_CACHE_MAX_BYTES) return 0;
-
-    u32 loaded_size = 0;
-    const u8* data = fat16_load(ent->name, &loaded_size);
-    if (!data) return 0;
-    if (loaded_size != ent->size) return 0;
-
-    u32 pages = (ent->size + 4095u) / 4096u;
-    ent->cache_page_count = 0;
-    for (u32 i = 0; i < pages; i++) {
-        u32 frame = pmm_alloc_frame();
-        if (!frame) {
-            process_fd_cache_free(ent);
-            return 0;
-        }
-        ent->cache_pages[i] = frame;
-        ent->cache_page_count++;
-    }
-
-    for (u32 i = 0; i < pages; i++) {
-        u32 remaining = ent->size - (i * 4096u);
-        u32 chunk = remaining < 4096u ? remaining : 4096u;
-        u8* dst = (u8*)ent->cache_pages[i];
-        const u8* src = data + (i * 4096u);
-        for (u32 j = 0; j < chunk; j++) {
-            dst[j] = src[j];
-        }
-    }
-
-    return 1;
-}
-
-/*
- * sys_fread_impl(fd, buf, len)
- *
- * Read up to len bytes from the file at fd into the user buffer buf,
- * starting at the current file offset.  Advances the offset.
- *
- * Implementation:
- *   The first read loads the file into PMM-backed per-fd cache pages.
- *   Later reads reuse that cache until sys_close() or process teardown.
- *
- * Returns bytes copied (0 at EOF), -1 on error.
- */
 static int sys_fread_impl(int fd, char* buf, unsigned int len) {
     if (fd < PROCESS_FD_FIRST || fd >= PROCESS_FD_MAX) return -1;
     if (len == 0) return 0;
@@ -710,30 +563,9 @@ static int sys_fread_impl(int fd, char* buf, unsigned int len) {
 
     process_t* proc = (process_t*)sched_current();
     if (!proc) return -1;
-    if (!proc->fds[fd].valid) return -1;
-
-    fd_entry_t* ent = &proc->fds[fd];
-
-    /* Already at or past end of file */
-    if (ent->offset >= ent->size) return 0;
-
-    if (!fd_cache_load(proc, ent)) return -1;
-
-    /* Clamp to remaining bytes */
-    u32 remaining = ent->size - ent->offset;
-    u32 to_copy   = (len < remaining) ? len : remaining;
-
-    /* Copy from kernel buffer into user buffer */
-    u32 src_off = ent->offset;
-    for (u32 i = 0; i < to_copy; i++) {
-        u32 page_idx = (src_off + i) / 4096u;
-        u32 page_off = (src_off + i) % 4096u;
-        const u8* src = (const u8*)ent->cache_pages[page_idx];
-        buf[i] = (char)src[page_off];
-    }
-
-    ent->offset += to_copy;
-    return (int)to_copy;
+    fd_entry_t* ent = process_fd_get(proc, fd);
+    if (!ent) return -1;
+    return process_fd_read_file(ent, buf, len);
 }
 
 void syscall_handler_main(syscall_regs_t* regs) {
@@ -819,13 +651,12 @@ void syscall_handler_main(syscall_regs_t* regs) {
         case SYS_CLOSE:
         {
             int fd = (int)regs->ebx;
-            if (fd >= PROCESS_FD_FIRST && fd < PROCESS_FD_MAX) {
-                process_t* proc = (process_t*)sched_current();
-                if (proc && proc->fds[fd].valid && proc->fds[fd].writable) {
-                    if (!sys_flush_writable_fd(&proc->fds[fd])) {
-                        regs->eax = SYSCALL_ERR_INVALID;
-                        break;
-                    }
+            process_t* proc = (process_t*)sched_current();
+            fd_entry_t* ent = process_fd_get(proc, fd);
+            if (ent && ent->writable) {
+                if (!process_fd_flush(ent)) {
+                    regs->eax = SYSCALL_ERR_INVALID;
+                    break;
                 }
             }
             regs->eax = (unsigned int)sys_close_impl(fd);

@@ -1,5 +1,20 @@
 # Changelog
 
+## [Current] — TCP bring-up and process handle seam
+
+### Added
+
+* **Minimal kernel TCP listener/echo task** (`src/drivers/tcp.c`, `src/drivers/tcp.h`, `src/kernel/kernel.c`)
+  * Phase 1 brings up a passive TCP listener in the kernel so the end-to-end network path can be validated before the socket ABI is exposed to user space
+  * The listener keeps the packet path intentionally small and stays inside the kernel for now
+
+### Changed
+
+* **Process-owned handle lifetime** (`src/kernel/process.c`, `src/kernel/process.h`, `src/kernel/syscall.c`)
+  * File-backed descriptors now route through a per-handle ops table owned by `process.c`
+  * `syscall.c` now validates and dispatches instead of owning fd lifetime directly, which leaves a clean seam for future socket handles
+  * `make test` stays green on the refactored handle path
+
 ## [Current] — Internet reachability probes
 
 ### Added
@@ -135,7 +150,7 @@
  
 ### Added
  
-* **Per-process file descriptor table** (`src/kernel/process.h`)
+* **Per-process file handle table** (`src/kernel/process.h`)
   * `fd_entry_t` struct: `valid`, `name[16]`, `size`, `offset`
   * `fds[PROCESS_FD_MAX]` (8 slots) embedded in `process_t` — zero-initialized by `proc_zero()` in `process_create()`; freed automatically with the process frame; no explicit close-on-exit needed
   * fds 0/1/2 reserved by convention; user-opened files start at fd 3 (`PROCESS_FD_FIRST`)
@@ -168,7 +183,7 @@
  
 ### Key design notes
  
-* **The fd table lives inside `process_t`** — no separate allocation, no leak risk, destroyed automatically with the process.
+* **The handle table lives inside `process_t`** — no separate allocation, no leak risk, destroyed automatically with the process.
 * **`SYS_FREAD` cache pages** — per-fd reads now populate PMM-backed cache pages on first use and reuse them until `sys_close()` or process teardown.
 * **`fat16_stat` does not disturb `s_load_buf`** — `SYS_OPEN` validation and ELF loading can interleave safely.
 * **Copy-from-user is address-range only** — it does not walk page tables. A user pointer in the valid range but backed by a missing PTE would still fault in the kernel; full fault handling is future work.
