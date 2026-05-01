@@ -14,6 +14,7 @@
 
 void tcp_init(void);
 void tcp_socket_handle_close(fd_entry_t* ent);
+void tcp_socket_use_port(unsigned int port);
 int  tcp_socket_bind(unsigned int port);
 int  tcp_socket_listen(void);
 int  tcp_socket_accept_ready(void);

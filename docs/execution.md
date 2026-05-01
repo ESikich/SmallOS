@@ -54,6 +54,7 @@ Important current-state facts:
 - `pinggw` only proves the QEMU gateway works; `pingpublic` and `netcheck` are the manual probes for "can I reach beyond the gateway?"
 - `pingpublic` now routes the echo request through the QEMU gateway instead of ARPing the public IP directly
 - `apps/services/tcpecho.elf` and `apps/services/ftpd.elf` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
+- `ftpd.elf` listens on `2121` in the guest and expects passive data connections on `30000`; host-side clients such as `lftp`, WinSCP, and FileZilla should use passive mode
 
 ---
 

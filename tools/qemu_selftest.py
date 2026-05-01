@@ -12,8 +12,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEST_PACKAGES = ("tests.shell", "tests.elfs")
-TRANSCRIPT_LIMIT = 65536
-TRANSCRIPT_TRIM = 32768
+TRANSCRIPT_LIMIT = 262144
+TRANSCRIPT_TRIM = 131072
 
 
 sys.path.insert(0, str(REPO_ROOT))

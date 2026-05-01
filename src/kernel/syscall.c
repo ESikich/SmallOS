@@ -556,6 +556,7 @@ static int sys_listen_impl(int fd, int backlog) {
     if (ent->socket_state != PROCESS_SOCKET_STATE_BOUND) return -1;
     if (ent->socket_port == 0u) return -1;
 
+    tcp_socket_use_port(ent->socket_port);
     if (tcp_socket_bind(ent->socket_port) < 0) return -1;
     if (tcp_socket_listen() < 0) return -1;
     ent->socket_state = PROCESS_SOCKET_STATE_LISTENER;
@@ -576,6 +577,7 @@ static int sys_accept_impl(syscall_regs_t* regs,
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -1;
     if (ent->socket_state != PROCESS_SOCKET_STATE_LISTENER) return -1;
+    tcp_socket_use_port(ent->socket_port);
 
     __asm__ __volatile__("sti");
     while (!tcp_socket_accept_ready()) {
@@ -659,6 +661,7 @@ static int sys_send_impl(int fd, const void* buf, unsigned int len) {
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -1;
     if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -1;
+    tcp_socket_use_port(ent->socket_port);
     return tcp_socket_send(buf, len);
 }
 
@@ -673,6 +676,7 @@ static int sys_recv_impl(syscall_regs_t* regs, int fd, void* buf, unsigned int l
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -1;
     if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -1;
+    tcp_socket_use_port(ent->socket_port);
 
     while (!tcp_socket_recv_ready()) {
         if (!tcp_socket_connection_established()) {
@@ -691,48 +695,98 @@ static int sys_recv_impl(syscall_regs_t* regs, int fd, void* buf, unsigned int l
     return tcp_socket_recv(buf, len);
 }
 
-static int sys_poll_impl(struct pollfd* fds, unsigned int nfds, int timeout) {
-    unsigned int ready = 0u;
-    process_t* proc = (process_t*)sched_current();
+static short sys_poll_revents_for_fd(process_t* proc, struct pollfd* pfd) {
+    fd_entry_t* ent = process_fd_get(proc, pfd->fd);
+    short revents = 0;
 
-    (void)timeout;
+    if (!socket_fd_is_socket(ent)) {
+        return POLLERR;
+    }
+    tcp_socket_use_port(ent->socket_port);
+
+    if (ent->socket_state == PROCESS_SOCKET_STATE_LISTENER) {
+        if (tcp_socket_accept_ready() && (pfd->events & POLLIN)) {
+            revents |= POLLIN;
+        }
+    } else if (ent->socket_state == PROCESS_SOCKET_STATE_BOUND) {
+        /* Bound-but-not-listening sockets are not yet ready. */
+    } else if (ent->socket_state == PROCESS_SOCKET_STATE_CONNECTED) {
+        if ((pfd->events & POLLIN) && tcp_socket_recv_ready()) {
+            revents |= POLLIN;
+        }
+        if ((pfd->events & POLLOUT) && tcp_socket_connection_established()) {
+            revents |= POLLOUT;
+        }
+    }
+
+    return revents;
+}
+
+static unsigned int sys_poll_snapshot(process_t* proc, struct pollfd* fds,
+                                      unsigned int nfds) {
+    unsigned int ready = 0u;
+
+    for (unsigned int i = 0; i < nfds; i++) {
+        short revents = sys_poll_revents_for_fd(proc, &fds[i]);
+        fds[i].revents = revents;
+        if (revents) {
+            ready++;
+        }
+    }
+
+    return ready;
+}
+
+static unsigned int sys_poll_timeout_ticks(int timeout_ms) {
+    if (timeout_ms <= 0) {
+        return 0u;
+    }
+
+    /* timer_init() programs 100 Hz in kernel_main(). */
+    return (unsigned int)((timeout_ms + 9) / 10);
+}
+
+static int sys_poll_impl(syscall_regs_t* regs, struct pollfd* fds,
+                         unsigned int nfds, int timeout) {
+    process_t* proc = (process_t*)sched_current();
+    unsigned int timeout_ticks;
+    unsigned int deadline;
+    int infinite_wait;
+
     if (!proc) return -1;
     if (nfds == 0u) return 0;
     if (!user_buf_ok((unsigned int)fds, nfds * sizeof(struct pollfd))) return -1;
 
-    for (unsigned int i = 0; i < nfds; i++) {
-        struct pollfd* pfd = &fds[i];
-        fd_entry_t* ent = process_fd_get(proc, pfd->fd);
-        short revents = 0;
+    infinite_wait = (timeout < 0);
+    timeout_ticks = infinite_wait ? 0u : sys_poll_timeout_ticks(timeout);
+    deadline = infinite_wait ? 0u : (timer_get_ticks() + timeout_ticks);
 
-        pfd->revents = 0;
-        if (!socket_fd_is_socket(ent)) {
-            pfd->revents = POLLERR;
-            continue;
+    for (;;) {
+        unsigned int ready = sys_poll_snapshot(proc, fds, nfds);
+        if (ready != 0u) {
+            tcp_socket_set_waiter(0);
+            return (int)ready;
         }
 
-        if (ent->socket_state == PROCESS_SOCKET_STATE_LISTENER) {
-            if (tcp_socket_accept_ready() && (pfd->events & POLLIN)) {
-                revents |= POLLIN;
-            }
-        } else if (ent->socket_state == PROCESS_SOCKET_STATE_BOUND) {
-            /* Bound-but-not-listening sockets are not yet ready. */
-        } else if (ent->socket_state == PROCESS_SOCKET_STATE_CONNECTED) {
-            if ((pfd->events & POLLIN) && tcp_socket_recv_ready()) {
-                revents |= POLLIN;
-            }
-            if ((pfd->events & POLLOUT) && tcp_socket_connection_established()) {
-                revents |= POLLOUT;
-            }
+        if (!infinite_wait && (int)(timer_get_ticks() - deadline) >= 0) {
+            tcp_socket_set_waiter(0);
+            return 0;
         }
 
-        if (revents) {
-            ready++;
+        proc->sleep_until = infinite_wait ? 0u : deadline;
+        proc->state = infinite_wait ? PROCESS_STATE_WAITING
+                                    : PROCESS_STATE_SLEEPING;
+        tcp_socket_set_waiter(proc);
+
+        __asm__ __volatile__("sti");
+        sched_yield_now((unsigned int)regs - SCHED_RESUME_RETADDR_OFFSET);
+        while (proc->state != PROCESS_STATE_RUNNING) {
+            __asm__ __volatile__("hlt");
         }
-        pfd->revents = revents;
+        __asm__ __volatile__("cli");
+
+        tcp_socket_set_waiter(0);
     }
-
-    return (int)ready;
 }
 
 static int sys_mkdir_impl(const char* path, unsigned int mode) {
@@ -811,6 +865,7 @@ static int sys_writefd_impl(int fd, const char* buf, unsigned int len) {
     fd_entry_t* ent = process_fd_get(proc, fd);
     if (!ent) return -1;
     if (socket_fd_is_socket(ent)) {
+        tcp_socket_use_port(ent->socket_port);
         if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -1;
         return tcp_socket_send(buf, len);
     }
@@ -892,6 +947,7 @@ static int sys_fread_impl(int fd, char* buf, unsigned int len) {
     terminal_put_uint((unsigned int)ent->socket_state);
     terminal_putc('\n');
     if (socket_fd_is_socket(ent)) {
+        tcp_socket_use_port(ent->socket_port);
         if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -1;
         terminal_puts("sys_fread socket wait\n");
         __asm__ __volatile__("sti");
@@ -1093,7 +1149,8 @@ void syscall_handler_main(syscall_regs_t* regs) {
             break;
 
         case SYS_POLL:
-            regs->eax = (unsigned int)sys_poll_impl((struct pollfd*)regs->ebx,
+            regs->eax = (unsigned int)sys_poll_impl(regs,
+                                                    (struct pollfd*)regs->ebx,
                                                     regs->ecx,
                                                     (int)regs->edx);
             break;

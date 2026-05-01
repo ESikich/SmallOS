@@ -239,6 +239,78 @@ static void append_uint(char** out, size_t* left, unsigned long value, unsigned 
     }
 }
 
+static void append_uint64_hex_parts(char** out, size_t* left,
+                                    unsigned long hi, unsigned long lo,
+                                    int uppercase, size_t* count) {
+    char tmp[16];
+    unsigned int i = 0;
+    const char* digits = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
+
+    if (hi == 0u && lo == 0u) {
+        append_char(out, left, '0', count);
+        return;
+    }
+
+    while (hi != 0u || lo != 0u) {
+        unsigned int nibble = (unsigned int)(lo & 0xFu);
+        tmp[i++] = digits[nibble];
+        lo = (lo >> 4) | (hi << 28);
+        hi >>= 4;
+    }
+
+    while (i > 0u) {
+        append_char(out, left, tmp[--i], count);
+    }
+}
+
+static void append_uint64_dec_parts(char** out, size_t* left,
+                                    unsigned long hi, unsigned long lo,
+                                    size_t* count) {
+    char tmp[32];
+    unsigned int i = 0;
+
+    if (hi == 0u && lo == 0u) {
+        append_char(out, left, '0', count);
+        return;
+    }
+
+    while (hi != 0u || lo != 0u) {
+        unsigned long q_hi = 0u;
+        unsigned long q_lo = 0u;
+        unsigned long rem = 0u;
+
+        for (int bit = 63; bit >= 0; bit--) {
+            unsigned long bitval;
+            unsigned long q_bit;
+
+            if (bit >= 32) {
+                bitval = (hi >> (bit - 32)) & 1u;
+            } else {
+                bitval = (lo >> bit) & 1u;
+            }
+
+            rem = (rem << 1) | bitval;
+            if (rem >= 10u) {
+                rem -= 10u;
+                q_bit = 1u;
+            } else {
+                q_bit = 0u;
+            }
+
+            q_hi = (q_hi << 1) | (q_lo >> 31);
+            q_lo = (q_lo << 1) | q_bit;
+        }
+
+        tmp[i++] = (char)('0' + rem);
+        hi = q_hi;
+        lo = q_lo;
+    }
+
+    while (i > 0u) {
+        append_char(out, left, tmp[--i], count);
+    }
+}
+
 static void append_int(char** out, size_t* left, long value, size_t* count) {
     if (value < 0) {
         append_char(out, left, '-', count);
@@ -246,6 +318,36 @@ static void append_int(char** out, size_t* left, long value, size_t* count) {
     } else {
         append_uint(out, left, (unsigned long)value, 10, 0, count);
     }
+}
+
+static void append_int64(char** out, size_t* left, long long value, size_t* count) {
+    union {
+        unsigned long long full;
+        struct {
+            unsigned long lo;
+            unsigned long hi;
+        } parts;
+    } u;
+
+    u.full = (unsigned long long)value;
+    if (value < 0) {
+        unsigned long carry = (u.parts.lo == 0u) ? 1u : 0u;
+        u.parts.lo = ~u.parts.lo + 1u;
+        u.parts.hi = ~u.parts.hi + carry;
+        append_char(out, left, '-', count);
+    }
+    append_uint64_dec_parts(out, left, u.parts.hi, u.parts.lo, count);
+}
+
+static const char* consume_decimal_width(const char* fmt, va_list* ap) {
+    if (*fmt == '*') {
+        (void)va_arg(*ap, int);
+        return fmt + 1;
+    }
+    while (*fmt >= '0' && *fmt <= '9') {
+        fmt++;
+    }
+    return fmt;
 }
 
 static int format_into(char* str, size_t size, const char* fmt, va_list ap) {
@@ -264,7 +366,52 @@ static int format_into(char* str, size_t size, const char* fmt, va_list ap) {
             fmt++;
             continue;
         }
-        while (*fmt == 'l' || *fmt == 'z' || *fmt == 'h' || *fmt == 't') fmt++;
+        while (*fmt == '-' || *fmt == '+' || *fmt == ' ' || *fmt == '#'
+            || *fmt == '0' || *fmt == '\'') {
+            fmt++;
+        }
+        fmt = consume_decimal_width(fmt, &ap);
+        if (*fmt == '.') {
+            fmt++;
+            fmt = consume_decimal_width(fmt, &ap);
+        }
+        int long_long = 0;
+        int long_count = 0;
+        int short_count = 0;
+        int size_t_mod = 0;
+        int ptrdiff_mod = 0;
+        int intmax_mod = 0;
+        while (*fmt == 'l' || *fmt == 'z' || *fmt == 'h' || *fmt == 't'
+            || *fmt == 'j' || *fmt == 'L') {
+            if (*fmt == 'l') {
+                if (fmt[1] == 'l') {
+                    long_long = 1;
+                    fmt += 2;
+                } else {
+                    long_count = 1;
+                    fmt++;
+                }
+            } else if (*fmt == 'h') {
+                if (fmt[1] == 'h') {
+                    short_count = 2;
+                    fmt += 2;
+                } else {
+                    short_count = 1;
+                    fmt++;
+                }
+            } else if (*fmt == 'z') {
+                size_t_mod = 1;
+                fmt++;
+            } else if (*fmt == 't') {
+                ptrdiff_mod = 1;
+                fmt++;
+            } else if (*fmt == 'j') {
+                intmax_mod = 1;
+                fmt++;
+            } else {
+                fmt++;
+            }
+        }
         switch (*fmt++) {
             case 's':
                 append_str(&out, &left, va_arg(ap, const char*), &count);
@@ -274,20 +421,87 @@ static int format_into(char* str, size_t size, const char* fmt, va_list ap) {
                 break;
             case 'd':
             case 'i':
-                append_int(&out, &left, (long)va_arg(ap, int), &count);
+                if (long_long || intmax_mod) {
+                    append_int64(&out, &left, va_arg(ap, long long), &count);
+                } else if (long_count || ptrdiff_mod) {
+                    append_int(&out, &left, va_arg(ap, long), &count);
+                } else if (short_count) {
+                    append_int(&out, &left, (long)(short)va_arg(ap, int), &count);
+                } else {
+                    append_int(&out, &left, (long)va_arg(ap, int), &count);
+                }
                 break;
             case 'u':
-                append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned int), 10, 0, &count);
+                if (long_long || intmax_mod) {
+                    union {
+                        unsigned long long full;
+                        struct {
+                            unsigned long lo;
+                            unsigned long hi;
+                        } parts;
+                    } u;
+                    u.full = va_arg(ap, unsigned long long);
+                    append_uint64_dec_parts(&out, &left, u.parts.hi, u.parts.lo, &count);
+                } else if (long_count || size_t_mod || ptrdiff_mod) {
+                    append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned long), 10, 0, &count);
+                } else if (short_count) {
+                    append_uint(&out, &left, (unsigned long)(unsigned short)va_arg(ap, unsigned int), 10, 0, &count);
+                } else {
+                    append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned int), 10, 0, &count);
+                }
                 break;
             case 'x':
-                append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned int), 16, 0, &count);
+                if (long_long || intmax_mod) {
+                    union {
+                        unsigned long long full;
+                        struct {
+                            unsigned long lo;
+                            unsigned long hi;
+                        } parts;
+                    } u;
+                    u.full = va_arg(ap, unsigned long long);
+                    append_uint64_hex_parts(&out, &left, u.parts.hi, u.parts.lo, 0, &count);
+                } else if (long_count || size_t_mod || ptrdiff_mod) {
+                    append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned long), 16, 0, &count);
+                } else if (short_count) {
+                    append_uint(&out, &left, (unsigned long)(unsigned short)va_arg(ap, unsigned int), 16, 0, &count);
+                } else {
+                    append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned int), 16, 0, &count);
+                }
                 break;
             case 'X':
-                append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned int), 16, 1, &count);
+                if (long_long || intmax_mod) {
+                    union {
+                        unsigned long long full;
+                        struct {
+                            unsigned long lo;
+                            unsigned long hi;
+                        } parts;
+                    } u;
+                    u.full = va_arg(ap, unsigned long long);
+                    append_uint64_hex_parts(&out, &left, u.parts.hi, u.parts.lo, 1, &count);
+                } else if (long_count || size_t_mod || ptrdiff_mod) {
+                    append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned long), 16, 1, &count);
+                } else if (short_count) {
+                    append_uint(&out, &left, (unsigned long)(unsigned short)va_arg(ap, unsigned int), 16, 1, &count);
+                } else {
+                    append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned int), 16, 1, &count);
+                }
                 break;
             case 'p':
                 append_str(&out, &left, "0x", &count);
                 append_uint(&out, &left, (unsigned long)(unsigned int)va_arg(ap, void*), 16, 0, &count);
+                break;
+            case 'f':
+            case 'F':
+            case 'e':
+            case 'E':
+            case 'g':
+            case 'G':
+            case 'a':
+            case 'A':
+                (void)va_arg(ap, double);
+                append_str(&out, &left, "<float>", &count);
                 break;
             default:
                 append_char(&out, &left, '%', &count);

@@ -26,12 +26,14 @@
 #define TCP_STATE_CLOSED     0
 #define TCP_STATE_SYN_RCVD    1
 #define TCP_STATE_ESTABLISHED 2
+#define TCP_STATE_FIN_WAIT    3
 
 #define TCP_RETRY_TICKS      100u
 #define TCP_IDLE_TICKS      1200u
 #define TCP_MAX_RETRIES        3u
-#define TCP_MAX_FRAME       1600u
+#define TCP_MAX_FRAME       1518u
 #define TCP_MAX_PAYLOAD    (TCP_MAX_FRAME - 14u - 20u - 20u)
+#define TCP_CONTROL_PORT     2121u
 
 typedef unsigned short u16;
 
@@ -47,18 +49,68 @@ typedef struct {
     unsigned int retries;
 } tcp_conn_t;
 
-static tcp_conn_t s_conn;
+typedef struct {
+    u16 local_port;
+    int listener_active;
+    int connection_accepted;
+    tcp_conn_t conn;
+    u8 rx_buf[TCP_MAX_PAYLOAD];
+    u32 rx_len;
+    u32 rx_off;
+} tcp_slot_t;
+
+#define TCP_MAX_SLOTS 4
+
+static tcp_slot_t s_slots[TCP_MAX_SLOTS];
+static u16 s_active_port = TCP_LISTEN_PORT;
 static process_t* s_socket_waiter;
-static u16 s_socket_listener_port = TCP_LISTEN_PORT;
-static int s_socket_listener_active;
-static int s_socket_connection_accepted;
-static u8 s_socket_rx_buf[TCP_MAX_PAYLOAD];
-static u32 s_socket_rx_len;
-static u32 s_socket_rx_off;
+static u16 s_socket_waiter_port;
 static u16 s_ip_id = 1u;
 static u8 s_rx_frame[TCP_MAX_FRAME];
 static u8 s_tx_frame[TCP_MAX_FRAME];
 static u8 s_checksum_scratch[12u + TCP_MAX_FRAME];
+
+static tcp_slot_t* tcp_slot_for_port(u16 port) {
+    for (unsigned int i = 0; i < TCP_MAX_SLOTS; i++) {
+        if (s_slots[i].local_port == port) {
+            return &s_slots[i];
+        }
+    }
+    return 0;
+}
+
+static tcp_slot_t* tcp_slot_for_port_create(u16 port) {
+    tcp_slot_t* slot = tcp_slot_for_port(port);
+    if (slot) {
+        return slot;
+    }
+
+    for (unsigned int i = 0; i < TCP_MAX_SLOTS; i++) {
+        if (s_slots[i].local_port == 0u) {
+            k_memset(&s_slots[i], 0, sizeof(s_slots[i]));
+            s_slots[i].local_port = port;
+            return &s_slots[i];
+        }
+    }
+
+    return 0;
+}
+
+static tcp_slot_t* tcp_active_slot(void) {
+    tcp_slot_t* slot = tcp_slot_for_port(s_active_port);
+    if (slot) {
+        return slot;
+    }
+    return &s_slots[0];
+}
+
+#define s_conn (tcp_active_slot()->conn)
+#define s_socket_listener_port (tcp_active_slot()->local_port)
+#define s_socket_listener_active (tcp_active_slot()->listener_active)
+#define s_socket_connection_accepted (tcp_active_slot()->connection_accepted)
+#define s_socket_rx_buf (tcp_active_slot()->rx_buf)
+#define s_socket_rx_len (tcp_active_slot()->rx_len)
+#define s_socket_rx_off (tcp_active_slot()->rx_off)
 
 static u16 tcp_read_u16_be(const u8* buf, u32 off) {
     return (u16)(((u16)buf[off] << 8) | (u16)buf[off + 1]);
@@ -299,21 +351,53 @@ static void tcp_reset_connection(void) {
     s_socket_rx_len = 0u;
     s_socket_rx_off = 0u;
     s_socket_connection_accepted = 0;
-    if (s_socket_waiter) {
+    if (s_socket_waiter && s_socket_waiter_port == s_active_port) {
         s_socket_waiter->state = PROCESS_STATE_RUNNING;
         s_socket_waiter = 0;
+        s_socket_waiter_port = 0;
     }
 }
 
-static void tcp_wake_waiter(void) {
-    if (s_socket_waiter && s_socket_waiter->state == PROCESS_STATE_WAITING) {
-        s_socket_waiter->state = PROCESS_STATE_RUNNING;
+static void tcp_begin_close(void) {
+    if (s_conn.state != TCP_STATE_ESTABLISHED) {
+        return;
     }
-    s_socket_waiter = 0;
+
+    tcp_send_segment(TCP_LOCAL_IP,
+                     s_conn.remote_ip,
+                     s_conn.remote_mac,
+                     s_socket_listener_port,
+                     s_conn.remote_port,
+                     s_conn.local_seq_next,
+                     s_conn.remote_seq_next,
+                     (u8)(TCP_FIN | TCP_ACK),
+                     0,
+                     0);
+    s_conn.local_seq_next += 1u;
+    s_conn.state = TCP_STATE_FIN_WAIT;
+    s_conn.last_activity = timer_get_ticks();
+    s_conn.retransmit_at = s_conn.last_activity + TCP_RETRY_TICKS;
+    s_conn.retries = 0;
+}
+
+void tcp_socket_use_port(unsigned int port) {
+    s_active_port = (u16)port;
+}
+
+static void tcp_wake_waiter(void) {
+    if (s_socket_waiter &&
+        s_socket_waiter_port == s_active_port &&
+        (s_socket_waiter->state == PROCESS_STATE_WAITING ||
+         s_socket_waiter->state == PROCESS_STATE_SLEEPING)) {
+        s_socket_waiter->state = PROCESS_STATE_RUNNING;
+        s_socket_waiter = 0;
+        s_socket_waiter_port = 0;
+    }
 }
 
 void tcp_socket_set_waiter(process_t* proc) {
     s_socket_waiter = proc;
+    s_socket_waiter_port = proc ? s_active_port : 0u;
 }
 
 void tcp_socket_wake_waiter(void) {
@@ -325,10 +409,17 @@ void tcp_socket_handle_close(fd_entry_t* ent) {
         return;
     }
 
+    tcp_socket_use_port(ent->socket_port);
     if (ent->socket_state == PROCESS_SOCKET_STATE_LISTENER) {
         s_socket_listener_active = 0;
-        tcp_reset_connection();
+        if (s_conn.state != TCP_STATE_ESTABLISHED || !s_socket_connection_accepted) {
+            tcp_reset_connection();
+        }
     } else if (ent->socket_state == PROCESS_SOCKET_STATE_CONNECTED) {
+        if (s_conn.state == TCP_STATE_ESTABLISHED) {
+            tcp_begin_close();
+            return;
+        }
         tcp_reset_connection();
     }
 }
@@ -338,13 +429,19 @@ int tcp_socket_bind(unsigned int port) {
         return -1;
     }
 
-    s_socket_listener_port = (u16)port;
+    if (!tcp_slot_for_port_create((u16)port)) {
+        return -1;
+    }
+    tcp_socket_use_port(port);
     s_socket_listener_active = 1;
     tcp_reset_connection();
     return 0;
 }
 
 int tcp_socket_listen(void) {
+    if (!tcp_slot_for_port(s_active_port)) {
+        return -1;
+    }
     s_socket_listener_active = 1;
     return 0;
 }
@@ -394,30 +491,42 @@ int tcp_socket_recv(void* buf, unsigned int len) {
 }
 
 int tcp_socket_send(const void* buf, unsigned int len) {
+    const u8* p;
+    unsigned int done = 0u;
+
     if (!buf || len == 0u) {
         return 0;
     }
     if (s_conn.state != TCP_STATE_ESTABLISHED) {
         return -1;
     }
-    terminal_puts("tcp: send ");
-    terminal_put_uint(len);
-    terminal_puts(" seq=");
-    terminal_put_uint(s_conn.local_seq_next);
-    terminal_puts(" ack=");
-    terminal_put_uint(s_conn.remote_seq_next);
-    terminal_putc('\n');
-    tcp_send_segment(TCP_LOCAL_IP,
-                     s_conn.remote_ip,
-                     s_conn.remote_mac,
-                     s_socket_listener_port,
-                     s_conn.remote_port,
-                     s_conn.local_seq_next,
-                     s_conn.remote_seq_next,
-                     (u8)(TCP_ACK | TCP_PSH),
-                     (const u8*)buf,
-                     len);
-    s_conn.local_seq_next += len;
+    p = (const u8*)buf;
+    while (done < len) {
+        unsigned int chunk = len - done;
+        if (chunk > TCP_MAX_PAYLOAD) {
+            chunk = TCP_MAX_PAYLOAD;
+        }
+
+        terminal_puts("tcp: send ");
+        terminal_put_uint(chunk);
+        terminal_puts(" seq=");
+        terminal_put_uint(s_conn.local_seq_next);
+        terminal_puts(" ack=");
+        terminal_put_uint(s_conn.remote_seq_next);
+        terminal_putc('\n');
+        tcp_send_segment(TCP_LOCAL_IP,
+                         s_conn.remote_ip,
+                         s_conn.remote_mac,
+                         s_socket_listener_port,
+                         s_conn.remote_port,
+                         s_conn.local_seq_next,
+                         s_conn.remote_seq_next,
+                         (u8)(TCP_ACK | TCP_PSH),
+                         p + done,
+                         chunk);
+        s_conn.local_seq_next += chunk;
+        done += chunk;
+    }
     return (int)len;
 }
 
@@ -483,7 +592,11 @@ static void tcp_accept_syn(const u8* frame,
     if (total_len < ip_header_len + tcp_header_len) {
         return;
     }
-    if (dst_port != s_socket_listener_port) {
+    if (!tcp_slot_for_port(dst_port)) {
+        return;
+    }
+    tcp_socket_use_port(dst_port);
+    if (!s_socket_listener_active) {
         return;
     }
     if ((frame[tcp_off + 13u] & TCP_SYN) == 0u) {
@@ -543,6 +656,7 @@ static void tcp_echo_payload(const u8* frame,
     u32 seq = tcp_read_u32_be(frame, tcp_off + 4u);
     u32 ack = tcp_read_u32_be(frame, tcp_off + 8u);
     u32 src_ip = tcp_read_u32_be(frame, 26);
+    u16 dst_port = tcp_read_u16_be(frame, tcp_off + 2u);
 
     if (total_len < ip_header_len + 20u) {
         return;
@@ -553,6 +667,10 @@ static void tcp_echo_payload(const u8* frame,
     if (tcp_len < header_len) {
         return;
     }
+    if (!tcp_slot_for_port(dst_port)) {
+        return;
+    }
+    tcp_socket_use_port(dst_port);
 
     if (s_conn.state == TCP_STATE_CLOSED) {
         tcp_accept_syn(frame, ip_header_len, total_len);
@@ -567,6 +685,32 @@ static void tcp_echo_payload(const u8* frame,
     if (flags & TCP_RST) {
         terminal_puts("tcp: reset\n");
         tcp_reset_connection();
+        return;
+    }
+
+    if (s_conn.state == TCP_STATE_FIN_WAIT) {
+        if (payload_len > 0u) {
+            return;
+        }
+
+        if ((flags & TCP_ACK) != 0u) {
+            s_conn.last_activity = timer_get_ticks();
+        }
+
+        if ((flags & TCP_FIN) != 0u) {
+            tcp_send_segment(TCP_LOCAL_IP,
+                             s_conn.remote_ip,
+                             s_conn.remote_mac,
+                             s_socket_listener_port,
+                             s_conn.remote_port,
+                             s_conn.local_seq_next,
+                             s_conn.remote_seq_next + 1u,
+                             TCP_ACK,
+                             0,
+                             0);
+            terminal_puts("tcp: close\n");
+            tcp_reset_connection();
+        }
         return;
     }
 
@@ -614,7 +758,7 @@ static void tcp_echo_payload(const u8* frame,
     }
 
     if (payload_len > 0u) {
-        if (s_socket_listener_active) {
+        if (s_conn.state == TCP_STATE_ESTABLISHED) {
             unsigned int available = TCP_MAX_PAYLOAD - s_socket_rx_len;
             unsigned int to_copy = (payload_len < available) ? payload_len : available;
 
@@ -682,35 +826,28 @@ static void tcp_echo_payload(const u8* frame,
 static void tcp_maybe_retransmit(void) {
     u32 now = timer_get_ticks();
 
-    if (s_conn.state == TCP_STATE_SYN_RCVD) {
-        if (now < s_conn.retransmit_at) {
-            return;
-        }
-        if (s_conn.retries >= TCP_MAX_RETRIES) {
-            terminal_puts("tcp: handshake timeout\n");
-            tcp_reset_connection();
-            return;
+    for (unsigned int i = 0; i < TCP_MAX_SLOTS; i++) {
+        tcp_slot_t* slot = &s_slots[i];
+
+        if (slot->local_port == 0u) {
+            continue;
         }
 
-        s_conn.retries++;
-        s_conn.retransmit_at = now + TCP_RETRY_TICKS;
-        terminal_puts("tcp: retransmit SYN-ACK\n");
-        tcp_send_segment(TCP_LOCAL_IP,
-                         s_conn.remote_ip,
-                         s_conn.remote_mac,
-                         s_socket_listener_port,
-                         s_conn.remote_port,
-                         s_conn.local_seq_next,
-                         s_conn.remote_seq_next,
-                         (u8)(TCP_SYN | TCP_ACK),
-                         0,
-                         0);
-        return;
-    }
+        tcp_socket_use_port(slot->local_port);
 
-    if (s_conn.state == TCP_STATE_ESTABLISHED) {
-        if (now - s_conn.last_activity > TCP_IDLE_TICKS) {
-            terminal_puts("tcp: idle timeout\n");
+        if (s_conn.state == TCP_STATE_SYN_RCVD) {
+            if (now < s_conn.retransmit_at) {
+                continue;
+            }
+            if (s_conn.retries >= TCP_MAX_RETRIES) {
+                terminal_puts("tcp: handshake timeout\n");
+                tcp_reset_connection();
+                continue;
+            }
+
+            s_conn.retries++;
+            s_conn.retransmit_at = now + TCP_RETRY_TICKS;
+            terminal_puts("tcp: retransmit SYN-ACK\n");
             tcp_send_segment(TCP_LOCAL_IP,
                              s_conn.remote_ip,
                              s_conn.remote_mac,
@@ -718,10 +855,23 @@ static void tcp_maybe_retransmit(void) {
                              s_conn.remote_port,
                              s_conn.local_seq_next,
                              s_conn.remote_seq_next,
-                             (u8)(TCP_FIN | TCP_ACK),
+                             (u8)(TCP_SYN | TCP_ACK),
                              0,
                              0);
-            tcp_reset_connection();
+            continue;
+        }
+
+        if (s_conn.state == TCP_STATE_ESTABLISHED) {
+            if (slot->local_port != TCP_CONTROL_PORT &&
+                now - s_conn.last_activity > TCP_IDLE_TICKS) {
+                terminal_puts("tcp: idle timeout\n");
+                tcp_begin_close();
+            }
+        } else if (s_conn.state == TCP_STATE_FIN_WAIT) {
+            if (now - s_conn.last_activity > TCP_IDLE_TICKS) {
+                terminal_puts("tcp: close timeout\n");
+                tcp_reset_connection();
+            }
         }
     }
 }
@@ -762,9 +912,13 @@ void tcp_init(void) {
         return;
     }
 
-    s_socket_listener_port = TCP_LISTEN_PORT;
-    s_socket_listener_active = 0;
-    s_socket_connection_accepted = 0;
+    k_memset(s_slots, 0, sizeof(s_slots));
+    if (!tcp_slot_for_port_create(TCP_LISTEN_PORT)) {
+        terminal_puts("tcp: failed to create default slot\n");
+        process_destroy(proc);
+        return;
+    }
+    tcp_socket_use_port(TCP_LISTEN_PORT);
     s_socket_waiter = 0;
     tcp_reset_connection();
 

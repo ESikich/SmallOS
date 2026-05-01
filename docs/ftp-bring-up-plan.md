@@ -24,7 +24,61 @@ Current handoff for the next implementation pass.
 - The FTP port uses SmallOS compatibility shims in `src/user/ftp_compat.c` plus small headers for `dirent`, `ctype`, and `netinet/in`.
 - A tiny user-space TCP echo app exists in `src/user/tcpecho.c`.
 - The TCP transmit path is now validated by a host client connecting through QEMU hostfwd and receiving echoed bytes back.
+- `ftpd.elf` has been verified as a normal guest ELF, reachable from the host through QEMU user networking on `2121` for control and `30000` for passive data.
+- `lftp` is the current least-fussy host-side smoke client; FileZilla and WinSCP both probe with `LIST -a`, so the server accepts that form as a current-directory listing request.
 - `third_party/ftp_server/` is present but intentionally untracked and should be treated as vendored input, not as the implementation target.
+
+## Verified Smoke Recipe
+
+Use this exact launch shape when you want to verify the guest FTP daemon over QEMU user networking:
+
+```bash
+qemu-system-i386 \
+  -drive format=raw,file=build/img/os-image.bin \
+  -boot c -m 32 \
+  -serial file:/tmp/smallos-serial.log \
+  -nic user,model=e1000,mac=52:54:00:12:34:56,hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000 \
+  -display none \
+  -monitor unix:/tmp/smallos-monitor.sock,server,nowait \
+  -daemonize -pidfile /tmp/smallos.pid
+```
+
+Inside the guest shell, start the daemon with:
+
+```text
+runelf_nowait apps/services/ftpd
+```
+
+Expected guest banner:
+
+```text
+ftpd: listening on 0.0.0.0:2121
+```
+
+Host-side expectations:
+
+- Connect to `127.0.0.1:2121` and verify the banner arrives immediately.
+- Log in with `USER ftp` and `PASS ftp`.
+- Send `PASV` and connect the data socket to the advertised host/port tuple.
+- Confirm `LIST`, `RETR`, and `STOR` all succeed through the passive data port.
+- Do not rely on active mode; the daemon is intended to operate passive-only.
+- Send `QUIT` and confirm the control connection closes cleanly.
+- If using a GUI client, expect it to probe `FEAT`, `OPTS UTF8 ON`, `TYPE A`, and `LIST -a` before the visible directory listing.
+
+Recommended repeatable host smoke:
+
+```bash
+lftp -d -e '
+set ftp:passive-mode yes
+set net:timeout 10
+open -u ftp,ftp 127.0.0.1:2121
+cls -l
+get apps/demo/hello.elf -o /tmp/retr.bin
+put /tmp/lftp-smoke.txt -o LFTP_SMOKE.TXT
+cls -l
+bye
+'
+```
 
 ## Goal
 
@@ -142,8 +196,14 @@ Goal:
 
 Ports to forward:
 
-- control port 2121 -> 21
+- control port 2121 -> 2121
 - passive data port 30000 -> 30000 first
+
+Notes:
+
+- Keep the guest FTP daemon on `2121`.
+- Keep passive data on `30000` until the guest TCP stack supports a wider range cleanly.
+- Document the `lftp` smoke as the preferred repeatable host check, with GUI clients as an additional compatibility test.
 
 ## Best First Move for the Next Session
 
