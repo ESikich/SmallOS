@@ -13,6 +13,8 @@ bits 16
 
 LOADER2_SEGMENT      equ 0x4000
 KERNEL_OFFSET        equ 0x1000
+KERNEL_SEGMENT       equ KERNEL_OFFSET / 16
+KERNEL_READ_CHUNK    equ 120        ; 120 sectors = 61440 bytes, fits below 64 KiB
 STAGE2_STACK_TOP     equ __STAGE2_STACK_TOP__
 STAGE2_STACK_TOP_32  equ __STAGE2_STACK_TOP_32__
 BOOT_SECTOR_ADDR     equ 0x7C00
@@ -89,20 +91,39 @@ lba_read:
 
 load_kernel:
     pusha
-    mov word  [dap_off],   KERNEL_OFFSET
-    mov word  [dap_seg],   0x0000
     push ds
     xor ax, ax
     mov ds, ax
     mov eax, [BOOT_SECTOR_ADDR + MBR_PARTITION_TABLE_OFFSET + KERNEL_PARTITION_INDEX * MBR_PARTITION_ENTRY_SIZE + MBR_PARTITION_LBA_OFFSET]
     mov edx, [BOOT_SECTOR_ADDR + MBR_PARTITION_TABLE_OFFSET + KERNEL_PARTITION_INDEX * MBR_PARTITION_ENTRY_SIZE + MBR_PARTITION_SIZE_OFFSET]
     pop ds
-    mov word  [dap_count], dx
     test dx, dx
     jz disk_error
-    mov dword [dap_lba],   eax
+
+    mov bx, KERNEL_SEGMENT
+
+.read_loop:
+    mov cx, dx
+    cmp cx, KERNEL_READ_CHUNK
+    jbe .chunk_ok
+    mov cx, KERNEL_READ_CHUNK
+
+.chunk_ok:
+    mov word [dap_count], cx
+    mov word [dap_seg], bx
+    mov word [dap_off], 0x0000
+    mov dword [dap_lba], eax
     mov dword [dap_lba+4], 0
     call lba_read
+
+    add eax, ecx
+    push cx
+    shl cx, 5              ; 512 bytes per sector / 16 bytes per paragraph
+    add bx, cx
+    pop cx
+    sub dx, cx
+    jnz .read_loop
+
     popa
     ret
 

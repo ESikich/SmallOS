@@ -17,6 +17,10 @@ BIN_DIR=$(BUILD_DIR)/bin
 GEN_DIR=$(BUILD_DIR)/gen
 IMG_DIR=$(BUILD_DIR)/img
 TOOLS_DIR=$(BUILD_DIR)/tools
+TINYCC_DIR=$(BUILD_DIR)/tinycc-host
+TINYCC_SMALOS_OBJ_DIR=$(OBJ_DIR)/tinycc-smalos
+TINYCC_SMALOS_OBJ=$(TINYCC_SMALOS_OBJ_DIR)/tcc.o
+TINYCC_SMALOS_BIN=$(BIN_DIR)/tcc-smalos.elf
 STATE_DIR=.state
 
 BOOT_SECTOR_SIZE := $(shell awk '/^BOOT_SECTOR_SIZE[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
@@ -38,6 +42,7 @@ CPPFLAGS=-I$(KERNEL_DIR) -I$(DRIVERS_DIR) -I$(SHELL_DIR) -I$(EXEC_DIR) -I$(USER_
 CFLAGS=-ffreestanding -m32 -fno-pie -fno-stack-protector -nostdlib -nostartfiles -Wa,--noexecstack
 DEPFLAGS=-MMD -MP
 HOST_CC=gcc
+LIBGCC_FILE := $(shell $(CC) -print-libgcc-file-name)
 LDFLAGS=-T linker.ld -m elf_i386
 USER_LDFLAGS=-m elf_i386 -Ttext-segment 0x400000 -e _start
 
@@ -72,15 +77,19 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/fat16.c \
 	$(DRIVERS_DIR)/serial.c
 
-USER_PROGS=echo about uptime halt reboot hello ticks args runelf_test readline exec_test fileread compiler_demo fault sleep_test ptrguard spinwkr preempt_test
+USER_PROGS=echo about uptime halt reboot hello ticks args runelf_test readline exec_test fileread compiler_demo heapprobe statprobe fileprobe fault sleep_test ptrguard spinwkr preempt_test
 USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
+USER_RUNTIME_SRCS=$(USER_DIR)/user_alloc.c $(USER_DIR)/user_stdio.c $(USER_DIR)/user_posix.c $(USER_DIR)/setjmp.asm
 FAT16_ROOT_ENTRIES=$(foreach prog,$(USER_PROGS),$(prog).elf=$(BIN_DIR)/$(prog).elf)
-FAT16_EXTRA_ENTRIES=apps/demo/hello.elf=$(BIN_DIR)/hello.elf
+FAT16_EXTRA_ENTRIES=apps/demo/hello.elf=$(BIN_DIR)/hello.elf tools/tcc.elf=$(TINYCC_SMALOS_BIN) tccmath.c=$(CURDIR)/samples/tccmath.c tccagg.c=$(CURDIR)/samples/tccagg.c tcctree.c=$(CURDIR)/samples/tcctree.c tccmini.c=$(CURDIR)/samples/tccmini.c
+FAT16_EXTRA_FILES=$(foreach entry,$(FAT16_EXTRA_ENTRIES),$(word 2,$(subst =, ,$(entry))))
 
 KERNEL_OBJS=$(patsubst $(SRC_DIR)/%.asm,$(OBJ_DIR)/%.o,$(KERNEL_ASM_SRCS)) \
             $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(KERNEL_C_SRCS))
 
 USER_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(USER_SRCS))
+USER_RUNTIME_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(filter $(USER_DIR)/%.c,$(USER_RUNTIME_SRCS))) \
+                 $(patsubst $(USER_DIR)/%.asm,$(OBJ_DIR)/user/%.o,$(filter $(USER_DIR)/%.asm,$(USER_RUNTIME_SRCS)))
 USER_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_PROGS)))
 
 OBJ_SUBDIRS=$(sort \
@@ -89,6 +98,7 @@ OBJ_SUBDIRS=$(sort \
 )
 
 BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
+BUILD_SUBDIRS+=$(TINYCC_SMALOS_OBJ_DIR)
 
 all: $(IMG_DIR)/os-image.bin
 
@@ -116,14 +126,23 @@ $(OBJ_DIR)/exec/%.o: $(EXEC_DIR)/%.c | dirs
 $(OBJ_DIR)/user/%.o: $(USER_DIR)/%.c | dirs
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
+$(OBJ_DIR)/user/%.o: $(USER_DIR)/%.asm | dirs
+	$(ASM) -f elf32 $< -o $@
+
+$(TINYCC_SMALOS_OBJ): $(CURDIR)/third_party/tinycc/tcc.c $(TINYCC_DIR)/config.h | dirs tinycc-host
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Os -ffunction-sections -fdata-sections -I$(TINYCC_DIR) -I$(CURDIR)/third_party/tinycc -DTCC_TARGET_I386 -DTCC_TARGET_SMALLOS -c $< -o $@
+
+$(TINYCC_SMALOS_BIN): $(TINYCC_SMALOS_OBJ) $(OBJ_DIR)/user/tcc_entry.o $(USER_RUNTIME_OBJS) | dirs
+	$(LD) $(USER_LDFLAGS) -s --gc-sections $^ $(LIBGCC_FILE) -o $@
+
 $(BIN_DIR)/kernel.elf: $(KERNEL_OBJS) linker.ld | dirs
 	$(LD) $(LDFLAGS) $(KERNEL_OBJS) -o $@
 
 $(BIN_DIR)/kernel.bin: $(BIN_DIR)/kernel.elf | dirs
 	$(OBJCOPY) -O binary $< $@
 
-$(BIN_DIR)/%.elf: $(OBJ_DIR)/user/%.o | dirs
-	$(LD) $(USER_LDFLAGS) $< -o $@
+$(BIN_DIR)/%.elf: $(OBJ_DIR)/user/%.o $(USER_RUNTIME_OBJS) | dirs
+	$(LD) $(USER_LDFLAGS) $^ -o $@
 
 $(TOOLS_DIR)/mkfat16: tools/mkfat16.c | dirs
 	$(HOST_CC) -o $@ $<
@@ -133,7 +152,7 @@ $(TOOLS_DIR)/mkimage: tools/mkimage.c | dirs
 
 # FAT16 seed image (generated from the current tree)
 #
-$(BIN_DIR)/fat16.seed.img: $(USER_ELFS) $(TOOLS_DIR)/mkfat16 | dirs
+$(BIN_DIR)/fat16.seed.img: $(USER_ELFS) $(TOOLS_DIR)/mkfat16 $(FAT16_EXTRA_FILES) | dirs
 	$(TOOLS_DIR)/mkfat16 $@ $(FAT16_ROOT_ENTRIES) $(FAT16_EXTRA_ENTRIES)
 
 $(STATE_DIR)/fat16.img: $(BIN_DIR)/fat16.seed.img | dirs
@@ -141,6 +160,14 @@ $(STATE_DIR)/fat16.img: $(BIN_DIR)/fat16.seed.img | dirs
 
 reset-disk: $(BIN_DIR)/fat16.seed.img | dirs
 	cp $< $(STATE_DIR)/fat16.img
+
+tinycc-host: tools/build_tinycc.sh
+	./tools/build_tinycc.sh $(CURDIR) $(TINYCC_DIR) $(CURDIR)/third_party/tinycc
+
+tinycc-host-clean:
+	rm -rf $(TINYCC_DIR)
+
+tinycc-smalos: $(TINYCC_SMALOS_BIN)
 
 $(GEN_DIR)/loader2.gen.asm: $(BOOT_DIR)/loader2.asm | dirs
 	sed \
@@ -216,7 +243,7 @@ PYTHON3=python3
 QEMUFLAGS=-drive format=raw,file=$(IMG_DIR)/os-image.bin -boot c -m 32 \
           -serial file:$(SERIAL_LOG)
 
-.PHONY: all dirs run run-headless test smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify reset-disk
+.PHONY: all dirs run run-headless test smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify reset-disk tinycc-host tinycc-host-clean
 
 run: image-layout-check
 	$(QEMU) $(QEMUFLAGS) -display curses
@@ -226,7 +253,9 @@ run-headless: image-layout-check
 	    -monitor unix:/tmp/smallos-monitor.sock,server,nowait \
 	    -daemonize -pidfile /tmp/smallos.pid
 
-test: reset-disk image-layout-check
+test:
+	$(MAKE) reset-disk
+	$(MAKE) image-layout-check
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
 	$(MAKE) run-headless

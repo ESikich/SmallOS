@@ -42,7 +42,14 @@ enum {
     SYS_WRITEFILE = 12,  /* create/overwrite a root-directory file */
     SYS_HALT      = 13,  /* halt the machine */
     SYS_REBOOT    = 14,  /* reboot the machine */
-    SYS_WRITEFILE_PATH = 15 /* create/overwrite a FAT16 file at any path */
+    SYS_WRITEFILE_PATH = 15, /* create/overwrite a FAT16 file at any path */
+    SYS_BRK       = 16,  /* query or grow the calling process heap break */
+    SYS_OPEN_WRITE = 17, /* open a FAT16 file for write/truncate */
+    SYS_WRITEFD    = 18,  /* write bytes to an open fd */
+    SYS_LSEEK      = 19,  /* reposition an open fd */
+    SYS_UNLINK     = 20,  /* remove a FAT16 file */
+    SYS_RENAME     = 21,  /* rename or move a FAT16 entry */
+    SYS_STAT       = 22   /* query size / directory status for a FAT16 path */
 };
 
 #endif

@@ -3,6 +3,7 @@
 This document defines how the system stores, discovers, and reads files from disk.
 
 The current implementation stores a **raw FAT16 volume inside an MBR-partitioned disk image**. Sector 0 contains the partition table, and the FAT16 partition starts immediately after the kernel region. The runtime now resolves nested FAT16 paths for reads and directory listings, and it can also create/remove directories in place. Regular file writes now work at nested paths too, and `rm` removes files in place. `cat` prints file contents, `touch` creates or truncates files, and the shell keeps a working directory for `cd` / `pwd` and `ls`.
+The filesystem layer also exposes file metadata through `stat`, and the writable-fd path now supports `rename`, `unlink`, `lseek`, and buffered `write` operations for toolchain-style programs.
 
 ---
 
@@ -183,9 +184,12 @@ The current FAT16 driver is intentionally narrow.
 - directory listing by path with `fat16_ls_path(path)` and `fsls [path]`
 - directory creation/removal by path with `fat16_mkdir(path)` / `fat16_rmdir(path)`
 - file removal by path with `fat16_rm(path)`
+- file metadata queries by path with `fat16_stat(path, ...)`
 - empty-file creation / truncation via `touch`
 - root-directory file creation and overwrite via `fat16_write(name, ...)`
 - nested-path file creation and overwrite via `fat16_write_path(path, ...)`
+- writable file descriptors with buffered output via `SYS_OPEN_WRITE`, `SYS_WRITEFD`, and `SYS_LSEEK`
+- file removal and rename/move through `SYS_UNLINK` and `SYS_RENAME`
 - case-insensitive 8.3 filename matching
 - FAT chain following for file reads
 - loading one file at a time into a shared static buffer
@@ -326,6 +330,7 @@ At runtime, the kernel:
 5. commits the updated FAT copies and root directory entry
 
 This is enough for compiler-style tools to emit generated artifacts such as `compiler.out` without a full VFS or buffered fd write API.
+It is also enough for SmallOS-hosted compiler binaries to create temp files, rename outputs into place, and inspect candidate paths before writing.
 
 ## Creating and Removing Directories
 

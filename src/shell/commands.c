@@ -454,7 +454,12 @@ static void cmd_runelf_nowait(command_t* cmd) {
         return;
     }
 
-    if (!elf_run_named(cmd->argv[1], cmd->argc - 1, &cmd->argv[1])) {
+    char path[SHELL_PATH_MAX];
+    if (!resolve_shell_path_arg(cmd->argv[1], path, sizeof(path))) {
+        return;
+    }
+
+    if (!elf_run_named(path, cmd->argc - 1, &cmd->argv[1])) {
         terminal_puts("runelf_nowait: failed\n");
     }
 }
@@ -512,6 +517,18 @@ static void cmd_shelltest(command_t* cmd) {
     command_t rmdir_nested_child_cmd = { 2, { "rmdir", "NESTPARENT/CHILD" } };
     command_t rmdir_nested_parent_cmd = { 2, { "rmdir", "NESTPARENT" } };
     command_t fsls_nested_removed_cmd = { 2, { "fsls", "NESTPARENT" } };
+    command_t mkdir_samples_cmd = { 2, { "mkdir", "samples" } };
+    command_t mv_tccmath_cmd = { 3, { "mv", "tccmath.c", "samples" } };
+    command_t mv_tccagg_cmd = { 3, { "mv", "tccagg.c", "samples" } };
+    command_t mv_tcctree_cmd = { 3, { "mv", "tcctree.c", "samples" } };
+    command_t mv_tccmini_cmd = { 3, { "mv", "tccmini.c", "samples" } };
+    command_t fsls_samples_cmd = { 2, { "fsls", "samples" } };
+    command_t tccmath_build_cmd = { 6, { "runelf", "tools/tcc.elf", "-nostdlib", "-o", "tccmath.elf", "samples/tccmath.c" } };
+    command_t tccmath_run_cmd = { 2, { "runelf", "tccmath" } };
+    command_t tccagg_build_cmd = { 6, { "runelf", "tools/tcc.elf", "-nostdlib", "-o", "tccagg.elf", "samples/tccagg.c" } };
+    command_t tccagg_run_cmd = { 2, { "runelf", "tccagg" } };
+    command_t tcctree_build_cmd = { 6, { "runelf", "tools/tcc.elf", "-nostdlib", "-o", "tcctree.elf", "samples/tcctree.c" } };
+    command_t tcctree_run_cmd = { 2, { "runelf", "tcctree" } };
     command_t cp_cmd = { 3, { "cp", "compiler.out", "compiler.copy" } };
     command_t fsread_copy_cmd = { 2, { "fsread", "compiler.copy" } };
     command_t mv_cmd = { 3, { "mv", "compiler.copy", "compiler.moved" } };
@@ -529,6 +546,9 @@ static void cmd_shelltest(command_t* cmd) {
     command_t runelf_path_cmd = { 4, { "runelf", "apps/demo/hello", "alpha", "beta" } };
     command_t runelf_nowait_cmd = { 2, { "runelf_nowait", "ticks" } };
     command_t compiler_demo_cmd = { 2, { "runelf", "compiler_demo" } };
+    command_t tinycc_cmd = { 3, { "runelf", "tools/tcc.elf", "-v" } };
+    command_t tccmini_build_cmd = { 6, { "runelf", "tools/tcc.elf", "-nostdlib", "-o", "tccmini.elf", "samples/tccmini.c" } };
+    command_t tccmini_run_cmd = { 2, { "runelf", "tccmini" } };
 
     terminal_puts("shelltest: start\n");
 
@@ -557,6 +577,21 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("rmdir_nested_parent", cmd_rmdir, &rmdir_nested_parent_cmd);
     shelltest_call("fsls_nested_removed", cmd_fsls, &fsls_nested_removed_cmd);
     shelltest_call("compiler_demo", cmd_runelf, &compiler_demo_cmd);
+    shelltest_call("tinycc", cmd_runelf, &tinycc_cmd);
+    shelltest_call("mkdir_samples", cmd_mkdir, &mkdir_samples_cmd);
+    shelltest_call("mv_tccmath", cmd_mv, &mv_tccmath_cmd);
+    shelltest_call("mv_tccagg", cmd_mv, &mv_tccagg_cmd);
+    shelltest_call("mv_tcctree", cmd_mv, &mv_tcctree_cmd);
+    shelltest_call("mv_tccmini", cmd_mv, &mv_tccmini_cmd);
+    shelltest_call("fsls_samples", cmd_fsls, &fsls_samples_cmd);
+    shelltest_call("tccmath_build", cmd_runelf, &tccmath_build_cmd);
+    shelltest_call("tccmath_run", cmd_runelf, &tccmath_run_cmd);
+    shelltest_call("tccagg_build", cmd_runelf, &tccagg_build_cmd);
+    shelltest_call("tccagg_run", cmd_runelf, &tccagg_run_cmd);
+    shelltest_call("tcctree_build", cmd_runelf, &tcctree_build_cmd);
+    shelltest_call("tcctree_run", cmd_runelf, &tcctree_run_cmd);
+    shelltest_call("tccmini_build", cmd_runelf, &tccmini_build_cmd);
+    shelltest_call("tccmini_run", cmd_runelf, &tccmini_run_cmd);
     shelltest_call("cat", cmd_cat, &cat_cmd);
     shelltest_call("touch", cmd_touch, &touch_cmd);
     shelltest_call("fsread_touch", cmd_fsread, &fsread_touch_cmd);
@@ -634,6 +669,9 @@ static void cmd_selftest(command_t* cmd) {
     char* exec_argv[] = { "exec_test.elf", 0 };
     char* fileread_argv[] = { "fileread.elf", 0 };
     char* compiler_demo_argv[] = { "compiler_demo.elf", 0 };
+    char* heapprobe_argv[] = { "heapprobe.elf", 0 };
+    char* statprobe_argv[] = { "statprobe.elf", 0 };
+    char* fileprobe_argv[] = { "fileprobe.elf", 0 };
     char* sleep_argv[] = { "sleep_test.elf", 0 };
     char* ptrguard_argv[] = { "ptrguard.elf", 0 };
     char* preempt_argv[] = { "preempt_test.elf", 0 };
@@ -653,6 +691,9 @@ static void cmd_selftest(command_t* cmd) {
         { "exec_test",   "exec_test.elf",   1, exec_argv,        0 },
         { "fileread",    "fileread.elf",    1, fileread_argv,    0 },
         { "compiler_demo","compiler_demo.elf",1, compiler_demo_argv,0 },
+        { "heapprobe",   "heapprobe.elf",   1, heapprobe_argv,   0 },
+        { "statprobe",   "statprobe.elf",   1, statprobe_argv,   0 },
+        { "fileprobe",   "fileprobe.elf",   1, fileprobe_argv,   0 },
         { "sleep_test",  "sleep_test.elf",  1, sleep_argv,       0 },
         { "ptrguard",    "ptrguard.elf",    1, ptrguard_argv,    0 }, /* syscall pointer regression */
         { "preempt_test","preempt_test.elf",1, preempt_argv,     0 }, /* timer-preemption regression */
@@ -730,6 +771,9 @@ static program_entry_t programs[] = {
     { "exec_test",   "exercise SYS_EXEC semantics" },
     { "fileread",    "exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE" },
     { "compiler_demo", "exercise SYS_WRITEFILE / SYS_WRITEFILE_PATH and readback" },
+    { "heapprobe",   "exercise malloc/free/realloc/calloc" },
+    { "statprobe",   "exercise SYS_STAT and path probing" },
+    { "fileprobe",   "exercise small file wrapper helpers" },
     { "sleep_test",  "exercise SYS_SLEEP semantics" },
     { "ptrguard",    "exercise syscall pointer validation" },
     { "preempt_test","prove timer-driven preemption" },

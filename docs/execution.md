@@ -48,6 +48,8 @@ Important current-state facts:
 - **ELF user programs** are loaded into their own page directory and do execute in ring 3
 - ELF launch and exit are now scheduler-owned: `elf_run_image()` seeds a bootstrap context, enqueues the task, and returns `process_t*`
 - the scheduler supports kernel tasks, ELF tasks, voluntary yielding, timer-driven sleeping, and timer-driven switching; `runelf` blocks with `process_wait()`, while `runelf_nowait` returns immediately
+- user ELFs now have a small freestanding runtime layer with a heap allocator, buffered writable file descriptors, `stat`/`rename`/`unlink`, and `lseek`, which is enough for compiler-style tools
+- the shipped `tools/tcc.elf` compiler binary can run inside SmallOS, compile guest C sources from FAT16, write the results back to disk, and then those generated ELFs can be executed immediately
 
 ---
 
@@ -117,6 +119,15 @@ if (!elf_run_named(cmd->argv[1], cmd->argc - 1, &cmd->argv[1])) {
 That means `argv[0]` inside the ELF process is the program name passed to `runelf`, and the rest of the shell tokens follow as normal argv entries. Nested paths such as `runelf apps/demo/hello alpha beta` are supported as long as the FAT16 image contains the target entry.
 
 There is **no active `runimg` command path** in the current shell command table.
+
+The same path is used by the guest TinyCC smoke tests:
+
+```text
+runelf tools/tcc.elf -nostdlib -o out.elf samples/tccmath.c
+runelf out.elf
+```
+
+The test suite uses this flow to compile several focused C samples inside the guest and then run the generated ELFs.
 
 ---
 

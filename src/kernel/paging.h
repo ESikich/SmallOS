@@ -21,8 +21,9 @@
  * from there.
  */
 #define USER_CODE_BASE  0x400000u
+#define USER_HEAP_BASE  0x10000000u
 #define USER_STACK_TOP  0xC0000000u   /* 3 GB — top of user virtual space */
-#define USER_STACK_SIZE PAGE_SIZE     /* one page for now */
+#define USER_STACK_SIZE (64u * PAGE_SIZE) /* give user tools room for deep parses */
 
 /*
  * paging_init()

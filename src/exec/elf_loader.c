@@ -203,17 +203,20 @@ process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
     }
 
     {
-        u32 stack_virt       = USER_STACK_TOP - USER_STACK_SIZE;
-        u32 stack_frame_phys = pmm_alloc_frame();
-        if (!stack_frame_phys) {
-            terminal_puts("elf: out of frames (stack)\n");
-            process_destroy(proc);
-            return 0;
-        }
+        u32 stack_base = USER_STACK_TOP - USER_STACK_SIZE;
+        for (u32 off = 0; off < USER_STACK_SIZE; off += PAGE_SIZE) {
+            u32 stack_virt       = stack_base + off;
+            u32 stack_frame_phys = pmm_alloc_frame();
+            if (!stack_frame_phys) {
+                terminal_puts("elf: out of frames (stack)\n");
+                process_destroy(proc);
+                return 0;
+            }
 
-        k_memset((void*)stack_frame_phys, 0, PAGE_SIZE);
-        paging_map_page(proc->pd, stack_virt, stack_frame_phys,
-                        PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+            k_memset((void*)stack_frame_phys, 0, PAGE_SIZE);
+            paging_map_page(proc->pd, stack_virt, stack_frame_phys,
+                            PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+        }
     }
 
     proc->kernel_stack_frame = pmm_alloc_frame();

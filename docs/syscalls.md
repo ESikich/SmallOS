@@ -110,6 +110,78 @@ Blocks the calling process for at least `ticks` timer ticks. The task marks itse
 
 ---
 
+### SYS_BRK (16)
+
+```c
+uint32_t sys_brk(uint32_t new_brk);
+```
+
+Queries or adjusts the calling process heap break. Passing `0` returns the current break. The kernel may grow or shrink the heap on page boundaries.
+
+The user-space allocator in `src/user/user_alloc.c` is layered on top of this syscall.
+
+---
+
+### SYS_OPEN_WRITE (17)
+
+```c
+int sys_open_write(const char* name);
+```
+
+Opens a FAT16 file for buffered write/truncate and returns a writable fd. This is the file-descriptor-oriented companion to `SYS_WRITEFILE_PATH`.
+
+---
+
+### SYS_WRITEFD (18)
+
+```c
+int sys_writefd(int fd, const char* buf, uint32_t len);
+```
+
+Writes bytes to an open writable fd. Returns bytes written or `-1` on error.
+
+---
+
+### SYS_LSEEK (19)
+
+```c
+int sys_lseek(int fd, int offset, int whence);
+```
+
+Repositions a writable fd.
+
+---
+
+### SYS_UNLINK (20)
+
+```c
+int sys_unlink(const char* path);
+```
+
+Removes a FAT16 file.
+
+---
+
+### SYS_RENAME (21)
+
+```c
+int sys_rename(const char* src, const char* dst);
+```
+
+Renames or moves a FAT16 entry.
+
+---
+
+### SYS_STAT (22)
+
+```c
+int sys_stat(const char* path, uint32_t* out_size, int* out_is_dir);
+```
+
+Queries whether a FAT16 path exists and whether it resolves to a file or directory. For regular files, `out_size` receives the file size. For directories, `out_is_dir` is set to 1 and `out_size` is set to 0.
+
+---
+
 ### SYS_WRITEFILE (12)
 
 ```c
@@ -246,9 +318,17 @@ sys_yield()
 sys_sleep(ticks)
 sys_exec(name, argc, argv)
 sys_writefile(name, buf, len)
+sys_writefile_path(path, buf, len)
 sys_open(name)
+sys_open_write(name)
 sys_close(fd)
 sys_fread(fd, buf, len)
+sys_writefd(fd, buf, len)
+sys_lseek(fd, offset, whence)
+sys_unlink(path)
+sys_rename(src, dst)
+sys_stat(path, out_size, out_is_dir)
+sys_brk(new_brk)
 ```
 
 `user_lib.h` higher-level wrappers:
@@ -258,6 +338,12 @@ u_puts(...)        sys_write wrapper
 u_putc(...)        sys_putc wrapper
 u_put_uint(...)    decimal integer output
 u_readline(...)    sys_read + null-terminate + strip newline
+u_open_write(...)  buffered write/truncate open
+u_writefd(...)     write to writable fd
+u_lseek(...)       reposition writable fd
+u_unlink(...)      remove FAT16 file
+u_rename(...)      rename or move FAT16 entry
+u_stat(...)        query path metadata
 ```
 
 ---

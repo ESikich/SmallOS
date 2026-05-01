@@ -13,9 +13,12 @@
 
 #define SYSCALL_ERR_INVALID   ((unsigned int)-1)
 #define SYSCALL_MAX_WRITE_LEN 4096u
-#define EXEC_NAME_MAX         32
+#define EXEC_NAME_MAX         PROCESS_FD_NAME_MAX
 #define SCHED_RESUME_RETADDR_OFFSET 8u  /* push esp + call return address */
 #define FREAD_CACHE_MAX_BYTES (PROCESS_FD_CACHE_PAGES * 4096u)
+#define FWRITE_CACHE_MAX_BYTES (PROCESS_FD_CACHE_PAGES * 4096u)
+
+static u8 s_write_flush_buf[FWRITE_CACHE_MAX_BYTES];
 
 /* ------------------------------------------------------------------ */
 /* Copy-from-user validation                                          */
@@ -324,6 +327,116 @@ static int sys_writefile_path_impl(const char* path, const void* buf, unsigned i
     return fat16_write_path(kpath, (const u8*)buf, len) ? 0 : -1;
 }
 
+/*
+ * heap_page_table_empty(pt)
+ *
+ * Return 1 if the page table has no present entries.
+ */
+static int heap_page_table_empty(u32* pt) {
+    for (unsigned int i = 0; i < 1024u; i++) {
+        if (pt[i] & PAGE_PRESENT) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/*
+ * heap_unmap_page(pd, virt)
+ *
+ * Unmap the page containing virt from the given user page directory.
+ * If the page table becomes empty, free it as well.
+ */
+static void heap_unmap_page(u32* pd, unsigned int virt) {
+    unsigned int pd_index = virt >> 22;
+    unsigned int pt_index = (virt >> 12) & 0x3FFu;
+
+    u32 pde = pd[pd_index];
+    if (!(pde & PAGE_PRESENT)) {
+        return;
+    }
+
+    u32* pt = (u32*)(pde & ~0xFFFu);
+    u32 pte = pt[pt_index];
+    if (!(pte & PAGE_PRESENT)) {
+        return;
+    }
+
+    pmm_free_frame(pte & ~0xFFFu);
+    pt[pt_index] = 0;
+    __asm__ __volatile__("invlpg (%0)" : : "r"(virt) : "memory");
+
+    if (heap_page_table_empty(pt)) {
+        pd[pd_index] = 0;
+        pmm_free_frame((u32)pt);
+    }
+}
+
+/*
+ * sys_brk_impl(new_brk)
+ *
+ * Query or adjust the calling process heap break.
+ *
+ * Passing 0 returns the current break.  Growing the break maps new user
+ * pages on demand.  Shrinking the break unmaps whole pages above the new
+ * limit and returns the updated value.
+ */
+static unsigned int sys_brk_impl(unsigned int new_brk) {
+    process_t* proc = (process_t*)sched_current();
+    if (!proc || !proc->pd) {
+        return (unsigned int)-1;
+    }
+
+    unsigned int cur_brk = proc->heap_brk;
+    if (new_brk == 0) {
+        return cur_brk;
+    }
+
+    if (new_brk < proc->heap_base || new_brk >= USER_STACK_TOP - USER_STACK_SIZE) {
+        return cur_brk;
+    }
+
+    if (new_brk == cur_brk) {
+        return new_brk;
+    }
+
+    u32* pd = proc->pd;
+
+    if (new_brk > cur_brk) {
+        unsigned int map_start = PAGE_ALIGN(cur_brk);
+        unsigned int map_end = PAGE_ALIGN(new_brk);
+        unsigned int mapped = map_start;
+
+        for (unsigned int addr = map_start; addr < map_end; addr += PAGE_SIZE) {
+            u32 frame = pmm_alloc_frame();
+            if (!frame) {
+                for (unsigned int undo = map_start; undo < mapped; undo += PAGE_SIZE) {
+                    heap_unmap_page(pd, undo);
+                }
+                return cur_brk;
+            }
+            k_memset((void*)frame, 0, PAGE_SIZE);
+            paging_map_page(pd, addr, frame, PAGE_WRITE | PAGE_USER);
+            mapped = addr + PAGE_SIZE;
+        }
+
+        proc->heap_brk = new_brk;
+        return new_brk;
+    }
+
+    {
+        unsigned int unmap_start = PAGE_ALIGN(new_brk);
+        unsigned int unmap_end = PAGE_ALIGN(cur_brk);
+
+        for (unsigned int addr = unmap_start; addr < unmap_end; addr += PAGE_SIZE) {
+            heap_unmap_page(pd, addr);
+        }
+
+        proc->heap_brk = new_brk;
+        return new_brk;
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* File descriptor syscalls                                           */
 /* ------------------------------------------------------------------ */
@@ -352,6 +465,7 @@ static int sys_open_impl(const char* name) {
     for (int fd = PROCESS_FD_FIRST; fd < PROCESS_FD_MAX; fd++) {
         if (!proc->fds[fd].valid) {
             proc->fds[fd].valid  = 1;
+            proc->fds[fd].writable = 0;
             proc->fds[fd].size   = file_size;
             proc->fds[fd].offset = 0;
             k_memcpy(proc->fds[fd].name, kname, (k_size_t)k_strlen(kname) + 1u);
@@ -376,10 +490,169 @@ static int sys_close_impl(int fd) {
 
     process_fd_cache_free(&proc->fds[fd]);
     proc->fds[fd].valid  = 0;
+    proc->fds[fd].writable = 0;
     proc->fds[fd].offset = 0;
     proc->fds[fd].size   = 0;
     proc->fds[fd].name[0] = '\0';
     return 0;
+}
+
+static int ensure_fd_capacity(fd_entry_t* ent, unsigned int bytes) {
+    unsigned int needed_pages = (bytes + 4095u) / 4096u;
+    while (ent->cache_page_count < needed_pages) {
+        if (ent->cache_page_count >= PROCESS_FD_CACHE_PAGES) {
+            return 0;
+        }
+        u32 frame = pmm_alloc_frame();
+        if (!frame) {
+            return 0;
+        }
+        k_memset((void*)frame, 0, 4096u);
+        ent->cache_pages[ent->cache_page_count++] = frame;
+    }
+    return 1;
+}
+
+static int sys_open_write_impl(const char* name) {
+    char kname[PROCESS_FD_NAME_MAX];
+    if (copy_user_cstr(kname, sizeof(kname), name) <= 1) return -1;
+
+    process_t* proc = (process_t*)sched_current();
+    if (!proc) return -1;
+
+    for (int fd = PROCESS_FD_FIRST; fd < PROCESS_FD_MAX; fd++) {
+        if (!proc->fds[fd].valid) {
+            proc->fds[fd].valid = 1;
+            proc->fds[fd].writable = 1;
+            proc->fds[fd].size = 0;
+            proc->fds[fd].offset = 0;
+            proc->fds[fd].cache_page_count = 0;
+            k_memset(proc->fds[fd].name, 0, sizeof(proc->fds[fd].name));
+            k_memcpy(proc->fds[fd].name, kname, (k_size_t)k_strlen(kname) + 1u);
+            return fd;
+        }
+    }
+
+    return -1;
+}
+
+static int sys_writefd_impl(int fd, const char* buf, unsigned int len) {
+    if (fd < PROCESS_FD_FIRST || fd >= PROCESS_FD_MAX) return -1;
+    if (len == 0) return 0;
+    if (!user_buf_ok((unsigned int)buf, len)) return -1;
+
+    process_t* proc = (process_t*)sched_current();
+    if (!proc) return -1;
+
+    fd_entry_t* ent = &proc->fds[fd];
+    if (!ent->valid || !ent->writable) return -1;
+
+    unsigned int end = ent->offset + len;
+    if (end < ent->offset) return -1;
+    if (!ensure_fd_capacity(ent, end)) return -1;
+
+    for (unsigned int i = 0; i < len; i++) {
+        unsigned int pos = ent->offset + i;
+        unsigned int page_idx = pos / 4096u;
+        unsigned int page_off = pos % 4096u;
+        u8* dst = (u8*)ent->cache_pages[page_idx];
+        dst[page_off] = (u8)buf[i];
+    }
+
+    ent->offset = end;
+    if (ent->offset > ent->size) {
+        ent->size = ent->offset;
+    }
+    return (int)len;
+}
+
+static int sys_lseek_impl(int fd, int offset, int whence) {
+    if (fd < PROCESS_FD_FIRST || fd >= PROCESS_FD_MAX) return -1;
+
+    process_t* proc = (process_t*)sched_current();
+    if (!proc) return -1;
+
+    fd_entry_t* ent = &proc->fds[fd];
+    if (!ent->valid) return -1;
+
+    unsigned int base;
+    if (whence == 0) {
+        base = 0;
+    } else if (whence == 1) {
+        base = ent->offset;
+    } else if (whence == 2) {
+        base = ent->size;
+    } else {
+        return -1;
+    }
+
+    int new_off = (int)base + offset;
+    if (new_off < 0) return -1;
+    ent->offset = (unsigned int)new_off;
+    return new_off;
+}
+
+static int sys_unlink_impl(const char* path) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    if (copy_user_cstr(kpath, sizeof(kpath), path) <= 1) return -1;
+    return fat16_rm(kpath) ? 0 : -1;
+}
+
+static int sys_rename_impl(const char* src, const char* dst) {
+    char ksrc[PROCESS_FD_NAME_MAX];
+    char kdst[PROCESS_FD_NAME_MAX];
+    if (copy_user_cstr(ksrc, sizeof(ksrc), src) <= 1) return -1;
+    if (copy_user_cstr(kdst, sizeof(kdst), dst) <= 1) return -1;
+    return fat16_move(ksrc, kdst) ? 0 : -1;
+}
+
+static int sys_stat_impl(const char* path, unsigned int* out_size, int* out_is_dir) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    u32 size = 0;
+    if (copy_user_cstr(kpath, sizeof(kpath), path) <= 1) return -1;
+
+    if (fat16_stat(kpath, &size)) {
+        if (out_size) {
+            if (!user_buf_ok((unsigned int)out_size, sizeof(unsigned int))) return -1;
+            *out_size = size;
+        }
+        if (out_is_dir) {
+            if (!user_buf_ok((unsigned int)out_is_dir, sizeof(int))) return -1;
+            *out_is_dir = 0;
+        }
+        return 0;
+    }
+
+    if (!fat16_is_dir(kpath)) {
+        return -1;
+    }
+
+    if (out_size) {
+        if (!user_buf_ok((unsigned int)out_size, sizeof(unsigned int))) return -1;
+        *out_size = 0;
+    }
+    if (out_is_dir) {
+        if (!user_buf_ok((unsigned int)out_is_dir, sizeof(int))) return -1;
+        *out_is_dir = 1;
+    }
+    return 0;
+}
+
+static int sys_flush_writable_fd(fd_entry_t* ent) {
+    if (!ent || !ent->valid || !ent->writable) {
+        return 0;
+    }
+    if (ent->size > FWRITE_CACHE_MAX_BYTES) {
+        return 0;
+    }
+
+    for (u32 i = 0; i < ent->size; i++) {
+        u32 page_idx = i / 4096u;
+        u32 page_off = i % 4096u;
+        s_write_flush_buf[i] = ((u8*)ent->cache_pages[page_idx])[page_off];
+    }
+
+    return fat16_write_path(ent->name, s_write_flush_buf, ent->size);
 }
 
 static int fd_cache_load(process_t* proc, fd_entry_t* ent) {
@@ -512,6 +785,10 @@ void syscall_handler_main(syscall_regs_t* regs) {
                             regs->edx);
             break;
 
+        case SYS_BRK:
+            regs->eax = sys_brk_impl(regs->ebx);
+            break;
+
         case SYS_HALT:
             system_halt();
             regs->eax = 0;
@@ -534,15 +811,61 @@ void syscall_handler_main(syscall_regs_t* regs) {
                             (const char*)regs->ebx);
             break;
 
-        case SYS_CLOSE:
-            regs->eax = (unsigned int)sys_close_impl((int)regs->ebx);
+        case SYS_OPEN_WRITE:
+            regs->eax = (unsigned int)sys_open_write_impl(
+                            (const char*)regs->ebx);
             break;
+
+        case SYS_CLOSE:
+        {
+            int fd = (int)regs->ebx;
+            if (fd >= PROCESS_FD_FIRST && fd < PROCESS_FD_MAX) {
+                process_t* proc = (process_t*)sched_current();
+                if (proc && proc->fds[fd].valid && proc->fds[fd].writable) {
+                    if (!sys_flush_writable_fd(&proc->fds[fd])) {
+                        regs->eax = SYSCALL_ERR_INVALID;
+                        break;
+                    }
+                }
+            }
+            regs->eax = (unsigned int)sys_close_impl(fd);
+            break;
+        }
 
         case SYS_FREAD:
             regs->eax = (unsigned int)sys_fread_impl(
                             (int)regs->ebx,
                             (char*)regs->ecx,
                             regs->edx);
+            break;
+
+        case SYS_WRITEFD:
+            regs->eax = (unsigned int)sys_writefd_impl(
+                            (int)regs->ebx,
+                            (const char*)regs->ecx,
+                            regs->edx);
+            break;
+
+        case SYS_LSEEK:
+            regs->eax = (unsigned int)sys_lseek_impl(
+                            (int)regs->ebx,
+                            (int)regs->ecx,
+                            (int)regs->edx);
+            break;
+
+        case SYS_UNLINK:
+            regs->eax = (unsigned int)sys_unlink_impl((const char*)regs->ebx);
+            break;
+
+        case SYS_RENAME:
+            regs->eax = (unsigned int)sys_rename_impl((const char*)regs->ebx,
+                                                      (const char*)regs->ecx);
+            break;
+
+        case SYS_STAT:
+            regs->eax = (unsigned int)sys_stat_impl((const char*)regs->ebx,
+                                                    (unsigned int*)regs->ecx,
+                                                    (int*)regs->edx);
             break;
 
         default:

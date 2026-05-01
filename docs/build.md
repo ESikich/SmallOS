@@ -42,8 +42,9 @@ build/
 ├── bin/   → final binaries (kernel.elf, kernel.bin,
 │             hello.elf, ticks.elf, args.elf, runelf_test.elf,
 │             readline.elf, exec_test.elf, fileread.elf, compiler_demo.elf,
-│             sleep_test.elf, fault.elf,
-│             fat16.img, boot.bin, loader2.bin)
+│             heapprobe.elf, statprobe.elf, fileprobe.elf, sleep_test.elf,
+│             ptrguard.elf, preempt_test.elf, fault.elf,
+│             fat16.img, boot.bin, loader2.bin, tcc-smalos.elf)
 ├── obj/   → object files and depfiles (.o, .d), mirrored by source subtree
 ├── gen/   → generated source (loader2.gen.asm)
 ├── img/   → final disk image (os-image.bin)
@@ -86,6 +87,10 @@ loader2.bin          boot.bin
 `selftest` command, feeds the interactive `readline` prompt, and
 verifies the built-in shell command suite in `tests/shell/` plus every
 shipped ELF against the per-program expectation files in `tests/elfs/`.
+
+The guest suite also exercises the SmallOS-hosted TinyCC compiler
+(`tools/tcc.elf`) by compiling several sample C files inside the guest
+and immediately running the generated ELFs.
 
 `make smoke` runs the dedicated reboot and halt smoke checks.  Use
 `make smoke-reboot` or `make smoke-halt` to exercise those shell
@@ -198,10 +203,20 @@ src/user/readline.c
 src/user/exec_test.c
 src/user/fileread.c
 src/user/compiler_demo.c
+src/user/heapprobe.c
+src/user/statprobe.c
+src/user/fileprobe.c
 src/user/sleep_test.c
+src/user/ptrguard.c
+src/user/preempt_test.c
+src/user/fault.c
+src/user/user_alloc.c
+src/user/user_posix.c
 ```
 
-All use `user_lib.h` and `user_syscall.h`. No libc, no runtime, no dynamic linking.
+All use `user_lib.h` and `user_syscall.h`. No libc, no hosted runtime, and no dynamic linking.
+
+The guest compiler toolchain ships as `tools/tcc.elf`, built from the vendored TinyCC sources with a SmallOS-target wrapper. The shell selftests compile `samples/tccmath.c`, `samples/tccagg.c`, `samples/tcctree.c`, and `samples/tccmini.c` inside the guest with that compiler.
 
 ## Compile
 
@@ -262,7 +277,12 @@ build/tools/mkfat16 build/bin/fat16.img \
     build/bin/exec_test.elf \
     build/bin/fileread.elf \
     build/bin/compiler_demo.elf \
+    build/bin/heapprobe.elf \
+    build/bin/statprobe.elf \
+    build/bin/fileprobe.elf \
     build/bin/sleep_test.elf \
+    build/bin/ptrguard.elf \
+    build/bin/preempt_test.elf \
     build/bin/fault.elf
 ```
 
@@ -277,8 +297,15 @@ Shipped FAT16 programs:
 - `exec_test` - exercise SYS_EXEC semantics
 - `fileread` - exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE
 - `compiler_demo` - exercise SYS_WRITEFILE, SYS_WRITEFILE_PATH, and readback
+- `heapprobe` - exercise malloc/free/realloc/calloc
+- `statprobe` - exercise SYS_STAT and path probing
+- `fileprobe` - exercise file wrapper helpers, rename, unlink, and stat
 - `sleep_test` - exercise SYS_SLEEP semantics
+- `ptrguard` - exercise syscall pointer validation
+- `preempt_test` - prove timer-driven preemption
 - `fault` - fault probe (ud/gp/de/br/pf)
+- `tools/tcc.elf` - SmallOS-hosted TinyCC compiler binary
+- `samples/tccmath.c`, `samples/tccagg.c`, `samples/tcctree.c`, `samples/tccmini.c` - guest compiler test inputs used by the shell selftests
 
 ## Properties
 

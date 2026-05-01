@@ -32,6 +32,7 @@ typedef enum {
 
 typedef struct {
     int  valid;                            /* 1 if this slot is open */
+    int  writable;                         /* 1 if writes should buffer */
     char name[PROCESS_FD_NAME_MAX];        /* filename as passed to SYS_OPEN */
     u32  size;                             /* file size in bytes */
     u32  offset;                           /* current read position */
@@ -59,6 +60,8 @@ typedef struct {
     int             user_argc;
     char*           user_argv[PROCESS_MAX_ARGS];
     char            user_arg_data[PROCESS_ARG_BYTES];
+    unsigned int    heap_base;
+    unsigned int    heap_brk;
     char            name[PROCESS_NAME_MAX];
     fd_entry_t      fds[PROCESS_FD_MAX];   /* per-process open file table */
 } process_t;

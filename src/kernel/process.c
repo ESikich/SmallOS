@@ -54,6 +54,7 @@ static void str_copy_n(char* dst, const char* src, unsigned int n) {
 void process_fd_cache_free(fd_entry_t* ent) {
     if (!ent) return;
 
+    ent->writable = 0;
     for (unsigned int i = 0; i < ent->cache_page_count; i++) {
         if (ent->cache_pages[i]) {
             pmm_free_frame(ent->cache_pages[i]);
@@ -100,6 +101,8 @@ process_t* process_create(const char* name) {
     proc_zero(proc);
 
     proc->state = PROCESS_STATE_UNUSED;
+    proc->heap_base = USER_HEAP_BASE;
+    proc->heap_brk = USER_HEAP_BASE;
     if (name) {
         str_copy_n(proc->name, name, PROCESS_NAME_MAX);
     }

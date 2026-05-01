@@ -130,6 +130,15 @@ static inline int sys_open(const char* name) {
 }
 
 /*
+ * sys_open_write(name)
+ *
+ * Open a FAT16 file for buffered write/truncate.
+ */
+static inline int sys_open_write(const char* name) {
+    return syscall1(SYS_OPEN_WRITE, (uint32_t)name);
+}
+
+/*
  * sys_close(fd)
  *
  * Close an open file descriptor.  Returns 0 on success, -1 on error.
@@ -153,6 +162,53 @@ static inline int sys_fread(int fd, char* buf, uint32_t len) {
 }
 
 /*
+ * sys_writefd(fd, buf, len)
+ *
+ * Write bytes to an open writable file descriptor.
+ */
+static inline int sys_writefd(int fd, const char* buf, uint32_t len) {
+    return syscall3(SYS_WRITEFD, (uint32_t)fd, (uint32_t)buf, len);
+}
+
+/*
+ * sys_lseek(fd, offset, whence)
+ *
+ * Reposition an open file descriptor.
+ */
+static inline int sys_lseek(int fd, int offset, int whence) {
+    return syscall3(SYS_LSEEK, (uint32_t)fd, (uint32_t)offset, (uint32_t)whence);
+}
+
+/*
+ * sys_unlink(path)
+ *
+ * Remove a FAT16 file.
+ */
+static inline int sys_unlink(const char* path) {
+    return syscall1(SYS_UNLINK, (uint32_t)path);
+}
+
+/*
+ * sys_rename(src, dst)
+ *
+ * Rename or move a FAT16 entry.
+ */
+static inline int sys_rename(const char* src, const char* dst) {
+    return syscall2(SYS_RENAME, (uint32_t)src, (uint32_t)dst);
+}
+
+/*
+ * sys_stat(path, out_size, out_is_dir)
+ *
+ * Query whether a path exists and whether it resolves to a directory.
+ * If the path is a regular file, *out_size receives its size.
+ * If the path is a directory, *out_is_dir receives 1 and *out_size is 0.
+ */
+static inline int sys_stat(const char* path, uint32_t* out_size, int* out_is_dir) {
+    return syscall3(SYS_STAT, (uint32_t)path, (uint32_t)out_size, (uint32_t)out_is_dir);
+}
+
+/*
  * sys_writefile(name, buf, len)
  *
  * Create or overwrite a root-directory FAT16 file with the provided
@@ -172,6 +228,17 @@ static inline int sys_writefile(const char* name, const char* buf, uint32_t len)
  */
 static inline int sys_writefile_path(const char* path, const char* buf, uint32_t len) {
     return syscall3(SYS_WRITEFILE_PATH, (uint32_t)path, (uint32_t)buf, len);
+}
+
+/*
+ * sys_brk(new_brk)
+ *
+ * Query or adjust the current process heap break.  Passing 0 returns the
+ * current break.  The kernel may grow or shrink the heap on page
+ * boundaries.
+ */
+static inline uint32_t sys_brk(uint32_t new_brk) {
+    return (uint32_t)syscall1(SYS_BRK, new_brk);
 }
 
 static inline int sys_halt(void) {
