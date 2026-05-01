@@ -237,6 +237,12 @@ int ipv4_ping_via_gateway(u32 sender_ip, u32 target_ip, u32 gateway_ip) {
     for (unsigned int attempt = 0; attempt < IPV4_PING_ATTEMPTS; attempt++) {
         unsigned int deadline = timer_get_ticks() + IPV4_PING_WAIT_TICKS;
 
+        terminal_puts("ping: attempt ");
+        terminal_put_uint(attempt + 1u);
+        terminal_puts("/");
+        terminal_put_uint(IPV4_PING_ATTEMPTS);
+        terminal_putc('\n');
+
         ipv4_build_echo_request(frame, e1000_mac(), target_mac, sender_ip, target_ip, ident, seq);
 
         if (!e1000_send(frame, IPV4_PACKET_SIZE)) {
