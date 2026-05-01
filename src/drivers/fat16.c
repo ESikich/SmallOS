@@ -520,7 +520,13 @@ static void print_right_aligned_uint(u32 value, unsigned int width) {
     terminal_put_uint(value);
 }
 
-static void print_size_field(u32 size, unsigned int width) {
+static void print_size_field(u32 size, int is_dir, unsigned int width) {
+    if (is_dir) {
+        print_right_aligned_uint(0, width - 1u);
+        terminal_putc('-');
+        return;
+    }
+
     u32 value;
     const char* unit;
 
@@ -627,9 +633,10 @@ static list_widths_t dir_list_widths(const dir_ctx_t* dir, const char* pattern) 
 
 static void print_list_row(const u8* entry, const list_widths_t* widths) {
     terminal_puts("  ");
-    print_name_field(entry + DIR_NAME, entry_is_dir(entry), widths->name_width);
+    int is_dir = entry_is_dir(entry);
+    print_name_field(entry + DIR_NAME, is_dir, widths->name_width);
     terminal_puts("  ");
-    print_size_field(read_u32_le(entry, DIR_FILE_SIZE), widths->size_width);
+    print_size_field(read_u32_le(entry, DIR_FILE_SIZE), is_dir, widths->size_width);
     terminal_puts("  ");
     print_right_aligned_uint(read_u16_le(entry, DIR_FIRST_CLUSTER), widths->cluster_width);
     terminal_putc('\n');
