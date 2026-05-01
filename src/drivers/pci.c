@@ -18,6 +18,7 @@ static unsigned int pci_config_address(unsigned char bus,
                                        unsigned char slot,
                                        unsigned char func,
                                        unsigned char offset) {
+    /* Standard PCI config mechanism #1 address format. */
     return 0x80000000u
          | ((unsigned int)bus << 16)
          | ((unsigned int)slot << 11)
@@ -119,6 +120,7 @@ void pci_init(void) {
 
     terminal_puts("pci: scan\n");
 
+    /* Walk the conventional PCI bus space and report anything present. */
     for (unsigned int bus = 0; bus < 256; bus++) {
         for (unsigned int slot = 0; slot < 32; slot++) {
             unsigned short vendor = pci_read_config_word((unsigned char)bus,
@@ -151,6 +153,7 @@ void pci_init(void) {
 
                 if (dev.class_code == PCI_CLASS_NETWORK) {
                     network_count++;
+                    /* Log network-class devices so NIC bring-up is visible. */
                     terminal_puts("pci: network ");
                     pci_put_byte_hex(dev.bus);
                     terminal_putc(':');
@@ -185,6 +188,7 @@ void pci_init(void) {
 int pci_find_device(unsigned short vendor_id,
                     unsigned short device_id,
                     pci_device_t* out) {
+    /* Helper for specific drivers that know their vendor/device IDs. */
     for (unsigned int bus = 0; bus < 256; bus++) {
         for (unsigned int slot = 0; slot < 32; slot++) {
             unsigned short vendor = pci_read_config_word((unsigned char)bus,
