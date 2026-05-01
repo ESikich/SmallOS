@@ -8,4 +8,20 @@ CASES = [
             "shelltest: netinfo end",
         ],
     },
+    {
+        "name": "netsend",
+        "must_contain": [
+            "shelltest: netsend begin",
+            "netsend: queued test frame",
+            "shelltest: netsend end",
+        ],
+    },
+    {
+        "name": "netrecv",
+        "must_contain": [
+            "shelltest: netrecv begin",
+            "netrecv: no packet",
+            "shelltest: netrecv end",
+        ],
+    },
 ]

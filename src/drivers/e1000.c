@@ -52,7 +52,9 @@
 #define E1000_RX_BUF_SIZE    2048u
 #define E1000_MAX_FRAME_SIZE 1518u
 #define E1000_MMIO_MAP_SIZE  0x20000u
+#define E1000_TEST_ETHER_TYPE 0x88B5u
 
+/* 16-byte ring descriptors used by the e1000 DMA engine. */
 typedef struct {
     u32 addr_lo;
     u32 addr_hi;
@@ -80,6 +82,7 @@ static e1000_rx_desc_t s_rx_desc[E1000_RX_DESC_COUNT] __attribute__((aligned(16)
 static e1000_tx_desc_t s_tx_desc[E1000_TX_DESC_COUNT] __attribute__((aligned(16)));
 static u8 s_rx_buf[E1000_RX_DESC_COUNT][E1000_RX_BUF_SIZE] __attribute__((aligned(16)));
 static u8 s_tx_buf[E1000_TX_DESC_COUNT][E1000_RX_BUF_SIZE] __attribute__((aligned(16)));
+static unsigned int s_rx_head = 0;
 static unsigned int s_tx_head = 0;
 static unsigned int s_tx_tail = 0;
 static int s_present = 0;
@@ -125,6 +128,10 @@ static void e1000_print_mac(void) {
 }
 
 static void e1000_setup_rings(void) {
+    /*
+     * RX buffers are owned by the driver and handed to the NIC as a
+     * ring of ready-to-fill packet targets.
+     */
     for (unsigned int i = 0; i < E1000_RX_DESC_COUNT; i++) {
         s_rx_desc[i].addr_lo = (u32)(unsigned int)&s_rx_buf[i][0];
         s_rx_desc[i].addr_hi = 0;
@@ -136,6 +143,10 @@ static void e1000_setup_rings(void) {
         k_memset(s_rx_buf[i], 0, E1000_RX_BUF_SIZE);
     }
 
+    /*
+     * TX buffers mirror the RX layout: the CPU copies a frame into a
+     * descriptor-owned buffer, then tells the NIC to DMA it out.
+     */
     for (unsigned int i = 0; i < E1000_TX_DESC_COUNT; i++) {
         s_tx_desc[i].addr_lo = (u32)(unsigned int)&s_tx_buf[i][0];
         s_tx_desc[i].addr_hi = 0;
@@ -160,11 +171,13 @@ static void e1000_setup_rings(void) {
     e1000_reg_write(E1000_TDH, 0);
     e1000_reg_write(E1000_TDT, 0);
 
+    s_rx_head = 0;
     s_tx_head = 0;
     s_tx_tail = 0;
 }
 
 static void e1000_program_rx_tx(void) {
+    /* Minimal steady-state config: accept packets and enable transmit. */
     e1000_reg_write(E1000_RCTL, E1000_RCTL_EN | E1000_RCTL_BAM | E1000_RCTL_SECRC);
     e1000_reg_write(E1000_TIPG, 0x0060200Au);
     e1000_reg_write(E1000_TCTL,
@@ -194,6 +207,10 @@ static int e1000_find_and_map(void) {
         return 0;
     }
 
+    /*
+     * The BAR sits above the identity-mapped low memory window, so map
+     * the MMIO pages into the kernel page table before touching them.
+     */
     pd = paging_get_kernel_pd();
     for (u32 off = 0; off < E1000_MMIO_MAP_SIZE; off += PAGE_SIZE) {
         paging_map_page(pd, bar0 + off, bar0 + off, PAGE_WRITE);
@@ -212,6 +229,7 @@ int e1000_init(void) {
 
     s_present = 1;
 
+    /* Reset the controller before programming the rings. */
     e1000_reg_write(E1000_IMC, 0xFFFFFFFFu);
     e1000_reg_write(E1000_CTRL, E1000_CTRL_RST);
     e1000_wait_for_reset();
@@ -273,6 +291,7 @@ int e1000_send(const void* data, u32 len) {
         return 0;
     }
 
+    /* Copy the packet into the descriptor-owned staging buffer. */
     dst = s_tx_buf[next];
     k_memcpy(dst, data, len);
 
@@ -280,8 +299,76 @@ int e1000_send(const void* data, u32 len) {
     s_tx_desc[next].cmd = (u8)(E1000_TXD_CMD_EOP | E1000_TXD_CMD_IFCS | E1000_TXD_CMD_RS);
     s_tx_desc[next].status = 0;
 
+    /* Advance the tail so the NIC starts DMA on this descriptor. */
     s_tx_tail = (next + 1u) % E1000_TX_DESC_COUNT;
     e1000_reg_write(E1000_TDT, s_tx_tail);
 
     return 1;
+}
+
+int e1000_recv(void* out, u32 out_size, u32* out_len) {
+    e1000_rx_desc_t* desc;
+    u32 len;
+
+    if (!s_present || !out || out_size == 0) {
+        return 0;
+    }
+
+    desc = &s_rx_desc[s_rx_head];
+    if ((desc->status & 0x01u) == 0) {
+        return 0;
+    }
+
+    len = desc->length;
+    if (len > out_size) {
+        len = out_size;
+    }
+
+    k_memcpy(out, s_rx_buf[s_rx_head], len);
+    if (out_len) {
+        *out_len = len;
+    }
+
+    /* Mark the descriptor available again and hand it back to hardware. */
+    desc->status = 0;
+    e1000_reg_write(E1000_RDT, s_rx_head);
+    s_rx_head = (s_rx_head + 1u) % E1000_RX_DESC_COUNT;
+
+    return 1;
+}
+
+int e1000_send_test_frame(void) {
+    u8 frame[64];
+    static const u8 payload[] = "SmallOS e1000 test";
+    const u8* mac = e1000_mac();
+
+    if (!s_present) {
+        return 0;
+    }
+
+    /*
+     * Build a broadcast Ethernet frame with a private ethertype so the
+     * transmit path is exercised without depending on ARP/IP being up.
+     */
+    frame[0] = 0xFF;
+    frame[1] = 0xFF;
+    frame[2] = 0xFF;
+    frame[3] = 0xFF;
+    frame[4] = 0xFF;
+    frame[5] = 0xFF;
+
+    frame[6] = mac[0];
+    frame[7] = mac[1];
+    frame[8] = mac[2];
+    frame[9] = mac[3];
+    frame[10] = mac[4];
+    frame[11] = mac[5];
+
+    frame[12] = (u8)(E1000_TEST_ETHER_TYPE >> 8);
+    frame[13] = (u8)(E1000_TEST_ETHER_TYPE & 0xFFu);
+
+    k_memset(&frame[14], 0, sizeof(frame) - 14u);
+    k_memcpy(&frame[14], payload, sizeof(payload) - 1u);
+
+    return e1000_send(frame, sizeof(frame));
 }

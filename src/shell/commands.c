@@ -8,6 +8,7 @@
 #include "e1000.h"
 #include "fat16.h"
 #include "process.h"
+#include "e1000.h"
 #include "klib.h"
 
 static void print_command_list(void);
@@ -150,6 +151,45 @@ static void cmd_netinfo(command_t* cmd) {
 
     terminal_puts("netinfo: ");
     e1000_print_info();
+}
+
+static void cmd_netsend(command_t* cmd) {
+    (void)cmd;
+
+    if (!e1000_send_test_frame()) {
+        terminal_puts("netsend: failed\n");
+        return;
+    }
+
+    terminal_puts("netsend: queued test frame\n");
+}
+
+static void cmd_netrecv(command_t* cmd) {
+    (void)cmd;
+
+    u8 frame[1600];
+    u32 len = 0;
+
+    if (!e1000_recv(frame, sizeof(frame), &len)) {
+        terminal_puts("netrecv: no packet\n");
+        return;
+    }
+
+    terminal_puts("netrecv: ");
+    terminal_put_uint(len);
+    terminal_puts(" bytes\nfirst 32: ");
+
+    static const char hex[] = "0123456789ABCDEF";
+    u32 show = len < 32u ? len : 32u;
+    for (u32 i = 0; i < show; i++) {
+        terminal_putc(hex[frame[i] >> 4]);
+        terminal_putc(hex[frame[i] & 0xF]);
+        terminal_putc(' ');
+        if (i == 15u) {
+            terminal_puts("\n  ");
+        }
+    }
+    terminal_putc('\n');
 }
 
 /*
@@ -567,6 +607,8 @@ static void cmd_shelltest(command_t* cmd) {
     command_t uptime_cmd = { 1, { "uptime" } };
     command_t meminfo_cmd = { 1, { "meminfo" } };
     command_t netinfo_cmd = { 1, { "netinfo" } };
+    command_t netsend_cmd = { 1, { "netsend" } };
+    command_t netrecv_cmd = { 1, { "netrecv" } };
     command_t cd_demo_cmd = { 2, { "cd", "apps/demo" } };
     command_t pwd_demo_cmd = { 1, { "pwd" } };
     command_t ls_demo_cmd = { 1, { "ls" } };
@@ -636,6 +678,8 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("uptime", cmd_uptime, &uptime_cmd);
     shelltest_call("meminfo", cmd_meminfo, &meminfo_cmd);
     shelltest_call("netinfo", cmd_netinfo, &netinfo_cmd);
+    shelltest_call("netsend", cmd_netsend, &netsend_cmd);
+    shelltest_call("netrecv", cmd_netrecv, &netrecv_cmd);
     shelltest_call("ataread", cmd_ataread, &ataread_cmd);
     shelltest_call("fsls", cmd_fsls, &fsls_root_cmd);
     shelltest_call("fsls_path", cmd_fsls, &fsls_path_cmd);
@@ -811,6 +855,8 @@ static command_entry_t commands[] = {
     { "uptime",        "show tick and second counts via ELF", cmd_uptime },
     { "meminfo",       "show heap and frame usage",     cmd_meminfo },
     { "netinfo",       "show PCI NIC status",          cmd_netinfo },
+    { "netsend",       "queue a test Ethernet frame",  cmd_netsend },
+    { "netrecv",       "poll and dump one Ethernet frame", cmd_netrecv },
     { "cd",            "change the shell working directory", cmd_cd },
     { "pwd",           "print the shell working directory", cmd_pwd },
     { "ls",            "list a FAT16 directory",       cmd_ls },
@@ -844,6 +890,8 @@ static program_entry_t programs[] = {
     { "halt",         "halt the machine" },
     { "reboot",       "reboot the machine" },
     { "netinfo",      "show PCI NIC status" },
+    { "netsend",      "queue a test Ethernet frame" },
+    { "netrecv",      "poll and dump one Ethernet frame" },
     { "apps/demo/hello",       "print argc/argv and tick count" },
     { "apps/tests/ticks",      "print the current tick count" },
     { "apps/tests/args",       "print argc and argv" },
