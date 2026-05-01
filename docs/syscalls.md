@@ -190,7 +190,7 @@ int sys_writefile(const char* name, const char* buf, uint32_t len);
 
 Creates or overwrites a root-directory FAT16 file in one shot. Returns `0` on success, `-1` on failure.
 
-This is the historical root-only persistence primitive for generated artifacts such as compiler output, assembly listings, or other build products. The kernel validates both the filename and the byte range before calling into `fat16_write()`.
+This is the root-only persistence primitive for generated artifacts such as compiler output, assembly listings, or other build products. The kernel validates both the filename and the byte range before calling into `fat16_write()`.
 
 ---
 
@@ -202,7 +202,7 @@ int sys_writefile_path(const char* path, const char* buf, uint32_t len);
 
 Creates or overwrites a FAT16 file at an arbitrary path. Returns `0` on success, `-1` on failure.
 
-This is the preferred persistence primitive for build tools and compilers because it can emit directly into nested directories. The kernel validates both the path and the byte range before calling into `fat16_write_path()`.
+This is the preferred persistence primitive for build tools and compilers because it can emit directly into nested directories such as `apps/demo/` and `apps/tests/`. The kernel validates both the path and the byte range before calling into `fat16_write_path()`.
 
 ---
 
@@ -358,7 +358,7 @@ u_stat(...)        query path metadata
 * The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.
 * fd 0/1/2 are reserved by convention; user-opened files start at fd 3. The fd table (`fd_entry_t fds[PROCESS_FD_MAX]`) lives inside `process_t` and is zero-initialized by `process_create()`; no explicit close-on-exit is needed since the entire frame is freed by `pmm_free_frame` on process destruction.
 * `SYS_WRITEFILE` is the simplest root-only persistence path for user tools that want to emit a generated artifact without managing an fd-based write stream.
-* `SYS_WRITEFILE_PATH` is the preferred path-aware persistence primitive for compilers and build tools.
+* `SYS_WRITEFILE_PATH` is the preferred path-aware persistence primitive for compilers and build tools, especially when writing into nested directories.
 
 ---
 

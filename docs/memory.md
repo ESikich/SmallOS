@@ -34,7 +34,7 @@ Verification rule:
 
 ```text
 meminfo
-runelf hello
+runelf apps/demo/hello
 meminfo
 ```
 
@@ -138,4 +138,3 @@ Use `meminfo` to verify that:
 - the kernel heap top does not drift unexpectedly
 - the frame pool shrinks and grows as processes come and go
 - user tools can allocate and free without leaking kernel heap
-

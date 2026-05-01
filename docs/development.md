@@ -187,9 +187,9 @@ pmm_alloc_frame          0x200000 – 0x7FFFFF   reclaimable on process exit
 
 ```text
 meminfo              ← note heap top and free frame count
-runelf hello
+runelf apps/demo/hello
 meminfo              ← heap top and frame count must be identical
-runelf hello
+runelf apps/demo/hello
 meminfo              ← still identical after second run
 ```
 
@@ -356,10 +356,10 @@ Useful signals:
 3. `ataread 0` — confirm `sig: 0x55 0xAA` and the correct FAT16 partition LBA value
 4. `fsls` — confirm FAT16 root directory lists correctly
 5. `mkdir TESTDIR` / `rmdir TESTDIR` — confirm directory creation and removal
-6. `fsread hello.elf` — confirm `7F 45 4C 46` (ELF magic)
-7. `runelf hello` — confirm ELF loads from FAT16 and exits cleanly
+6. `fsread apps/demo/hello.elf` — confirm `7F 45 4C 46` (ELF magic)
+7. `runelf apps/demo/hello` — confirm ELF loads from FAT16 and exits cleanly
 8. `meminfo` before and after — heap top and frame count must be identical
-9. Run a second `runelf hello` — confirm static buffer reuse is safe
+9. Run a second `runelf apps/demo/hello` — confirm static buffer reuse is safe
 10. Then expand
 
 ---

@@ -465,10 +465,10 @@ ata_read_sectors(lba, count, buf)
 # ELF Execution Model
 
 ```text
-runelf hello arg1
+runelf apps/demo/hello arg1
   ↓
 fat16_load("hello", &size)
-  → search FAT16 root directory, follow cluster chain, load into s_load_buf
+  → search FAT16 directory tree, follow cluster chain, load into s_load_buf
   ↓
 elf_run_image(data, argc, argv)
   ↓

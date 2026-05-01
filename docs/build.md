@@ -523,9 +523,9 @@ Cause: simple linker script does not separate read-only and executable sections.
 # Dependency Model
 
 ```text
-hello.elf ──────────────────────────────┐
-ticks.elf ──────────────────────────────┤
-args.elf / runelf_test.elf / ... / compiler_demo.elf / fault.elf ──┤→ fat16.img ───────┐
+apps/demo/hello.elf ────────────────────┐
+apps/tests/*.elf ───────────────────────┤
+tools/tcc.elf / samples/*.c ────────────┤→ fat16.img ───────┐
                                         │                           │
 kernel.bin ───────────────┐             │                           │
                           ├→ loader2.gen.asm → loader2.bin ───────┤

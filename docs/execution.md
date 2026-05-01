@@ -355,7 +355,7 @@ Properties of the current setup:
 
 # Argument Passing
 
-When `runelf hello a b` is invoked, the ELF sees:
+When `runelf apps/demo/hello a b` is invoked, the ELF sees:
 
 - `argc = 3`
 - `argv[0] = "hello"`
