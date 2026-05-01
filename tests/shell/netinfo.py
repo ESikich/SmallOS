@@ -24,4 +24,15 @@ CASES = [
             "shelltest: netrecv end",
         ],
     },
+    {
+        "name": "arpgw",
+        "must_contain": [
+            "shelltest: arpgw begin",
+            "arpgw: who-has 10.0.2.2 from 10.0.2.15",
+            "arpgw:",
+            "is-at",
+            "shelltest: arpgw end",
+        ],
+        "timeout": 60.0,
+    },
 ]

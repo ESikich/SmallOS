@@ -6,9 +6,9 @@
 #include "pmm.h"
 #include "ata.h"
 #include "e1000.h"
+#include "arp.h"
 #include "fat16.h"
 #include "process.h"
-#include "e1000.h"
 #include "klib.h"
 
 static void print_command_list(void);
@@ -187,6 +187,39 @@ static void cmd_netrecv(command_t* cmd) {
         terminal_putc(' ');
         if (i == 15u) {
             terminal_puts("\n  ");
+        }
+    }
+    terminal_putc('\n');
+}
+
+static void cmd_arpgw(command_t* cmd) {
+    (void)cmd;
+
+    /* QEMU user networking defaults to 10.0.2.2 as the gateway. */
+    u32 sender_ip = 0x0A00020Fu; /* 10.0.2.15 */
+    u32 target_ip  = 0x0A000202u; /* 10.0.2.2  */
+    u8 mac[6];
+
+    terminal_puts("arpgw: who-has ");
+    arp_print_ip(target_ip);
+    terminal_puts(" from ");
+    arp_print_ip(sender_ip);
+    terminal_putc('\n');
+
+    if (!arp_resolve(sender_ip, target_ip, mac)) {
+        terminal_puts("arpgw: no reply\n");
+        return;
+    }
+
+    terminal_puts("arpgw: ");
+    arp_print_ip(target_ip);
+    terminal_puts(" is-at ");
+    static const char hex[] = "0123456789ABCDEF";
+    for (unsigned int i = 0; i < 6; i++) {
+        terminal_putc(hex[mac[i] >> 4]);
+        terminal_putc(hex[mac[i] & 0xF]);
+        if (i != 5) {
+            terminal_putc(':');
         }
     }
     terminal_putc('\n');
@@ -609,6 +642,7 @@ static void cmd_shelltest(command_t* cmd) {
     command_t netinfo_cmd = { 1, { "netinfo" } };
     command_t netsend_cmd = { 1, { "netsend" } };
     command_t netrecv_cmd = { 1, { "netrecv" } };
+    command_t arpgw_cmd = { 1, { "arpgw" } };
     command_t cd_demo_cmd = { 2, { "cd", "apps/demo" } };
     command_t pwd_demo_cmd = { 1, { "pwd" } };
     command_t ls_demo_cmd = { 1, { "ls" } };
@@ -680,6 +714,7 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("netinfo", cmd_netinfo, &netinfo_cmd);
     shelltest_call("netsend", cmd_netsend, &netsend_cmd);
     shelltest_call("netrecv", cmd_netrecv, &netrecv_cmd);
+    shelltest_call("arpgw", cmd_arpgw, &arpgw_cmd);
     shelltest_call("ataread", cmd_ataread, &ataread_cmd);
     shelltest_call("fsls", cmd_fsls, &fsls_root_cmd);
     shelltest_call("fsls_path", cmd_fsls, &fsls_path_cmd);
@@ -857,6 +892,7 @@ static command_entry_t commands[] = {
     { "netinfo",       "show PCI NIC status",          cmd_netinfo },
     { "netsend",       "queue a test Ethernet frame",  cmd_netsend },
     { "netrecv",       "poll and dump one Ethernet frame", cmd_netrecv },
+    { "arpgw",         "resolve the QEMU gateway via ARP", cmd_arpgw },
     { "cd",            "change the shell working directory", cmd_cd },
     { "pwd",           "print the shell working directory", cmd_pwd },
     { "ls",            "list a FAT16 directory",       cmd_ls },
@@ -892,6 +928,7 @@ static program_entry_t programs[] = {
     { "netinfo",      "show PCI NIC status" },
     { "netsend",      "queue a test Ethernet frame" },
     { "netrecv",      "poll and dump one Ethernet frame" },
+    { "arpgw",        "resolve the QEMU gateway via ARP" },
     { "apps/demo/hello",       "print argc/argv and tick count" },
     { "apps/tests/ticks",      "print the current tick count" },
     { "apps/tests/args",       "print argc and argv" },
