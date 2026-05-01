@@ -113,6 +113,11 @@ sudo ip addr add 192.168.100.1/24 dev tap0
 To put the guest on a real bridged network, connect `tap0` to an existing host
 bridge or routing setup that already has upstream access.
 
+On Windows, QEMU's TAP mode depends on a separate TAP driver; the standard
+QEMU for Windows packages do not include it. If you are staying on Windows and
+do not want to install extra networking drivers, keep using the default
+`make run` / `make test` user-network NAT path.
+
 **Windows / PowerShell debug run:**
 ```powershell
 qemu-system-i386 -drive format=raw,file=os-image.bin -m 32 -serial stdio -d int,cpu_reset,guest_errors -D qemu.log -display gtk 2>&1 | Tee-Object -FilePath qemu-console.log

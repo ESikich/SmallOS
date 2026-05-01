@@ -106,6 +106,11 @@ user-network NAT so CI stays simple. `make run-tap` and
 instead. That is the right path when you want the guest on a bridged LAN
 or otherwise reachable beyond QEMU's built-in NAT layer.
 
+On Windows, TAP networking requires an additional TAP driver. The QEMU
+documentation notes that the TAP-Win32 driver is not bundled with standard
+QEMU for Windows and must be installed separately. If you are not setting
+that up, stay with the default user-network mode.
+
 ---
 
 # Kernel Build
