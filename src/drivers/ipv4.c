@@ -3,6 +3,7 @@
 #include "arp.h"
 #include "e1000.h"
 #include "../kernel/klib.h"
+#include "../kernel/timer.h"
 #include "terminal.h"
 
 #define IPV4_ETHERTYPE     0x0800u
@@ -12,8 +13,9 @@
 #define IPV4_ECHO_REQUEST  8u
 #define IPV4_ECHO_REPLY    0u
 
-#define IPV4_PACKET_SIZE   60u
-#define IPV4_MAX_POLL_COUNT 2000u
+#define IPV4_PACKET_SIZE    60u
+#define IPV4_PING_ATTEMPTS   3u
+#define IPV4_PING_WAIT_TICKS 200u  /* 2 seconds at the current 100 Hz timer */
 
 typedef unsigned short u16;
 
@@ -232,24 +234,28 @@ int ipv4_ping_via_gateway(u32 sender_ip, u32 target_ip, u32 gateway_ip) {
         return 0;
     }
 
-    ipv4_build_echo_request(frame, e1000_mac(), target_mac, sender_ip, target_ip, ident, seq);
+    for (unsigned int attempt = 0; attempt < IPV4_PING_ATTEMPTS; attempt++) {
+        unsigned int deadline = timer_get_ticks() + IPV4_PING_WAIT_TICKS;
 
-    if (!e1000_send(frame, IPV4_PACKET_SIZE)) {
-        terminal_puts("ping: send failed\n");
-        return 0;
-    }
+        ipv4_build_echo_request(frame, e1000_mac(), target_mac, sender_ip, target_ip, ident, seq);
 
-    for (unsigned int i = 0; i < IPV4_MAX_POLL_COUNT; i++) {
-        if (!e1000_recv(frame, sizeof(frame), &len)) {
-            __asm__ __volatile__("hlt");
-            continue;
+        if (!e1000_send(frame, IPV4_PACKET_SIZE)) {
+            terminal_puts("ping: send failed\n");
+            return 0;
         }
 
-        if (ipv4_parse_echo_reply(frame, len, sender_ip, target_ip, ident, seq)) {
-            terminal_puts("ping: ");
-            ipv4_print_ip(target_ip);
-            terminal_puts(" reply\n");
-            return 1;
+        while ((int)(timer_get_ticks() - deadline) < 0) {
+            if (!e1000_recv(frame, sizeof(frame), &len)) {
+                __asm__ __volatile__("hlt");
+                continue;
+            }
+
+            if (ipv4_parse_echo_reply(frame, len, sender_ip, target_ip, ident, seq)) {
+                terminal_puts("ping: ");
+                ipv4_print_ip(target_ip);
+                terminal_puts(" reply\n");
+                return 1;
+            }
         }
     }
 
