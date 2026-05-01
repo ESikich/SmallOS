@@ -714,6 +714,7 @@ PUB_FUNC void _tcc_error(const char *fmt, ...)
     va_start(ap, fmt);
     error1(ERROR_ERROR, fmt, ap);
     exit(1);
+    __builtin_unreachable();
 }
 #define _tcc_error use_tcc_error_noabort
 

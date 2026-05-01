@@ -46,6 +46,12 @@
 # ifndef CONFIG_TCC_STATIC
 #  include <dlfcn.h>
 # endif
+/*
+ * Some build configurations end up without a visible prototype for open()
+ * even though the TinyCC sources use it in the ELF output path.
+ * Declare it explicitly here so vendored builds stay warning-free.
+ */
+extern int open(const char *pathname, int flags, ...);
 /* XXX: need to define this to use them in non ISOC99 context */
 extern float strtof (const char *__nptr, char **__endptr);
 extern long double strtold (const char *__nptr, char **__endptr);
