@@ -100,6 +100,12 @@ stored under `apps/tests/`, while the shipped hello demo lives under
 `make smoke-reboot` or `make smoke-halt` to exercise those shell
 commands on their own.
 
+For networking, the default `run` and `test` targets keep using QEMU's
+user-network NAT so CI stays simple. `make run-tap` and
+`make run-headless-tap` switch the e1000 NIC over to a host TAP device
+instead. That is the right path when you want the guest on a bridged LAN
+or otherwise reachable beyond QEMU's built-in NAT layer.
+
 ---
 
 # Kernel Build

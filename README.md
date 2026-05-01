@@ -93,6 +93,26 @@ make run-headless           # starts QEMU as a daemon
 tail -f /tmp/smallos-serial.log   # read all kernel output
 ```
 
+**TAP / bridge networking:**
+```bash
+make run-tap QEMU_NET_IFACE=tap0
+```
+
+`run-tap` tells QEMU to attach the e1000 NIC to a host TAP device instead of
+using the built-in user-network NAT. The TAP interface must already exist on
+the host; if you want the guest to reach your LAN or the internet, bridge that
+TAP device into your host network stack first.
+
+One common Linux setup is:
+```bash
+sudo ip tuntap add dev tap0 mode tap user "$USER"
+sudo ip link set tap0 up
+sudo ip addr add 192.168.100.1/24 dev tap0
+```
+
+To put the guest on a real bridged network, connect `tap0` to an existing host
+bridge or routing setup that already has upstream access.
+
 **Windows / PowerShell debug run:**
 ```powershell
 qemu-system-i386 -drive format=raw,file=os-image.bin -m 32 -serial stdio -d int,cpu_reset,guest_errors -D qemu.log -display gtk 2>&1 | Tee-Object -FilePath qemu-console.log

@@ -1,5 +1,14 @@
 # Changelog
 
+## [Current] — TAP networking option
+
+### Added
+
+* **QEMU TAP/bridge networking** (`Makefile`, `README.md`, `docs/build.md`, `docs/execution.md`)
+  * `make run-tap` and `make run-headless-tap` attach the e1000 NIC to a host TAP device instead of QEMU user networking
+  * The default `make run` / `make test` path still uses QEMU's built-in NAT so the existing automated suite stays unchanged
+  * The README and docs now describe how to point TAP at a bridged host network when you want the guest reachable beyond QEMU's NAT layer
+
 ## [Current] — Shell selftest stack safety
 
 ### Fixed
