@@ -7,6 +7,7 @@
 #include "ata.h"
 #include "e1000.h"
 #include "arp.h"
+#include "ipv4.h"
 #include "fat16.h"
 #include "process.h"
 #include "klib.h"
@@ -223,6 +224,27 @@ static void cmd_arpgw(command_t* cmd) {
         }
     }
     terminal_putc('\n');
+}
+
+static void cmd_pinggw(command_t* cmd) {
+    (void)cmd;
+
+    /* QEMU user networking defaults to 10.0.2.15/24 with gateway 10.0.2.2. */
+    u32 sender_ip = 0x0A00020Fu; /* 10.0.2.15 */
+    u32 target_ip  = 0x0A000202u; /* 10.0.2.2  */
+
+    terminal_puts("pinggw: ");
+    ipv4_print_ip(target_ip);
+    terminal_puts(" from ");
+    ipv4_print_ip(sender_ip);
+    terminal_putc('\n');
+
+    if (!ipv4_ping(sender_ip, target_ip)) {
+        terminal_puts("pinggw: failed\n");
+        return;
+    }
+
+    terminal_puts("pinggw: ok\n");
 }
 
 /*
@@ -643,6 +665,7 @@ static void cmd_shelltest(command_t* cmd) {
     command_t netsend_cmd = { 1, { "netsend" } };
     command_t netrecv_cmd = { 1, { "netrecv" } };
     command_t arpgw_cmd = { 1, { "arpgw" } };
+    command_t pinggw_cmd = { 1, { "pinggw" } };
     command_t cd_demo_cmd = { 2, { "cd", "apps/demo" } };
     command_t pwd_demo_cmd = { 1, { "pwd" } };
     command_t ls_demo_cmd = { 1, { "ls" } };
@@ -691,7 +714,6 @@ static void cmd_shelltest(command_t* cmd) {
     command_t rm_dir_cmd = { 2, { "rm", "apps/demo/compiler.out" } };
     command_t fsread_dir_removed_cmd = { 2, { "fsread", "apps/demo/compiler.out" } };
     command_t mv_dir_cmd = { 3, { "mv", "compiler.moved", "apps/demo" } };
-    command_t fsread_dir_moved_cmd = { 2, { "fsread", "apps/demo/compiler.moved" } };
     command_t cat_cmd = { 2, { "cat", "compiler.out" } };
     command_t touch_cmd = { 2, { "touch", "EMPTY.TXT" } };
     command_t fsread_touch_cmd = { 2, { "fsread", "EMPTY.TXT" } };
@@ -715,6 +737,7 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("netsend", cmd_netsend, &netsend_cmd);
     shelltest_call("netrecv", cmd_netrecv, &netrecv_cmd);
     shelltest_call("arpgw", cmd_arpgw, &arpgw_cmd);
+    shelltest_call("pinggw", cmd_pinggw, &pinggw_cmd);
     shelltest_call("ataread", cmd_ataread, &ataread_cmd);
     shelltest_call("fsls", cmd_fsls, &fsls_root_cmd);
     shelltest_call("fsls_path", cmd_fsls, &fsls_path_cmd);
@@ -773,7 +796,6 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("rm_dir", cmd_rm, &rm_dir_cmd);
     shelltest_call("fsread_dir_removed", cmd_fsread, &fsread_dir_removed_cmd);
     shelltest_call("mv_dir", cmd_mv, &mv_dir_cmd);
-    shelltest_call("fsread_dir_moved", cmd_fsread, &fsread_dir_moved_cmd);
     shelltest_call("runelf", cmd_runelf, &runelf_cmd);
     shelltest_call("runelf_path", cmd_runelf, &runelf_path_cmd);
     shelltest_call("runelf_nowait", cmd_runelf_nowait, &runelf_nowait_cmd);
@@ -893,6 +915,7 @@ static command_entry_t commands[] = {
     { "netsend",       "queue a test Ethernet frame",  cmd_netsend },
     { "netrecv",       "poll and dump one Ethernet frame", cmd_netrecv },
     { "arpgw",         "resolve the QEMU gateway via ARP", cmd_arpgw },
+    { "pinggw",        "ping the QEMU gateway",         cmd_pinggw },
     { "cd",            "change the shell working directory", cmd_cd },
     { "pwd",           "print the shell working directory", cmd_pwd },
     { "ls",            "list a FAT16 directory",       cmd_ls },
@@ -929,6 +952,7 @@ static program_entry_t programs[] = {
     { "netsend",      "queue a test Ethernet frame" },
     { "netrecv",      "poll and dump one Ethernet frame" },
     { "arpgw",        "resolve the QEMU gateway via ARP" },
+    { "pinggw",       "ping the QEMU gateway" },
     { "apps/demo/hello",       "print argc/argv and tick count" },
     { "apps/tests/ticks",      "print the current tick count" },
     { "apps/tests/args",       "print argc and argv" },

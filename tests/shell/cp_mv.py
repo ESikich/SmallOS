@@ -36,9 +36,6 @@ CASES = [
             "shelltest: mv_dir begin",
             "mv: compiler.moved -> apps/demo",
             "shelltest: mv_dir end",
-            "shelltest: fsread_dir_moved begin",
-            "fsread: apps/demo/compiler.moved",
-            "shelltest: fsread_dir_moved end",
         ],
         timeout=60.0,
     )

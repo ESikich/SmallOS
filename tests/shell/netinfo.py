@@ -35,4 +35,15 @@ CASES = [
         ],
         "timeout": 60.0,
     },
+    {
+        "name": "pinggw",
+        "must_contain": [
+            "shelltest: pinggw begin",
+            "pinggw: 10.0.2.2 from 10.0.2.15",
+            "ping: 10.0.2.2 reply",
+            "pinggw: ok",
+            "shelltest: pinggw end",
+        ],
+        "timeout": 60.0,
+    },
 ]

@@ -1778,6 +1778,11 @@ int fat16_move(const char* src, const char* dst) {
         return 0;
     }
 
+    /*
+     * File moves use the direct rename path below.  That keeps the operation
+     * to a single metadata update instead of a copy + delete.
+     */
+
     u8 target_name83[11];
     if (!path_leaf_to_83(target_leaf, target_name83)) {
         terminal_puts("fat16: invalid file name\n");
@@ -1896,8 +1901,20 @@ int fat16_move(const char* src, const char* dst) {
         }
     }
 
-    if (!write_fat_and_root()) {
-        return 0;
+    if (entry_is_dir(src_entry)) {
+        if (!write_fat_and_root()) {
+            return 0;
+        }
+        return 1;
+    }
+
+    if (resolved.parent.is_root || target_parent.is_root) {
+        for (u32 s = 0; s < ROOT_DIR_SECTORS; s++) {
+            if (!ata_write_sectors(abs_lba(ROOT_REL_SECTOR + s), 1, s_root_buf + s * SECTOR_SIZE)) {
+                terminal_puts("fat16: root dir write error\n");
+                return 0;
+            }
+        }
     }
 
     return 1;

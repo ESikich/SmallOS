@@ -77,6 +77,7 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/pci.c \
 	$(DRIVERS_DIR)/e1000.c \
 	$(DRIVERS_DIR)/arp.c \
+	$(DRIVERS_DIR)/ipv4.c \
 	$(DRIVERS_DIR)/fat16.c \
 	$(DRIVERS_DIR)/serial.c
 
