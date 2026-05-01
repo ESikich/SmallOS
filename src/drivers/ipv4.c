@@ -260,9 +260,20 @@ int ipv4_ping_via_gateway(u32 sender_ip, u32 target_ip, u32 gateway_ip) {
                 terminal_puts("ping: ");
                 ipv4_print_ip(target_ip);
                 terminal_puts(" reply\n");
+                terminal_puts("ping: attempt ");
+                terminal_put_uint(attempt + 1u);
+                terminal_puts("/");
+                terminal_put_uint(IPV4_PING_ATTEMPTS);
+                terminal_puts(" ok\n");
                 return 1;
             }
         }
+
+        terminal_puts("ping: attempt ");
+        terminal_put_uint(attempt + 1u);
+        terminal_puts("/");
+        terminal_put_uint(IPV4_PING_ATTEMPTS);
+        terminal_puts(" timeout\n");
     }
 
     terminal_puts("ping: timeout\n");
