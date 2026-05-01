@@ -46,4 +46,15 @@ CASES = [
         ],
         "timeout": 60.0,
     },
+    {
+        "name": "ping",
+        "must_contain": [
+            "shelltest: ping begin",
+            "ping: 10.0.2.2 from 10.0.2.15",
+            "ping: 10.0.2.2 reply",
+            "ping: ok",
+            "shelltest: ping end",
+        ],
+        "timeout": 60.0,
+    },
 ]

@@ -4,7 +4,7 @@ from .common import case
 CASES = [
     case(
         name="exec_test",
-        command="runelf apps/tests/exec_test",
+        command="runelf apps/tests/exec_test alpha beta",
         must_contain=[
             "[1] exec_test alive",
             "[2] calling sys_exec apps/demo/hello",

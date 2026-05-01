@@ -64,6 +64,54 @@ void ipv4_print_ip(u32 ip) {
     arp_print_ip(ip);
 }
 
+int ipv4_parse_ip(const char* text, u32* out_ip) {
+    if (!text || !out_ip) {
+        return 0;
+    }
+
+    u32 parts[4];
+    unsigned int part_index = 0;
+    u32 value = 0;
+    int saw_digit = 0;
+
+    for (const char* p = text; ; p++) {
+        char c = *p;
+        if (c >= '0' && c <= '9') {
+            value = value * 10u + (u32)(c - '0');
+            if (value > 255u) {
+                return 0;
+            }
+            saw_digit = 1;
+            continue;
+        }
+
+        if (c == '.' || c == '\0') {
+            if (!saw_digit || part_index >= 4u) {
+                return 0;
+            }
+            parts[part_index++] = value;
+            value = 0;
+            saw_digit = 0;
+            if (c == '\0') {
+                break;
+            }
+            continue;
+        }
+
+        return 0;
+    }
+
+    if (part_index != 4u) {
+        return 0;
+    }
+
+    *out_ip = (parts[0] << 24)
+            | (parts[1] << 16)
+            | (parts[2] << 8)
+            | parts[3];
+    return 1;
+}
+
 static void ipv4_build_echo_request(u8* frame,
                                     const u8* src_mac,
                                     const u8* dst_mac,

@@ -4,7 +4,7 @@ from .common import case
 CASES = [
     case(
         name="ptrguard",
-        command="runelf apps/tests/ptrguard",
+        command="runelf apps/tests/ptrguard alpha beta",
         must_contain=[
             "ptrguard: start",
             "sys_write invalid buf",

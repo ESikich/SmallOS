@@ -146,6 +146,7 @@ netinfo             show PCI NIC status
 netsend             queue a test Ethernet frame
 netrecv             poll and dump one Ethernet frame
 arpgw               resolve the QEMU gateway via ARP
+ping <ip>           ping an IPv4 address
 pinggw              ping the QEMU gateway
 mkdir <path>       create a FAT16 directory
 rmdir <path>       remove an empty FAT16 directory

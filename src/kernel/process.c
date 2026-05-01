@@ -64,6 +64,11 @@ void process_fd_cache_free(fd_entry_t* ent) {
     ent->cache_page_count = 0;
 }
 
+void process_claim_for_wait(process_t* proc) {
+    if (!proc) return;
+    proc->reaper_claimed = 1;
+}
+
 /* ------------------------------------------------------------------ */
 /* Kernel-task bootstrap                                              */
 /* ------------------------------------------------------------------ */
@@ -194,6 +199,7 @@ int process_wait(process_t* proc) {
     if (!proc) return -1;
 
     process_set_foreground(proc);
+    process_claim_for_wait(proc);
 
     while (proc->state != PROCESS_STATE_ZOMBIE) {
         __asm__ __volatile__("sti; hlt");

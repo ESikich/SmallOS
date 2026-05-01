@@ -1,5 +1,14 @@
 # Changelog
 
+## [Current] — Shell selftest stack safety
+
+### Fixed
+
+* **Shell/selftest stack overflow** (`src/shell/commands.c`)
+  * The scripted shell command tables and ELF argv vectors now live in static storage instead of on the shell task's 4 KB kernel stack
+  * That keeps `shelltest`, `selftest`, and `runelf_nowait` from trampling process state while the full regression matrix is running
+  * `make test` is green again end to end
+
 ## [Current] — Path-aware compiler output writes
 
 ### Added

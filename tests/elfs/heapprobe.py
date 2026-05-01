@@ -4,7 +4,7 @@ from .common import case
 CASES = [
     case(
         name="heapprobe",
-        command="runelf apps/tests/heapprobe",
+        command="runelf apps/tests/heapprobe alpha beta",
         must_contain=[
             "heapprobe start",
             "malloc a: PASS",

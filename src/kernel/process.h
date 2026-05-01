@@ -52,8 +52,9 @@ typedef struct {
     u32*            pd;
     u32             kernel_stack_frame;
     unsigned int    sched_esp;
-    process_state_t state;
+    volatile process_state_t state;
     int             exit_status;
+    volatile int    reaper_claimed;  /* 1 once a waiter owns zombie cleanup */
     unsigned int    sleep_until;
     void          (*kernel_entry)(void);
     unsigned int    user_entry;
@@ -74,6 +75,7 @@ process_t* process_create(const char* name);
 process_t* process_create_kernel_task(const char* name, void (*entry)(void));
 void       process_destroy(process_t* proc);
 void       process_fd_cache_free(fd_entry_t* ent);
+void       process_claim_for_wait(process_t* proc);
 
 process_t* process_get_current(void);
 

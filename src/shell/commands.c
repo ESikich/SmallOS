@@ -36,7 +36,13 @@ static void cmd_clear(command_t* cmd) {
 }
 
 static void run_elf_command(command_t* cmd, const char* program) {
+    __asm__ __volatile__("cli");
     process_t* proc = elf_run_named(program, cmd->argc, cmd->argv);
+    if (proc) {
+        process_claim_for_wait(proc);
+    }
+    __asm__ __volatile__("sti");
+
     if (!proc) {
         terminal_puts(program);
         terminal_puts(": failed\n");
@@ -226,25 +232,45 @@ static void cmd_arpgw(command_t* cmd) {
     terminal_putc('\n');
 }
 
-static void cmd_pinggw(command_t* cmd) {
-    (void)cmd;
-
-    /* QEMU user networking defaults to 10.0.2.15/24 with gateway 10.0.2.2. */
-    u32 sender_ip = 0x0A00020Fu; /* 10.0.2.15 */
-    u32 target_ip  = 0x0A000202u; /* 10.0.2.2  */
-
-    terminal_puts("pinggw: ");
+static void cmd_ping_target(const char* label, u32 sender_ip, u32 target_ip) {
+    terminal_puts(label);
+    terminal_puts(": ");
     ipv4_print_ip(target_ip);
     terminal_puts(" from ");
     ipv4_print_ip(sender_ip);
     terminal_putc('\n');
 
     if (!ipv4_ping(sender_ip, target_ip)) {
-        terminal_puts("pinggw: failed\n");
+        terminal_puts(label);
+        terminal_puts(": failed\n");
         return;
     }
 
-    terminal_puts("pinggw: ok\n");
+    terminal_puts(label);
+    terminal_puts(": ok\n");
+}
+
+static void cmd_ping(command_t* cmd) {
+    if (cmd->argc < 2) {
+        terminal_puts("usage: ping <ip>\n");
+        return;
+    }
+
+    u32 target_ip = 0;
+    if (!ipv4_parse_ip(cmd->argv[1], &target_ip)) {
+        terminal_puts("ping: invalid ip\n");
+        return;
+    }
+
+    /* QEMU user networking defaults to 10.0.2.15/24. */
+    cmd_ping_target("ping", 0x0A00020Fu, target_ip);
+}
+
+static void cmd_pinggw(command_t* cmd) {
+    (void)cmd;
+
+    /* QEMU user networking defaults to 10.0.2.15/24 with gateway 10.0.2.2. */
+    cmd_ping_target("pinggw", 0x0A00020Fu, 0x0A000202u);
 }
 
 /*
@@ -609,12 +635,18 @@ static void cmd_runelf(command_t* cmd) {
         return;
     }
 
+    __asm__ __volatile__("cli");
     process_t* proc = elf_run_named(path, cmd->argc - 1, &cmd->argv[1]);
+    if (proc) {
+        process_claim_for_wait(proc);
+    }
+
     if (!proc) {
         terminal_puts("runelf: failed\n");
         return;
     }
 
+    __asm__ __volatile__("sti");
     process_wait(proc);
 }
 
@@ -655,6 +687,10 @@ static void shelltest_call(const char* name, command_fn_t fn, command_t* cmd) {
 static void cmd_shelltest(command_t* cmd) {
     (void)cmd;
 
+    /*
+     * Keep these tables static: the shell task only has a 4 KB kernel
+     * stack, and the full shell/selftest matrix is large enough to matter.
+     */
     command_t help_cmd = { 1, { "help" } };
     command_t clear_cmd = { 1, { "clear" } };
     command_t echo_cmd = { 4, { "echo", "alpha", "beta", "gamma" } };
@@ -665,65 +701,66 @@ static void cmd_shelltest(command_t* cmd) {
     command_t netsend_cmd = { 1, { "netsend" } };
     command_t netrecv_cmd = { 1, { "netrecv" } };
     command_t arpgw_cmd = { 1, { "arpgw" } };
-    command_t pinggw_cmd = { 1, { "pinggw" } };
-    command_t cd_demo_cmd = { 2, { "cd", "apps/demo" } };
-    command_t pwd_demo_cmd = { 1, { "pwd" } };
-    command_t ls_demo_cmd = { 1, { "ls" } };
-    command_t fsread_rel_cmd = { 2, { "fsread", "hello.elf" } };
-    command_t cat_rel_cmd = { 2, { "cat", "../../compiler.out" } };
-    command_t touch_rel_cmd = { 2, { "touch", "LOCAL.TXT" } };
-    command_t fsread_touch_rel_cmd = { 2, { "fsread", "LOCAL.TXT" } };
-    command_t runelf_rel_cmd = { 4, { "runelf", "hello", "alpha", "beta" } };
-    command_t cd_root_cmd = { 2, { "cd", "/" } };
-    command_t pwd_root_cmd = { 1, { "pwd" } };
-    command_t ls_root_cmd = { 1, { "ls" } };
-    command_t ls_glob_cmd = { 2, { "ls", "*.elf" } };
-    command_t ataread_cmd = { 2, { "ataread", "0" } };
-    command_t fsls_root_cmd = { 1, { "fsls" } };
-    command_t fsls_path_cmd = { 2, { "fsls", "apps/demo" } };
-    command_t fsread_cmd = { 2, { "fsread", "apps/demo/hello.elf" } };
-    command_t fsread_path_cmd = { 2, { "fsread", "apps/demo/hello.elf" } };
-    command_t mkdir_cmd = { 2, { "mkdir", "TESTDIR" } };
-    command_t fsls_newdir_cmd = { 2, { "fsls", "TESTDIR" } };
-    command_t rmdir_cmd = { 2, { "rmdir", "TESTDIR" } };
-    command_t fsls_removed_cmd = { 2, { "fsls", "TESTDIR" } };
-    command_t mkdir_nested_parent_cmd = { 2, { "mkdir", "NESTPARENT" } };
-    command_t mkdir_nested_child_cmd = { 2, { "mkdir", "NESTPARENT/CHILD" } };
-    command_t fsls_nested_cmd = { 2, { "fsls", "NESTPARENT" } };
-    command_t rmdir_nested_child_cmd = { 2, { "rmdir", "NESTPARENT/CHILD" } };
-    command_t rmdir_nested_parent_cmd = { 2, { "rmdir", "NESTPARENT" } };
-    command_t fsls_nested_removed_cmd = { 2, { "fsls", "NESTPARENT" } };
-    command_t mkdir_samples_cmd = { 2, { "mkdir", "samples" } };
-    command_t mv_tccmath_cmd = { 3, { "mv", "tccmath.c", "samples" } };
-    command_t mv_tccagg_cmd = { 3, { "mv", "tccagg.c", "samples" } };
-    command_t mv_tcctree_cmd = { 3, { "mv", "tcctree.c", "samples" } };
-    command_t mv_tccmini_cmd = { 3, { "mv", "tccmini.c", "samples" } };
-    command_t fsls_samples_cmd = { 2, { "fsls", "samples" } };
-    command_t tccmath_build_cmd = { 6, { "runelf", "tools/tcc.elf", "-nostdlib", "-o", "tccmath.elf", "samples/tccmath.c" } };
-    command_t tccmath_run_cmd = { 2, { "runelf", "tccmath" } };
-    command_t tccagg_build_cmd = { 6, { "runelf", "tools/tcc.elf", "-nostdlib", "-o", "tccagg.elf", "samples/tccagg.c" } };
-    command_t tccagg_run_cmd = { 2, { "runelf", "tccagg" } };
-    command_t tcctree_build_cmd = { 6, { "runelf", "tools/tcc.elf", "-nostdlib", "-o", "tcctree.elf", "samples/tcctree.c" } };
-    command_t tcctree_run_cmd = { 2, { "runelf", "tcctree" } };
-    command_t cp_cmd = { 3, { "cp", "compiler.out", "compiler.copy" } };
-    command_t fsread_copy_cmd = { 2, { "fsread", "compiler.copy" } };
-    command_t mv_cmd = { 3, { "mv", "compiler.copy", "compiler.moved" } };
-    command_t fsread_moved_cmd = { 2, { "fsread", "compiler.moved" } };
-    command_t cp_dir_cmd = { 3, { "cp", "compiler.out", "apps/demo" } };
-    command_t fsread_dir_copy_cmd = { 2, { "fsread", "apps/demo/compiler.out" } };
-    command_t rm_dir_cmd = { 2, { "rm", "apps/demo/compiler.out" } };
-    command_t fsread_dir_removed_cmd = { 2, { "fsread", "apps/demo/compiler.out" } };
-    command_t mv_dir_cmd = { 3, { "mv", "compiler.moved", "apps/demo" } };
-    command_t cat_cmd = { 2, { "cat", "compiler.out" } };
-    command_t touch_cmd = { 2, { "touch", "EMPTY.TXT" } };
-    command_t fsread_touch_cmd = { 2, { "fsread", "EMPTY.TXT" } };
-    command_t runelf_cmd = { 2, { "runelf", "apps/demo/hello" } };
-    command_t runelf_path_cmd = { 4, { "runelf", "apps/demo/hello", "alpha", "beta" } };
-    command_t runelf_nowait_cmd = { 2, { "runelf_nowait", "apps/tests/ticks" } };
-    command_t compiler_demo_cmd = { 2, { "runelf", "apps/tests/compiler_demo" } };
-    command_t tinycc_cmd = { 3, { "runelf", "tools/tcc.elf", "-v" } };
-    command_t tccmini_build_cmd = { 6, { "runelf", "tools/tcc.elf", "-nostdlib", "-o", "tccmini.elf", "samples/tccmini.c" } };
-    command_t tccmini_run_cmd = { 2, { "runelf", "tccmini" } };
+    static command_t ping_cmd = { 2, { "ping", "10.0.2.2" } };
+    static command_t pinggw_cmd = { 1, { "pinggw" } };
+    static command_t cd_demo_cmd = { 2, { "cd", "apps/demo" } };
+    static command_t pwd_demo_cmd = { 1, { "pwd" } };
+    static command_t ls_demo_cmd = { 1, { "ls" } };
+    static command_t fsread_rel_cmd = { 2, { "fsread", "hello.elf" } };
+    static command_t cat_rel_cmd = { 2, { "cat", "../../compiler.out" } };
+    static command_t touch_rel_cmd = { 2, { "touch", "LOCAL.TXT" } };
+    static command_t fsread_touch_rel_cmd = { 2, { "fsread", "LOCAL.TXT" } };
+    static command_t runelf_rel_cmd = { 4, { "runelf", "hello", "alpha", "beta" } };
+    static command_t cd_root_cmd = { 2, { "cd", "/" } };
+    static command_t pwd_root_cmd = { 1, { "pwd" } };
+    static command_t ls_root_cmd = { 1, { "ls" } };
+    static command_t ls_glob_cmd = { 2, { "ls", "*.elf" } };
+    static command_t ataread_cmd = { 2, { "ataread", "0" } };
+    static command_t fsls_root_cmd = { 1, { "fsls" } };
+    static command_t fsls_path_cmd = { 2, { "fsls", "apps/demo" } };
+    static command_t fsread_cmd = { 2, { "fsread", "apps/demo/hello.elf" } };
+    static command_t fsread_path_cmd = { 2, { "fsread", "apps/demo/hello.elf" } };
+    static command_t mkdir_cmd = { 2, { "mkdir", "TESTDIR" } };
+    static command_t fsls_newdir_cmd = { 2, { "fsls", "TESTDIR" } };
+    static command_t rmdir_cmd = { 2, { "rmdir", "TESTDIR" } };
+    static command_t fsls_removed_cmd = { 2, { "fsls", "TESTDIR" } };
+    static command_t mkdir_nested_parent_cmd = { 2, { "mkdir", "NESTPARENT" } };
+    static command_t mkdir_nested_child_cmd = { 2, { "mkdir", "NESTPARENT/CHILD" } };
+    static command_t fsls_nested_cmd = { 2, { "fsls", "NESTPARENT" } };
+    static command_t rmdir_nested_child_cmd = { 2, { "rmdir", "NESTPARENT/CHILD" } };
+    static command_t rmdir_nested_parent_cmd = { 2, { "rmdir", "NESTPARENT" } };
+    static command_t fsls_nested_removed_cmd = { 2, { "fsls", "NESTPARENT" } };
+    static command_t mkdir_samples_cmd = { 2, { "mkdir", "samples" } };
+    static command_t mv_tccmath_cmd = { 3, { "mv", "tccmath.c", "samples" } };
+    static command_t mv_tccagg_cmd = { 3, { "mv", "tccagg.c", "samples" } };
+    static command_t mv_tcctree_cmd = { 3, { "mv", "tcctree.c", "samples" } };
+    static command_t mv_tccmini_cmd = { 3, { "mv", "tccmini.c", "samples" } };
+    static command_t fsls_samples_cmd = { 2, { "fsls", "samples" } };
+    static command_t tccmath_build_cmd = { 6, { "runelf", "tools/tcc.elf", "-nostdlib", "-o", "tccmath.elf", "samples/tccmath.c" } };
+    static command_t tccmath_run_cmd = { 2, { "runelf", "tccmath" } };
+    static command_t tccagg_build_cmd = { 6, { "runelf", "tools/tcc.elf", "-nostdlib", "-o", "tccagg.elf", "samples/tccagg.c" } };
+    static command_t tccagg_run_cmd = { 2, { "runelf", "tccagg" } };
+    static command_t tcctree_build_cmd = { 6, { "runelf", "tools/tcc.elf", "-nostdlib", "-o", "tcctree.elf", "samples/tcctree.c" } };
+    static command_t tcctree_run_cmd = { 2, { "runelf", "tcctree" } };
+    static command_t cp_cmd = { 3, { "cp", "compiler.out", "compiler.copy" } };
+    static command_t fsread_copy_cmd = { 2, { "fsread", "compiler.copy" } };
+    static command_t mv_cmd = { 3, { "mv", "compiler.copy", "compiler.moved" } };
+    static command_t fsread_moved_cmd = { 2, { "fsread", "compiler.moved" } };
+    static command_t cp_dir_cmd = { 3, { "cp", "compiler.out", "apps/demo" } };
+    static command_t fsread_dir_copy_cmd = { 2, { "fsread", "apps/demo/compiler.out" } };
+    static command_t rm_dir_cmd = { 2, { "rm", "apps/demo/compiler.out" } };
+    static command_t fsread_dir_removed_cmd = { 2, { "fsread", "apps/demo/compiler.out" } };
+    static command_t mv_dir_cmd = { 3, { "mv", "compiler.moved", "apps/demo" } };
+    static command_t cat_cmd = { 2, { "cat", "compiler.out" } };
+    static command_t touch_cmd = { 2, { "touch", "EMPTY.TXT" } };
+    static command_t fsread_touch_cmd = { 2, { "fsread", "EMPTY.TXT" } };
+    static command_t runelf_cmd = { 4, { "runelf", "hello", "alpha", "beta" } };
+    static command_t runelf_path_cmd = { 4, { "runelf", "apps/demo/hello", "alpha", "beta" } };
+    static command_t runelf_nowait_cmd = { 2, { "runelf_nowait", "apps/tests/ticks" } };
+    static command_t compiler_demo_cmd = { 2, { "runelf", "apps/tests/compiler_demo" } };
+    static command_t tinycc_cmd = { 3, { "runelf", "tools/tcc.elf", "-v" } };
+    static command_t tccmini_build_cmd = { 6, { "runelf", "tools/tcc.elf", "-nostdlib", "-o", "tccmini.elf", "samples/tccmini.c" } };
+    static command_t tccmini_run_cmd = { 2, { "runelf", "tccmini" } };
 
     terminal_puts("shelltest: start\n");
 
@@ -737,6 +774,7 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("netsend", cmd_netsend, &netsend_cmd);
     shelltest_call("netrecv", cmd_netrecv, &netrecv_cmd);
     shelltest_call("arpgw", cmd_arpgw, &arpgw_cmd);
+    shelltest_call("ping", cmd_ping, &ping_cmd);
     shelltest_call("pinggw", cmd_pinggw, &pinggw_cmd);
     shelltest_call("ataread", cmd_ataread, &ataread_cmd);
     shelltest_call("fsls", cmd_fsls, &fsls_root_cmd);
@@ -783,8 +821,10 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("touch_rel", cmd_touch, &touch_rel_cmd);
     shelltest_call("fsread_touch_rel", cmd_fsread, &fsread_touch_rel_cmd);
     shelltest_call("runelf_rel", cmd_runelf, &runelf_rel_cmd);
+    shelltest_call("runelf", cmd_runelf, &runelf_cmd);
     shelltest_call("cd_root", cmd_cd, &cd_root_cmd);
     shelltest_call("pwd_root", cmd_pwd, &pwd_root_cmd);
+    shelltest_call("runelf_path", cmd_runelf, &runelf_path_cmd);
     shelltest_call("ls_root", cmd_ls, &ls_root_cmd);
     shelltest_call("ls_glob", cmd_ls, &ls_glob_cmd);
     shelltest_call("cp", cmd_cp, &cp_cmd);
@@ -796,8 +836,6 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("rm_dir", cmd_rm, &rm_dir_cmd);
     shelltest_call("fsread_dir_removed", cmd_fsread, &fsread_dir_removed_cmd);
     shelltest_call("mv_dir", cmd_mv, &mv_dir_cmd);
-    shelltest_call("runelf", cmd_runelf, &runelf_cmd);
-    shelltest_call("runelf_path", cmd_runelf, &runelf_path_cmd);
     shelltest_call("runelf_nowait", cmd_runelf_nowait, &runelf_nowait_cmd);
 
     terminal_puts("shelltest: PASS\n");
@@ -816,13 +854,28 @@ static int run_selftest_case(const selftest_case_t* tc) {
     terminal_puts(tc->label);
     terminal_puts(" ... ");
 
+    __asm__ __volatile__("cli");
     process_t* proc = elf_run_named(tc->program, tc->argc, tc->argv);
+    if (proc) {
+        process_claim_for_wait(proc);
+    }
     if (!proc) {
+        __asm__ __volatile__("sti");
         terminal_puts("FAIL (launch)\n");
         return 0;
     }
 
+    terminal_puts("selftest: ");
+    terminal_puts(tc->label);
+    terminal_puts(" launched\n");
+    terminal_puts("selftest: ");
+    terminal_puts(tc->label);
+    terminal_puts(" waiting\n");
+    __asm__ __volatile__("sti");
     int status = process_wait(proc);
+    terminal_puts("selftest: ");
+    terminal_puts(tc->label);
+    terminal_puts(" woke\n");
     if (status != tc->expected_status) {
         terminal_puts("FAIL (status=");
         terminal_put_uint((unsigned int)status);
@@ -841,26 +894,31 @@ static void cmd_selftest(command_t* cmd) {
 
     int ok = 1;
 
-    char* hello_argv[] = { "apps/demo/hello", "alpha", "beta", 0 };
-    char* ticks_argv[] = { "apps/tests/ticks", 0 };
-    char* args_argv[] = { "apps/tests/args", "alpha", "beta", 0 };
-    char* runelf_argv[] = { "apps/tests/runelf_test", "alpha", "beta", "gamma", 0 };
-    char* readline_argv[] = { "apps/tests/readline", 0 };
-    char* exec_argv[] = { "apps/tests/exec_test", 0 };
-    char* fileread_argv[] = { "apps/tests/fileread", 0 };
-    char* compiler_demo_argv[] = { "apps/tests/compiler_demo", 0 };
-    char* heapprobe_argv[] = { "apps/tests/heapprobe", 0 };
-    char* statprobe_argv[] = { "apps/tests/statprobe", 0 };
-    char* fileprobe_argv[] = { "apps/tests/fileprobe", 0 };
-    char* sleep_argv[] = { "apps/tests/sleep_test", 0 };
-    char* ptrguard_argv[] = { "apps/tests/ptrguard", 0 };
-    char* preempt_argv[] = { "apps/tests/preempt_test", 0 };
-    char* fault_ud_argv[] = { "apps/tests/fault", "ud", 0 };
-    char* fault_gp_argv[] = { "apps/tests/fault", "gp", 0 };
-    char* fault_de_argv[] = { "apps/tests/fault", "de", 0 };
-    char* fault_br_argv[] = { "apps/tests/fault", "br", 0 };
-    char* fault_pf_argv[] = { "apps/tests/fault", "pf", 0 };
-    command_t shelltest_cmd = { 1, { "shelltest" } };
+    /*
+     * Same stack-safety note as cmd_shelltest(): these argv tables stay in
+     * static storage so the shell task does not trample its kernel stack
+     * while it runs the full ELF regression suite.
+     */
+    static char* hello_argv[] = { "apps/demo/hello", "alpha", "beta", 0 };
+    static char* ticks_argv[] = { "apps/tests/ticks", "alpha", "beta", 0 };
+    static char* args_argv[] = { "apps/tests/args", "alpha", "beta", 0 };
+    static char* runelf_argv[] = { "apps/tests/runelf_test", "alpha", "beta", "gamma", 0 };
+    static char* readline_argv[] = { "apps/tests/readline", "alpha", "beta", 0 };
+    static char* exec_argv[] = { "apps/tests/exec_test", "alpha", "beta", 0 };
+    static char* fileread_argv[] = { "apps/tests/fileread", "alpha", "beta", 0 };
+    static char* compiler_demo_argv[] = { "apps/tests/compiler_demo", "alpha", "beta", 0 };
+    static char* heapprobe_argv[] = { "apps/tests/heapprobe", "alpha", "beta", 0 };
+    static char* statprobe_argv[] = { "apps/tests/statprobe", "alpha", "beta", 0 };
+    static char* fileprobe_argv[] = { "apps/tests/fileprobe", "alpha", "beta", 0 };
+    static char* sleep_argv[] = { "apps/tests/sleep_test", "alpha", "beta", 0 };
+    static char* ptrguard_argv[] = { "apps/tests/ptrguard", "alpha", "beta", 0 };
+    static char* preempt_argv[] = { "apps/tests/preempt_test", "alpha", "beta", 0 };
+    static char* fault_ud_argv[] = { "apps/tests/fault", "ud", 0 };
+    static char* fault_gp_argv[] = { "apps/tests/fault", "gp", 0 };
+    static char* fault_de_argv[] = { "apps/tests/fault", "de", 0 };
+    static char* fault_br_argv[] = { "apps/tests/fault", "br", 0 };
+    static char* fault_pf_argv[] = { "apps/tests/fault", "pf", 0 };
+    static command_t shelltest_cmd = { 1, { "shelltest" } };
 
     const selftest_case_t cases[] = {
         { "hello",       "apps/demo/hello",       3, hello_argv,       0 },
@@ -915,6 +973,7 @@ static command_entry_t commands[] = {
     { "netsend",       "queue a test Ethernet frame",  cmd_netsend },
     { "netrecv",       "poll and dump one Ethernet frame", cmd_netrecv },
     { "arpgw",         "resolve the QEMU gateway via ARP", cmd_arpgw },
+    { "ping",          "ping an IPv4 address",        cmd_ping },
     { "pinggw",        "ping the QEMU gateway",         cmd_pinggw },
     { "cd",            "change the shell working directory", cmd_cd },
     { "pwd",           "print the shell working directory", cmd_pwd },
@@ -952,6 +1011,7 @@ static program_entry_t programs[] = {
     { "netsend",      "queue a test Ethernet frame" },
     { "netrecv",      "poll and dump one Ethernet frame" },
     { "arpgw",        "resolve the QEMU gateway via ARP" },
+    { "ping",         "ping an IPv4 address" },
     { "pinggw",       "ping the QEMU gateway" },
     { "apps/demo/hello",       "print argc/argv and tick count" },
     { "apps/tests/ticks",      "print the current tick count" },

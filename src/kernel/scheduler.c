@@ -269,10 +269,12 @@ int sched_reap_zombies(void) {
 
         if (!proc) continue;
         if (proc->state != PROCESS_STATE_ZOMBIE) continue;
+        if (proc->reaper_claimed) continue;
 
         /* Never touch the currently running task from here. */
         if (i == s_current_idx) continue;
 
+        sched_dequeue(proc);
         process_destroy(proc);
         reaped++;
     }

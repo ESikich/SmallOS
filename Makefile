@@ -270,7 +270,8 @@ test:
 	$(PYTHON3) tools/qemu_selftest.py \
 		--monitor $(MONITOR_SOCK) \
 		--serial $(SERIAL_LOG) \
-		--pidfile $(PIDFILE)
+		--pidfile $(PIDFILE) \
+		--timeout 600
 
 smoke: reset-disk image-layout-check
 	$(MAKE) smoke-reboot
