@@ -262,8 +262,8 @@ static void cmd_ping(command_t* cmd) {
         return;
     }
 
-    /* QEMU user networking defaults to 10.0.2.15/24. */
-    cmd_ping_target("ping", 0x0A00020Fu, target_ip, target_ip);
+    /* QEMU user networking defaults to 10.0.2.15/24 with gateway 10.0.2.2. */
+    cmd_ping_target("ping", 0x0A00020Fu, target_ip, 0x0A000202u);
 }
 
 static void cmd_pinggw(command_t* cmd) {
