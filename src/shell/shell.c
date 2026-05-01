@@ -17,6 +17,7 @@ static line_editor_t editor;
 
 static int prompt_row = 0;
 static int prompt_col = 0;
+static int prompt_len = 0;
 
 static char history[HISTORY_MAX][LINE_EDITOR_MAX];
 static int history_count = 0;
@@ -181,22 +182,45 @@ static int shell_dequeue_event(shell_event_t* ev) {
     return 1;
 }
 
+static int shell_prompt_length(void) {
+    const char* cwd = shell_get_cwd();
+    int len = 3; /* "/> " */
+    if (cwd) {
+        while (*cwd) {
+            len++;
+            cwd++;
+        }
+    }
+    return len;
+}
+
+static void shell_put_prompt(void) {
+    terminal_putc('/');
+    const char* cwd = shell_get_cwd();
+    if (cwd && cwd[0] != '\0') {
+        terminal_puts(cwd);
+    }
+    terminal_puts("> ");
+}
+
 static void shell_render_current_line(void) {
-    for (int i = 0; i < 78; i++) {
-        terminal_write_at(prompt_row, prompt_col + 2 + i, ' ');
+    int start = prompt_col + prompt_len;
+    for (int i = 0; start + i < 80; i++) {
+        terminal_write_at(prompt_row, start + i, ' ');
     }
 
-    for (int i = 0; i < editor.len && (prompt_col + 2 + i) < 80; i++) {
-        terminal_write_at(prompt_row, prompt_col + 2 + i, editor.buf[i]);
+    for (int i = 0; i < editor.len && (start + i) < 80; i++) {
+        terminal_write_at(prompt_row, start + i, editor.buf[i]);
     }
 
-    terminal_set_cursor(prompt_row, prompt_col + 2 + editor.cursor);
+    terminal_set_cursor(prompt_row, start + editor.cursor);
 }
 
 static void shell_start_prompt(void) {
-    terminal_puts("> ");
+    prompt_len = shell_prompt_length();
+    shell_put_prompt();
     prompt_row = terminal_get_row();
-    prompt_col = terminal_get_col() - 2;
+    prompt_col = terminal_get_col() - prompt_len;
 
     line_editor_clear(&editor);
 
@@ -338,7 +362,7 @@ void shell_poll(void) {
         switch (ev.type) {
             case SHELL_EVENT_INPUT_CHAR:
                 if (ev.c == '\n') {
-                    terminal_set_cursor(prompt_row, prompt_col + 2 + editor.len);
+                    terminal_set_cursor(prompt_row, prompt_col + prompt_len + editor.len);
                     terminal_putc('\n');
 
                     shell_history_add(editor.buf);
@@ -360,22 +384,22 @@ void shell_poll(void) {
 
             case SHELL_EVENT_MOVE_LEFT:
                 line_editor_move_left(&editor);
-                terminal_set_cursor(prompt_row, prompt_col + 2 + editor.cursor);
+                terminal_set_cursor(prompt_row, prompt_col + prompt_len + editor.cursor);
                 break;
 
             case SHELL_EVENT_MOVE_RIGHT:
                 line_editor_move_right(&editor);
-                terminal_set_cursor(prompt_row, prompt_col + 2 + editor.cursor);
+                terminal_set_cursor(prompt_row, prompt_col + prompt_len + editor.cursor);
                 break;
 
             case SHELL_EVENT_MOVE_HOME:
                 line_editor_move_home(&editor);
-                terminal_set_cursor(prompt_row, prompt_col + 2 + editor.cursor);
+                terminal_set_cursor(prompt_row, prompt_col + prompt_len + editor.cursor);
                 break;
 
             case SHELL_EVENT_MOVE_END:
                 line_editor_move_end(&editor);
-                terminal_set_cursor(prompt_row, prompt_col + 2 + editor.cursor);
+                terminal_set_cursor(prompt_row, prompt_col + prompt_len + editor.cursor);
                 break;
 
             case SHELL_EVENT_DELETE:
