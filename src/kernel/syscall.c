@@ -8,6 +8,9 @@
 #include "pmm.h"
 #include "system.h"
 #include "klib.h"
+#include "../drivers/tcp.h"
+#include "uapi_poll.h"
+#include "uapi_socket.h"
 #include "../exec/elf_loader.h"
 #include "fat16.h"
 
@@ -486,6 +489,245 @@ static int sys_open_write_impl(const char* name) {
     return process_fd_open_file(proc, kname, 0, 1);
 }
 
+static int copy_user_sockaddr_in(struct sockaddr_in* dst,
+                                 const struct sockaddr* src,
+                                 unsigned int len) {
+    if (!dst || !src) {
+        return -1;
+    }
+    if (len < sizeof(struct sockaddr_in)) {
+        return -1;
+    }
+    if (!user_buf_ok((unsigned int)src, sizeof(struct sockaddr_in))) {
+        return -1;
+    }
+
+    k_memcpy(dst, src, sizeof(struct sockaddr_in));
+    if (dst->sin_family != AF_INET) {
+        return -1;
+    }
+    return 0;
+}
+
+static int socket_fd_is_socket(fd_entry_t* ent) {
+    return ent && ent->valid && ent->kind == PROCESS_HANDLE_KIND_SOCKET;
+}
+
+static unsigned short swap_u16(unsigned short value) {
+    return (unsigned short)(((value & 0x00FFu) << 8) | ((value & 0xFF00u) >> 8));
+}
+
+static int sys_socket_impl(int domain, int type, int protocol) {
+    process_t* proc = (process_t*)sched_current();
+    if (!proc) return -1;
+    if (domain != AF_INET) return -1;
+    if (type != SOCK_STREAM) return -1;
+    if (protocol != 0 && protocol != IPPROTO_TCP) return -1;
+
+    return process_fd_open_socket(proc, "socket");
+}
+
+static int sys_bind_impl(int fd, const struct sockaddr* addr, unsigned int addrlen) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+    struct sockaddr_in sa;
+
+    if (!proc) return -1;
+    ent = process_fd_get(proc, fd);
+    if (!socket_fd_is_socket(ent)) return -1;
+    if (ent->socket_state != PROCESS_SOCKET_STATE_OPEN) return -1;
+    if (copy_user_sockaddr_in(&sa, addr, addrlen) < 0) return -1;
+
+    ent->socket_port = swap_u16(sa.sin_port);
+    ent->socket_state = PROCESS_SOCKET_STATE_BOUND;
+    return 0;
+}
+
+static int sys_listen_impl(int fd, int backlog) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+
+    if (!proc) return -1;
+    (void)backlog;
+
+    ent = process_fd_get(proc, fd);
+    if (!socket_fd_is_socket(ent)) return -1;
+    if (ent->socket_state != PROCESS_SOCKET_STATE_BOUND) return -1;
+    if (ent->socket_port == 0u) return -1;
+
+    if (tcp_socket_bind(ent->socket_port) < 0) return -1;
+    if (tcp_socket_listen() < 0) return -1;
+    ent->socket_state = PROCESS_SOCKET_STATE_LISTENER;
+    return 0;
+}
+
+static int sys_accept_impl(syscall_regs_t* regs,
+                           int fd,
+                           struct sockaddr* addr,
+                           unsigned int* addrlen) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+    unsigned int peer_ip;
+    unsigned int peer_port;
+    int new_fd;
+
+    if (!proc) return -1;
+    ent = process_fd_get(proc, fd);
+    if (!socket_fd_is_socket(ent)) return -1;
+    if (ent->socket_state != PROCESS_SOCKET_STATE_LISTENER) return -1;
+
+    while (!tcp_socket_accept_ready()) {
+        proc->state = PROCESS_STATE_WAITING;
+        tcp_socket_set_waiter(proc);
+        __asm__ __volatile__("sti");
+        sched_yield_now((unsigned int)regs - SCHED_RESUME_RETADDR_OFFSET);
+        while (proc->state != PROCESS_STATE_RUNNING) {
+            __asm__ __volatile__("hlt");
+        }
+        __asm__ __volatile__("cli");
+    }
+
+    new_fd = process_fd_open_socket(proc, "socket");
+    if (new_fd < 0) return -1;
+
+    {
+        fd_entry_t* new_ent = process_fd_get(proc, new_fd);
+        if (!socket_fd_is_socket(new_ent)) {
+            process_fd_close(new_ent);
+            return -1;
+        }
+        new_ent->socket_state = PROCESS_SOCKET_STATE_CONNECTED;
+        new_ent->socket_port = ent->socket_port;
+    }
+    tcp_socket_mark_accepted();
+
+    peer_ip = tcp_socket_peer_ip();
+    peer_port = tcp_socket_peer_port();
+    if (addr && addrlen) {
+        struct sockaddr_in sa;
+        if (!user_buf_ok((unsigned int)addrlen, sizeof(unsigned int))) {
+            process_fd_close(process_fd_get(proc, new_fd));
+            return -1;
+        }
+        if (*addrlen < sizeof(struct sockaddr_in)) {
+            process_fd_close(process_fd_get(proc, new_fd));
+            return -1;
+        }
+        if (!user_buf_ok((unsigned int)addr, sizeof(struct sockaddr_in))) {
+            process_fd_close(process_fd_get(proc, new_fd));
+            return -1;
+        }
+        k_memset(&sa, 0, sizeof(sa));
+        sa.sin_family = AF_INET;
+        sa.sin_port = swap_u16((unsigned short)peer_port);
+        sa.sin_addr.s_addr = peer_ip;
+        k_memcpy(addr, &sa, sizeof(sa));
+        *addrlen = sizeof(sa);
+    }
+
+    tcp_socket_wake_waiter();
+    return new_fd;
+}
+
+static int sys_connect_impl(int fd, const struct sockaddr* addr, unsigned int addrlen) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+
+    if (!proc) return -1;
+    ent = process_fd_get(proc, fd);
+    if (!socket_fd_is_socket(ent)) return -1;
+    (void)addr;
+    (void)addrlen;
+    return -1;
+}
+
+static int sys_send_impl(int fd, const void* buf, unsigned int len) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+
+    if (!proc) return -1;
+    if (len == 0u) return 0;
+    if (!user_buf_ok((unsigned int)buf, len)) return -1;
+
+    ent = process_fd_get(proc, fd);
+    if (!socket_fd_is_socket(ent)) return -1;
+    if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -1;
+    return tcp_socket_send(buf, len);
+}
+
+static int sys_recv_impl(syscall_regs_t* regs, int fd, void* buf, unsigned int len) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+
+    if (!proc) return -1;
+    if (len == 0u) return 0;
+    if (!user_buf_ok((unsigned int)buf, len)) return -1;
+
+    ent = process_fd_get(proc, fd);
+    if (!socket_fd_is_socket(ent)) return -1;
+    if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -1;
+
+    while (!tcp_socket_recv_ready()) {
+        if (!tcp_socket_connection_established()) {
+            return 0;
+        }
+        proc->state = PROCESS_STATE_WAITING;
+        tcp_socket_set_waiter(proc);
+        __asm__ __volatile__("sti");
+        sched_yield_now((unsigned int)regs - SCHED_RESUME_RETADDR_OFFSET);
+        while (proc->state != PROCESS_STATE_RUNNING) {
+            __asm__ __volatile__("hlt");
+        }
+        __asm__ __volatile__("cli");
+    }
+
+    return tcp_socket_recv(buf, len);
+}
+
+static int sys_poll_impl(struct pollfd* fds, unsigned int nfds, int timeout) {
+    unsigned int ready = 0u;
+    process_t* proc = (process_t*)sched_current();
+
+    (void)timeout;
+    if (!proc) return -1;
+    if (nfds == 0u) return 0;
+    if (!user_buf_ok((unsigned int)fds, nfds * sizeof(struct pollfd))) return -1;
+
+    for (unsigned int i = 0; i < nfds; i++) {
+        struct pollfd* pfd = &fds[i];
+        fd_entry_t* ent = process_fd_get(proc, pfd->fd);
+        short revents = 0;
+
+        pfd->revents = 0;
+        if (!socket_fd_is_socket(ent)) {
+            pfd->revents = POLLERR;
+            continue;
+        }
+
+        if (ent->socket_state == PROCESS_SOCKET_STATE_LISTENER) {
+            if (tcp_socket_accept_ready() && (pfd->events & POLLIN)) {
+                revents |= POLLIN;
+            }
+        } else if (ent->socket_state == PROCESS_SOCKET_STATE_BOUND) {
+            /* Bound-but-not-listening sockets are not yet ready. */
+        } else if (ent->socket_state == PROCESS_SOCKET_STATE_CONNECTED) {
+            if ((pfd->events & POLLIN) && tcp_socket_recv_ready()) {
+                revents |= POLLIN;
+            }
+            if ((pfd->events & POLLOUT) && tcp_socket_connection_established()) {
+                revents |= POLLOUT;
+            }
+        }
+
+        if (revents) {
+            ready++;
+        }
+        pfd->revents = revents;
+    }
+
+    return (int)ready;
+}
+
 static int sys_writefd_impl(int fd, const char* buf, unsigned int len) {
     if (fd < PROCESS_FD_FIRST || fd >= PROCESS_FD_MAX) return -1;
     if (len == 0) return 0;
@@ -697,6 +939,55 @@ void syscall_handler_main(syscall_regs_t* regs) {
             regs->eax = (unsigned int)sys_stat_impl((const char*)regs->ebx,
                                                     (unsigned int*)regs->ecx,
                                                     (int*)regs->edx);
+            break;
+
+        case SYS_SOCKET:
+            regs->eax = (unsigned int)sys_socket_impl((int)regs->ebx,
+                                                      (int)regs->ecx,
+                                                      (int)regs->edx);
+            break;
+
+        case SYS_BIND:
+            regs->eax = (unsigned int)sys_bind_impl((int)regs->ebx,
+                                                    (const struct sockaddr*)regs->ecx,
+                                                    regs->edx);
+            break;
+
+        case SYS_LISTEN:
+            regs->eax = (unsigned int)sys_listen_impl((int)regs->ebx,
+                                                      (int)regs->ecx);
+            break;
+
+        case SYS_ACCEPT:
+            regs->eax = (unsigned int)sys_accept_impl(regs,
+                                                      (int)regs->ebx,
+                                                      (struct sockaddr*)regs->ecx,
+                                                      (unsigned int*)regs->edx);
+            break;
+
+        case SYS_CONNECT:
+            regs->eax = (unsigned int)sys_connect_impl((int)regs->ebx,
+                                                       (const struct sockaddr*)regs->ecx,
+                                                       regs->edx);
+            break;
+
+        case SYS_SEND:
+            regs->eax = (unsigned int)sys_send_impl((int)regs->ebx,
+                                                    (const void*)regs->ecx,
+                                                    regs->edx);
+            break;
+
+        case SYS_RECV:
+            regs->eax = (unsigned int)sys_recv_impl(regs,
+                                                    (int)regs->ebx,
+                                                    (void*)regs->ecx,
+                                                    regs->edx);
+            break;
+
+        case SYS_POLL:
+            regs->eax = (unsigned int)sys_poll_impl((struct pollfd*)regs->ebx,
+                                                    regs->ecx,
+                                                    (int)regs->edx);
             break;
 
         default:

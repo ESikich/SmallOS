@@ -38,6 +38,14 @@ typedef enum {
     PROCESS_HANDLE_KIND_SOCKET = 2
 } process_handle_kind_t;
 
+typedef enum {
+    PROCESS_SOCKET_STATE_NONE      = 0,
+    PROCESS_SOCKET_STATE_OPEN      = 1,
+    PROCESS_SOCKET_STATE_BOUND     = 2,
+    PROCESS_SOCKET_STATE_LISTENER  = 3,
+    PROCESS_SOCKET_STATE_CONNECTED = 4
+} process_socket_state_t;
+
 typedef struct process_handle_ops {
     int  (*flush)(fd_entry_t* ent);
     void (*close)(fd_entry_t* ent);
@@ -48,6 +56,8 @@ struct fd_entry {
     int  kind;                             /* PROCESS_HANDLE_KIND_* */
     const process_handle_ops_t* ops;       /* resource-specific lifetime hooks */
     int  writable;                         /* 1 if writes should buffer */
+    u32  socket_state;                     /* PROCESS_SOCKET_STATE_* */
+    u32  socket_port;                      /* listener or peer port */
     char name[PROCESS_FD_NAME_MAX];        /* filename as passed to SYS_OPEN */
     u32  size;                             /* file size in bytes */
     u32  offset;                           /* current read position */
@@ -95,6 +105,7 @@ int        process_fd_open_file(process_t* proc,
                                 const char* name,
                                 u32 size,
                                 int writable);
+int        process_fd_open_socket(process_t* proc, const char* name);
 void       process_fd_close(fd_entry_t* ent);
 int        process_fd_flush(fd_entry_t* ent);
 int        process_fd_seek(fd_entry_t* ent, int offset, int whence);

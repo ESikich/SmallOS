@@ -7,6 +7,7 @@
 #include "scheduler.h"
 #include "keyboard.h"
 #include "shell.h"
+#include "../drivers/tcp.h"
 
 #define FREAD_CACHE_MAX_BYTES (PROCESS_FD_CACHE_PAGES * 4096u)
 #define FWRITE_CACHE_MAX_BYTES (PROCESS_FD_CACHE_PAGES * 4096u)
@@ -73,10 +74,16 @@ void process_fd_cache_free(fd_entry_t* ent) {
 
 static int process_handle_file_flush(fd_entry_t* ent);
 static void process_handle_file_close(fd_entry_t* ent);
+static void process_handle_socket_close(fd_entry_t* ent);
 
 static const process_handle_ops_t s_file_handle_ops = {
     .flush = process_handle_file_flush,
     .close = process_handle_file_close,
+};
+
+static const process_handle_ops_t s_socket_handle_ops = {
+    .flush = 0,
+    .close = process_handle_socket_close,
 };
 
 fd_entry_t* process_fd_get(process_t* proc, int fd) {
@@ -101,6 +108,29 @@ int process_fd_open_file(process_t* proc, const char* name, u32 size, int writab
             ent->offset = 0;
             ent->cache_page_count = 0;
             k_memcpy(ent->name, name, (k_size_t)k_strlen(name) + 1u);
+            return fd;
+        }
+    }
+
+    return -1;
+}
+
+int process_fd_open_socket(process_t* proc, const char* name) {
+    if (!proc) return -1;
+
+    for (int fd = PROCESS_FD_FIRST; fd < PROCESS_FD_MAX; fd++) {
+        if (!proc->fds[fd].valid) {
+            fd_entry_t* ent = &proc->fds[fd];
+            k_memset(ent, 0, sizeof(*ent));
+            ent->valid = 1;
+            ent->kind = PROCESS_HANDLE_KIND_SOCKET;
+            ent->ops = &s_socket_handle_ops;
+            ent->socket_state = PROCESS_SOCKET_STATE_OPEN;
+            ent->socket_port = 0;
+            ent->writable = 0;
+            if (name) {
+                k_memcpy(ent->name, name, (k_size_t)k_strlen(name) + 1u);
+            }
             return fd;
         }
     }
@@ -192,6 +222,12 @@ static int process_handle_file_flush(fd_entry_t* ent) {
 static void process_handle_file_close(fd_entry_t* ent) {
     if (!ent) return;
     process_fd_cache_free(ent);
+    k_memset(ent, 0, sizeof(*ent));
+}
+
+static void process_handle_socket_close(fd_entry_t* ent) {
+    if (!ent) return;
+    tcp_socket_handle_close(ent);
     k_memset(ent, 0, sizeof(*ent));
 }
 

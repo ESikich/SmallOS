@@ -191,6 +191,7 @@ The current FAT16 driver is intentionally narrow.
 - nested-path file creation and overwrite via `fat16_write_path(path, ...)`
 - writable file-backed handles with buffered output via `SYS_OPEN_WRITE`, `SYS_WRITEFD`, and `SYS_LSEEK`
 - file removal and rename/move through `SYS_UNLINK` and `SYS_RENAME`
+- socket-backed handles for the current TCP passive listener path via `SYS_SOCKET`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_SEND`, `SYS_RECV`, and `SYS_POLL`
 - case-insensitive 8.3 filename matching
 - FAT chain following for file reads
 - loading one file at a time into a shared static buffer
@@ -199,7 +200,7 @@ The current FAT16 driver is intentionally narrow.
 
 - long filenames (LFN)
 - multiple concurrent file buffers
-- general-purpose socket-backed handles
+- arbitrary transport stacks beyond the current TCP passive listener path
 - mounting arbitrary FAT layouts
 
 Directory scan code explicitly skips:

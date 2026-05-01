@@ -2,6 +2,7 @@
 
 #include "e1000.h"
 #include "ipv4.h"
+#include "../kernel/uapi_poll.h"
 #include "../kernel/klib.h"
 #include "../kernel/process.h"
 #include "../kernel/scheduler.h"
@@ -46,6 +47,13 @@ typedef struct {
 } tcp_conn_t;
 
 static tcp_conn_t s_conn;
+static process_t* s_socket_waiter;
+static u16 s_socket_listener_port = TCP_LISTEN_PORT;
+static int s_socket_listener_active;
+static int s_socket_connection_accepted;
+static u8 s_socket_rx_buf[TCP_MAX_PAYLOAD];
+static u32 s_socket_rx_len;
+static u32 s_socket_rx_off;
 static u16 s_ip_id = 1u;
 static u8 s_rx_frame[TCP_MAX_FRAME];
 static u8 s_tx_frame[TCP_MAX_FRAME];
@@ -98,6 +106,16 @@ static u16 tcp_segment_checksum(u32 src_ip,
                                 u32 dst_ip,
                                 const u8* tcp_segment,
                                 u32 tcp_len);
+static void tcp_send_segment(u32 src_ip,
+                             u32 dst_ip,
+                             const u8* dst_mac,
+                             u16 src_port,
+                             u16 dst_port,
+                             u32 seq,
+                             u32 ack,
+                             u8 flags,
+                             const u8* payload,
+                             u32 payload_len);
 
 static u32 tcp_ipv4_header_len(const u8* frame, u32 len) {
     u8 ihl = (u8)(frame[14] & 0x0Fu);
@@ -277,6 +295,149 @@ static u32 tcp_build_frame(u8* frame,
 static void tcp_reset_connection(void) {
     k_memset(&s_conn, 0, sizeof(s_conn));
     s_conn.state = TCP_STATE_CLOSED;
+    s_socket_rx_len = 0u;
+    s_socket_rx_off = 0u;
+    s_socket_connection_accepted = 0;
+    if (s_socket_waiter) {
+        s_socket_waiter->state = PROCESS_STATE_RUNNING;
+        s_socket_waiter = 0;
+    }
+}
+
+static void tcp_wake_waiter(void) {
+    if (s_socket_waiter && s_socket_waiter->state == PROCESS_STATE_WAITING) {
+        s_socket_waiter->state = PROCESS_STATE_RUNNING;
+    }
+    s_socket_waiter = 0;
+}
+
+void tcp_socket_set_waiter(process_t* proc) {
+    s_socket_waiter = proc;
+}
+
+void tcp_socket_wake_waiter(void) {
+    tcp_wake_waiter();
+}
+
+void tcp_socket_handle_close(fd_entry_t* ent) {
+    if (!ent) {
+        return;
+    }
+
+    if (ent->socket_state == PROCESS_SOCKET_STATE_LISTENER) {
+        s_socket_listener_active = 0;
+        tcp_reset_connection();
+    } else if (ent->socket_state == PROCESS_SOCKET_STATE_CONNECTED) {
+        tcp_reset_connection();
+    }
+}
+
+int tcp_socket_bind(unsigned int port) {
+    if (port == 0u || port > 0xFFFFu) {
+        return -1;
+    }
+
+    s_socket_listener_port = (u16)port;
+    s_socket_listener_active = 1;
+    tcp_reset_connection();
+    return 0;
+}
+
+int tcp_socket_listen(void) {
+    s_socket_listener_active = 1;
+    return 0;
+}
+
+int tcp_socket_accept_ready(void) {
+    return s_conn.state == TCP_STATE_ESTABLISHED && !s_socket_connection_accepted;
+}
+
+void tcp_socket_mark_accepted(void) {
+    s_socket_connection_accepted = 1;
+}
+
+int tcp_socket_connection_established(void) {
+    return s_conn.state == TCP_STATE_ESTABLISHED;
+}
+
+int tcp_socket_recv_ready(void) {
+    return s_socket_rx_len > s_socket_rx_off;
+}
+
+int tcp_socket_recv(void* buf, unsigned int len) {
+    unsigned int available;
+    unsigned int to_copy;
+
+    if (!buf) {
+        return -1;
+    }
+    if (s_conn.state != TCP_STATE_ESTABLISHED) {
+        return -1;
+    }
+
+    available = s_socket_rx_len - s_socket_rx_off;
+    if (available == 0u) {
+        return 0;
+    }
+
+    to_copy = (len < available) ? len : available;
+    for (unsigned int i = 0; i < to_copy; i++) {
+        ((u8*)buf)[i] = s_socket_rx_buf[s_socket_rx_off + i];
+    }
+    s_socket_rx_off += to_copy;
+    if (s_socket_rx_off >= s_socket_rx_len) {
+        s_socket_rx_len = 0u;
+        s_socket_rx_off = 0u;
+    }
+    return (int)to_copy;
+}
+
+int tcp_socket_send(const void* buf, unsigned int len) {
+    if (!buf || len == 0u) {
+        return 0;
+    }
+    if (s_conn.state != TCP_STATE_ESTABLISHED) {
+        return -1;
+    }
+    tcp_send_segment(TCP_LOCAL_IP,
+                     s_conn.remote_ip,
+                     s_conn.remote_mac,
+                     s_socket_listener_port,
+                     s_conn.remote_port,
+                     s_conn.local_seq_next,
+                     s_conn.remote_seq_next,
+                     (u8)(TCP_ACK | TCP_PSH),
+                     (const u8*)buf,
+                     len);
+    s_conn.local_seq_next += len;
+    return (int)len;
+}
+
+unsigned int tcp_socket_poll_events(void) {
+    unsigned int events = 0u;
+
+    if (s_conn.state == TCP_STATE_ESTABLISHED) {
+        events |= POLLOUT;
+        if (tcp_socket_recv_ready()) {
+            events |= POLLIN;
+        }
+    } else if (tcp_socket_accept_ready()) {
+        events |= POLLIN;
+    }
+
+    return events;
+}
+
+unsigned int tcp_socket_peer_ip(void) {
+    return s_conn.remote_ip;
+}
+
+unsigned int tcp_socket_peer_port(void) {
+    return s_conn.remote_port;
+}
+
+unsigned int tcp_socket_local_port(void) {
+    return s_socket_listener_port;
 }
 
 static void tcp_send_segment(u32 src_ip,
@@ -309,7 +470,7 @@ static void tcp_accept_syn(const u8* frame,
     if (total_len < ip_header_len + 20u) {
         return;
     }
-    if (dst_port != TCP_LISTEN_PORT) {
+    if (dst_port != s_socket_listener_port) {
         return;
     }
     if ((frame[tcp_off + 13u] & TCP_SYN) == 0u) {
@@ -347,7 +508,7 @@ static void tcp_accept_syn(const u8* frame,
     tcp_send_segment(TCP_LOCAL_IP,
                      s_conn.remote_ip,
                      s_conn.remote_mac,
-                     TCP_LISTEN_PORT,
+                     s_socket_listener_port,
                      s_conn.remote_port,
                      s_conn.local_seq_next,
                      s_conn.remote_seq_next,
@@ -407,6 +568,7 @@ static void tcp_echo_payload(const u8* frame,
         s_conn.local_seq_next += 1u;
         s_conn.last_activity = timer_get_ticks();
         terminal_puts("tcp: established\n");
+        tcp_wake_waiter();
 
         if (payload_len == 0u) {
             return;
@@ -433,22 +595,46 @@ static void tcp_echo_payload(const u8* frame,
     }
 
     if (payload_len > 0u) {
-        tcp_send_segment(TCP_LOCAL_IP,
-                         s_conn.remote_ip,
-                         s_conn.remote_mac,
-                         TCP_LISTEN_PORT,
-                         s_conn.remote_port,
-                         s_conn.local_seq_next,
-                         s_conn.remote_seq_next,
-                         (u8)(TCP_ACK | TCP_PSH),
-                         &frame[payload_off],
-                         payload_len);
+        if (s_socket_listener_active) {
+            unsigned int available = TCP_MAX_PAYLOAD - s_socket_rx_len;
+            unsigned int to_copy = (payload_len < available) ? payload_len : available;
+
+            if (to_copy > 0u) {
+                for (u32 i = 0u; i < to_copy; i++) {
+                    s_socket_rx_buf[s_socket_rx_len + i] = frame[payload_off + i];
+                }
+                s_socket_rx_len += to_copy;
+                tcp_wake_waiter();
+            }
+
+            tcp_send_segment(TCP_LOCAL_IP,
+                             s_conn.remote_ip,
+                             s_conn.remote_mac,
+                             s_socket_listener_port,
+                             s_conn.remote_port,
+                             s_conn.local_seq_next,
+                             s_conn.remote_seq_next,
+                             TCP_ACK,
+                             0,
+                             0);
+        } else {
+            tcp_send_segment(TCP_LOCAL_IP,
+                             s_conn.remote_ip,
+                             s_conn.remote_mac,
+                             s_socket_listener_port,
+                             s_conn.remote_port,
+                             s_conn.local_seq_next,
+                             s_conn.remote_seq_next,
+                             (u8)(TCP_ACK | TCP_PSH),
+                             &frame[payload_off],
+                             payload_len);
+        }
         s_conn.local_seq_next += payload_len;
     } else {
         tcp_send_segment(TCP_LOCAL_IP,
                          s_conn.remote_ip,
                          s_conn.remote_mac,
-                         TCP_LISTEN_PORT,
+                         s_socket_listener_port,
                          s_conn.remote_port,
                          s_conn.local_seq_next,
                          s_conn.remote_seq_next,
@@ -461,7 +647,7 @@ static void tcp_echo_payload(const u8* frame,
         tcp_send_segment(TCP_LOCAL_IP,
                          s_conn.remote_ip,
                          s_conn.remote_mac,
-                         TCP_LISTEN_PORT,
+                         s_socket_listener_port,
                          s_conn.remote_port,
                          s_conn.local_seq_next,
                          s_conn.remote_seq_next,
@@ -493,7 +679,7 @@ static void tcp_maybe_retransmit(void) {
         tcp_send_segment(TCP_LOCAL_IP,
                          s_conn.remote_ip,
                          s_conn.remote_mac,
-                         TCP_LISTEN_PORT,
+                         s_socket_listener_port,
                          s_conn.remote_port,
                          s_conn.local_seq_next,
                          s_conn.remote_seq_next,
@@ -509,7 +695,7 @@ static void tcp_maybe_retransmit(void) {
             tcp_send_segment(TCP_LOCAL_IP,
                              s_conn.remote_ip,
                              s_conn.remote_mac,
-                             TCP_LISTEN_PORT,
+                             s_socket_listener_port,
                              s_conn.remote_port,
                              s_conn.local_seq_next,
                              s_conn.remote_seq_next,
@@ -527,7 +713,7 @@ static void tcp_service_main(void) {
     terminal_puts("tcp: listener on ");
     ipv4_print_ip(TCP_LOCAL_IP);
     terminal_puts(":");
-    terminal_put_uint(TCP_LISTEN_PORT);
+    terminal_put_uint(s_socket_listener_port);
     terminal_putc('\n');
 
     for (;;) {
@@ -554,6 +740,10 @@ void tcp_init(void) {
         return;
     }
 
+    s_socket_listener_port = TCP_LISTEN_PORT;
+    s_socket_listener_active = 0;
+    s_socket_connection_accepted = 0;
+    s_socket_waiter = 0;
     tcp_reset_connection();
 
     if (!sched_enqueue(proc)) {

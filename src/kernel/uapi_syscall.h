@@ -49,7 +49,22 @@ enum {
     SYS_LSEEK      = 19,  /* reposition an open fd */
     SYS_UNLINK     = 20,  /* remove a FAT16 file */
     SYS_RENAME     = 21,  /* rename or move a FAT16 entry */
-    SYS_STAT       = 22   /* query size / directory status for a FAT16 path */
+    SYS_STAT       = 22,  /* query size / directory status for a FAT16 path */
+
+    /*
+     * Socket ABI.
+     *
+     * The first cut is intentionally tiny: stream sockets only, IPv4 only,
+     * and a minimal poll surface for blocking server loops.
+     */
+    SYS_SOCKET     = 23,
+    SYS_BIND       = 24,
+    SYS_LISTEN     = 25,
+    SYS_ACCEPT     = 26,
+    SYS_CONNECT    = 27,
+    SYS_SEND       = 28,
+    SYS_RECV       = 29,
+    SYS_POLL       = 30
 };
 
 #endif

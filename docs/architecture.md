@@ -167,7 +167,7 @@ so the scripted `shelltest` / `selftest` command tables are kept in static
 storage rather than on the stack. That avoids trampling `process_t` state during
 the longest regression paths.
 
-The handle array is generic rather than file-specific now: each slot carries its own kind and ops table, so file-backed handles can own their flush/close behavior inside `process.c` while future socket-backed handles can plug into the same lifetime path without teaching `syscall.c` about resource internals.
+The handle array is generic rather than file-specific now: each slot carries its own kind and ops table, so file-backed handles own their flush/close behavior inside `process.c` while socket-backed handles can plug into the same lifetime path without teaching `syscall.c` about resource internals.
 
 ---
 
@@ -607,7 +607,8 @@ SYS_EXEC — async ELF spawn from the current foreground context; the child runs
 SYS_OPEN / SYS_CLOSE / SYS_FREAD — per-process file-backed handle table backed by FAT16; fds 0/1/2 reserved, user files start at fd 3+, and `SYS_FREAD` caches file data in PMM-backed pages until close
 SYS_BRK / user heap — per-process heap break managed in user space through `SYS_BRK` and a shared user allocator
 SYS_OPEN_WRITE / SYS_WRITEFD / SYS_LSEEK / SYS_UNLINK / SYS_RENAME / SYS_STAT — writable file-backed handles plus path metadata and file management for compiler-style tools
-TCP bring-up task — minimal kernel TCP listener/echo path used to prove the network plumbing before user-space sockets land
+SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_SEND / SYS_RECV / SYS_POLL — initial socket ABI for passive TCP servers and later FTP userland
+TCP bring-up task — minimal kernel TCP listener/echo path used to prove the network plumbing before the socket ABI landed
 page-aware copy-from-user validation — syscall pointer arguments are checked against user address space [USER_CODE_BASE, USER_STACK_TOP) and mapped user pages before dereference
 preemptive round-robin scheduler — timer IRQ context switch, 100 ms quantum
 ATA PIO driver — 28-bit LBA polling reads from primary IDE channel (0x1F0)

@@ -182,6 +182,90 @@ Queries whether a FAT16 path exists and whether it resolves to a file or directo
 
 ---
 
+### SYS_SOCKET (23)
+
+```c
+int sys_socket(int domain, int type, int protocol);
+```
+
+Creates a stream socket handle. The current implementation accepts `AF_INET`, `SOCK_STREAM`, and either `0` or `IPPROTO_TCP`.
+
+---
+
+### SYS_BIND (24)
+
+```c
+int sys_bind(int fd, const struct sockaddr* addr, socklen_t addrlen);
+```
+
+Associates a socket with an IPv4 address/port tuple.
+
+`sin_port` is interpreted in network byte order, matching the user-space wrappers.
+
+---
+
+### SYS_LISTEN (25)
+
+```c
+int sys_listen(int fd, int backlog);
+```
+
+Puts a bound socket into passive-listen mode. `backlog` is currently accepted but not used.
+
+---
+
+### SYS_ACCEPT (26)
+
+```c
+int sys_accept(int fd, struct sockaddr* addr, socklen_t* addrlen);
+```
+
+Waits for an incoming TCP connection on a listening socket and returns a connected handle.
+
+If `addr` and `addrlen` are supplied, the kernel writes back the peer address using network byte order for the port field.
+
+---
+
+### SYS_CONNECT (27)
+
+```c
+int sys_connect(int fd, const struct sockaddr* addr, socklen_t addrlen);
+```
+
+Currently returns `-1`. Outbound TCP connect support is not wired yet.
+
+---
+
+### SYS_SEND (28)
+
+```c
+int sys_send(int fd, const void* buf, uint32_t len);
+```
+
+Sends bytes on an established stream socket.
+
+---
+
+### SYS_RECV (29)
+
+```c
+int sys_recv(int fd, void* buf, uint32_t len);
+```
+
+Receives bytes from an established stream socket. The current server-side path blocks until data arrives or the connection closes.
+
+---
+
+### SYS_POLL (30)
+
+```c
+int sys_poll(struct pollfd* fds, nfds_t nfds, int timeout);
+```
+
+Checks readiness for listening and connected socket handles. `timeout` is currently ignored.
+
+---
+
 ### SYS_WRITEFILE (12)
 
 ```c

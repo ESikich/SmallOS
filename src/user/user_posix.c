@@ -1,5 +1,7 @@
 #include "user_stdio.h"
 #include "sys/stat.h"
+#include "sys/socket.h"
+#include "poll.h"
 #include "time.h"
 #include "sys/time.h"
 
@@ -85,6 +87,38 @@ int execvp(const char* file, char* const argv[]) {
     (void)file;
     (void)argv;
     return -1;
+}
+
+int socket(int domain, int type, int protocol) {
+    return sys_socket(domain, type, protocol);
+}
+
+int bind(int fd, const struct sockaddr* addr, socklen_t addrlen) {
+    return sys_bind(fd, addr, addrlen);
+}
+
+int listen(int fd, int backlog) {
+    return sys_listen(fd, backlog);
+}
+
+int accept(int fd, struct sockaddr* addr, socklen_t* addrlen) {
+    return sys_accept(fd, addr, addrlen);
+}
+
+int connect(int fd, const struct sockaddr* addr, socklen_t addrlen) {
+    return sys_connect(fd, addr, addrlen);
+}
+
+int send(int fd, const void* buf, unsigned int len) {
+    return sys_send(fd, buf, len);
+}
+
+int recv(int fd, void* buf, unsigned int len) {
+    return sys_recv(fd, buf, len);
+}
+
+int poll(struct pollfd* fds, nfds_t nfds, int timeout) {
+    return sys_poll(fds, nfds, timeout);
 }
 
 char* realpath(const char* path, char* resolved_path) {

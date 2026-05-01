@@ -2,6 +2,8 @@
 #define USER_SYSCALL_H
 
 #include "uapi_syscall.h"
+#include "uapi_socket.h"
+#include "uapi_poll.h"
 
 typedef unsigned int uint32_t;
 
@@ -206,6 +208,38 @@ static inline int sys_rename(const char* src, const char* dst) {
  */
 static inline int sys_stat(const char* path, uint32_t* out_size, int* out_is_dir) {
     return syscall3(SYS_STAT, (uint32_t)path, (uint32_t)out_size, (uint32_t)out_is_dir);
+}
+
+static inline int sys_socket(int domain, int type, int protocol) {
+    return syscall3(SYS_SOCKET, (uint32_t)domain, (uint32_t)type, (uint32_t)protocol);
+}
+
+static inline int sys_bind(int fd, const struct sockaddr* addr, socklen_t addrlen) {
+    return syscall3(SYS_BIND, (uint32_t)fd, (uint32_t)addr, (uint32_t)addrlen);
+}
+
+static inline int sys_listen(int fd, int backlog) {
+    return syscall2(SYS_LISTEN, (uint32_t)fd, (uint32_t)backlog);
+}
+
+static inline int sys_accept(int fd, struct sockaddr* addr, socklen_t* addrlen) {
+    return syscall3(SYS_ACCEPT, (uint32_t)fd, (uint32_t)addr, (uint32_t)addrlen);
+}
+
+static inline int sys_connect(int fd, const struct sockaddr* addr, socklen_t addrlen) {
+    return syscall3(SYS_CONNECT, (uint32_t)fd, (uint32_t)addr, (uint32_t)addrlen);
+}
+
+static inline int sys_send(int fd, const void* buf, uint32_t len) {
+    return syscall3(SYS_SEND, (uint32_t)fd, (uint32_t)buf, len);
+}
+
+static inline int sys_recv(int fd, void* buf, uint32_t len) {
+    return syscall3(SYS_RECV, (uint32_t)fd, (uint32_t)buf, len);
+}
+
+static inline int sys_poll(struct pollfd* fds, nfds_t nfds, int timeout) {
+    return syscall3(SYS_POLL, (uint32_t)fds, (uint32_t)nfds, (uint32_t)timeout);
 }
 
 /*
