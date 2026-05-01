@@ -1,6 +1,7 @@
 #include "user_stdio.h"
 #include "sys/stat.h"
 #include "sys/socket.h"
+#include "dirent.h"
 #include "poll.h"
 #include "time.h"
 #include "sys/time.h"
@@ -49,6 +50,14 @@ int rename(const char* src, const char* dst) {
     return sys_rename(src, dst);
 }
 
+int mkdir(const char* path, unsigned int mode) {
+    return sys_mkdir(path, mode);
+}
+
+int rmdir(const char* path) {
+    return sys_rmdir(path);
+}
+
 int stat(const char* path, struct stat* st) {
     uint32_t size = 0;
     int is_dir = 0;
@@ -70,6 +79,10 @@ int fstat(int fd, struct stat* st) {
     memset(st, 0, sizeof(*st));
     st->st_mode = S_IFREG;
     return 0;
+}
+
+int lstat(const char* path, struct stat* st) {
+    return stat(path, st);
 }
 
 int access(const char* path, int mode) {
@@ -149,6 +162,14 @@ int chdir(const char* path) {
     return 0;
 }
 
+int setsockopt(int fd, int level, int optname, const void* optval, unsigned int optlen) {
+    return sys_setsockopt(fd, level, optname, optval, (socklen_t)optlen);
+}
+
+int getsockname(int fd, struct sockaddr* addr, socklen_t* addrlen) {
+    return sys_getsockname(fd, addr, addrlen);
+}
+
 time_t time(time_t* out) {
     time_t now = (time_t)(sys_get_ticks() / 100u);
     if (out) {
@@ -175,5 +196,20 @@ int gettimeofday(struct timeval* tv, struct timezone* tz) {
         tz->tz_minuteswest = 0;
         tz->tz_dsttime = 0;
     }
+    return 0;
+}
+
+int clock_gettime(int clock_id, struct timespec* ts) {
+    unsigned int ticks;
+    unsigned int rem;
+
+    if (!ts || clock_id != CLOCK_REALTIME) {
+        return -1;
+    }
+
+    ticks = sys_get_ticks();
+    rem = ticks % 100u;
+    ts->tv_sec = (time_t)(ticks / 100u);
+    ts->tv_nsec = (long)(rem * 10000000u);
     return 0;
 }

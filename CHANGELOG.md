@@ -1,5 +1,21 @@
 # Changelog
 
+## [Current] — Guest TCP smoke path and FTP ELF launcher
+
+### Added
+
+* **Socket ABI + user-space TCP services** (`src/kernel/syscall.c`, `src/drivers/tcp.c`, `src/user/user_posix.c`, `src/user/tcpecho.c`, `src/user/ftpd.c`)
+  * The passive socket ABI now reaches a real user-space echo server through QEMU host forwarding
+  * `apps/services/tcpecho.elf` now serves as the end-to-end smoke test for the TCP path
+  * `apps/services/ftpd.elf` runs the vendored FTP session logic as a normal guest ELF
+
+### Changed
+
+* **Documentation refresh** (`README.md`, `docs/ftp-bring-up-plan.md`, `docs/execution.md`)
+  * The README now calls out the socket ABI and the guest-side TCP smoke apps
+  * The FTP bring-up plan now records the working hostfwd smoke result and keeps the next FTP step focused on the launcher and passive control/data paths
+  * The execution docs now describe the TCP smoke apps as normal ELF launch targets
+
 ## [Current] — TCP bring-up and process handle seam
 
 ### Added

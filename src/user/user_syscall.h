@@ -5,6 +5,8 @@
 #include "uapi_socket.h"
 #include "uapi_poll.h"
 
+struct dirent;
+
 typedef unsigned int uint32_t;
 
 /*
@@ -240,6 +242,32 @@ static inline int sys_recv(int fd, void* buf, uint32_t len) {
 
 static inline int sys_poll(struct pollfd* fds, nfds_t nfds, int timeout) {
     return syscall3(SYS_POLL, (uint32_t)fds, (uint32_t)nfds, (uint32_t)timeout);
+}
+
+static inline int sys_mkdir(const char* path, uint32_t mode) {
+    return syscall2(SYS_MKDIR, (uint32_t)path, mode);
+}
+
+static inline int sys_rmdir(const char* path) {
+    return syscall1(SYS_RMDIR, (uint32_t)path);
+}
+
+static inline int sys_dirlist(const char* path,
+                              uint32_t index,
+                              struct dirent* out) {
+    return syscall3(SYS_DIRLIST, (uint32_t)path, index, (uint32_t)out);
+}
+
+static inline int sys_setsockopt(int fd, int level, int optname,
+                                 const void* optval, socklen_t optlen) {
+    (void)optval;
+    (void)optlen;
+    return syscall3(SYS_SETSOCKOPT, (uint32_t)fd, (uint32_t)level,
+                    (uint32_t)optname);
+}
+
+static inline int sys_getsockname(int fd, struct sockaddr* addr, socklen_t* addrlen) {
+    return syscall3(SYS_GETSOCKNAME, (uint32_t)fd, (uint32_t)addr, (uint32_t)addrlen);
 }
 
 /*

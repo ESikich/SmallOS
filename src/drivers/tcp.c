@@ -1,5 +1,6 @@
 #include "tcp.h"
 
+#include "arp.h"
 #include "e1000.h"
 #include "ipv4.h"
 #include "../kernel/uapi_poll.h"
@@ -399,6 +400,13 @@ int tcp_socket_send(const void* buf, unsigned int len) {
     if (s_conn.state != TCP_STATE_ESTABLISHED) {
         return -1;
     }
+    terminal_puts("tcp: send ");
+    terminal_put_uint(len);
+    terminal_puts(" seq=");
+    terminal_put_uint(s_conn.local_seq_next);
+    terminal_puts(" ack=");
+    terminal_put_uint(s_conn.remote_seq_next);
+    terminal_putc('\n');
     tcp_send_segment(TCP_LOCAL_IP,
                      s_conn.remote_ip,
                      s_conn.remote_mac,
@@ -465,9 +473,14 @@ static void tcp_accept_syn(const u8* frame,
     u16 src_port = tcp_read_u16_be(frame, tcp_off + 0u);
     u16 dst_port = tcp_read_u16_be(frame, tcp_off + 2u);
     u32 seq = tcp_read_u32_be(frame, tcp_off + 4u);
+    u8 data_offset = (u8)(frame[tcp_off + 12u] >> 4);
+    u32 tcp_header_len = (u32)data_offset * 4u;
     u32 payload_len;
 
-    if (total_len < ip_header_len + 20u) {
+    if (data_offset < 5u) {
+        return;
+    }
+    if (total_len < ip_header_len + tcp_header_len) {
         return;
     }
     if (dst_port != s_socket_listener_port) {
@@ -477,7 +490,7 @@ static void tcp_accept_syn(const u8* frame,
         return;
     }
 
-    payload_len = total_len - ip_header_len - 20u;
+    payload_len = total_len - ip_header_len - tcp_header_len;
     if (payload_len > TCP_MAX_PAYLOAD) {
         return;
     }
@@ -587,6 +600,12 @@ static void tcp_echo_payload(const u8* frame,
         return;
     }
 
+    if (payload_len > 0u) {
+        terminal_puts("tcp: payload ");
+        terminal_put_uint(payload_len);
+        terminal_putc('\n');
+    }
+
     s_conn.last_activity = timer_get_ticks();
     s_conn.remote_seq_next += payload_len;
 
@@ -628,8 +647,8 @@ static void tcp_echo_payload(const u8* frame,
                              (u8)(TCP_ACK | TCP_PSH),
                              &frame[payload_off],
                              payload_len);
+            s_conn.local_seq_next += payload_len;
         }
-        s_conn.local_seq_next += payload_len;
     } else {
         tcp_send_segment(TCP_LOCAL_IP,
                          s_conn.remote_ip,
@@ -721,6 +740,9 @@ static void tcp_service_main(void) {
             u32 ip_header_len = 0;
             u32 total_len = 0;
 
+            if (arp_handle_frame(s_rx_frame, len)) {
+                continue;
+            }
             if (!tcp_validate_ipv4(s_rx_frame, len, &ip_header_len, &total_len)) {
                 continue;
             }

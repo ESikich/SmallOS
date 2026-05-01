@@ -38,7 +38,7 @@ BOOT_PARTITION_TABLE_OFFSET := $(shell awk '/^MBR_PARTITION_TABLE_OFFSET[[:space
 BOOT_PARTITION_ENTRY_SIZE := $(shell awk '/^MBR_PARTITION_ENTRY_SIZE[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 LOADER2_SIZE_BYTES := $(shell awk '/^LOADER2_SIZE_BYTES[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/loader2.asm)
 
-CPPFLAGS=-I$(KERNEL_DIR) -I$(DRIVERS_DIR) -I$(SHELL_DIR) -I$(EXEC_DIR) -I$(USER_DIR)
+CPPFLAGS=-I$(KERNEL_DIR) -I$(DRIVERS_DIR) -I$(SHELL_DIR) -I$(EXEC_DIR) -I$(USER_DIR) -I$(CURDIR)/third_party/ftp_server/include
 CFLAGS=-ffreestanding -m32 -fno-pie -fno-stack-protector -nostdlib -nostartfiles -Wa,--noexecstack
 DEPFLAGS=-MMD -MP
 HOST_CC=gcc
@@ -82,13 +82,14 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/fat16.c \
 	$(DRIVERS_DIR)/serial.c
 
-USER_PROGS=echo about uptime halt reboot hello ticks args runelf_test readline exec_test fileread compiler_demo heapprobe statprobe fileprobe fault sleep_test ptrguard spinwkr preempt_test tcpecho
+USER_PROGS=echo about uptime halt reboot hello ticks args runelf_test readline exec_test fileread compiler_demo heapprobe statprobe fileprobe fault sleep_test ptrguard spinwkr preempt_test tcpecho ftpd
 USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
-USER_RUNTIME_SRCS=$(USER_DIR)/user_alloc.c $(USER_DIR)/user_stdio.c $(USER_DIR)/user_posix.c $(USER_DIR)/setjmp.asm
+USER_RUNTIME_SRCS=$(USER_DIR)/user_alloc.c $(USER_DIR)/user_stdio.c $(USER_DIR)/user_posix.c $(USER_DIR)/ftp_compat.c $(USER_DIR)/setjmp.asm
 FAT16_ROOT_ENTRIES=echo.elf=$(BIN_DIR)/echo.elf about.elf=$(BIN_DIR)/about.elf uptime.elf=$(BIN_DIR)/uptime.elf halt.elf=$(BIN_DIR)/halt.elf reboot.elf=$(BIN_DIR)/reboot.elf
 FAT16_DEMO_ENTRIES=apps/demo/hello.elf=$(BIN_DIR)/hello.elf
 FAT16_TEST_ENTRIES=apps/tests/ticks.elf=$(BIN_DIR)/ticks.elf apps/tests/args.elf=$(BIN_DIR)/args.elf apps/tests/runelf_test.elf=$(BIN_DIR)/runelf_test.elf apps/tests/readline.elf=$(BIN_DIR)/readline.elf apps/tests/exec_test.elf=$(BIN_DIR)/exec_test.elf apps/tests/fileread.elf=$(BIN_DIR)/fileread.elf apps/tests/compiler_demo.elf=$(BIN_DIR)/compiler_demo.elf apps/tests/heapprobe.elf=$(BIN_DIR)/heapprobe.elf apps/tests/statprobe.elf=$(BIN_DIR)/statprobe.elf apps/tests/fileprobe.elf=$(BIN_DIR)/fileprobe.elf apps/tests/fault.elf=$(BIN_DIR)/fault.elf apps/tests/sleep_test.elf=$(BIN_DIR)/sleep_test.elf apps/tests/ptrguard.elf=$(BIN_DIR)/ptrguard.elf apps/tests/spinwkr.elf=$(BIN_DIR)/spinwkr.elf apps/tests/preempt_test.elf=$(BIN_DIR)/preempt_test.elf
 FAT16_APP_ENTRIES=$(FAT16_DEMO_ENTRIES) $(FAT16_TEST_ENTRIES)
+FAT16_APP_ENTRIES+= apps/services/tcpecho.elf=$(BIN_DIR)/tcpecho.elf apps/services/ftpd.elf=$(BIN_DIR)/ftpd.elf
 FAT16_EXTRA_ENTRIES=tools/tcc.elf=$(TINYCC_SMALOS_BIN) tccmath.c=$(CURDIR)/samples/tccmath.c tccagg.c=$(CURDIR)/samples/tccagg.c tcctree.c=$(CURDIR)/samples/tcctree.c tccmini.c=$(CURDIR)/samples/tccmini.c
 FAT16_EXTRA_FILES=$(foreach entry,$(FAT16_EXTRA_ENTRIES),$(word 2,$(subst =, ,$(entry))))
 

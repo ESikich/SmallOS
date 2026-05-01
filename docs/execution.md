@@ -53,6 +53,7 @@ Important current-state facts:
 - QEMU user networking is still the default for `make run` / `make test`, but `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT
 - `pinggw` only proves the QEMU gateway works; `pingpublic` and `netcheck` are the manual probes for "can I reach beyond the gateway?"
 - `pingpublic` now routes the echo request through the QEMU gateway instead of ARPing the public IP directly
+- `apps/services/tcpecho.elf` and `apps/services/ftpd.elf` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
 
 ---
 
@@ -131,6 +132,11 @@ runelf out.elf
 ```
 
 The test suite uses this flow to compile several focused C samples inside the guest and then run the generated ELFs. The produced binaries are written back under the `apps/tests/` subtree so the shell can execute them by path.
+
+For the TCP bring-up path, the shell can also launch a long-lived service
+with `runelf_nowait apps/services/tcpecho` or `runelf_nowait
+apps/services/ftpd`. Those programs bind and listen inside the guest, and
+you connect to them from the host through QEMU `hostfwd`.
 
 ---
 

@@ -9,4 +9,6 @@
 #define O_APPEND 0x0400
 #define O_BINARY 0
 
+int open(const char* path, int flags, ...);
+
 #endif

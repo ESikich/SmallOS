@@ -6,6 +6,7 @@ Current handoff for the next implementation pass.
 
 - `make test` is green on the current tree.
 - A minimal kernel TCP bring-up path already exists in `src/drivers/tcp.c` and `src/drivers/tcp.h`.
+- The hostfwd smoke path is proven end to end with `apps/services/tcpecho.elf`.
 - The process/file layer now has a generic per-process handle seam in:
   - `src/kernel/process.c`
   - `src/kernel/process.h`
@@ -17,10 +18,12 @@ Current handoff for the next implementation pass.
   - `accept`
   - `connect` stubbed for now
   - `send`
-- `recv`
-- `poll`
-- The FTP daemon itself is not yet integrated.
+  - `recv`
+  - `poll`
+- A guest-side FTP ELF launcher now exists in `src/user/ftpd.c`.
+- The FTP port uses SmallOS compatibility shims in `src/user/ftp_compat.c` plus small headers for `dirent`, `ctype`, and `netinet/in`.
 - A tiny user-space TCP echo app exists in `src/user/tcpecho.c`.
+- The TCP transmit path is now validated by a host client connecting through QEMU hostfwd and receiving echoed bytes back.
 - `third_party/ftp_server/` is present but intentionally untracked and should be treated as vendored input, not as the implementation target.
 
 ## Goal
@@ -116,12 +119,15 @@ Goal:
 - Port the FTP daemon to user space.
 - Keep it passive mode only at first.
 - The TCP echo app should remain the quick smoke test before any FTP porting.
+- The first implementation target is the guest-side ELF launcher, not `main.c` from the vendored tree.
+- Use the same QEMU hostfwd path that already works with `tcpecho.elf` to validate control and passive data ports.
 
 Important:
 
 - Keep the server in user space.
 - Avoid active FTP until everything else is stable.
 - Use the existing filesystem syscalls for file operations.
+- Keep the vendored FTP session logic unchanged unless a SmallOS shim absolutely requires a tiny adaptation.
 
 Validation:
 
@@ -141,6 +147,6 @@ Ports to forward:
 
 ## Best First Move for the Next Session
 
-- Re-add the TCP echo path if it is missing from the current branch state.
-- Run `make test`.
-- If green, add the socket ABI.
+- Exercise `build/bin/ftpd.elf` in QEMU over the proven hostfwd path.
+- Keep the vendored FTP code as the core session engine.
+- If anything regresses, fix the SmallOS shim layer before touching the FTP logic.

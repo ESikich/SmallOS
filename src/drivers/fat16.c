@@ -474,7 +474,7 @@ static int entry_matches_pattern(const u8* entry, const char* pattern) {
     }
 
     char name[32];
-    entry_display_name(entry + DIR_NAME, entry_is_dir(entry), name, sizeof(name));
+    entry_display_name(entry + DIR_NAME, 0, name, sizeof(name));
     return wildcard_match(pattern, name);
 }
 
@@ -849,6 +849,79 @@ static int resolve_path(const char* path, resolved_path_t* out) {
     out->parent = stack[depth];
     out->has_entry = 0;
     return 1;
+}
+
+typedef struct {
+    u32 target;
+    u32 seen;
+    char* out_name;
+    u32 out_name_size;
+    u32* out_size;
+    int* out_is_dir;
+    int found;
+} dirent_at_ctx_t;
+
+static int dirent_at_cb(const u8* entry, void* raw) {
+    dirent_at_ctx_t* ctx = (dirent_at_ctx_t*)raw;
+    char name[256];
+
+    if (ctx->seen != ctx->target) {
+        ctx->seen++;
+        return 1;
+    }
+
+    entry_display_name(entry + DIR_NAME, entry_is_dir(entry), name, sizeof(name));
+    if (k_strlen(name) + 1u > ctx->out_name_size) {
+        return 0;
+    }
+    k_memcpy(ctx->out_name, name, k_strlen(name) + 1u);
+    if (ctx->out_size) {
+        *ctx->out_size = read_u32_le(entry, DIR_FILE_SIZE);
+    }
+    if (ctx->out_is_dir) {
+        *ctx->out_is_dir = entry_is_dir(entry) ? 1 : 0;
+    }
+    ctx->found = 1;
+    return 0;
+}
+
+int fat16_dirent_at(const char* path,
+                    u32 index,
+                    char* out_name,
+                    u32 out_name_size,
+                    u32* out_size,
+                    int* out_is_dir) {
+    resolved_path_t resolved;
+    dirent_at_ctx_t ctx;
+
+    if (!s_initialised || !out_name || out_name_size == 0u) {
+        return 0;
+    }
+
+    if (!resolve_path(path, &resolved)) {
+        return 0;
+    }
+
+    if (resolved.has_entry && !entry_is_dir(resolved.entry)) {
+        return 0;
+    }
+
+    ctx.target = index;
+    ctx.seen = 0u;
+    ctx.out_name = out_name;
+    ctx.out_name_size = out_name_size;
+    ctx.out_size = out_size;
+    ctx.out_is_dir = out_is_dir;
+    ctx.found = 0;
+
+    if (resolved.has_entry) {
+        dir_ctx_t dir = dir_ctx_from_entry(resolved.entry);
+        dir_scan(&dir, dirent_at_cb, &ctx);
+    } else {
+        dir_scan(&resolved.parent, dirent_at_cb, &ctx);
+    }
+
+    return ctx.found;
 }
 
 typedef struct {

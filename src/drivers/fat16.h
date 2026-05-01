@@ -149,6 +149,20 @@ int fat16_rm(const char* path);
 int fat16_is_dir(const char* path);
 
 /*
+ * fat16_dirent_at(path, index, out_name, out_name_size, out_size, out_is_dir)
+ *
+ * Return the Nth entry from the named directory as a display name and
+ * metadata tuple.  Indexing is zero-based and excludes "." / "..".
+ * Returns 1 if the entry exists, 0 otherwise.
+ */
+int fat16_dirent_at(const char* path,
+                    u32 index,
+                    char* out_name,
+                    u32 out_name_size,
+                    u32* out_size,
+                    int* out_is_dir);
+
+/*
  * fat16_copy(src, dst)
  *
  * Copy a file from src to dst.  If dst names an existing directory, the

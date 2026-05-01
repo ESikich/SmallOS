@@ -9,6 +9,7 @@
 #define ARP_PTYPE_IPV4     0x0800u
 #define ARP_OP_REQUEST     0x0001u
 #define ARP_OP_REPLY       0x0002u
+#define ARP_LOCAL_IP       0x0A00020Fu  /* 10.0.2.15 */
 
 #define ARP_FRAME_SIZE     42u
 #define ARP_MAX_POLL_COUNT 200u
@@ -34,6 +35,37 @@ static u32 arp_read_u32_be(const u8* buf, u32 off) {
          | ((u32)buf[off + 1] << 16)
          | ((u32)buf[off + 2] << 8)
          | (u32)buf[off + 3];
+}
+
+static void arp_reply(const u8* frame) {
+    u8 reply[ARP_FRAME_SIZE];
+    const u8* src_mac = e1000_mac();
+
+    k_memset(reply, 0, sizeof(reply));
+
+    for (unsigned int i = 0; i < 6; i++) {
+        reply[i] = frame[6 + i];
+        reply[6 + i] = src_mac[i];
+    }
+
+    arp_write_u16_be(reply, 12, ARP_ETHERTYPE);
+    arp_write_u16_be(reply, 14, ARP_HTYPE_ETHERNET);
+    arp_write_u16_be(reply, 16, ARP_PTYPE_IPV4);
+    reply[18] = 6;
+    reply[19] = 4;
+    arp_write_u16_be(reply, 20, ARP_OP_REPLY);
+
+    for (unsigned int i = 0; i < 6; i++) {
+        reply[22 + i] = src_mac[i];
+    }
+    arp_write_u32_be(reply, 28, ARP_LOCAL_IP);
+
+    for (unsigned int i = 0; i < 6; i++) {
+        reply[32 + i] = frame[22 + i];
+    }
+    arp_write_u32_be(reply, 38, arp_read_u32_be(frame, 28));
+
+    e1000_send(reply, sizeof(reply));
 }
 
 void arp_print_ip(u32 ip) {
@@ -161,4 +193,35 @@ int arp_resolve(u32 sender_ip, u32 target_ip, u8* out_mac) {
     }
 
     return 0;
+}
+
+int arp_handle_frame(const u8* frame, u32 len) {
+    if (!frame || len < ARP_FRAME_SIZE) {
+        return 0;
+    }
+
+    if (arp_read_u16_be(frame, 12) != ARP_ETHERTYPE) {
+        return 0;
+    }
+    if (arp_read_u16_be(frame, 14) != ARP_HTYPE_ETHERNET) {
+        return 0;
+    }
+    if (arp_read_u16_be(frame, 16) != ARP_PTYPE_IPV4) {
+        return 0;
+    }
+    if (frame[18] != 6 || frame[19] != 4) {
+        return 0;
+    }
+    if (arp_read_u16_be(frame, 20) != ARP_OP_REQUEST) {
+        return 0;
+    }
+    if (arp_read_u32_be(frame, 38) != ARP_LOCAL_IP) {
+        return 0;
+    }
+
+    arp_reply(frame);
+    terminal_puts("arp: reply to ");
+    arp_print_ip(arp_read_u32_be(frame, 28));
+    terminal_putc('\n');
+    return 1;
 }

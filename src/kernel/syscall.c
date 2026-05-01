@@ -10,6 +10,7 @@
 #include "klib.h"
 #include "../drivers/tcp.h"
 #include "uapi_poll.h"
+#include "uapi_dirent.h"
 #include "uapi_socket.h"
 #include "../exec/elf_loader.h"
 #include "fat16.h"
@@ -576,19 +577,19 @@ static int sys_accept_impl(syscall_regs_t* regs,
     if (!socket_fd_is_socket(ent)) return -1;
     if (ent->socket_state != PROCESS_SOCKET_STATE_LISTENER) return -1;
 
+    __asm__ __volatile__("sti");
     while (!tcp_socket_accept_ready()) {
         proc->state = PROCESS_STATE_WAITING;
         tcp_socket_set_waiter(proc);
-        __asm__ __volatile__("sti");
-        sched_yield_now((unsigned int)regs - SCHED_RESUME_RETADDR_OFFSET);
-        while (proc->state != PROCESS_STATE_RUNNING) {
-            __asm__ __volatile__("hlt");
-        }
-        __asm__ __volatile__("cli");
+        __asm__ __volatile__("hlt");
     }
+    __asm__ __volatile__("cli");
 
     new_fd = process_fd_open_socket(proc, "socket");
     if (new_fd < 0) return -1;
+    terminal_puts("sys_accept allocated fd=");
+    terminal_put_uint((unsigned int)new_fd);
+    terminal_putc('\n');
 
     {
         fd_entry_t* new_ent = process_fd_get(proc, new_fd);
@@ -626,6 +627,12 @@ static int sys_accept_impl(syscall_regs_t* regs,
     }
 
     tcp_socket_wake_waiter();
+    terminal_puts("sys_accept final fd=");
+    terminal_put_uint((unsigned int)new_fd);
+    terminal_putc('\n');
+    terminal_puts("sys_accept returning fd=");
+    terminal_put_uint((unsigned int)new_fd);
+    terminal_putc('\n');
     return new_fd;
 }
 
@@ -728,6 +735,71 @@ static int sys_poll_impl(struct pollfd* fds, unsigned int nfds, int timeout) {
     return (int)ready;
 }
 
+static int sys_mkdir_impl(const char* path, unsigned int mode) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    (void)mode;
+    if (copy_user_cstr(kpath, sizeof(kpath), path) <= 1) return -1;
+    return fat16_mkdir(kpath) ? 0 : -1;
+}
+
+static int sys_rmdir_impl(const char* path) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    if (copy_user_cstr(kpath, sizeof(kpath), path) <= 1) return -1;
+    return fat16_rmdir(kpath) ? 0 : -1;
+}
+
+static int sys_dirlist_impl(const char* path, unsigned int index, uapi_dirent_t* out) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    char name[UAPI_DIRENT_NAME_MAX];
+    unsigned int size = 0;
+    int is_dir = 0;
+    if (copy_user_cstr(kpath, sizeof(kpath), path) <= 1) return -1;
+    if (!out) return -1;
+    if (!user_buf_ok((unsigned int)out, sizeof(*out))) return -1;
+    if (!fat16_dirent_at(kpath, index, name, sizeof(name), &size, &is_dir)) {
+        return 0;
+    }
+    k_memset(out, 0, sizeof(*out));
+    k_memcpy(out->d_name, name, k_strlen(name) + 1u);
+    out->d_size = size;
+    out->d_is_dir = is_dir;
+    return 1;
+}
+
+static int sys_setsockopt_impl(int fd, int level, int optname) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+
+    if (!proc) return -1;
+    ent = process_fd_get(proc, fd);
+    if (!socket_fd_is_socket(ent)) return -1;
+    (void)level;
+    (void)optname;
+    return 0;
+}
+
+static int sys_getsockname_impl(int fd, struct sockaddr* addr, unsigned int* addrlen) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+    struct sockaddr_in sa;
+
+    if (!proc) return -1;
+    ent = process_fd_get(proc, fd);
+    if (!socket_fd_is_socket(ent)) return -1;
+    if (!addr || !addrlen) return -1;
+    if (!user_buf_ok((unsigned int)addrlen, sizeof(unsigned int))) return -1;
+    if (*addrlen < sizeof(struct sockaddr_in)) return -1;
+    if (!user_buf_ok((unsigned int)addr, sizeof(struct sockaddr_in))) return -1;
+
+    k_memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = swap_u16(ent->socket_port);
+    sa.sin_addr.s_addr = 0x0100007Fu;
+    k_memcpy(addr, &sa, sizeof(sa));
+    *addrlen = sizeof(sa);
+    return 0;
+}
+
 static int sys_writefd_impl(int fd, const char* buf, unsigned int len) {
     if (fd < PROCESS_FD_FIRST || fd >= PROCESS_FD_MAX) return -1;
     if (len == 0) return 0;
@@ -737,7 +809,12 @@ static int sys_writefd_impl(int fd, const char* buf, unsigned int len) {
     if (!proc) return -1;
 
     fd_entry_t* ent = process_fd_get(proc, fd);
-    if (!ent || !ent->writable) return -1;
+    if (!ent) return -1;
+    if (socket_fd_is_socket(ent)) {
+        if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -1;
+        return tcp_socket_send(buf, len);
+    }
+    if (!ent->writable) return -1;
     return process_fd_write_file(ent, buf, len);
 }
 
@@ -807,6 +884,35 @@ static int sys_fread_impl(int fd, char* buf, unsigned int len) {
     if (!proc) return -1;
     fd_entry_t* ent = process_fd_get(proc, fd);
     if (!ent) return -1;
+    terminal_puts("sys_fread fd=");
+    terminal_put_uint((unsigned int)fd);
+    terminal_puts(" kind=");
+    terminal_put_uint((unsigned int)ent->kind);
+    terminal_puts(" state=");
+    terminal_put_uint((unsigned int)ent->socket_state);
+    terminal_putc('\n');
+    if (socket_fd_is_socket(ent)) {
+        if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -1;
+        terminal_puts("sys_fread socket wait\n");
+        __asm__ __volatile__("sti");
+        while (!tcp_socket_recv_ready()) {
+            if (!tcp_socket_connection_established()) {
+                terminal_puts("sys_fread socket closed\n");
+                __asm__ __volatile__("cli");
+                return 0;
+            }
+            __asm__ __volatile__("hlt");
+        }
+        terminal_puts("sys_fread socket ready\n");
+        __asm__ __volatile__("cli");
+        {
+            int n = tcp_socket_recv(buf, len);
+            terminal_puts("sys_fread socket read=");
+            terminal_put_uint((unsigned int)(n < 0 ? 0 : n));
+            terminal_putc('\n');
+            return n;
+        }
+    }
     return process_fd_read_file(ent, buf, len);
 }
 
@@ -959,11 +1065,13 @@ void syscall_handler_main(syscall_regs_t* regs) {
             break;
 
         case SYS_ACCEPT:
+        {
             regs->eax = (unsigned int)sys_accept_impl(regs,
                                                       (int)regs->ebx,
                                                       (struct sockaddr*)regs->ecx,
                                                       (unsigned int*)regs->edx);
             break;
+        }
 
         case SYS_CONNECT:
             regs->eax = (unsigned int)sys_connect_impl((int)regs->ebx,
@@ -988,6 +1096,33 @@ void syscall_handler_main(syscall_regs_t* regs) {
             regs->eax = (unsigned int)sys_poll_impl((struct pollfd*)regs->ebx,
                                                     regs->ecx,
                                                     (int)regs->edx);
+            break;
+
+        case SYS_MKDIR:
+            regs->eax = (unsigned int)sys_mkdir_impl((const char*)regs->ebx,
+                                                     regs->ecx);
+            break;
+
+        case SYS_RMDIR:
+            regs->eax = (unsigned int)sys_rmdir_impl((const char*)regs->ebx);
+            break;
+
+        case SYS_DIRLIST:
+            regs->eax = (unsigned int)sys_dirlist_impl((const char*)regs->ebx,
+                                                       regs->ecx,
+                                                       (uapi_dirent_t*)regs->edx);
+            break;
+
+        case SYS_SETSOCKOPT:
+            regs->eax = (unsigned int)sys_setsockopt_impl((int)regs->ebx,
+                                                          (int)regs->ecx,
+                                                          (int)regs->edx);
+            break;
+
+        case SYS_GETSOCKNAME:
+            regs->eax = (unsigned int)sys_getsockname_impl((int)regs->ebx,
+                                                           (struct sockaddr*)regs->ecx,
+                                                           (unsigned int*)regs->edx);
             break;
 
         default:

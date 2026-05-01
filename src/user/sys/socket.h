@@ -10,5 +10,10 @@ int accept(int fd, struct sockaddr* addr, socklen_t* addrlen);
 int connect(int fd, const struct sockaddr* addr, socklen_t addrlen);
 int send(int fd, const void* buf, unsigned int len);
 int recv(int fd, void* buf, unsigned int len);
+int setsockopt(int fd, int level, int optname, const void* optval, unsigned int optlen);
+int getsockname(int fd, struct sockaddr* addr, socklen_t* addrlen);
+
+#define SOL_SOCKET 1
+#define SO_REUSEADDR 2
 
 #endif /* USER_SYS_SOCKET_H */

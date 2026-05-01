@@ -36,6 +36,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Ring 3 user mode — hardware-enforced privilege separation
 * Per-process kernel stacks — dedicated PMM frame per process; TSS ESP0 set from it; freed on exit
 * Syscall layer via `int 0x80` (DPL=3 gate): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`, `SYS_READ`, `SYS_YIELD`, `SYS_SLEEP`, `SYS_EXEC`, `SYS_WRITEFILE`, `SYS_WRITEFILE_PATH`, plus file-handle helpers (`SYS_OPEN_WRITE`, `SYS_WRITEFD`, `SYS_LSEEK`, `SYS_UNLINK`, `SYS_RENAME`, `SYS_STAT`)
+* Socket ABI via `int 0x80`: `SYS_SOCKET`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_CONNECT`, `SYS_SEND`, `SYS_RECV`, and `SYS_POLL`
 * `sys_exit()` is scheduler-owned: it switches to the kernel page directory, marks the current task `PROCESS_STATE_ZOMBIE`, and switches to the next runnable task
 * Shell now runs as an explicit kernel task scheduled by `scheduler.c`
 * **Preemptive round-robin scheduler** — timer IRQ (100 Hz) context-switches between kernel tasks; 10-tick (100 ms) quantum
@@ -46,6 +47,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * **ATA PIO driver** — polls the primary IDE channel (`0x1F0`) to read 512-byte sectors from disk in 32-bit protected mode; no DMA or IRQ required
 * **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing all user ELFs; built by `tools/mkfat16.c` with no external dependencies; readable via ATA PIO with nested directory paths, writable at runtime for root-directory files and nested paths
 * **TCP bring-up task** — minimal kernel-side TCP listener/echo path for end-to-end networking validation before the socket ABI is exposed to user space
+* **Guest TCP apps** — `apps/services/tcpecho.elf` proves the socket path end to end, and `apps/services/ftpd.elf` runs the vendored FTP session logic as a normal user-space ELF
 
 ---
 
@@ -133,6 +135,24 @@ screenshots (`screendump`).
 The mutable FAT16 disk state now lives in `.state/fat16.img`, so normal
 rebuilds keep your files.  Use `make reset-disk` if you want to restore
 the seeded filesystem from the latest build.
+
+For the TCP smoke path, launch the guest with host forwarding for the
+service port you want to exercise. For example:
+
+```bash
+qemu-system-i386 \
+  -drive format=raw,file=build/img/os-image.bin \
+  -boot c -m 32 \
+  -serial file:/tmp/smallos-serial.log \
+  -nic user,model=e1000,mac=52:54:00:12:34:56,hostfwd=tcp::2462-:2323,hostfwd=tcp::2121-:2121 \
+  -display none \
+  -monitor unix:/tmp/smallos-monitor.sock,server,nowait \
+  -daemonize -pidfile /tmp/smallos.pid
+```
+
+Then run `runelf_nowait apps/services/tcpecho` or `runelf_nowait
+apps/services/ftpd` in the guest shell and connect from the host to
+`127.0.0.1:2462` or `127.0.0.1:2121` respectively.
 
 `make test` boots the image headlessly, runs the shell `selftest`
 command, feeds the interactive `readline` prompt, and checks every

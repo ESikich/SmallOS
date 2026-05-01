@@ -64,7 +64,13 @@ enum {
     SYS_CONNECT    = 27,
     SYS_SEND       = 28,
     SYS_RECV       = 29,
-    SYS_POLL       = 30
+    SYS_POLL       = 30,
+
+    SYS_MKDIR      = 31,
+    SYS_RMDIR      = 32,
+    SYS_DIRLIST    = 33,
+    SYS_SETSOCKOPT = 34,
+    SYS_GETSOCKNAME = 35
 };
 
 #endif
