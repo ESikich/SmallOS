@@ -186,7 +186,7 @@ Important:
 Validation:
 
 - `make test`
-- then a manual Windows FileZilla or PowerShell smoke test
+- then a manual host smoke test with `lftp` or a Windows GUI client such as FileZilla/WinSCP
 
 ### Phase 5: QEMU Launch and Docs
 
@@ -204,6 +204,7 @@ Notes:
 - Keep the guest FTP daemon on `2121`.
 - Keep passive data on `30000` until the guest TCP stack supports a wider range cleanly.
 - Document the `lftp` smoke as the preferred repeatable host check, with GUI clients as an additional compatibility test.
+- GUI clients are expected to probe `FEAT`, `OPTS UTF8 ON`, `TYPE A`, and `LIST -a` before showing the directory listing.
 
 ## Best First Move for the Next Session
 
