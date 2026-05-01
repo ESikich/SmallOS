@@ -22,9 +22,9 @@ void _start(int argc, char** argv) {
     (void)argv;
 
     u_puts("statprobe start\n");
-    check_stat("hello", "hello.elf");
     check_stat("demo_dir", "apps/demo");
     check_stat("demo_hello", "apps/demo/hello.elf");
+    check_stat("tests_dir", "apps/tests");
     u_puts("statprobe PASS\n");
     sys_exit(0);
 }

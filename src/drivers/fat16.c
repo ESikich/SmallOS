@@ -62,6 +62,8 @@ static u8 s_sector[SECTOR_SIZE];
 /* Writable working copies of the FAT and root directory. */
 static u8 s_fat_buf[FAT_SECTORS * SECTOR_SIZE] __attribute__((aligned(2)));
 static u8 s_root_buf[ROOT_DIR_SECTORS * SECTOR_SIZE] __attribute__((aligned(2)));
+static u8 s_dir_buf[CLUSTER_BYTES] __attribute__((aligned(2)));
+static u8 s_dir_buf2[CLUSTER_BYTES] __attribute__((aligned(2)));
 
 /*
  * Static ELF load buffer — reused across fat16_load() calls.
@@ -71,11 +73,9 @@ static u8 s_root_buf[ROOT_DIR_SECTORS * SECTOR_SIZE] __attribute__((aligned(2)))
  * before returning, so the buffer is safe to reuse on the next call.
  *
  * A separate static cluster scratch buffer is used to avoid a 2048-byte
- * allocation on the kernel stack inside fat16_load().
+ * allocation on the kernel stack inside hot paths that stream cluster data.
  */
 static u8 s_load_buf[FAT16_MAX_FILE_BYTES];
-static u8 s_cluster_buf[CLUSTER_BYTES];
-static u8 s_dir_buf[FAT16_MAX_FILE_BYTES];
 
 typedef struct {
     int is_root;
@@ -104,6 +104,26 @@ static u32 abs_lba(u32 rel) {
 
 static u32 cluster_to_rel_sector(u32 cluster) {
     return DATA_REL_SECTOR + (cluster - FIRST_CLUSTER) * SECTORS_PER_CLUSTER;
+}
+
+static int read_cluster_data(u32 cluster, u8* out) {
+    u32 rel_sector = cluster_to_rel_sector(cluster);
+    for (u32 s = 0; s < SECTORS_PER_CLUSTER; s++) {
+        if (!ata_read_sectors(abs_lba(rel_sector + s), 1, out + s * SECTOR_SIZE)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int write_cluster_data(u32 cluster, const u8* data) {
+    u32 rel_sector = cluster_to_rel_sector(cluster);
+    for (u32 s = 0; s < SECTORS_PER_CLUSTER; s++) {
+        if (!ata_write_sectors(abs_lba(rel_sector + s), 1, data + s * SECTOR_SIZE)) {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 static int is_sep(char c) {
@@ -328,7 +348,138 @@ static void write_dot_entry(u8* entry, u16 cluster, u32 size, int is_dotdot) {
     write_u32_le(entry, DIR_FILE_SIZE, size);
 }
 
-static void print_83_name(const u8 name83[11], int is_dir) {
+static int dir_scan(const dir_ctx_t* dir,
+                    int (*cb)(const u8* entry, void* ctx),
+                    void* ctx);
+
+static unsigned int decimal_len(u32 value) {
+    unsigned int len = 1;
+    while (value >= 10u) {
+        value /= 10u;
+        len++;
+    }
+    return len;
+}
+
+static unsigned int display_name_width(const u8 name83[11], int is_dir) {
+    unsigned int width = 0;
+    int base_end = 8;
+    while (base_end > 0 && name83[base_end - 1] == ' ') base_end--;
+
+    int ext_end = 3;
+    while (ext_end > 0 && name83[8 + ext_end - 1] == ' ') ext_end--;
+
+    for (int i = 0; i < base_end; i++) {
+        width++;
+    }
+
+    if (ext_end > 0) {
+        width++;
+        for (int i = 0; i < ext_end; i++) {
+            width++;
+        }
+    }
+
+    if (is_dir) {
+        width++;
+    }
+
+    return width;
+}
+
+static unsigned int display_size_width(u32 size) {
+    if (size < 1024u) {
+        return decimal_len(size) + 2u;
+    }
+
+    return decimal_len(size / 1024u) + 3u;
+}
+
+static unsigned int entry_display_name(const u8 name83[11], int is_dir, char* out, unsigned int out_size) {
+    unsigned int pos = 0;
+    int base_end = 8;
+    while (base_end > 0 && name83[base_end - 1] == ' ') base_end--;
+
+    int ext_end = 3;
+    while (ext_end > 0 && name83[8 + ext_end - 1] == ' ') ext_end--;
+
+    if (out_size == 0) {
+        return 0;
+    }
+
+    for (int i = 0; i < base_end && pos + 1u < out_size; i++) {
+        out[pos++] = (char)name83[i];
+    }
+
+    if (ext_end > 0 && pos + 1u < out_size) {
+        out[pos++] = '.';
+        for (int i = 0; i < ext_end && pos + 1u < out_size; i++) {
+            out[pos++] = (char)name83[8 + i];
+        }
+    }
+
+    if (is_dir && pos + 1u < out_size) {
+        out[pos++] = '/';
+    }
+
+    out[pos] = '\0';
+    return pos;
+}
+
+static int wildcard_match(const char* pattern, const char* text) {
+    if (*pattern == '*') {
+        while (*pattern == '*') {
+            pattern++;
+        }
+
+        if (*pattern == '\0') {
+            return 1;
+        }
+
+        while (*text) {
+            if (wildcard_match(pattern, text)) {
+                return 1;
+            }
+            text++;
+        }
+
+        return 0;
+    }
+
+    if (*pattern == '?') {
+        if (*text == '\0') {
+            return 0;
+        }
+        return wildcard_match(pattern + 1, text + 1);
+    }
+
+    if (*pattern == '\0') {
+        return *text == '\0';
+    }
+
+    if (*text == '\0') {
+        return 0;
+    }
+
+    if (to_upper(*pattern) != to_upper(*text)) {
+        return 0;
+    }
+
+    return wildcard_match(pattern + 1, text + 1);
+}
+
+static int entry_matches_pattern(const u8* entry, const char* pattern) {
+    if (!pattern || pattern[0] == '\0') {
+        return 1;
+    }
+
+    char name[32];
+    entry_display_name(entry + DIR_NAME, entry_is_dir(entry), name, sizeof(name));
+    return wildcard_match(pattern, name);
+}
+
+static void print_name_field(const u8 name83[11], int is_dir, unsigned int width) {
+    unsigned int printed = 0;
     int base_end = 8;
     while (base_end > 0 && name83[base_end - 1] == ' ') base_end--;
 
@@ -337,17 +488,173 @@ static void print_83_name(const u8 name83[11], int is_dir) {
 
     for (int i = 0; i < base_end; i++) {
         terminal_putc((char)name83[i]);
+        printed++;
     }
 
     if (ext_end > 0) {
         terminal_putc('.');
+        printed++;
         for (int i = 0; i < ext_end; i++) {
             terminal_putc((char)name83[8 + i]);
+            printed++;
         }
     }
 
     if (is_dir) {
         terminal_putc('/');
+        printed++;
+    }
+
+    while (printed < width) {
+        terminal_putc(' ');
+        printed++;
+    }
+}
+
+static void print_right_aligned_uint(u32 value, unsigned int width) {
+    unsigned int len = decimal_len(value);
+    while (len < width) {
+        terminal_putc(' ');
+        len++;
+    }
+    terminal_put_uint(value);
+}
+
+static void print_size_field(u32 size, unsigned int width) {
+    u32 value;
+    const char* unit;
+
+    if (size < 1024u) {
+        value = size;
+        unit = " B";
+    } else {
+        value = size / 1024u;
+        unit = " KB";
+    }
+
+    print_right_aligned_uint(value, width - (size < 1024u ? 2u : 3u));
+    terminal_puts(unit);
+}
+
+static int entry_sort_cmp(const u8* a, const u8* b) {
+    int a_is_dir = entry_is_dir(a);
+    int b_is_dir = entry_is_dir(b);
+
+    if (a_is_dir != b_is_dir) {
+        return a_is_dir ? -1 : 1;
+    }
+
+    for (int i = 0; i < 11; i++) {
+        if (a[DIR_NAME + i] != b[DIR_NAME + i]) {
+            return (int)a[DIR_NAME + i] - (int)b[DIR_NAME + i];
+        }
+    }
+
+    return 0;
+}
+
+typedef struct {
+    int want_dirs;
+    int have_last;
+    u8 last[32];
+    int found;
+    u8 best[32];
+    const char* pattern;
+} list_sorted_ctx_t;
+
+typedef struct {
+    unsigned int name_width;
+    unsigned int size_width;
+    unsigned int cluster_width;
+    const char* pattern;
+} list_widths_t;
+
+static int list_sorted_cb(const u8* entry, void* raw) {
+    list_sorted_ctx_t* ctx = (list_sorted_ctx_t*)raw;
+
+    if (entry_is_dir(entry) != ctx->want_dirs) {
+        return 1;
+    }
+
+    if (!entry_matches_pattern(entry, ctx->pattern)) {
+        return 1;
+    }
+
+    if (ctx->have_last && entry_sort_cmp(entry, ctx->last) <= 0) {
+        return 1;
+    }
+
+    if (!ctx->found || entry_sort_cmp(entry, ctx->best) < 0) {
+        k_memcpy(ctx->best, entry, 32);
+        ctx->found = 1;
+    }
+
+    return 1;
+}
+
+static int list_widths_cb(const u8* entry, void* raw) {
+    list_widths_t* widths = (list_widths_t*)raw;
+    if (!entry_matches_pattern(entry, widths->pattern)) {
+        return 1;
+    }
+
+    unsigned int name_width = display_name_width(entry + DIR_NAME, entry_is_dir(entry));
+    unsigned int size_width = display_size_width(read_u32_le(entry, DIR_FILE_SIZE));
+    unsigned int cluster_width = decimal_len(read_u16_le(entry, DIR_FIRST_CLUSTER));
+
+    if (name_width > widths->name_width) {
+        widths->name_width = name_width;
+    }
+    if (size_width > widths->size_width) {
+        widths->size_width = size_width;
+    }
+    if (cluster_width > widths->cluster_width) {
+        widths->cluster_width = cluster_width;
+    }
+
+    return 1;
+}
+
+static list_widths_t dir_list_widths(const dir_ctx_t* dir, const char* pattern) {
+    list_widths_t widths;
+    widths.name_width = 4u;
+    widths.size_width = 4u;
+    widths.cluster_width = 7u;
+    widths.pattern = pattern;
+    dir_scan(dir, list_widths_cb, &widths);
+    return widths;
+}
+
+static void print_list_row(const u8* entry, const list_widths_t* widths) {
+    terminal_puts("  ");
+    print_name_field(entry + DIR_NAME, entry_is_dir(entry), widths->name_width);
+    terminal_puts("  ");
+    print_size_field(read_u32_le(entry, DIR_FILE_SIZE), widths->size_width);
+    terminal_puts("  ");
+    print_right_aligned_uint(read_u16_le(entry, DIR_FIRST_CLUSTER), widths->cluster_width);
+    terminal_putc('\n');
+}
+
+static void list_sorted_group(const dir_ctx_t* dir, int want_dirs, const list_widths_t* widths, const char* pattern) {
+    list_sorted_ctx_t ctx;
+    k_memset(&ctx, 0, sizeof(ctx));
+    ctx.want_dirs = want_dirs;
+    ctx.pattern = pattern;
+
+    for (;;) {
+        ctx.found = 0;
+        if (!dir_scan(dir, list_sorted_cb, &ctx)) {
+            return;
+        }
+
+        if (!ctx.found) {
+            return;
+        }
+
+        print_list_row(ctx.best, widths);
+
+        k_memcpy(ctx.last, ctx.best, 32);
+        ctx.have_last = 1;
     }
 }
 
@@ -356,6 +663,7 @@ static int dir_scan(const dir_ctx_t* dir,
                     void* ctx)
 {
     if (!dir || !cb) return 0;
+    u8 sector_buf[SECTOR_SIZE];
 
     if (dir->is_root) {
         for (u32 s = 0; s < ROOT_DIR_SECTORS; s++) {
@@ -385,30 +693,28 @@ static int dir_scan(const dir_ctx_t* dir,
 
     while (cluster >= FIRST_CLUSTER && cluster < FAT16_EOC_MIN && bytes_remaining > 0) {
         u32 rel_sector = cluster_to_rel_sector(cluster);
-
-        for (u32 s = 0; s < SECTORS_PER_CLUSTER; s++) {
-            if (!ata_read_sectors(abs_lba(rel_sector + s), 1,
-                                  s_cluster_buf + s * SECTOR_SIZE)) {
+        for (u32 s = 0; s < SECTORS_PER_CLUSTER && bytes_remaining > 0; s++) {
+            if (!ata_read_sectors(abs_lba(rel_sector + s), 1, sector_buf)) {
                 terminal_puts("fat16: directory read error\n");
                 return 0;
             }
-        }
 
-        u32 bytes_in_cluster = bytes_remaining < CLUSTER_BYTES
-                             ? bytes_remaining
-                             : CLUSTER_BYTES;
+            u32 bytes_in_sector = bytes_remaining < SECTOR_SIZE
+                                ? bytes_remaining
+                                : SECTOR_SIZE;
 
-        for (u32 off = 0; off + 32u <= bytes_in_cluster; off += 32u) {
-            const u8* entry = s_cluster_buf + off;
-            if (!entry_is_valid(entry)) {
-                if (entry[DIR_NAME] == 0x00) return 1;
-                continue;
+            for (u32 off = 0; off + 32u <= bytes_in_sector; off += 32u) {
+                const u8* entry = sector_buf + off;
+                if (!entry_is_valid(entry)) {
+                    if (entry[DIR_NAME] == 0x00) return 1;
+                    continue;
+                }
+                if (!cb(entry, ctx)) return 1;
             }
-            if (!cb(entry, ctx)) return 1;
-        }
 
-        bytes_remaining -= bytes_in_cluster;
-        if (bytes_remaining == 0) break;
+            bytes_remaining -= bytes_in_sector;
+            if (bytes_remaining == 0) break;
+        }
 
         cluster = fat_entry(cluster);
     }
@@ -592,6 +898,7 @@ static int resolve_create_path(const char* path, create_path_t* out) {
 
 static int dir_read_ctx(const dir_ctx_t* dir, u8* buf, u32 buf_size, u32* out_size) {
     if (!dir || !buf) return 0;
+    u8 sector_buf[SECTOR_SIZE];
 
     if (dir->is_root) {
         u32 root_bytes = ROOT_DIR_SECTORS * SECTOR_SIZE;
@@ -617,17 +924,17 @@ static int dir_read_ctx(const dir_ctx_t* dir, u8* buf, u32 buf_size, u32* out_si
         }
 
         u32 rel_sector = cluster_to_rel_sector(cluster);
-        for (u32 s = 0; s < SECTORS_PER_CLUSTER; s++) {
-            if (!ata_read_sectors(abs_lba(rel_sector + s), 1, s_cluster_buf + s * SECTOR_SIZE)) {
+        for (u32 s = 0; s < SECTORS_PER_CLUSTER && remaining > 0; s++) {
+            if (!ata_read_sectors(abs_lba(rel_sector + s), 1, sector_buf)) {
                 terminal_puts("fat16: directory read error\n");
                 return 0;
             }
-        }
 
-        u32 to_copy = remaining < CLUSTER_BYTES ? remaining : CLUSTER_BYTES;
-        k_memcpy(buf + offset, s_cluster_buf, to_copy);
-        offset += to_copy;
-        remaining -= to_copy;
+            u32 to_copy = remaining < SECTOR_SIZE ? remaining : SECTOR_SIZE;
+            k_memcpy(buf + offset, sector_buf, to_copy);
+            offset += to_copy;
+            remaining -= to_copy;
+        }
 
         if (remaining == 0) break;
         cluster = fat_entry(cluster);
@@ -639,6 +946,7 @@ static int dir_read_ctx(const dir_ctx_t* dir, u8* buf, u32 buf_size, u32* out_si
 
 static int dir_write_ctx(const dir_ctx_t* dir, const u8* buf, u32 size) {
     if (!dir || !buf) return 0;
+    u8 sector_buf[SECTOR_SIZE];
 
     if (dir->is_root) {
         u32 root_bytes = ROOT_DIR_SECTORS * SECTOR_SIZE;
@@ -660,19 +968,19 @@ static int dir_write_ctx(const dir_ctx_t* dir, const u8* buf, u32 size) {
         }
 
         u32 rel_sector = cluster_to_rel_sector(cluster);
-        u32 chunk = remaining < CLUSTER_BYTES ? remaining : CLUSTER_BYTES;
-        k_memset(s_cluster_buf, 0, CLUSTER_BYTES);
-        k_memcpy(s_cluster_buf, buf + offset, chunk);
+        for (u32 s = 0; s < SECTORS_PER_CLUSTER && remaining > 0; s++) {
+            u32 chunk = remaining < SECTOR_SIZE ? remaining : SECTOR_SIZE;
+            k_memset(sector_buf, 0, SECTOR_SIZE);
+            k_memcpy(sector_buf, buf + offset, chunk);
 
-        for (u32 s = 0; s < SECTORS_PER_CLUSTER; s++) {
-            if (!ata_write_sectors(abs_lba(rel_sector + s), 1, s_cluster_buf + s * SECTOR_SIZE)) {
+            if (!ata_write_sectors(abs_lba(rel_sector + s), 1, sector_buf)) {
                 terminal_puts("fat16: directory write error\n");
                 return 0;
             }
-        }
 
-        offset += chunk;
-        remaining -= chunk;
+            offset += chunk;
+            remaining -= chunk;
+        }
         if (remaining == 0) break;
         cluster = fat_entry(cluster);
     }
@@ -763,24 +1071,7 @@ static int path_leaf_to_83(const char* leaf, u8 name83[11]) {
     return name83[0] != ' ';
 }
 
-static int list_entry_cb(const u8* entry, void* raw) {
-    (void)raw;
-    u8 name83[11];
-    k_memcpy(name83, entry + DIR_NAME, 11);
-    u16 cluster = read_u16_le(entry, DIR_FIRST_CLUSTER);
-    u32 file_size = read_u32_le(entry, DIR_FILE_SIZE);
-
-    terminal_puts("  ");
-    print_83_name(name83, entry_is_dir(entry));
-    terminal_puts("  ");
-    terminal_put_uint(file_size);
-    terminal_puts(" bytes  cluster ");
-    terminal_put_uint(cluster);
-    terminal_putc('\n');
-    return 1;
-}
-
-static int dir_list_ctx(const dir_ctx_t* dir, const char* label) {
+static int dir_list_ctx(const dir_ctx_t* dir, const char* label, const char* pattern) {
     if (label && k_strcmp(label, "root directory")) {
         terminal_puts("fat16 root directory:\n");
     } else {
@@ -788,7 +1079,22 @@ static int dir_list_ctx(const dir_ctx_t* dir, const char* label) {
         terminal_puts(label ? label : "");
         terminal_putc('\n');
     }
-    return dir_scan(dir, list_entry_cb, 0);
+
+    list_widths_t widths = dir_list_widths(dir, pattern);
+
+    terminal_puts("  name");
+    for (unsigned int i = 4u; i < widths.name_width; i++) {
+        terminal_putc(' ');
+    }
+    terminal_puts("  size");
+    for (unsigned int i = 4u; i < widths.size_width; i++) {
+        terminal_putc(' ');
+    }
+    terminal_puts("  cluster\n");
+
+    list_sorted_group(dir, 1, &widths, pattern);
+    list_sorted_group(dir, 0, &widths, pattern);
+    return 1;
 }
 
 static void write_dirent(u8* entry, const u8 name83[11], u16 start_cluster, u32 file_size) {
@@ -800,31 +1106,43 @@ static void write_dirent(u8* entry, const u8 name83[11], u16 start_cluster, u32 
 }
 
 static int load_fat_and_root(void) {
-    if (!ata_read_sectors(abs_lba(FAT1_REL_SECTOR), FAT_SECTORS, s_fat_buf)) {
-        terminal_puts("fat16: FAT read error\n");
-        return 0;
+    for (u32 s = 0; s < FAT_SECTORS; s++) {
+        if (!ata_read_sectors(abs_lba(FAT1_REL_SECTOR + s), 1, s_fat_buf + s * SECTOR_SIZE)) {
+            terminal_puts("fat16: FAT read error\n");
+            return 0;
+        }
     }
 
-    if (!ata_read_sectors(abs_lba(ROOT_REL_SECTOR), ROOT_DIR_SECTORS, s_root_buf)) {
-        terminal_puts("fat16: root dir read error\n");
-        return 0;
+    for (u32 s = 0; s < ROOT_DIR_SECTORS; s++) {
+        if (!ata_read_sectors(abs_lba(ROOT_REL_SECTOR + s), 1, s_root_buf + s * SECTOR_SIZE)) {
+            terminal_puts("fat16: root dir read error\n");
+            return 0;
+        }
     }
 
     return 1;
 }
 
 static int write_fat_and_root(void) {
-    if (!ata_write_sectors(abs_lba(FAT1_REL_SECTOR), FAT_SECTORS, s_fat_buf)) {
-        terminal_puts("fat16: FAT write error\n");
-        return 0;
+    for (u32 s = 0; s < FAT_SECTORS; s++) {
+        if (!ata_write_sectors(abs_lba(FAT1_REL_SECTOR + s), 1, s_fat_buf + s * SECTOR_SIZE)) {
+            terminal_puts("fat16: FAT write error\n");
+            return 0;
+        }
     }
-    if (!ata_write_sectors(abs_lba(FAT2_REL_SECTOR), FAT_SECTORS, s_fat_buf)) {
-        terminal_puts("fat16: FAT mirror write error\n");
-        return 0;
+
+    for (u32 s = 0; s < FAT_SECTORS; s++) {
+        if (!ata_write_sectors(abs_lba(FAT2_REL_SECTOR + s), 1, s_fat_buf + s * SECTOR_SIZE)) {
+            terminal_puts("fat16: FAT mirror write error\n");
+            return 0;
+        }
     }
-    if (!ata_write_sectors(abs_lba(ROOT_REL_SECTOR), ROOT_DIR_SECTORS, s_root_buf)) {
-        terminal_puts("fat16: root dir write error\n");
-        return 0;
+
+    for (u32 s = 0; s < ROOT_DIR_SECTORS; s++) {
+        if (!ata_write_sectors(abs_lba(ROOT_REL_SECTOR + s), 1, s_root_buf + s * SECTOR_SIZE)) {
+            terminal_puts("fat16: root dir write error\n");
+            return 0;
+        }
     }
     return 1;
 }
@@ -882,6 +1200,7 @@ static int load_parent_dir_buf(const dir_ctx_t* parent, u8* buf, u32* out_size) 
 
 static int dir_parent_cluster(const dir_ctx_t* dir, u16* out_parent_cluster) {
     if (!dir || !out_parent_cluster) return 0;
+    u8 sector_buf[SECTOR_SIZE];
 
     if (dir->is_root) {
         *out_parent_cluster = 0;
@@ -889,14 +1208,12 @@ static int dir_parent_cluster(const dir_ctx_t* dir, u16* out_parent_cluster) {
     }
 
     u32 rel_sector = cluster_to_rel_sector(dir->start_cluster);
-    for (u32 s = 0; s < SECTORS_PER_CLUSTER; s++) {
-        if (!ata_read_sectors(abs_lba(rel_sector + s), 1, s_cluster_buf + s * SECTOR_SIZE)) {
-            terminal_puts("fat16: directory read error\n");
-            return 0;
-        }
+    if (!ata_read_sectors(abs_lba(rel_sector), 1, sector_buf)) {
+        terminal_puts("fat16: directory read error\n");
+        return 0;
     }
 
-    *out_parent_cluster = read_u16_le(s_cluster_buf + 32u, DIR_FIRST_CLUSTER);
+    *out_parent_cluster = read_u16_le(sector_buf + 32u, DIR_FIRST_CLUSTER);
     return 1;
 }
 
@@ -1210,6 +1527,10 @@ int fat16_init(void) {
 }
 
 void fat16_ls_path(const char* path) {
+    fat16_ls_path_filtered(path, 0);
+}
+
+void fat16_ls_path_filtered(const char* path, const char* pattern) {
     if (!s_initialised) { terminal_puts("fat16: not initialised\n"); return; }
 
     resolved_path_t resolved;
@@ -1221,7 +1542,7 @@ void fat16_ls_path(const char* path) {
     }
 
     if (!resolved.has_entry) {
-        if (!dir_list_ctx(&resolved.parent, "root directory")) {
+        if (!dir_list_ctx(&resolved.parent, "root directory", pattern)) {
             terminal_puts("fat16: directory read error\n");
         }
         return;
@@ -1235,7 +1556,7 @@ void fat16_ls_path(const char* path) {
     }
 
     dir_ctx_t dir = dir_ctx_from_entry(resolved.entry);
-    if (!dir_list_ctx(&dir, path)) {
+    if (!dir_list_ctx(&dir, path, pattern)) {
         terminal_puts("fat16: directory read error\n");
     }
 }
@@ -1286,33 +1607,31 @@ const u8* fat16_load(const char* name, u32* out_size) {
         return s_load_buf;
     }
 
-    /* Use the static load buffer — safe since ELFs run sequentially */
+    u8 sector_buf[SECTOR_SIZE];
     u8* buf = s_load_buf;
 
-    /* Load cluster chain into buffer */
     u32 bytes_remaining = file_size;
     u32 buf_offset      = 0;
     u32 cluster         = (u32)start_cluster;
 
     while (cluster >= FIRST_CLUSTER && cluster < FAT16_EOC_MIN) {
         u32 rel_sector = cluster_to_rel_sector(cluster);
-
         for (u32 s = 0; s < SECTORS_PER_CLUSTER; s++) {
-            if (!ata_read_sectors(abs_lba(rel_sector + s), 1,
-                                  s_cluster_buf + s * SECTOR_SIZE)) {
+            if (!ata_read_sectors(abs_lba(rel_sector + s), 1, sector_buf)) {
                 terminal_puts("fat16: cluster read error\n");
                 return 0;
             }
+
+            u32 to_copy = bytes_remaining < SECTOR_SIZE
+                        ? bytes_remaining : SECTOR_SIZE;
+            k_memcpy(buf + buf_offset, sector_buf, to_copy);
+            buf_offset      += to_copy;
+            bytes_remaining -= to_copy;
+
+            if (bytes_remaining == 0) {
+                break;
+            }
         }
-
-        u32 to_copy = bytes_remaining < CLUSTER_BYTES
-                    ? bytes_remaining : CLUSTER_BYTES;
-
-        for (u32 i = 0; i < to_copy; i++)
-            buf[buf_offset + i] = s_cluster_buf[i];
-
-        buf_offset      += to_copy;
-        bytes_remaining -= to_copy;
 
         if (bytes_remaining == 0) break;
 
@@ -1476,7 +1795,7 @@ int fat16_move(const char* src, const char* dst) {
         return 0;
     }
 
-    u8* dst_parent_buf = target_parent.is_root ? s_root_buf : s_load_buf;
+    u8* dst_parent_buf = target_parent.is_root ? s_root_buf : s_dir_buf2;
     u32 dst_parent_size = target_parent.is_root ? (ROOT_DIR_SECTORS * SECTOR_SIZE)
                                                 : target_parent.size;
     if (!target_parent.is_root) {
@@ -1540,15 +1859,13 @@ int fat16_move(const char* src, const char* dst) {
         (resolved.parent.is_root != target_parent.is_root ||
          resolved.parent.start_cluster != target_parent.start_cluster)) {
         u16 parent_cluster = target_parent.is_root ? 0 : target_parent.start_cluster;
-        u32 rel_sector = cluster_to_rel_sector(read_u16_le(src_entry, DIR_FIRST_CLUSTER));
-        for (u32 s = 0; s < SECTORS_PER_CLUSTER; s++) {
-            if (!ata_read_sectors(abs_lba(rel_sector + s), 1, s_cluster_buf + s * SECTOR_SIZE)) {
-                terminal_puts("fat16: directory read error\n");
-                return 0;
-            }
+        u8* cluster_buf = s_load_buf;
+        if (!read_cluster_data(read_u16_le(src_entry, DIR_FIRST_CLUSTER), cluster_buf)) {
+            terminal_puts("fat16: directory read error\n");
+            return 0;
         }
-        write_u16_le(s_cluster_buf + 32u, DIR_FIRST_CLUSTER, parent_cluster);
-        if (!write_data_clusters((const u32[]){ read_u16_le(src_entry, DIR_FIRST_CLUSTER) }, 1, s_cluster_buf, CLUSTER_BYTES)) {
+        write_u16_le(cluster_buf + 32u, DIR_FIRST_CLUSTER, parent_cluster);
+        if (!write_data_clusters((const u32[]){ read_u16_le(src_entry, DIR_FIRST_CLUSTER) }, 1, cluster_buf, CLUSTER_BYTES)) {
             return 0;
         }
     }
@@ -1613,7 +1930,7 @@ int fat16_rm(const char* path) {
     u32 parent_size = resolved.parent.is_root ? (ROOT_DIR_SECTORS * SECTOR_SIZE)
                                               : resolved.parent.size;
     if (!resolved.parent.is_root) {
-        if (!dir_read_ctx(&resolved.parent, parent_buf, FAT16_MAX_FILE_BYTES, 0)) {
+        if (!dir_read_ctx(&resolved.parent, parent_buf, CLUSTER_BYTES, 0)) {
             return 0;
         }
     }
@@ -1700,7 +2017,7 @@ int fat16_mkdir(const char* path) {
     u32 parent_size = create.parent.is_root ? (ROOT_DIR_SECTORS * SECTOR_SIZE)
                                             : create.parent.size;
     if (!create.parent.is_root) {
-        if (!dir_read_ctx(&create.parent, parent_buf, FAT16_MAX_FILE_BYTES, 0)) {
+        if (!dir_read_ctx(&create.parent, parent_buf, CLUSTER_BYTES, 0)) {
             return 0;
         }
     }
@@ -1730,14 +2047,15 @@ int fat16_mkdir(const char* path) {
     }
 
     u16 new_cluster = (u16)chain[0];
-    k_memset(s_cluster_buf, 0, CLUSTER_BYTES);
-    write_dot_entry(s_cluster_buf, new_cluster, CLUSTER_BYTES, 0);
-    write_dot_entry(s_cluster_buf + 32u,
+    u8* cluster_buf = s_load_buf;
+    k_memset(cluster_buf, 0, CLUSTER_BYTES);
+    write_dot_entry(cluster_buf, new_cluster, CLUSTER_BYTES, 0);
+    write_dot_entry(cluster_buf + 32u,
                     create.parent.is_root ? 0 : create.parent.start_cluster,
                     create.parent.size,
                     1);
 
-    if (!write_data_clusters(chain, 1, s_cluster_buf, CLUSTER_BYTES)) {
+    if (!write_data_clusters(chain, 1, cluster_buf, CLUSTER_BYTES)) {
         return 0;
     }
 
@@ -1793,7 +2111,7 @@ int fat16_rmdir(const char* path) {
 
     u8* target_buf = s_dir_buf;
     u32 target_size = 0;
-    if (!dir_read_ctx(&target, target_buf, FAT16_MAX_FILE_BYTES, &target_size)) {
+    if (!dir_read_ctx(&target, target_buf, CLUSTER_BYTES, &target_size)) {
         return 0;
     }
 
@@ -1806,11 +2124,11 @@ int fat16_rmdir(const char* path) {
         return 0;
     }
 
-    u8* parent_buf = resolved.parent.is_root ? s_root_buf : s_dir_buf;
+    u8* parent_buf = resolved.parent.is_root ? s_root_buf : s_dir_buf2;
     u32 parent_size = resolved.parent.is_root ? (ROOT_DIR_SECTORS * SECTOR_SIZE)
                                               : resolved.parent.size;
     if (!resolved.parent.is_root) {
-        if (!dir_read_ctx(&resolved.parent, parent_buf, FAT16_MAX_FILE_BYTES, 0)) {
+        if (!dir_read_ctx(&resolved.parent, parent_buf, CLUSTER_BYTES, 0)) {
             return 0;
         }
     }

@@ -40,10 +40,7 @@ gcc              → host tool compilation (mkfat16, mkimage)
 ```text
 build/
 ├── bin/   → final binaries (kernel.elf, kernel.bin,
-│             hello.elf, ticks.elf, args.elf, runelf_test.elf,
-│             readline.elf, exec_test.elf, fileread.elf, compiler_demo.elf,
-│             heapprobe.elf, statprobe.elf, fileprobe.elf, sleep_test.elf,
-│             ptrguard.elf, preempt_test.elf, fault.elf,
+│             apps/demo/hello.elf, apps/tests/*.elf,
 │             fat16.img, boot.bin, loader2.bin, tcc-smalos.elf)
 ├── obj/   → object files and depfiles (.o, .d), mirrored by source subtree
 ├── gen/   → generated source (loader2.gen.asm)
@@ -60,7 +57,7 @@ source files (.c, .asm)
   ↓
 object files (.o)
   ↓
-kernel.elf          hello.elf   ticks.elf   ...
+kernel.elf          apps/demo/hello.elf   apps/tests/*.elf   ...
   ↓                      ↓
 kernel.bin         user program ELFs
   ↓                      ↓
@@ -90,7 +87,9 @@ shipped ELF against the per-program expectation files in `tests/elfs/`.
 
 The guest suite also exercises the SmallOS-hosted TinyCC compiler
 (`tools/tcc.elf`) by compiling several sample C files inside the guest
-and immediately running the generated ELFs.
+and immediately running the generated ELFs. Those generated binaries are
+stored under `apps/tests/`, while the shipped hello demo lives under
+`apps/demo/`.
 
 `make smoke` runs the dedicated reboot and halt smoke checks.  Use
 `make smoke-reboot` or `make smoke-halt` to exercise those shell
@@ -286,31 +285,36 @@ build/tools/mkfat16 build/bin/fat16.img \
     build/bin/fault.elf
 ```
 
-`mkfat16` produces a raw FAT16 volume containing the user ELFs in the root directory.
+`mkfat16` produces a raw FAT16 volume containing the shipped utilities in the
+root directory plus the `apps/demo/`, `apps/tests/`, and `tools/` subtrees.
 
 Shipped FAT16 programs:
-- `hello` - print argc/argv and tick count
-- `ticks` - print the current tick count
-- `args` - print argc and argv
-- `runelf_test` - verify ELF loading, syscalls, and stack setup
-- `readline` - interactive SYS_READ demo
-- `exec_test` - exercise SYS_EXEC semantics
-- `fileread` - exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE
-- `compiler_demo` - exercise SYS_WRITEFILE, SYS_WRITEFILE_PATH, and readback
-- `heapprobe` - exercise malloc/free/realloc/calloc
-- `statprobe` - exercise SYS_STAT and path probing
-- `fileprobe` - exercise file wrapper helpers, rename, unlink, and stat
-- `sleep_test` - exercise SYS_SLEEP semantics
-- `ptrguard` - exercise syscall pointer validation
-- `preempt_test` - prove timer-driven preemption
-- `fault` - fault probe (ud/gp/de/br/pf)
+- `apps/demo/hello` - print argc/argv and tick count
+- `apps/tests/ticks` - print the current tick count
+- `apps/tests/args` - print argc and argv
+- `apps/tests/runelf_test` - verify ELF loading, syscalls, and stack setup
+- `apps/tests/readline` - interactive SYS_READ demo
+- `apps/tests/exec_test` - exercise SYS_EXEC semantics
+- `apps/tests/fileread` - exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE
+- `apps/tests/compiler_demo` - exercise SYS_WRITEFILE, SYS_WRITEFILE_PATH, and readback
+- `apps/tests/heapprobe` - exercise malloc/free/realloc/calloc
+- `apps/tests/statprobe` - exercise SYS_STAT and path probing
+- `apps/tests/fileprobe` - exercise file wrapper helpers, rename, unlink, and stat
+- `apps/tests/sleep_test` - exercise SYS_SLEEP semantics
+- `apps/tests/ptrguard` - exercise syscall pointer validation
+- `apps/tests/preempt_test` - prove timer-driven preemption
+- `apps/tests/fault` - fault probe (ud/gp/de/br/pf)
 - `tools/tcc.elf` - SmallOS-hosted TinyCC compiler binary
 - `samples/tccmath.c`, `samples/tccagg.c`, `samples/tcctree.c`, `samples/tccmini.c` - guest compiler test inputs used by the shell selftests
 
 ## Properties
 
 * fixed-size volume defined by `tools/mkfat16.c`
-* root directory contains all shipped user ELFs
+* root directory contains the small launcher utilities and shared compiler demo artifacts
+* `apps/demo/` contains the hello demo ELF
+* `apps/tests/` contains the remaining shipped test ELFs
+* `tools/` contains the guest TinyCC binary
+* sample C sources live at the image root until the shell demo moves them into `samples/`
 * filenames are converted to uppercase 8.3 names
 * no external filesystem tools are required
 

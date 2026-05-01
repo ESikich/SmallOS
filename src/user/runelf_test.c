@@ -43,8 +43,19 @@ static int str_eq(const char* a, const char* b) {
     return a[i] == '\0' && b[i] == '\0';
 }
 
+static const char* basename_ptr(const char* s) {
+    const char* base = s;
+    for (unsigned int i = 0; s[i] != '\0'; i++) {
+        if (s[i] == '/' || s[i] == '\\') {
+            base = s + i + 1;
+        }
+    }
+    return base;
+}
+
 static int argv0_is_runelf_test(const char* s) {
-    return str_eq(s, "runelf_test") || str_eq(s, "runelf_test.elf");
+    const char* base = basename_ptr(s);
+    return str_eq(base, "runelf_test") || str_eq(base, "runelf_test.elf");
 }
 
 static void check_true(const char* name, int cond) {

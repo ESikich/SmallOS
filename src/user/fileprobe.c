@@ -20,7 +20,7 @@ void _start(int argc, char** argv) {
     int is_dir = -1;
     int ok = 1;
 
-    if (u_file_open_read(&f, "hello.elf") < 0) {
+    if (u_file_open_read(&f, "apps/demo/hello.elf") < 0) {
         u_puts("open read: FAIL\n");
         ok = 0;
     } else {

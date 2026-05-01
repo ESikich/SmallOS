@@ -3,7 +3,7 @@
 /*
  * exec_test — diagnostic SYS_EXEC test for current blocking semantics.
  *
- * sys_exec("hello", ...) runs the child through the foreground
+ * sys_exec("apps/demo/hello", ...) runs the child through the foreground
  * run-and-wait path. The parent resumes only after the child exits, so
  * this test expects ordered output around the call.
  */
@@ -16,9 +16,9 @@ void _start(int argc, char** argv) {
 
     u_puts("[1] exec_test alive\n");
 
-    u_puts("[2] calling sys_exec hello\n");
-    char* av[] = { "hello", 0 };
-    int r = sys_exec("hello", 1, av);
+    u_puts("[2] calling sys_exec apps/demo/hello\n");
+    char* av[] = { "apps/demo/hello", 0 };
+    int r = sys_exec("apps/demo/hello", 1, av);
     u_puts("[3] sys_exec returned ");
     if (r < 0) {
         u_putc('-');

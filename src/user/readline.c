@@ -9,7 +9,7 @@
  * process input buffer (not the shell) while the process is running.
  *
  * Usage:
- *   runelf readline
+ *   runelf apps/tests/readline
  */
 void _start(int argc, char** argv) {
     (void)argc;

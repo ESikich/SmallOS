@@ -5,7 +5,8 @@
  *
  * This is the first building block for a future in-OS compiler: it
  * writes a compiler-style output file to the FAT16 root directory and
- * reads it back to verify persistence.
+ * mirrors the same artifact under apps/demo/ so the seeded image keeps
+ * its demo content grouped together.
  */
 
 static int bytes_equal(const char* a, const char* b, unsigned int n) {

@@ -54,6 +54,15 @@ void fat16_ls(void);
 void fat16_ls_path(const char* path);
 
 /*
+ * fat16_ls_path_filtered(path, pattern)
+ *
+ * Print the entries in the named directory, filtered by a wildcard
+ * pattern such as "*.elf" or "TCC*.C".  Passing 0 for pattern lists
+ * all entries.  Passing 0 or "" for path lists the root directory.
+ */
+void fat16_ls_path_filtered(const char* path, const char* pattern);
+
+/*
  * fat16_stat(name, out_size)
  *
  * Check whether a file exists in the root directory (case-insensitive 8.3)

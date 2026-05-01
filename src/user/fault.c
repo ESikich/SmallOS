@@ -55,7 +55,7 @@ static void trigger_pf(void) {
 void _start(int argc, char** argv) {
     const char* mode = (argc >= 2) ? argv[1] : "ud";
 
-    /* Default to #UD so a bare `runelf fault.elf` still does something useful. */
+    /* Default to #UD so a bare `runelf apps/tests/fault` still does something useful. */
     if (str_eq(mode, "gp")) {
         trigger_gp();
     } else if (str_eq(mode, "de")) {

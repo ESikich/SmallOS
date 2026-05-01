@@ -7,8 +7,8 @@ CASES = [
         must_contain=[
             "shelltest: fsls begin",
             "fat16 root directory:",
-            "HELLO.ELF",
-            "FAULT.ELF",
+            "APPS/",
+            "TOOLS/",
             "shelltest: fsls end",
         ],
         timeout=60.0,

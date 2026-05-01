@@ -13,6 +13,9 @@ static void print_command_list(void);
 static void print_program_list(void);
 static void run_elf_command(command_t* cmd, const char* program);
 static int resolve_shell_path_arg(const char* input, char* out, unsigned int out_size);
+static int path_has_wildcards(const char* path);
+static int split_wildcard_path(const char* path, char* dir_out, unsigned int dir_out_size, const char** pattern_out);
+static void cmd_ls_path(const char* input);
 static void terminal_put_cwd(void);
 
 static void cmd_help(command_t* cmd) {
@@ -210,12 +213,7 @@ static void cmd_fsls(command_t* cmd) {
         return;
     }
 
-    char path[SHELL_PATH_MAX];
-    if (!resolve_shell_path_arg(cmd->argv[1], path, sizeof(path))) {
-        return;
-    }
-
-    fat16_ls_path(path);
+    cmd_ls_path(cmd->argv[1]);
 }
 
 static void cmd_ls(command_t* cmd) {
@@ -230,7 +228,76 @@ static void cmd_ls(command_t* cmd) {
         return;
     }
 
-    cmd_fsls(cmd);
+    cmd_ls_path(cmd->argv[1]);
+}
+
+static int path_has_wildcards(const char* path) {
+    if (!path) {
+        return 0;
+    }
+
+    for (const char* p = path; *p; p++) {
+        if (*p == '*' || *p == '?') {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int split_wildcard_path(const char* path, char* dir_out, unsigned int dir_out_size, const char** pattern_out) {
+    if (!path || !dir_out || !pattern_out || dir_out_size == 0) {
+        return 0;
+    }
+
+    const char* last_sep = 0;
+    for (const char* p = path; *p; p++) {
+        if (*p == '/' || *p == '\\') {
+            last_sep = p;
+        }
+    }
+
+    if (!last_sep) {
+        if (path[0] != '\0' && 1u > dir_out_size) {
+            return 0;
+        }
+        dir_out[0] = '\0';
+        *pattern_out = path;
+        return 1;
+    }
+
+    unsigned int dir_len = (unsigned int)(last_sep - path);
+    if (dir_len + 1u > dir_out_size) {
+        return 0;
+    }
+
+    for (unsigned int i = 0; i < dir_len; i++) {
+        dir_out[i] = path[i];
+    }
+    dir_out[dir_len] = '\0';
+    *pattern_out = last_sep + 1;
+    return 1;
+}
+
+static void cmd_ls_path(const char* input) {
+    char path[SHELL_PATH_MAX];
+    if (!resolve_shell_path_arg(input, path, sizeof(path))) {
+        return;
+    }
+
+    if (!path_has_wildcards(path)) {
+        fat16_ls_path(path);
+        return;
+    }
+
+    char dir[SHELL_PATH_MAX];
+    const char* pattern = 0;
+    if (!split_wildcard_path(path, dir, sizeof(dir), &pattern)) {
+        terminal_puts("ls: failed\n");
+        return;
+    }
+
+    fat16_ls_path_filtered(dir, pattern);
 }
 
 static void cmd_fsread(command_t* cmd) {
@@ -502,10 +569,11 @@ static void cmd_shelltest(command_t* cmd) {
     command_t cd_root_cmd = { 2, { "cd", "/" } };
     command_t pwd_root_cmd = { 1, { "pwd" } };
     command_t ls_root_cmd = { 1, { "ls" } };
+    command_t ls_glob_cmd = { 2, { "ls", "*.elf" } };
     command_t ataread_cmd = { 2, { "ataread", "0" } };
     command_t fsls_root_cmd = { 1, { "fsls" } };
     command_t fsls_path_cmd = { 2, { "fsls", "apps/demo" } };
-    command_t fsread_cmd = { 2, { "fsread", "hello.elf" } };
+    command_t fsread_cmd = { 2, { "fsread", "apps/demo/hello.elf" } };
     command_t fsread_path_cmd = { 2, { "fsread", "apps/demo/hello.elf" } };
     command_t mkdir_cmd = { 2, { "mkdir", "TESTDIR" } };
     command_t fsls_newdir_cmd = { 2, { "fsls", "TESTDIR" } };
@@ -542,10 +610,10 @@ static void cmd_shelltest(command_t* cmd) {
     command_t cat_cmd = { 2, { "cat", "compiler.out" } };
     command_t touch_cmd = { 2, { "touch", "EMPTY.TXT" } };
     command_t fsread_touch_cmd = { 2, { "fsread", "EMPTY.TXT" } };
-    command_t runelf_cmd = { 2, { "runelf", "hello" } };
+    command_t runelf_cmd = { 2, { "runelf", "apps/demo/hello" } };
     command_t runelf_path_cmd = { 4, { "runelf", "apps/demo/hello", "alpha", "beta" } };
-    command_t runelf_nowait_cmd = { 2, { "runelf_nowait", "ticks" } };
-    command_t compiler_demo_cmd = { 2, { "runelf", "compiler_demo" } };
+    command_t runelf_nowait_cmd = { 2, { "runelf_nowait", "apps/tests/ticks" } };
+    command_t compiler_demo_cmd = { 2, { "runelf", "apps/tests/compiler_demo" } };
     command_t tinycc_cmd = { 3, { "runelf", "tools/tcc.elf", "-v" } };
     command_t tccmini_build_cmd = { 6, { "runelf", "tools/tcc.elf", "-nostdlib", "-o", "tccmini.elf", "samples/tccmini.c" } };
     command_t tccmini_run_cmd = { 2, { "runelf", "tccmini" } };
@@ -606,6 +674,7 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("cd_root", cmd_cd, &cd_root_cmd);
     shelltest_call("pwd_root", cmd_pwd, &pwd_root_cmd);
     shelltest_call("ls_root", cmd_ls, &ls_root_cmd);
+    shelltest_call("ls_glob", cmd_ls, &ls_glob_cmd);
     shelltest_call("cp", cmd_cp, &cp_cmd);
     shelltest_call("fsread_copy", cmd_fsread, &fsread_copy_cmd);
     shelltest_call("mv", cmd_mv, &mv_cmd);
@@ -661,47 +730,47 @@ static void cmd_selftest(command_t* cmd) {
 
     int ok = 1;
 
-    char* hello_argv[] = { "hello", "alpha", "beta", 0 };
-    char* ticks_argv[] = { "ticks.elf", 0 };
-    char* args_argv[] = { "args", "alpha", "beta", 0 };
-    char* runelf_argv[] = { "runelf_test.elf", "alpha", "beta", "gamma", 0 };
-    char* readline_argv[] = { "readline.elf", 0 };
-    char* exec_argv[] = { "exec_test.elf", 0 };
-    char* fileread_argv[] = { "fileread.elf", 0 };
-    char* compiler_demo_argv[] = { "compiler_demo.elf", 0 };
-    char* heapprobe_argv[] = { "heapprobe.elf", 0 };
-    char* statprobe_argv[] = { "statprobe.elf", 0 };
-    char* fileprobe_argv[] = { "fileprobe.elf", 0 };
-    char* sleep_argv[] = { "sleep_test.elf", 0 };
-    char* ptrguard_argv[] = { "ptrguard.elf", 0 };
-    char* preempt_argv[] = { "preempt_test.elf", 0 };
-    char* fault_ud_argv[] = { "fault.elf", "ud", 0 };
-    char* fault_gp_argv[] = { "fault.elf", "gp", 0 };
-    char* fault_de_argv[] = { "fault.elf", "de", 0 };
-    char* fault_br_argv[] = { "fault.elf", "br", 0 };
-    char* fault_pf_argv[] = { "fault.elf", "pf", 0 };
+    char* hello_argv[] = { "apps/demo/hello", "alpha", "beta", 0 };
+    char* ticks_argv[] = { "apps/tests/ticks", 0 };
+    char* args_argv[] = { "apps/tests/args", "alpha", "beta", 0 };
+    char* runelf_argv[] = { "apps/tests/runelf_test", "alpha", "beta", "gamma", 0 };
+    char* readline_argv[] = { "apps/tests/readline", 0 };
+    char* exec_argv[] = { "apps/tests/exec_test", 0 };
+    char* fileread_argv[] = { "apps/tests/fileread", 0 };
+    char* compiler_demo_argv[] = { "apps/tests/compiler_demo", 0 };
+    char* heapprobe_argv[] = { "apps/tests/heapprobe", 0 };
+    char* statprobe_argv[] = { "apps/tests/statprobe", 0 };
+    char* fileprobe_argv[] = { "apps/tests/fileprobe", 0 };
+    char* sleep_argv[] = { "apps/tests/sleep_test", 0 };
+    char* ptrguard_argv[] = { "apps/tests/ptrguard", 0 };
+    char* preempt_argv[] = { "apps/tests/preempt_test", 0 };
+    char* fault_ud_argv[] = { "apps/tests/fault", "ud", 0 };
+    char* fault_gp_argv[] = { "apps/tests/fault", "gp", 0 };
+    char* fault_de_argv[] = { "apps/tests/fault", "de", 0 };
+    char* fault_br_argv[] = { "apps/tests/fault", "br", 0 };
+    char* fault_pf_argv[] = { "apps/tests/fault", "pf", 0 };
     command_t shelltest_cmd = { 1, { "shelltest" } };
 
     const selftest_case_t cases[] = {
-        { "hello",       "hello.elf",       3, hello_argv,       0 },
-        { "ticks",       "ticks.elf",       1, ticks_argv,       0 },
-        { "args",        "args.elf",        3, args_argv,        0 },
-        { "runelf_test", "runelf_test.elf", 4, runelf_argv,      0 },
-        { "readline",    "readline.elf",    1, readline_argv,    0 },
-        { "exec_test",   "exec_test.elf",   1, exec_argv,        0 },
-        { "fileread",    "fileread.elf",    1, fileread_argv,    0 },
-        { "compiler_demo","compiler_demo.elf",1, compiler_demo_argv,0 },
-        { "heapprobe",   "heapprobe.elf",   1, heapprobe_argv,   0 },
-        { "statprobe",   "statprobe.elf",   1, statprobe_argv,   0 },
-        { "fileprobe",   "fileprobe.elf",   1, fileprobe_argv,   0 },
-        { "sleep_test",  "sleep_test.elf",  1, sleep_argv,       0 },
-        { "ptrguard",    "ptrguard.elf",    1, ptrguard_argv,    0 }, /* syscall pointer regression */
-        { "preempt_test","preempt_test.elf",1, preempt_argv,     0 }, /* timer-preemption regression */
-        { "fault ud",    "fault.elf",       2, fault_ud_argv,    6 },
-        { "fault gp",    "fault.elf",       2, fault_gp_argv,   13 },
-        { "fault de",    "fault.elf",       2, fault_de_argv,    0 },
-        { "fault br",    "fault.elf",       2, fault_br_argv,    5 },
-        { "fault pf",    "fault.elf",       2, fault_pf_argv,   14 },
+        { "hello",       "apps/demo/hello",       3, hello_argv,       0 },
+        { "ticks",       "apps/tests/ticks",      1, ticks_argv,       0 },
+        { "args",        "apps/tests/args",       3, args_argv,        0 },
+        { "runelf_test", "apps/tests/runelf_test",4, runelf_argv,      0 },
+        { "readline",    "apps/tests/readline",   1, readline_argv,    0 },
+        { "exec_test",   "apps/tests/exec_test",  1, exec_argv,        0 },
+        { "fileread",    "apps/tests/fileread",   1, fileread_argv,    0 },
+        { "compiler_demo","apps/tests/compiler_demo",1, compiler_demo_argv,0 },
+        { "heapprobe",   "apps/tests/heapprobe",  1, heapprobe_argv,   0 },
+        { "statprobe",   "apps/tests/statprobe",  1, statprobe_argv,   0 },
+        { "fileprobe",   "apps/tests/fileprobe",  1, fileprobe_argv,   0 },
+        { "sleep_test",  "apps/tests/sleep_test", 1, sleep_argv,       0 },
+        { "ptrguard",    "apps/tests/ptrguard",   1, ptrguard_argv,    0 }, /* syscall pointer regression */
+        { "preempt_test","apps/tests/preempt_test",1, preempt_argv,     0 }, /* timer-preemption regression */
+        { "fault ud",    "apps/tests/fault",      2, fault_ud_argv,    6 },
+        { "fault gp",    "apps/tests/fault",      2, fault_gp_argv,   13 },
+        { "fault de",    "apps/tests/fault",      2, fault_de_argv,    0 },
+        { "fault br",    "apps/tests/fault",      2, fault_br_argv,    5 },
+        { "fault pf",    "apps/tests/fault",      2, fault_pf_argv,   14 },
     };
 
     terminal_puts("selftest: start\n");
@@ -763,21 +832,21 @@ static program_entry_t programs[] = {
     { "uptime",       "show tick and second counts" },
     { "halt",         "halt the machine" },
     { "reboot",       "reboot the machine" },
-    { "hello",       "print argc/argv and tick count" },
-    { "ticks",       "print the current tick count" },
-    { "args",        "print argc and argv" },
-    { "runelf_test", "verify ELF loading, syscalls, and stack setup" },
-    { "readline",    "interactive SYS_READ demo" },
-    { "exec_test",   "exercise SYS_EXEC semantics" },
-    { "fileread",    "exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE" },
-    { "compiler_demo", "exercise SYS_WRITEFILE / SYS_WRITEFILE_PATH and readback" },
-    { "heapprobe",   "exercise malloc/free/realloc/calloc" },
-    { "statprobe",   "exercise SYS_STAT and path probing" },
-    { "fileprobe",   "exercise small file wrapper helpers" },
-    { "sleep_test",  "exercise SYS_SLEEP semantics" },
-    { "ptrguard",    "exercise syscall pointer validation" },
-    { "preempt_test","prove timer-driven preemption" },
-    { "fault",       "fault probe (ud/gp/de/br/pf)" },
+    { "apps/demo/hello",       "print argc/argv and tick count" },
+    { "apps/tests/ticks",      "print the current tick count" },
+    { "apps/tests/args",       "print argc and argv" },
+    { "apps/tests/runelf_test","verify ELF loading, syscalls, and stack setup" },
+    { "apps/tests/readline",   "interactive SYS_READ demo" },
+    { "apps/tests/exec_test",  "exercise SYS_EXEC semantics" },
+    { "apps/tests/fileread",   "exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE" },
+    { "apps/tests/compiler_demo", "exercise SYS_WRITEFILE / SYS_WRITEFILE_PATH and readback" },
+    { "apps/tests/heapprobe",  "exercise malloc/free/realloc/calloc" },
+    { "apps/tests/statprobe",  "exercise SYS_STAT and path probing" },
+    { "apps/tests/fileprobe",  "exercise small file wrapper helpers" },
+    { "apps/tests/sleep_test", "exercise SYS_SLEEP semantics" },
+    { "apps/tests/ptrguard",   "exercise syscall pointer validation" },
+    { "apps/tests/preempt_test","prove timer-driven preemption" },
+    { "apps/tests/fault",      "fault probe (ud/gp/de/br/pf)" },
 };
 
 #define PROGRAM_COUNT (sizeof(programs) / sizeof(programs[0]))

@@ -107,14 +107,14 @@ void _start(int argc, char** argv) {
 
     u_puts("preempt_test start\n");
 
-    char* a_argv[] = { "spinwkr", "late", (char*)a_file, "30", 0 };
-    char* b_argv[] = { "spinwkr", "early", (char*)b_file, "30", 0 };
+    char* a_argv[] = { "apps/tests/spinwkr", "late", (char*)a_file, "30", 0 };
+    char* b_argv[] = { "apps/tests/spinwkr", "early", (char*)b_file, "30", 0 };
 
-    if (sys_exec("spinwkr", 4, a_argv) < 0) {
+    if (sys_exec("apps/tests/spinwkr", 4, a_argv) < 0) {
         u_puts("preempt_test: launch A failed\n");
         sys_exit(1);
     }
-    if (sys_exec("spinwkr", 4, b_argv) < 0) {
+    if (sys_exec("apps/tests/spinwkr", 4, b_argv) < 0) {
         u_puts("preempt_test: launch B failed\n");
         sys_exit(1);
     }

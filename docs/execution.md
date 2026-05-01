@@ -93,7 +93,7 @@ The shell task itself is created in `kernel_main()` with `process_create_kernel_
 
 ## 1. Built-in shell commands
 
-Commands like `help`, `clear`, `meminfo`, `fsls [path]`, `ls [path]`, `fsread`, `cat`, `cd`, `pwd`, `mkdir`, `rmdir`, `rm`, `touch`, `cp`, and `mv` are normal kernel C functions dispatched by `commands_execute()`.
+Commands like `help`, `clear`, `meminfo`, `fsls [path]`, `ls [pattern]`, `fsread`, `cat`, `cd`, `pwd`, `mkdir`, `rmdir`, `rm`, `touch`, `cp`, and `mv` are normal kernel C functions dispatched by `commands_execute()`.
 
 Commands like `echo`, `about`, `uptime`, `halt`, and `reboot` are thin kernel wrappers that launch same-named ELFs and wait for them to finish. The command names stay in the shell, but the behavior now lives in user space.
 
@@ -127,7 +127,7 @@ runelf tools/tcc.elf -nostdlib -o out.elf samples/tccmath.c
 runelf out.elf
 ```
 
-The test suite uses this flow to compile several focused C samples inside the guest and then run the generated ELFs.
+The test suite uses this flow to compile several focused C samples inside the guest and then run the generated ELFs. The produced binaries are written back under the `apps/tests/` subtree so the shell can execute them by path.
 
 ---
 

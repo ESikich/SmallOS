@@ -4,7 +4,7 @@ from .common import case
 CASES = [
     case(
         name="readline",
-        command="runelf readline",
+        command="runelf apps/tests/readline",
         must_contain=[
             "readline test",
             'Hello, erik!',

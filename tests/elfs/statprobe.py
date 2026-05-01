@@ -4,7 +4,7 @@ from .common import case
 CASES = [
     case(
         name="statprobe",
-        command="runelf statprobe",
+        command="runelf apps/tests/statprobe",
         must_contain=[
             "statprobe start",
             "hello: ok size=",

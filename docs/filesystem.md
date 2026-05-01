@@ -2,7 +2,7 @@
 
 This document defines how the system stores, discovers, and reads files from disk.
 
-The current implementation stores a **raw FAT16 volume inside an MBR-partitioned disk image**. Sector 0 contains the partition table, and the FAT16 partition starts immediately after the kernel region. The runtime now resolves nested FAT16 paths for reads and directory listings, and it can also create/remove directories in place. Regular file writes now work at nested paths too, and `rm` removes files in place. `cat` prints file contents, `touch` creates or truncates files, and the shell keeps a working directory for `cd` / `pwd` and `ls`.
+The current implementation stores a **raw FAT16 volume inside an MBR-partitioned disk image**. Sector 0 contains the partition table, and the FAT16 partition starts immediately after the kernel region. The runtime resolves nested FAT16 paths for reads and directory listings, and it can also create/remove directories in place. Regular file writes now work at nested paths too, and `rm` removes files in place. `cat` prints file contents, `touch` creates or truncates files, and the shell keeps a working directory for `cd` / `pwd` and `ls`. `ls` also accepts simple `*` and `?` wildcards, while still sorting directories before files.
 The filesystem layer also exposes file metadata through `stat`, and the writable-fd path now supports `rename`, `unlink`, `lseek`, and buffered `write` operations for toolchain-style programs.
 
 ---
@@ -182,6 +182,7 @@ The current FAT16 driver is intentionally narrow.
 - raw file display via `cat`
 - shell working-directory navigation via `cd` / `pwd`
 - directory listing by path with `fat16_ls_path(path)` and `fsls [path]`
+- wildcard shell listing with `ls [pattern]`
 - directory creation/removal by path with `fat16_mkdir(path)` / `fat16_rmdir(path)`
 - file removal by path with `fat16_rm(path)`
 - file metadata queries by path with `fat16_stat(path, ...)`
@@ -275,13 +276,8 @@ This buffer:
 - must not be freed by the caller
 - must not be assumed stable across another filesystem load
 
-The driver also uses a separate static cluster scratch buffer:
-
-```text
-s_cluster_buf[2048]
-```
-
-so it does not need a large stack allocation while copying cluster data.
+The driver also uses a separate static cluster scratch buffer so it does not
+need a large stack allocation while copying cluster data.
 
 ## Size limit
 
@@ -311,11 +307,12 @@ That is a behavior choice in the current code, not a FAT16 requirement.
 
 # Writing a File
 
-`fat16_write(name, data, size)` creates or overwrites a root-directory file in one shot.
+`fat16_write(name, data, size)` creates or overwrites a root-directory file in
+one shot. The shell's `touch` and compiler-style write paths use
+`fat16_write_path(path, ...)` when they need to target nested directories.
 
 The write path is intentionally narrow:
 
-- root directory only
 - 8.3 filename matching
 - no general buffered fd write API
 - no long filenames
@@ -324,7 +321,7 @@ The write path is intentionally narrow:
 At runtime, the kernel:
 
 1. loads FAT1 and the root directory into temporary working buffers
-2. resolves the destination root entry or finds a free slot
+2. resolves the destination entry or finds a free slot in the target parent
 3. allocates enough free clusters for the new file contents
 4. writes the data clusters to disk
 5. commits the updated FAT copies and root directory entry
@@ -377,7 +374,8 @@ Important invariant:
 
 # Root Directory Listing
 
-`fat16_ls()` prints all non-empty root-directory entries.
+`fat16_ls()` prints all non-empty root-directory entries, grouped with
+directories first and files second.
 
 For each file it prints:
 
@@ -386,7 +384,9 @@ For each file it prints:
 ```
 
 `fat16_ls_path(path)` descends into nested directories before listing. The
-listing is derived directly from directory entries. It is not sorted.
+listing is derived directly from directory entries and keeps the same
+directory-first alphabetical order. The shell `ls` command can also apply a
+wildcard pattern after resolving the path prefix.
 
 ---
 

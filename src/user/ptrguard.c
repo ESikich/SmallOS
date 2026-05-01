@@ -90,7 +90,7 @@ void _start(int argc, char** argv) {
 
     {
         /* A valid fd should still work, but bad read buffers must fail. */
-        int fd = sys_open("hello.elf");
+        int fd = sys_open("apps/demo/hello.elf");
         check_true("sys_open hello", fd >= 3);
         if (fd >= 3) {
             check_int("sys_fread invalid buf",
@@ -105,7 +105,7 @@ void _start(int argc, char** argv) {
         char* bad_argv[] = { (char*)0x1234, 0 };
         check_int("sys_exec invalid argv",
                   -1,
-                  sys_exec("hello", 1, bad_argv));
+                  sys_exec("apps/demo/hello", 1, bad_argv));
     }
 
     u_puts("checks = ");

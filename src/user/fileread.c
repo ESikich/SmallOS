@@ -13,7 +13,7 @@
  *   fd close: ok
  *
  * Usage:
- *   runelf fileread
+ *   runelf apps/tests/fileread
  */
 
 static void put_hex_byte(unsigned char b) {

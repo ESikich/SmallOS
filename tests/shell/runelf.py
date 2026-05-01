@@ -7,7 +7,7 @@ CASES = [
         must_contain=[
             "shelltest: runelf begin",
             "hello from elf via int 0x80",
-            'argv[0] = "hello"',
+            'argv[0] = "apps/demo/hello"',
             "shelltest: runelf end",
         ],
         timeout=60.0,

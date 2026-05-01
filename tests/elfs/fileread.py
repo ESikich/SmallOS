@@ -4,7 +4,7 @@ from .common import case
 CASES = [
     case(
         name="fileread",
-        command="runelf fileread",
+        command="runelf apps/tests/fileread",
         must_contain=[
             "fileread test",
             "opened fd=3",

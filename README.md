@@ -68,6 +68,10 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 ├── linker.ld
 ```
 
+The seeded FAT16 image keeps shipped programs under `apps/demo/` and
+`apps/tests/`, with TinyCC under `tools/` and its sample sources at the
+image root for the shell demo that moves them into `samples/`.
+
 ---
 
 ## Build & Run
@@ -131,7 +135,7 @@ meminfo
 ataread <lba>        dump first 32 bytes of a disk sector (ATA PIO)
 
 fsls [path]        list a FAT16 directory (root by default)
-ls [path]           list a FAT16 directory (alias for fsls)
+ls [pattern]       list a FAT16 directory, with `*` and `?` globbing
 fsread <name>      dump first 16 bytes of a FAT16 file
 cat <path>          print a FAT16 file
 cd <path>           change the shell working directory
@@ -148,23 +152,25 @@ selftest            run all shipped ELF self-tests
 shelltest           run built-in shell command tests
 ```
 
-Current FAT16 programs:
-- `echo` - print arguments
-- `about` - show the OS version
-- `uptime` - show tick and second counts
-- `halt` - halt the machine
-- `reboot` - reboot the machine
-- `hello` - print argc/argv and tick count
-- `ticks` - print the current tick count
-- `args` - print argc and argv
-- `runelf_test` - verify ELF loading, syscalls, and stack setup
-- `readline` - interactive SYS_READ demo
-- `exec_test` - exercise SYS_EXEC semantics
-- `fileread` - exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE
-- `compiler_demo` - exercise SYS_WRITEFILE, SYS_WRITEFILE_PATH, and readback
-- `sleep_test` - exercise SYS_SLEEP semantics
-- `preempt_test` - prove timer-driven preemption between runnable tasks
-- `fault` - fault probe (ud/gp/de/br/pf)
+Seeded FAT16 layout:
+- `echo`, `about`, `uptime`, `halt`, `reboot` in the image root
+- `apps/demo/hello` - print argc/argv and tick count
+- `apps/tests/ticks` - print the current tick count
+- `apps/tests/args` - print argc and argv
+- `apps/tests/runelf_test` - verify ELF loading, syscalls, and stack setup
+- `apps/tests/readline` - interactive SYS_READ demo
+- `apps/tests/exec_test` - exercise SYS_EXEC semantics
+- `apps/tests/fileread` - exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE
+- `apps/tests/compiler_demo` - exercise SYS_WRITEFILE, SYS_WRITEFILE_PATH, and readback
+- `apps/tests/heapprobe` - exercise malloc/free/realloc/calloc
+- `apps/tests/statprobe` - exercise SYS_STAT and path probing
+- `apps/tests/fileprobe` - exercise small file wrapper helpers
+- `apps/tests/sleep_test` - exercise SYS_SLEEP semantics
+- `apps/tests/ptrguard` - exercise syscall pointer validation
+- `apps/tests/preempt_test` - prove timer-driven preemption between runnable tasks
+- `apps/tests/fault` - fault probe (ud/gp/de/br/pf)
+- `tools/tcc.elf` in `tools/`
+- `samples/tccmath.c`, `samples/tccagg.c`, `samples/tcctree.c`, `samples/tccmini.c` at the image root for the guest compiler demo
 
 `help` renders the built-in shell command list from the command table and the shipped-program list from the program table, with the same short descriptions.
 
@@ -194,7 +200,7 @@ kernel_main()
  → sti
  → sched_start(shell)    switch from boot stack into shell task
 
-runelf hello
+runelf apps/demo/hello
  → process_create()      allocate process_t from PMM
  → process_pd_create()   fresh page directory (PMM), kernel entries shared
  → map ELF + stack       pmm_alloc_frame() per page
