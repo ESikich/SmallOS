@@ -12,6 +12,7 @@
 #include "ata.h"
 #include "fat16.h"
 #include "pci.h"
+#include "e1000.h"
 
 static unsigned short kernel_read_tr(void) {
     unsigned short tr;
@@ -94,6 +95,12 @@ void kernel_main(void) {
      * real hardware/QEMU enumeration path later.
      */
     pci_init();
+
+    /*
+     * e1000 NIC — bind to the Intel 82540EM QEMU exposes and set up
+     * basic DMA rings so networking can grow from a known-good device.
+     */
+    e1000_init();
 
     /*
      * FAT16 filesystem — reads FAT16_LBA from sector 0 offset 504

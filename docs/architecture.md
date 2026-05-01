@@ -44,6 +44,7 @@ kernel_main()
   sched_init()      ← initialise runnable task table
   ata_init()        ← software reset ATA primary channel, verify ready
   pci_init()        ← scan PCI config space and log network controllers
+  e1000_init()      ← bind the Intel 82540EM NIC and set up DMA rings
   fat16_init()      ← read BPB, validate FAT16 volume geometry
   create shell task ← explicit kernel task with dedicated stack
   process_start_reaper() ← create and enqueue zombie reaper task
@@ -110,12 +111,13 @@ Inside `kernel_main()`:
 8. `sched_init()` — initialise the scheduler data structures
 9. `ata_init()` — software reset ATA primary channel (`0x1F0`), poll until ready
 10. `pci_init()` — scan PCI config space and log discovered network controllers
-11. `fat16_init()` — read ATA sector 0, extract the FAT16 start LBA from partition entry 1 in the MBR partition table, then read and validate the FAT16 BPB at that runtime-discovered location
-12. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
-13. `sched_enqueue(shell_proc)` — make the shell runnable
-14. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
-15. `sti` — enable interrupts
-16. `sched_start(shell_proc)` — switch from the boot stack into the shell task
+11. `e1000_init()` — bind the Intel 82540EM NIC and set up DMA rings
+12. `fat16_init()` — read ATA sector 0, extract the FAT16 start LBA from partition entry 1 in the MBR partition table, then read and validate the FAT16 BPB at that runtime-discovered location
+13. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
+14. `sched_enqueue(shell_proc)` — make the shell runnable
+15. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
+16. `sti` — enable interrupts
+17. `sched_start(shell_proc)` — switch from the boot stack into the shell task
 
 `sched_init()` must still be called before `sti`, and `sched_start()` must happen only after the first runnable task has been created.
 

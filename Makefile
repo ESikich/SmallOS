@@ -75,6 +75,7 @@ KERNEL_C_SRCS=\
 	$(KERNEL_DIR)/paging.c \
 	$(DRIVERS_DIR)/ata.c \
 	$(DRIVERS_DIR)/pci.c \
+	$(DRIVERS_DIR)/e1000.c \
 	$(DRIVERS_DIR)/fat16.c \
 	$(DRIVERS_DIR)/serial.c
 
@@ -245,7 +246,8 @@ PIDFILE=/tmp/smallos.pid
 SMOKE_TIMEOUT=120.0
 PYTHON3=python3
 QEMUFLAGS=-drive format=raw,file=$(IMG_DIR)/os-image.bin -boot c -m 32 \
-          -serial file:$(SERIAL_LOG)
+          -serial file:$(SERIAL_LOG) \
+          -nic user,model=e1000,mac=52:54:00:12:34:56
 
 .PHONY: all dirs run run-headless test smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify reset-disk tinycc-host tinycc-host-clean
 

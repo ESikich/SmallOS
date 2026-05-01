@@ -5,6 +5,7 @@
 #include "memory.h"
 #include "pmm.h"
 #include "ata.h"
+#include "e1000.h"
 #include "fat16.h"
 #include "process.h"
 #include "klib.h"
@@ -142,6 +143,13 @@ static void cmd_meminfo(command_t* cmd) {
     terminal_puts(" frames (");
     terminal_put_uint(used_frames * 4);
     terminal_puts(" KB)\n");
+}
+
+static void cmd_netinfo(command_t* cmd) {
+    (void)cmd;
+
+    terminal_puts("netinfo: ");
+    e1000_print_info();
 }
 
 /*
@@ -558,6 +566,7 @@ static void cmd_shelltest(command_t* cmd) {
     command_t about_cmd = { 1, { "about" } };
     command_t uptime_cmd = { 1, { "uptime" } };
     command_t meminfo_cmd = { 1, { "meminfo" } };
+    command_t netinfo_cmd = { 1, { "netinfo" } };
     command_t cd_demo_cmd = { 2, { "cd", "apps/demo" } };
     command_t pwd_demo_cmd = { 1, { "pwd" } };
     command_t ls_demo_cmd = { 1, { "ls" } };
@@ -626,6 +635,7 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("about", cmd_about, &about_cmd);
     shelltest_call("uptime", cmd_uptime, &uptime_cmd);
     shelltest_call("meminfo", cmd_meminfo, &meminfo_cmd);
+    shelltest_call("netinfo", cmd_netinfo, &netinfo_cmd);
     shelltest_call("ataread", cmd_ataread, &ataread_cmd);
     shelltest_call("fsls", cmd_fsls, &fsls_root_cmd);
     shelltest_call("fsls_path", cmd_fsls, &fsls_path_cmd);
@@ -800,6 +810,7 @@ static command_entry_t commands[] = {
     { "reboot",        "reboot the machine via ELF",    cmd_reboot },
     { "uptime",        "show tick and second counts via ELF", cmd_uptime },
     { "meminfo",       "show heap and frame usage",     cmd_meminfo },
+    { "netinfo",       "show PCI NIC status",          cmd_netinfo },
     { "cd",            "change the shell working directory", cmd_cd },
     { "pwd",           "print the shell working directory", cmd_pwd },
     { "ls",            "list a FAT16 directory",       cmd_ls },
@@ -832,6 +843,7 @@ static program_entry_t programs[] = {
     { "uptime",       "show tick and second counts" },
     { "halt",         "halt the machine" },
     { "reboot",       "reboot the machine" },
+    { "netinfo",      "show PCI NIC status" },
     { "apps/demo/hello",       "print argc/argv and tick count" },
     { "apps/tests/ticks",      "print the current tick count" },
     { "apps/tests/args",       "print argc and argv" },

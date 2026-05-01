@@ -23,6 +23,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * COM1 serial driver — mirrors all terminal output to QEMU's serial backend for headless testing
 * VGA text-mode display and terminal abstraction
 * PCI bus scan at boot — groundwork for future NIC support
+* e1000 NIC bring-up — PCI discovery, MMIO mapping, and DMA ring setup
 * Shell with line editing, history, and command parsing
 * Shell input processing decoupled from IRQ1 via a small event queue
 * Bump allocator (`kmalloc`) for permanent kernel structures
@@ -141,6 +142,7 @@ fsread <name>      dump first 16 bytes of a FAT16 file
 cat <path>          print a FAT16 file
 cd <path>           change the shell working directory
 pwd                 print the shell working directory
+netinfo             show PCI NIC status
 mkdir <path>       create a FAT16 directory
 rmdir <path>       remove an empty FAT16 directory
 rm <path>          remove a FAT16 file

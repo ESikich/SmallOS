@@ -51,6 +51,49 @@ unsigned char pci_read_config_byte(unsigned char bus,
     return (unsigned char)((value >> ((offset & 3) * 8)) & 0xFFu);
 }
 
+void pci_write_config_dword(unsigned char bus,
+                            unsigned char slot,
+                            unsigned char func,
+                            unsigned char offset,
+                            unsigned int value) {
+    outl(PCI_CONFIG_ADDRESS, pci_config_address(bus, slot, func, offset));
+    outl(PCI_CONFIG_DATA, value);
+}
+
+void pci_write_config_word(unsigned char bus,
+                           unsigned char slot,
+                           unsigned char func,
+                           unsigned char offset,
+                           unsigned short value) {
+    unsigned int addr = pci_config_address(bus, slot, func, offset);
+    unsigned int shift = (offset & 2u) * 8u;
+    unsigned int current;
+
+    outl(PCI_CONFIG_ADDRESS, addr);
+    current = inl(PCI_CONFIG_DATA);
+    current &= ~(0xFFFFu << shift);
+    current |= ((unsigned int)value << shift);
+    outl(PCI_CONFIG_ADDRESS, addr);
+    outl(PCI_CONFIG_DATA, current);
+}
+
+void pci_write_config_byte(unsigned char bus,
+                           unsigned char slot,
+                           unsigned char func,
+                           unsigned char offset,
+                           unsigned char value) {
+    unsigned int addr = pci_config_address(bus, slot, func, offset);
+    unsigned int shift = (offset & 3u) * 8u;
+    unsigned int current;
+
+    outl(PCI_CONFIG_ADDRESS, addr);
+    current = inl(PCI_CONFIG_DATA);
+    current &= ~(0xFFu << shift);
+    current |= ((unsigned int)value << shift);
+    outl(PCI_CONFIG_ADDRESS, addr);
+    outl(PCI_CONFIG_DATA, current);
+}
+
 void pci_read_device(unsigned char bus,
                      unsigned char slot,
                      unsigned char func,
@@ -137,4 +180,54 @@ void pci_init(void) {
     if (network_count == 0) {
         terminal_puts("pci: no network controller detected\n");
     }
+}
+
+int pci_find_device(unsigned short vendor_id,
+                    unsigned short device_id,
+                    pci_device_t* out) {
+    for (unsigned int bus = 0; bus < 256; bus++) {
+        for (unsigned int slot = 0; slot < 32; slot++) {
+            unsigned short vendor = pci_read_config_word((unsigned char)bus,
+                                                         (unsigned char)slot,
+                                                         0,
+                                                         0x00);
+            if (vendor == 0xFFFFu) {
+                continue;
+            }
+
+            unsigned char header_type = pci_read_config_byte((unsigned char)bus,
+                                                             (unsigned char)slot,
+                                                             0,
+                                                             0x0E);
+            unsigned int function_count = (header_type & 0x80u) ? 8u : 1u;
+
+            for (unsigned int func = 0; func < function_count; func++) {
+                unsigned short found_vendor = pci_read_config_word((unsigned char)bus,
+                                                                   (unsigned char)slot,
+                                                                   (unsigned char)func,
+                                                                   0x00);
+                if (found_vendor != vendor_id) {
+                    continue;
+                }
+
+                unsigned short found_device = pci_read_config_word((unsigned char)bus,
+                                                                   (unsigned char)slot,
+                                                                   (unsigned char)func,
+                                                                   0x02);
+                if (found_device != device_id) {
+                    continue;
+                }
+
+                if (out) {
+                    pci_read_device((unsigned char)bus,
+                                    (unsigned char)slot,
+                                    (unsigned char)func,
+                                    out);
+                }
+                return 1;
+            }
+        }
+    }
+
+    return 0;
 }

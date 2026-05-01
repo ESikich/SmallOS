@@ -28,9 +28,27 @@ unsigned char pci_read_config_byte(unsigned char bus,
                                    unsigned char slot,
                                    unsigned char func,
                                    unsigned char offset);
+void pci_write_config_dword(unsigned char bus,
+                            unsigned char slot,
+                            unsigned char func,
+                            unsigned char offset,
+                            unsigned int value);
+void pci_write_config_word(unsigned char bus,
+                           unsigned char slot,
+                           unsigned char func,
+                           unsigned char offset,
+                           unsigned short value);
+void pci_write_config_byte(unsigned char bus,
+                           unsigned char slot,
+                           unsigned char func,
+                           unsigned char offset,
+                           unsigned char value);
 void pci_read_device(unsigned char bus,
                      unsigned char slot,
                      unsigned char func,
                      pci_device_t* out);
+int pci_find_device(unsigned short vendor_id,
+                    unsigned short device_id,
+                    pci_device_t* out);
 
 #endif /* PCI_H */
