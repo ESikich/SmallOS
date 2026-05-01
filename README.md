@@ -22,6 +22,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Page-fault handler that logs `CR2`, the error code, and user-vs-kernel context; user faults terminate only the offending process
 * COM1 serial driver — mirrors all terminal output to QEMU's serial backend for headless testing
 * VGA text-mode display and terminal abstraction
+* PCI bus scan at boot — groundwork for future NIC support
 * Shell with line editing, history, and command parsing
 * Shell input processing decoupled from IRQ1 via a small event queue
 * Bump allocator (`kmalloc`) for permanent kernel structures
@@ -194,6 +195,7 @@ kernel_main()
  → keyboard/timer/idt    drivers and interrupt table
  → sched_init()          initialise runnable task table
  → ata_init()            initialise ATA primary channel
+ → pci_init()            scan PCI devices and log discovered network controllers
  → fat16_init()          read BPB, validate FAT16 volume
  → create shell task     explicit kernel task with its own stack
  → process_start_reaper() create and enqueue the zombie reaper task

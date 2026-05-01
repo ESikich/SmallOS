@@ -74,6 +74,7 @@ KERNEL_C_SRCS=\
 	$(KERNEL_DIR)/gdt.c \
 	$(KERNEL_DIR)/paging.c \
 	$(DRIVERS_DIR)/ata.c \
+	$(DRIVERS_DIR)/pci.c \
 	$(DRIVERS_DIR)/fat16.c \
 	$(DRIVERS_DIR)/serial.c
 

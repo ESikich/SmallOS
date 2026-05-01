@@ -11,6 +11,7 @@
 #include "process.h"
 #include "ata.h"
 #include "fat16.h"
+#include "pci.h"
 
 static unsigned short kernel_read_tr(void) {
     unsigned short tr;
@@ -87,6 +88,12 @@ void kernel_main(void) {
      * Must be called before fat16_init() and before sti.
      */
     ata_init();
+
+    /*
+     * PCI bus scan — discover devices now so NIC work can bind to the
+     * real hardware/QEMU enumeration path later.
+     */
+    pci_init();
 
     /*
      * FAT16 filesystem — reads FAT16_LBA from sector 0 offset 504

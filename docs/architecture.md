@@ -43,6 +43,7 @@ kernel_main()
   #PF handler      ← logs CR2 / error code, kills user faults, panics on kernel faults
   sched_init()      ← initialise runnable task table
   ata_init()        ← software reset ATA primary channel, verify ready
+  pci_init()        ← scan PCI config space and log network controllers
   fat16_init()      ← read BPB, validate FAT16 volume geometry
   create shell task ← explicit kernel task with dedicated stack
   process_start_reaper() ← create and enqueue zombie reaper task
@@ -108,12 +109,13 @@ Inside `kernel_main()`:
 7. `keyboard_init()`, `timer_init(100)`, `idt_init()` — drivers and interrupt table
 8. `sched_init()` — initialise the scheduler data structures
 9. `ata_init()` — software reset ATA primary channel (`0x1F0`), poll until ready
-10. `fat16_init()` — read ATA sector 0, extract the FAT16 start LBA from partition entry 1 in the MBR partition table, then read and validate the FAT16 BPB at that runtime-discovered location
-11. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
-12. `sched_enqueue(shell_proc)` — make the shell runnable
-13. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
-14. `sti` — enable interrupts
-15. `sched_start(shell_proc)` — switch from the boot stack into the shell task
+10. `pci_init()` — scan PCI config space and log discovered network controllers
+11. `fat16_init()` — read ATA sector 0, extract the FAT16 start LBA from partition entry 1 in the MBR partition table, then read and validate the FAT16 BPB at that runtime-discovered location
+12. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
+13. `sched_enqueue(shell_proc)` — make the shell runnable
+14. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
+15. `sti` — enable interrupts
+16. `sched_start(shell_proc)` — switch from the boot stack into the shell task
 
 `sched_init()` must still be called before `sti`, and `sched_start()` must happen only after the first runnable task has been created.
 
