@@ -48,7 +48,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * **ATA PIO driver** — polls the primary IDE channel (`0x1F0`) to read 512-byte sectors from disk in 32-bit protected mode; no DMA or IRQ required
 * **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing all user ELFs; built by `tools/mkfat16.c` with no external dependencies; readable via ATA PIO with nested directory paths, writable at runtime through the kernel VFS shim for root-directory files and nested paths
 * **TCP bring-up task** — minimal kernel-side TCP listener/echo path for end-to-end networking validation before the socket ABI is exposed to user space
-* **Guest TCP apps** — `apps/services/tcpecho.elf` proves the socket path end to end, and `apps/services/ftpd.elf` runs the vendored FTP session logic as a normal user-space ELF
+* **Guest TCP apps** — `apps/services/tcpecho.elf` proves the socket path end to end, `apps/services/sockeof.elf` pins down peer-close/read EOF semantics, and `apps/services/ftpd.elf` runs the vendored FTP session logic as a normal user-space ELF
 
 ---
 
@@ -153,17 +153,22 @@ qemu-system-i386 \
   -drive format=raw,file=build/img/os-image.bin \
   -boot c -m 32 \
   -serial file:/tmp/smallos-serial.log \
-  -nic user,model=e1000,mac=52:54:00:12:34:56,hostfwd=tcp::2462-:2323,hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000 \
+  -nic user,model=e1000,mac=52:54:00:12:34:56,hostfwd=tcp::2462-:2323,hostfwd=tcp::2463-:2463,hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000 \
   -display none \
   -monitor unix:/tmp/smallos-monitor.sock,server,nowait \
   -daemonize -pidfile /tmp/smallos.pid
 ```
 
-Then run `runelf_nowait apps/services/tcpecho` or `runelf_nowait
-apps/services/ftpd` in the guest shell and connect from the host to
-`127.0.0.1:2462` or `127.0.0.1:2121` respectively. FTP passive transfers
-also need the passive data port, currently guest `30000`, forwarded to the
-host.
+Then run `runelf_nowait apps/services/tcpecho`,
+`runelf_nowait apps/services/sockeof`, or `runelf_nowait apps/services/ftpd`
+in the guest shell and connect from the host to the forwarded service port.
+FTP passive transfers also need the passive data port, currently guest
+`30000`, forwarded to the host.
+
+`make socket-eof-smoke` boots QEMU with host forwarding for
+`apps/services/sockeof`, sends payload plus a TCP half-close from the host,
+and verifies that guest `poll()`/`read()` observe EOF before the guest writes
+back `PASS`.
 
 `make ftp-smoke` runs the FTP path end to end: it boots QEMU with control and
 passive-data host forwarding, starts `apps/services/ftpd`, logs in as

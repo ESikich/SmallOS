@@ -421,6 +421,9 @@ void tcp_socket_handle_close(fd_entry_t* ent) {
     } else if (ent->socket_state == PROCESS_SOCKET_STATE_CONNECTED) {
         if (s_conn.state == TCP_STATE_ESTABLISHED) {
             tcp_begin_close();
+            if (s_socket_peer_closed) {
+                tcp_reset_connection();
+            }
             return;
         }
         tcp_reset_connection();

@@ -60,7 +60,8 @@ Important current-state facts:
 - QEMU user networking is still the default for `make run` / `make test`, but `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT
 - `pinggw` only proves the QEMU gateway works; `pingpublic` and `netcheck` are the manual probes for "can I reach beyond the gateway?"
 - `pingpublic` now routes the echo request through the QEMU gateway instead of ARPing the public IP directly
-- `apps/services/tcpecho.elf` and `apps/services/ftpd.elf` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
+- `apps/services/tcpecho.elf`, `apps/services/sockeof.elf`, and `apps/services/ftpd.elf` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
+- `sockeof.elf` listens on `2463` in the guest and is driven by `make socket-eof-smoke` to verify payload-before-EOF, `POLLHUP`, and post-EOF response writes
 - `ftpd.elf` listens on `2121` in the guest and expects passive data connections on `30000`; host-side clients such as `lftp`, WinSCP, and FileZilla should use passive mode
 
 ---
@@ -145,9 +146,10 @@ TinyCC's runtime expectations are part of the user runtime contract in
 [`docs/user-runtime.md`](user-runtime.md).
 
 For the TCP bring-up path, the shell can also launch a long-lived service
-with `runelf_nowait apps/services/tcpecho` or `runelf_nowait
-apps/services/ftpd`. Those programs bind and listen inside the guest, and
-you connect to them from the host through QEMU `hostfwd`.
+with `runelf_nowait apps/services/tcpecho`, `runelf_nowait
+apps/services/sockeof`, or `runelf_nowait apps/services/ftpd`. Those programs
+bind and listen inside the guest, and you connect to them from the host
+through QEMU `hostfwd`.
 
 The FTP service uses passive data connections, so a host-driven smoke needs
 both the control port and passive data port forwarded:

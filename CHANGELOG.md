@@ -46,6 +46,10 @@
   * Expanded the smoke to cover bad auth/path replies, uploaded-file readback, nested directory upload/delete cleanup, and `RMD`.
   * Documented that passive FTP needs both guest port `2121` and guest port `30000` forwarded when using QEMU user networking.
 
+* **Socket EOF smoke** (`src/drivers/tcp.c`, `src/kernel/process.c`, `src/user/sockeof.c`, `tools/socket_eof_smoke.py`, `Makefile`)
+  * TCP sockets now keep peer FIN visible long enough for userland `poll()` to report `POLLHUP` and for `read()` to return buffered data followed by EOF.
+  * Added `make socket-eof-smoke`, which sends payload plus a host half-close and verifies guest payload read, EOF read, and post-EOF response write.
+
 * **Unified fd-backed handles and VFS file backend** (`src/kernel/process.c`, `src/kernel/process.h`, `src/kernel/vfs.c`, `src/kernel/vfs.h`, `src/kernel/syscall.c`, `src/user/user_stdio.c`, `src/user/user_posix.c`, `docs/`)
   * `process_handle_ops_t` now covers `read`, `write`, `seek`, `poll`, `flush`, and `close` for file, socket, and console handles.
   * fd `0`, `1`, and `2` are real console handles; `printf`/`fprintf(stdout, ...)`/`fprintf(stderr, ...)` now route through `SYS_WRITEFD` instead of a stdio-only console special case.

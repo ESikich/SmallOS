@@ -105,6 +105,11 @@ wrappers, stdio, directory traversal, and TinyCC expectations.
 `make smoke-reboot` or `make smoke-halt` to exercise those shell
 commands on their own.
 
+`make socket-eof-smoke` boots QEMU with user-network host forwarding for
+guest port `2463`, starts `apps/services/sockeof`, then verifies that
+payload plus host half-close wakes guest `poll()`, leaves the payload readable,
+returns `0` on the next `read()`, and still allows the guest to write back.
+
 `make ftp-smoke` boots QEMU with user-network host forwarding for FTP control
 port `2121` and passive data port `30000`, starts `apps/services/ftpd`, then
 drives login, negative path checks, `LIST`, `RETR`, `STOR` readback,
