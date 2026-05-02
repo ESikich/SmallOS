@@ -126,13 +126,19 @@
 
 ## [Current] — Internet reachability probes
 
+### Fixed
+
+* **Network RX ownership** (`src/drivers/net.c`, `src/drivers/arp.c`, `src/drivers/ipv4.c`, `src/drivers/tcp.c`)
+  * Added a central receive dispatcher so ARP, ICMP, and TCP no longer race each other by draining the e1000 RX ring from multiple tasks.
+  * ARP and ping waiters now observe replies recorded by the dispatcher, even when the background TCP task polls the NIC first.
+
 ### Added
 
 * **`pingpublic` and `netcheck`** (`src/shell/commands.c`, `README.md`, `docs/execution.md`)
-  * `pingpublic` pings `1.1.1.1` so you can distinguish gateway-only success from actual outbound reachability
+  * `pingpublic` pings `1.1.1.1` as a best-effort public ICMP probe, but now warns that QEMU user networking often does not support that path
   * `netcheck` runs ARP, gateway ping, and public ping in one pass and prints where the chain fails
   * Public pings are routed through QEMU's gateway instead of ARPing the public IP directly, so the probe matches NAT-mode networking
-  * The README and execution docs now explain that `pinggw` only validates QEMU's local NAT gateway
+  * The README and execution docs now explain that `pinggw` and `ping 10.0.2.2` are the supported QEMU user-network checks
 
 ## [Current] — TAP networking option
 

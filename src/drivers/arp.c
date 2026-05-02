@@ -1,6 +1,7 @@
 #include "arp.h"
 
 #include "e1000.h"
+#include "net.h"
 #include "../kernel/klib.h"
 #include "terminal.h"
 
@@ -13,6 +14,11 @@
 
 #define ARP_FRAME_SIZE     42u
 #define ARP_MAX_POLL_COUNT 200u
+
+static int s_arp_cache_valid;
+static u32 s_arp_cache_sender_ip;
+static u32 s_arp_cache_target_ip;
+static u8 s_arp_cache_mac[6];
 
 static void arp_write_u16_be(u8* buf, u32 off, u16 value) {
     buf[off] = (u8)(value >> 8);
@@ -97,6 +103,20 @@ static void arp_wait(void) {
     __asm__ __volatile__("hlt");
 }
 
+int arp_lookup(u32 sender_ip, u32 target_ip, u8* out_mac) {
+    if (!out_mac || !s_arp_cache_valid) {
+        return 0;
+    }
+    if (s_arp_cache_sender_ip != sender_ip || s_arp_cache_target_ip != target_ip) {
+        return 0;
+    }
+
+    for (unsigned int i = 0; i < 6; i++) {
+        out_mac[i] = s_arp_cache_mac[i];
+    }
+    return 1;
+}
+
 static int arp_send_request(u32 sender_ip, u32 target_ip) {
     u8 frame[ARP_FRAME_SIZE];
     const u8* src_mac = e1000_mac();
@@ -135,11 +155,12 @@ static int arp_send_request(u32 sender_ip, u32 target_ip) {
 }
 
 int arp_resolve(u32 sender_ip, u32 target_ip, u8* out_mac) {
-    u8 frame[1600];
-    u32 len = 0;
-
     if (!out_mac) {
         return 0;
+    }
+
+    if (arp_lookup(sender_ip, target_ip, out_mac)) {
+        return 1;
     }
 
     if (!arp_send_request(sender_ip, target_ip)) {
@@ -147,49 +168,18 @@ int arp_resolve(u32 sender_ip, u32 target_ip, u8* out_mac) {
     }
 
     for (unsigned int i = 0; i < ARP_MAX_POLL_COUNT; i++) {
-        if (!e1000_recv(frame, sizeof(frame), &len)) {
+        if (arp_lookup(sender_ip, target_ip, out_mac)) {
+            return 1;
+        }
+
+        if (!net_poll_once()) {
             arp_wait();
             continue;
         }
 
-        if (len < 42u) {
-            arp_wait();
-            continue;
+        if (arp_lookup(sender_ip, target_ip, out_mac)) {
+            return 1;
         }
-
-        if (arp_read_u16_be(frame, 12) != ARP_ETHERTYPE) {
-            arp_wait();
-            continue;
-        }
-        if (arp_read_u16_be(frame, 14) != ARP_HTYPE_ETHERNET) {
-            arp_wait();
-            continue;
-        }
-        if (arp_read_u16_be(frame, 16) != ARP_PTYPE_IPV4) {
-            arp_wait();
-            continue;
-        }
-        if (frame[18] != 6 || frame[19] != 4) {
-            arp_wait();
-            continue;
-        }
-        if (arp_read_u16_be(frame, 20) != ARP_OP_REPLY) {
-            arp_wait();
-            continue;
-        }
-        if (arp_read_u32_be(frame, 28) != target_ip) {
-            arp_wait();
-            continue;
-        }
-        if (arp_read_u32_be(frame, 38) != sender_ip) {
-            arp_wait();
-            continue;
-        }
-
-        for (unsigned int j = 0; j < 6; j++) {
-            out_mac[j] = frame[22 + j];
-        }
-        return 1;
     }
 
     return 0;
@@ -211,6 +201,15 @@ int arp_handle_frame(const u8* frame, u32 len) {
     }
     if (frame[18] != 6 || frame[19] != 4) {
         return 0;
+    }
+    if (arp_read_u16_be(frame, 20) == ARP_OP_REPLY) {
+        s_arp_cache_sender_ip = arp_read_u32_be(frame, 38);
+        s_arp_cache_target_ip = arp_read_u32_be(frame, 28);
+        for (unsigned int i = 0; i < 6; i++) {
+            s_arp_cache_mac[i] = frame[22 + i];
+        }
+        s_arp_cache_valid = 1;
+        return 1;
     }
     if (arp_read_u16_be(frame, 20) != ARP_OP_REQUEST) {
         return 0;

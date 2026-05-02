@@ -6,6 +6,7 @@
 #include "pmm.h"
 #include "ata.h"
 #include "e1000.h"
+#include "net.h"
 #include "arp.h"
 #include "ipv4.h"
 #include "fat16.h"
@@ -264,29 +265,12 @@ static void cmd_netsend(command_t* cmd) {
 static void cmd_netrecv(command_t* cmd) {
     (void)cmd;
 
-    u8 frame[1600];
-    u32 len = 0;
-
-    if (!e1000_recv(frame, sizeof(frame), &len)) {
+    if (!net_poll_once()) {
         terminal_puts("netrecv: no packet\n");
         return;
     }
 
-    terminal_puts("netrecv: ");
-    terminal_put_uint(len);
-    terminal_puts(" bytes\nfirst 32: ");
-
-    static const char hex[] = "0123456789ABCDEF";
-    u32 show = len < 32u ? len : 32u;
-    for (u32 i = 0; i < show; i++) {
-        terminal_putc(hex[frame[i] >> 4]);
-        terminal_putc(hex[frame[i] & 0xF]);
-        terminal_putc(' ');
-        if (i == 15u) {
-            terminal_puts("\n  ");
-        }
-    }
-    terminal_putc('\n');
+    terminal_puts("netrecv: dispatched packet\n");
 }
 
 static void cmd_arpgw(command_t* cmd) {
@@ -366,8 +350,10 @@ static void cmd_pinggw(command_t* cmd) {
 static void cmd_pingpublic(command_t* cmd) {
     (void)cmd;
 
-    /* Public ICMP probe to separate "gateway works" from "internet works". */
+    /* QEMU user networking usually does not forward public ICMP. */
     cmd_ping_target("pingpublic", 0x0A00020Fu, 0x01010101u, 0x0A000202u);
+    terminal_puts("pingpublic: note: QEMU user networking may not support public ICMP\n");
+    terminal_puts("pingpublic: use pinggw or ping 10.0.2.2 for the supported NAT check\n");
 }
 
 static void cmd_netcheck(command_t* cmd) {
@@ -392,7 +378,8 @@ static void cmd_netcheck(command_t* cmd) {
     terminal_puts("netcheck: public ping\n");
     if (!ipv4_ping_via_gateway(0x0A00020Fu, 0x01010101u, 0x0A000202u)) {
         terminal_puts("netcheck: public ping failed\n");
-        terminal_puts("netcheck: note: some hosts block ICMP beyond the gateway\n");
+        terminal_puts("netcheck: note: QEMU user networking may not support public ICMP\n");
+        terminal_puts("netcheck: gateway is ok; TCP hostfwd smokes are the supported user-net test\n");
         return;
     }
     terminal_puts("netcheck: public ping ok\n");
@@ -1113,11 +1100,11 @@ static command_entry_t commands[] = {
     { "meminfo",       "show heap and frame usage",     cmd_meminfo },
     { "netinfo",       "show PCI NIC status",          cmd_netinfo },
     { "netsend",       "queue a test Ethernet frame",  cmd_netsend },
-    { "netrecv",       "poll and dump one Ethernet frame", cmd_netrecv },
+    { "netrecv",       "poll and dispatch one Ethernet frame", cmd_netrecv },
     { "arpgw",         "resolve the QEMU gateway via ARP", cmd_arpgw },
     { "ping",          "ping an IPv4 address",        cmd_ping },
     { "pinggw",        "ping the QEMU gateway",         cmd_pinggw },
-    { "pingpublic",    "ping 1.1.1.1 to probe internet reachability", cmd_pingpublic },
+    { "pingpublic",    "try public ICMP (often unsupported by QEMU user net)", cmd_pingpublic },
     { "netcheck",      "check gateway and public connectivity", cmd_netcheck },
     { "cd",            "change the shell working directory", cmd_cd },
     { "ataread",       "dump raw sector bytes",         cmd_ataread },

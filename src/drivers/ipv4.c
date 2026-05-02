@@ -2,6 +2,7 @@
 
 #include "arp.h"
 #include "e1000.h"
+#include "net.h"
 #include "../kernel/klib.h"
 #include "../kernel/timer.h"
 #include "terminal.h"
@@ -18,6 +19,13 @@
 #define IPV4_PING_WAIT_TICKS (2u * SMALLOS_TIMER_HZ)
 
 typedef unsigned short u16;
+
+static int s_ping_waiting;
+static int s_ping_got_reply;
+static u32 s_ping_sender_ip;
+static u32 s_ping_target_ip;
+static u16 s_ping_ident;
+static u16 s_ping_seq;
 
 static u16 ipv4_checksum16(const u8* data, u32 len) {
     u32 sum = 0;
@@ -222,10 +230,26 @@ static int ipv4_parse_echo_reply(const u8* frame,
     return 1;
 }
 
+int ipv4_handle_frame(const u8* frame, u32 len) {
+    if (!s_ping_waiting) {
+        return 0;
+    }
+    if (!ipv4_parse_echo_reply(frame,
+                               len,
+                               s_ping_sender_ip,
+                               s_ping_target_ip,
+                               s_ping_ident,
+                               s_ping_seq)) {
+        return 0;
+    }
+
+    s_ping_got_reply = 1;
+    return 1;
+}
+
 int ipv4_ping_via_gateway(u32 sender_ip, u32 target_ip, u32 gateway_ip) {
     u8 target_mac[6];
     u8 frame[1600];
-    u32 len = 0;
     u16 ident = 0x4A50u; /* "JP" for ping bookkeeping */
     u16 seq = 1u;
 
@@ -244,19 +268,40 @@ int ipv4_ping_via_gateway(u32 sender_ip, u32 target_ip, u32 gateway_ip) {
         terminal_putc('\n');
 
         ipv4_build_echo_request(frame, e1000_mac(), target_mac, sender_ip, target_ip, ident, seq);
+        s_ping_waiting = 1;
+        s_ping_got_reply = 0;
+        s_ping_sender_ip = sender_ip;
+        s_ping_target_ip = target_ip;
+        s_ping_ident = ident;
+        s_ping_seq = seq;
 
         if (!e1000_send(frame, IPV4_PACKET_SIZE)) {
+            s_ping_waiting = 0;
             terminal_puts("ping: send failed\n");
             return 0;
         }
 
         while ((int)(timer_get_ticks() - deadline) < 0) {
-            if (!e1000_recv(frame, sizeof(frame), &len)) {
+            if (s_ping_got_reply) {
+                s_ping_waiting = 0;
+                terminal_puts("ping: ");
+                ipv4_print_ip(target_ip);
+                terminal_puts(" reply\n");
+                terminal_puts("ping: attempt ");
+                terminal_put_uint(attempt + 1u);
+                terminal_puts("/");
+                terminal_put_uint(IPV4_PING_ATTEMPTS);
+                terminal_puts(" ok\n");
+                return 1;
+            }
+
+            if (!net_poll_once()) {
                 __asm__ __volatile__("hlt");
                 continue;
             }
 
-            if (ipv4_parse_echo_reply(frame, len, sender_ip, target_ip, ident, seq)) {
+            if (s_ping_got_reply) {
+                s_ping_waiting = 0;
                 terminal_puts("ping: ");
                 ipv4_print_ip(target_ip);
                 terminal_puts(" reply\n");
@@ -269,6 +314,7 @@ int ipv4_ping_via_gateway(u32 sender_ip, u32 target_ip, u32 gateway_ip) {
             }
         }
 
+        s_ping_waiting = 0;
         terminal_puts("ping: attempt ");
         terminal_put_uint(attempt + 1u);
         terminal_puts("/");

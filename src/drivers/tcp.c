@@ -3,6 +3,7 @@
 #include "arp.h"
 #include "e1000.h"
 #include "ipv4.h"
+#include "net.h"
 #include "../kernel/uapi_poll.h"
 #include "../kernel/klib.h"
 #include "../kernel/process.h"
@@ -67,7 +68,6 @@ static u16 s_active_port = TCP_LISTEN_PORT;
 static process_t* s_socket_waiter;
 static u16 s_socket_waiter_port;
 static u16 s_ip_id = 1u;
-static u8 s_rx_frame[TCP_MAX_FRAME];
 static u8 s_tx_frame[TCP_MAX_FRAME];
 static u8 s_checksum_scratch[12u + TCP_MAX_FRAME];
 
@@ -855,24 +855,21 @@ static void tcp_maybe_retransmit(void) {
     }
 }
 
+int tcp_handle_ipv4_frame(const unsigned char* frame, unsigned int len) {
+    u32 ip_header_len = 0;
+    u32 total_len = 0;
+
+    if (!tcp_validate_ipv4(frame, len, &ip_header_len, &total_len)) {
+        return 0;
+    }
+
+    tcp_echo_payload(frame, ip_header_len, total_len);
+    return 1;
+}
+
 static void tcp_service_main(void) {
-    u32 len = 0;
-
     for (;;) {
-        while (e1000_recv(s_rx_frame, sizeof(s_rx_frame), &len)) {
-            u32 ip_header_len = 0;
-            u32 total_len = 0;
-
-            if (arp_handle_frame(s_rx_frame, len)) {
-                continue;
-            }
-            if (!tcp_validate_ipv4(s_rx_frame, len, &ip_header_len, &total_len)) {
-                continue;
-            }
-
-            tcp_echo_payload(s_rx_frame, ip_header_len, total_len);
-        }
-
+        net_poll_drain();
         tcp_maybe_retransmit();
         __asm__ __volatile__("sti; hlt");
     }

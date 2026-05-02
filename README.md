@@ -212,11 +212,11 @@ cd <path>           change the shell working directory
 pwd                 print the shell working directory
 netinfo             show PCI NIC status
 netsend             queue a test Ethernet frame
-netrecv             poll and dump one Ethernet frame
+netrecv             poll and dispatch one Ethernet frame
 arpgw               resolve the QEMU gateway via ARP
 ping <ip>           ping an IPv4 address
 pinggw              ping the QEMU gateway
-pingpublic          ping 1.1.1.1 to probe internet reachability
+pingpublic          try public ICMP (often unsupported by QEMU user net)
 netcheck            check gateway and public connectivity
 mkdir <path>       create a FAT16 directory
 rmdir <path>       remove an empty FAT16 directory
@@ -253,9 +253,11 @@ Seeded FAT16 layout:
 
 `help` renders the shell command list from the command table with the same short descriptions.
 
-`pinggw` only proves the QEMU NAT gateway works. `pingpublic` routes the echo
-request through that gateway to a public IP, and `netcheck` prints each step so
-you can see whether the failure is local to the gateway or beyond it.
+`pinggw` and `ping 10.0.2.2` are the supported checks for QEMU user networking.
+`pingpublic` still tries an echo request through the QEMU gateway, but public
+ICMP is often unsupported by user-mode networking, especially outside Linux.
+`netcheck` prints the gateway steps separately from that best-effort public
+probe.
 
 ---
 

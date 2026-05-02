@@ -13,6 +13,7 @@
  */
 
 void tcp_init(void);
+int  tcp_handle_ipv4_frame(const unsigned char* frame, unsigned int len);
 void tcp_socket_handle_close(fd_entry_t* ent);
 void tcp_socket_use_port(unsigned int port);
 int  tcp_socket_bind(unsigned int port);

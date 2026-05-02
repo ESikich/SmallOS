@@ -58,8 +58,8 @@ Important current-state facts:
   compiler-style tools and small network services
 - the shipped `tools/tcc.elf` compiler binary links the generic SmallOS `user_crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from FAT16, write the results back to disk, and then those generated ELFs can be executed immediately
 - QEMU user networking is still the default for `make run` / `make test`, but `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT
-- `pinggw` only proves the QEMU gateway works; `pingpublic` and `netcheck` are the manual probes for "can I reach beyond the gateway?"
-- `pingpublic` now routes the echo request through the QEMU gateway instead of ARPing the public IP directly
+- `pinggw` and `ping 10.0.2.2` are the supported QEMU user-network checks; public ICMP is often unsupported by user-mode networking, so `pingpublic` is only a best-effort probe
+- `netcheck` prints the gateway steps separately from the public ICMP probe so a `1.1.1.1` timeout does not imply the local NAT path is broken
 - `apps/services/tcpecho.elf`, `apps/services/sockeof.elf`, and `apps/services/ftpd.elf` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
 - `sockeof.elf` listens on `2463` in the guest and is driven by `make socket-eof-smoke` to verify payload-before-EOF, `POLLHUP`, and post-EOF response writes
 - `ftpd.elf` listens on `2121` in the guest and expects passive data connections on `30000`; host-side clients such as `lftp`, WinSCP, and FileZilla should use passive mode
