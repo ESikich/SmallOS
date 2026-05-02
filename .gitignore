@@ -26,3 +26,4 @@ Thumbs.db
 
 # Local/vendor experiments
 third_party/ftp_server/
+third_party/ftp_client/
