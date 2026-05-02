@@ -380,7 +380,7 @@ keyboard IRQ → keyboard_handle_irq()
   ↓
   [Enter] → parse_command() → commands_execute()
   ↓
-  kernel command dispatch or apps/bin/<name>.elf fallback
+  kernel command dispatch or bin/<name>.elf fallback
 ```
 
 The active consumer is managed by `keyboard_set_consumer()`:

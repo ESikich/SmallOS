@@ -115,7 +115,7 @@ They:
 - do not switch page directories
 - do not create a new `process_t`
 
-If a command name is not in the kernel command table, the shell looks for a matching app ELF. Bare names are resolved through `apps/bin/<name>.elf` first, then `<name>.elf` in the current filesystem namespace. Path-like command names are resolved relative to the shell cwd and may omit the `.elf` suffix. Commands like `echo`, `about`, `uptime`, `halt`, `reboot`, `pwd`, `cat`, `fsread`, `ls`, `fsls`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, and `mv` are shipped this way under `apps/bin/`.
+If a command name is not in the kernel command table, the shell looks for a matching app ELF. Bare names are resolved through `bin/<name>.elf` first, then `<name>.elf` in the current filesystem namespace. Path-like command names are resolved relative to the shell cwd and may omit the `.elf` suffix. Commands like `echo`, `about`, `uptime`, `halt`, `reboot`, `pwd`, `cat`, `fsread`, `ls`, `fsls`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, and `mv` are shipped this way under `/bin/`.
 
 When the shell launches an app command, it copies the current shell cwd into the child process before waiting. That preserves shell-style relative path behavior even though the command itself is a normal ring-3 ELF.
 

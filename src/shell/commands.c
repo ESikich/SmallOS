@@ -141,7 +141,7 @@ static int resolve_app_command_path(const char* name, char* out, unsigned int ou
         return 0;
     }
 
-    if (path_copy3(candidate, sizeof(candidate), "apps/bin/", name, ".elf") &&
+    if (path_copy3(candidate, sizeof(candidate), "bin/", name, ".elf") &&
         executable_path_exists(candidate)) {
         k_strncpy(out, candidate, out_size);
         return 1;
@@ -840,8 +840,6 @@ static void cmd_shelltest(command_t* cmd) {
     command_t arpgw_cmd = { 1, { "arpgw" } };
     static command_t ping_cmd = { 2, { "ping", "10.0.2.2" } };
     static command_t pinggw_cmd = { 1, { "pinggw" } };
-    static command_t pingpublic_cmd = { 1, { "pingpublic" } };
-    static command_t netcheck_cmd = { 1, { "netcheck" } };
     static command_t cd_demo_cmd = { 2, { "cd", "apps/demo" } };
     static command_t pwd_demo_cmd = { 1, { "pwd" } };
     static command_t ls_demo_cmd = { 1, { "ls" } };
@@ -915,8 +913,6 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("arpgw", cmd_arpgw, &arpgw_cmd);
     shelltest_call("ping", cmd_ping, &ping_cmd);
     shelltest_call("pinggw", cmd_pinggw, &pinggw_cmd);
-    shelltest_call("pingpublic", cmd_pingpublic, &pingpublic_cmd);
-    shelltest_call("netcheck", cmd_netcheck, &netcheck_cmd);
     shelltest_call("ataread", cmd_ataread, &ataread_cmd);
     shelltest_exec("fsls", &fsls_root_cmd);
     shelltest_exec("fsls_path", &fsls_path_cmd);

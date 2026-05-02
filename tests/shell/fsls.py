@@ -8,6 +8,7 @@ CASES = [
             "shelltest: fsls begin",
             "fat16 root directory:",
             "APPS/",
+            "BIN/",
             "TOOLS/",
             "shelltest: fsls end",
         ],
