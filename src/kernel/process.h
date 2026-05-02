@@ -28,7 +28,7 @@ typedef enum {
 #define PROCESS_FD_MAX      8
 #define PROCESS_FD_FIRST    3        /* first allocatable fd */
 #define PROCESS_FD_NAME_MAX 128      /* max path length stored in fd entry */
-#define PROCESS_FD_CACHE_PAGES 64    /* 256 KB max file / 4 KB per page */
+#define PROCESS_FD_CACHE_PAGES 256   /* 1 MB max file / 4 KB per page */
 
 typedef struct fd_entry fd_entry_t;
 
@@ -69,7 +69,7 @@ struct fd_entry {
     u32  size;                             /* file size in bytes */
     u32  offset;                           /* current read position */
     u32  cache_page_count;                 /* number of cached 4 KB pages */
-    u32  cache_pages[PROCESS_FD_CACHE_PAGES]; /* PMM frames holding cached data */
+    u32  cache_pages_frame;                /* PMM frame holding cached page frame numbers */
 };
 
 /* ------------------------------------------------------------------ */

@@ -114,8 +114,9 @@ FAT16-backed file descriptors support:
 - flush
 - close-time writeback
 
-The user-visible fd API is preserved even though the current FAT write path is
-still cache-backed internally.
+The user-visible fd API is preserved while FAT writes are still cache-backed
+internally. Flushes stream sectors from those cache pages into FAT16 rather
+than requiring one contiguous kernel writeback buffer.
 
 ---
 

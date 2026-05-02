@@ -275,7 +275,7 @@ return pointer to s_load_buf and set *out_size
 `fat16_load()` returns a pointer into a **single static internal buffer**:
 
 ```text
-s_load_buf[256 KB]
+s_load_buf[1 MB]
 ```
 
 This buffer:
@@ -292,7 +292,7 @@ need a large stack allocation while copying cluster data.
 The driver rejects files larger than:
 
 ```text
-256 KB
+1 MB
 ```
 
 If a file is larger, `fat16_load()` fails with:
@@ -303,26 +303,25 @@ fat16: file too large
 
 ## Empty files
 
-The current implementation rejects zero-length files:
-
-```text
-fat16: file is empty
-```
-
-That is a behavior choice in the current code, not a FAT16 requirement.
+The current implementation supports zero-length regular files. `touch` uses
+the normal write path with size `0`, records a directory entry with no starting
+cluster, and readback reports a zero-byte file.
 
 ---
 
 # Writing a File
 
-`fat16_write(name, data, size)` creates or overwrites a root-directory file in
-one shot. The shell's `touch` and compiler-style write paths use
+`fat16_write(name, data, size)` creates or overwrites a root-directory file from
+a contiguous buffer. The shell's `touch` and compiler-style write paths use
 `fat16_write_path(path, ...)` when they need to target nested directories.
+Fd-backed flushes use `fat16_write_path_from_source(...)` so VFS can stream
+each sector from PMM cache pages without first flattening the file into one
+temporary buffer.
 
 The FAT16 write path is intentionally narrow:
 
 - 8.3 filename matching
-- fd writes are buffered in VFS-owned PMM pages and flushed through the FAT16 one-shot writer
+- fd writes are buffered in VFS-owned PMM pages and flushed through a FAT16 source callback
 - no long filenames
 - no concurrent writer support
 

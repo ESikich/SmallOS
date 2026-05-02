@@ -7,32 +7,61 @@
 
 #define VFS_FILE_CACHE_MAX_BYTES (PROCESS_FD_CACHE_PAGES * 4096u)
 
-static u8 s_write_flush_buf[VFS_FILE_CACHE_MAX_BYTES];
+typedef struct {
+    fd_entry_t* ent;
+} vfs_page_source_t;
+
+static u32* vfs_file_cache_pages(fd_entry_t* ent) {
+    if (!ent || !ent->cache_pages_frame) return 0;
+    return (u32*)ent->cache_pages_frame;
+}
+
+static int vfs_file_ensure_page_table(fd_entry_t* ent) {
+    if (!ent) return 0;
+    if (ent->cache_pages_frame) return 1;
+
+    u32 frame = pmm_alloc_frame();
+    if (!frame) {
+        return 0;
+    }
+    k_memset((void*)frame, 0, 4096u);
+    ent->cache_pages_frame = frame;
+    return 1;
+}
 
 static void vfs_file_cache_free(fd_entry_t* ent) {
     if (!ent) return;
 
+    u32* cache_pages = vfs_file_cache_pages(ent);
     for (unsigned int i = 0; i < ent->cache_page_count; i++) {
-        if (ent->cache_pages[i]) {
-            pmm_free_frame(ent->cache_pages[i]);
-            ent->cache_pages[i] = 0;
+        if (cache_pages && cache_pages[i]) {
+            pmm_free_frame(cache_pages[i]);
+            cache_pages[i] = 0;
         }
     }
     ent->cache_page_count = 0;
+    if (ent->cache_pages_frame) {
+        pmm_free_frame(ent->cache_pages_frame);
+        ent->cache_pages_frame = 0;
+    }
 }
 
 static int vfs_file_ensure_capacity(fd_entry_t* ent, unsigned int bytes) {
     unsigned int needed_pages = (bytes + 4095u) / 4096u;
+    if (needed_pages > PROCESS_FD_CACHE_PAGES) {
+        return 0;
+    }
+    if (needed_pages > 0 && !vfs_file_ensure_page_table(ent)) {
+        return 0;
+    }
+    u32* cache_pages = vfs_file_cache_pages(ent);
     while (ent->cache_page_count < needed_pages) {
-        if (ent->cache_page_count >= PROCESS_FD_CACHE_PAGES) {
-            return 0;
-        }
         u32 frame = pmm_alloc_frame();
         if (!frame) {
             return 0;
         }
         k_memset((void*)frame, 0, 4096u);
-        ent->cache_pages[ent->cache_page_count++] = frame;
+        cache_pages[ent->cache_page_count++] = frame;
     }
     return 1;
 }
@@ -49,6 +78,10 @@ static int vfs_file_load_cache(fd_entry_t* ent) {
     if (loaded_size != ent->size) return 0;
 
     u32 pages = (ent->size + 4095u) / 4096u;
+    if (!vfs_file_ensure_page_table(ent)) {
+        return 0;
+    }
+    u32* cache_pages = vfs_file_cache_pages(ent);
     ent->cache_page_count = 0;
     for (u32 i = 0; i < pages; i++) {
         u32 frame = pmm_alloc_frame();
@@ -56,14 +89,14 @@ static int vfs_file_load_cache(fd_entry_t* ent) {
             vfs_file_cache_free(ent);
             return 0;
         }
-        ent->cache_pages[i] = frame;
+        cache_pages[i] = frame;
         ent->cache_page_count++;
     }
 
     for (u32 i = 0; i < pages; i++) {
         u32 remaining = ent->size - (i * 4096u);
         u32 chunk = remaining < 4096u ? remaining : 4096u;
-        u8* dst = (u8*)ent->cache_pages[i];
+        u8* dst = (u8*)cache_pages[i];
         const u8* src = data + (i * 4096u);
         for (u32 j = 0; j < chunk; j++) {
             dst[j] = src[j];
@@ -91,7 +124,11 @@ static int vfs_file_read(fd_entry_t* ent, char* buf, unsigned int len) {
     for (u32 i = 0; i < to_copy; i++) {
         u32 page_idx = (src_off + i) / 4096u;
         u32 page_off = (src_off + i) % 4096u;
-        const u8* src = (const u8*)ent->cache_pages[page_idx];
+        u32* cache_pages = vfs_file_cache_pages(ent);
+        if (!cache_pages || page_idx >= ent->cache_page_count || !cache_pages[page_idx]) {
+            return -EIO;
+        }
+        const u8* src = (const u8*)cache_pages[page_idx];
         buf[i] = (char)src[page_off];
     }
 
@@ -109,12 +146,14 @@ static int vfs_file_write(fd_entry_t* ent, const char* buf, unsigned int len) {
     unsigned int end = ent->offset + len;
     if (end < ent->offset) return -EFBIG;
     if (!vfs_file_ensure_capacity(ent, end)) return -EFBIG;
+    u32* cache_pages = vfs_file_cache_pages(ent);
+    if (!cache_pages) return -EFBIG;
 
     for (unsigned int i = 0; i < len; i++) {
         unsigned int pos = ent->offset + i;
         unsigned int page_idx = pos / 4096u;
         unsigned int page_off = pos % 4096u;
-        u8* dst = (u8*)ent->cache_pages[page_idx];
+        u8* dst = (u8*)cache_pages[page_idx];
         dst[page_off] = (u8)buf[i];
     }
 
@@ -124,6 +163,26 @@ static int vfs_file_write(fd_entry_t* ent, const char* buf, unsigned int len) {
     }
     ent->dirty = 1;
     return (int)len;
+}
+
+static int vfs_page_source_read(void* ctx, u32 offset, u8* out, u32 len) {
+    vfs_page_source_t* source = (vfs_page_source_t*)ctx;
+    fd_entry_t* ent = source ? source->ent : 0;
+
+    if (!ent || !out) return 0;
+    if (offset > ent->size || len > ent->size - offset) return 0;
+
+    for (u32 i = 0; i < len; i++) {
+        u32 pos = offset + i;
+        u32 page_idx = pos / 4096u;
+        u32 page_off = pos % 4096u;
+        u32* cache_pages = vfs_file_cache_pages(ent);
+        if (!cache_pages || page_idx >= ent->cache_page_count || !cache_pages[page_idx]) {
+            return 0;
+        }
+        out[i] = ((u8*)cache_pages[page_idx])[page_off];
+    }
+    return 1;
 }
 
 static int vfs_file_seek(fd_entry_t* ent, int offset, int whence) {
@@ -172,13 +231,10 @@ static int vfs_file_flush(fd_entry_t* ent) {
         return 0;
     }
 
-    for (u32 i = 0; i < ent->size; i++) {
-        u32 page_idx = i / 4096u;
-        u32 page_off = i % 4096u;
-        s_write_flush_buf[i] = ((u8*)ent->cache_pages[page_idx])[page_off];
-    }
+    vfs_page_source_t page_source = { ent };
+    fat16_data_source_t source = { &page_source, vfs_page_source_read };
 
-    if (!fat16_write_path(ent->name, s_write_flush_buf, ent->size)) {
+    if (!fat16_write_path_from_source(ent->name, &source, ent->size)) {
         return 0;
     }
     ent->dirty = 0;

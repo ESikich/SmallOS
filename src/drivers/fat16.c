@@ -65,6 +65,8 @@ static u8 s_fat_buf[FAT_SECTORS * SECTOR_SIZE] __attribute__((aligned(2)));
 static u8 s_root_buf[ROOT_DIR_SECTORS * SECTOR_SIZE] __attribute__((aligned(2)));
 static u8 s_dir_buf[CLUSTER_BYTES] __attribute__((aligned(2)));
 static u8 s_dir_buf2[CLUSTER_BYTES] __attribute__((aligned(2)));
+static u32 s_write_chain[FAT16_MAX_FILE_CLUSTERS];
+static u32 s_old_write_chain[FAT16_MAX_FILE_CLUSTERS];
 
 /*
  * ELF load buffer — reused across fat16_load() calls.
@@ -83,6 +85,10 @@ typedef struct {
     u16 start_cluster;
     u32 size;
 } dir_ctx_t;
+
+typedef struct {
+    const u8* data;
+} mem_source_t;
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                              */
@@ -1238,17 +1244,38 @@ static int find_free_chain(const u16* fat, u32 clusters_needed, u32* chain) {
     return found == clusters_needed;
 }
 
-static int write_data_clusters(const u32* chain, u32 clusters, const u8* data, u32 size) {
+static int mem_source_read(void* ctx, u32 offset, u8* out, u32 len) {
+    mem_source_t* mem = (mem_source_t*)ctx;
+    if (!mem || (!mem->data && len > 0) || !out) {
+        return 0;
+    }
+    if (len > 0) {
+        k_memcpy(out, mem->data + offset, len);
+    }
+    return 1;
+}
+
+static int write_data_clusters(const u32* chain,
+                               u32 clusters,
+                               const fat16_data_source_t* source,
+                               u32 size) {
     u8 sector[SECTOR_SIZE];
     u32 offset = 0;
     u32 remaining = size;
+
+    if (!source || !source->read) {
+        return 0;
+    }
 
     for (u32 i = 0; i < clusters; i++) {
         for (u32 s = 0; s < SECTORS_PER_CLUSTER; s++) {
             k_memset(sector, 0, SECTOR_SIZE);
             u32 chunk = remaining < SECTOR_SIZE ? remaining : SECTOR_SIZE;
             if (chunk > 0) {
-                k_memcpy(sector, data + offset, chunk);
+                if (!source->read(source->ctx, offset, sector, chunk)) {
+                    terminal_puts("fat16: data source read error\n");
+                    return 0;
+                }
             }
 
             if (!ata_write_sectors(abs_lba(cluster_to_rel_sector(chain[i]) + s), 1, sector)) {
@@ -1357,8 +1384,14 @@ static int resolve_write_target(const char* path,
     return 1;
 }
 
-static int write_file_to_parent(const dir_ctx_t* parent, const char* leaf, const u8* data, u32 size) {
+static int write_file_to_parent(const dir_ctx_t* parent,
+                                const char* leaf,
+                                const fat16_data_source_t* source,
+                                u32 size) {
     if (!parent || !leaf || leaf[0] == '\0') {
+        return 0;
+    }
+    if (size > 0 && (!source || !source->read)) {
         return 0;
     }
 
@@ -1387,7 +1420,6 @@ static int write_file_to_parent(const dir_ctx_t* parent, const char* leaf, const
     int existing_entry = -1;
     int free_entry = -1;
     u16 old_start_cluster = 0;
-    u32 old_chain[FAT16_MAX_FILE_CLUSTERS];
     u32 old_clusters = 0;
 
     for (u32 e = 0; e < parent_size / 32u; e++) {
@@ -1440,7 +1472,7 @@ static int write_file_to_parent(const dir_ctx_t* parent, const char* leaf, const
         while (cluster >= FIRST_CLUSTER &&
                cluster < FAT16_EOC_MIN &&
                old_clusters < FAT16_MAX_FILE_CLUSTERS) {
-            old_chain[old_clusters++] = cluster;
+            s_old_write_chain[old_clusters++] = cluster;
             u16 next = fat[cluster];
             fat[cluster] = 0;
             if (next >= FAT16_EOC_MIN) {
@@ -1450,34 +1482,33 @@ static int write_file_to_parent(const dir_ctx_t* parent, const char* leaf, const
         }
     }
 
-    u32 chain[FAT16_MAX_FILE_CLUSTERS];
-    if (clusters_needed > 0 && !find_free_chain(fat, clusters_needed, chain)) {
+    if (clusters_needed > 0 && !find_free_chain(fat, clusters_needed, s_write_chain)) {
         terminal_puts("fat16: filesystem full\n");
 
         if (old_clusters > 0) {
             for (u32 i = 0; i < old_clusters; i++) {
-                u16 next = (i + 1 < old_clusters) ? (u16)old_chain[i + 1] : FAT16_EOC_MIN;
-                fat[old_chain[i]] = next;
+                u16 next = (i + 1 < old_clusters) ? (u16)s_old_write_chain[i + 1] : FAT16_EOC_MIN;
+                fat[s_old_write_chain[i]] = next;
             }
         }
 
         return 0;
     }
 
-    if (clusters_needed > 0 && !write_data_clusters(chain, clusters_needed, data, size)) {
+    if (clusters_needed > 0 && !write_data_clusters(s_write_chain, clusters_needed, source, size)) {
         return 0;
     }
 
     if (clusters_needed > 0) {
         for (u32 i = 0; i < clusters_needed; i++) {
-            u16 next = (i + 1 < clusters_needed) ? (u16)chain[i + 1] : FAT16_EOC_MIN;
-            fat[chain[i]] = next;
+            u16 next = (i + 1 < clusters_needed) ? (u16)s_write_chain[i + 1] : FAT16_EOC_MIN;
+            fat[s_write_chain[i]] = next;
         }
     }
 
     u8* entry = parent_buf + (u32)((existing_entry >= 0) ? existing_entry : free_entry) * 32u;
     write_dirent(entry, name83,
-                 clusters_needed > 0 ? (u16)chain[0] : 0,
+                 clusters_needed > 0 ? (u16)s_write_chain[0] : 0,
                  size);
 
     if (parent->is_root) {
@@ -1755,12 +1786,20 @@ int fat16_write(const char* name, const u8* data, u32 size) {
 }
 
 int fat16_write_path(const char* path, const u8* data, u32 size) {
+    mem_source_t mem = { data };
+    fat16_data_source_t source = { &mem, mem_source_read };
+    return fat16_write_path_from_source(path, &source, size);
+}
+
+int fat16_write_path_from_source(const char* path,
+                                 const fat16_data_source_t* source,
+                                 u32 size) {
     if (!s_initialised) {
         terminal_puts("fat16: not initialised\n");
         return 0;
     }
 
-    if (!path || (!data && size > 0)) {
+    if (!path || (size > 0 && (!source || !source->read))) {
         return 0;
     }
 
@@ -1777,7 +1816,7 @@ int fat16_write_path(const char* path, const u8* data, u32 size) {
         return 0;
     }
 
-    return write_file_to_parent(&create.parent, create.leaf, data, size);
+    return write_file_to_parent(&create.parent, create.leaf, source, size);
 }
 
 int fat16_copy(const char* src, const char* dst) {
@@ -1825,7 +1864,9 @@ int fat16_copy(const char* src, const char* dst) {
         return 0;
     }
 
-    return write_file_to_parent(&target_parent, target_leaf, data, file_size);
+    mem_source_t mem = { data };
+    fat16_data_source_t source = { &mem, mem_source_read };
+    return write_file_to_parent(&target_parent, target_leaf, &source, file_size);
 }
 
 int fat16_move(const char* src, const char* dst) {
@@ -1959,7 +2000,9 @@ int fat16_move(const char* src, const char* dst) {
             return 0;
         }
         write_u16_le(cluster_buf + 32u, DIR_FIRST_CLUSTER, parent_cluster);
-        if (!write_data_clusters((const u32[]){ read_u16_le(src_entry, DIR_FIRST_CLUSTER) }, 1, cluster_buf, CLUSTER_BYTES)) {
+        mem_source_t mem = { cluster_buf };
+        fat16_data_source_t source = { &mem, mem_source_read };
+        if (!write_data_clusters((const u32[]){ read_u16_le(src_entry, DIR_FIRST_CLUSTER) }, 1, &source, CLUSTER_BYTES)) {
             return 0;
         }
     }
@@ -2161,7 +2204,9 @@ int fat16_mkdir(const char* path) {
                     create.parent.size,
                     1);
 
-    if (!write_data_clusters(chain, 1, cluster_buf, CLUSTER_BYTES)) {
+    mem_source_t mem = { cluster_buf };
+    fat16_data_source_t source = { &mem, mem_source_read };
+    if (!write_data_clusters(chain, 1, &source, CLUSTER_BYTES)) {
         return 0;
     }
 

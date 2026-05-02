@@ -188,7 +188,8 @@ This is the preferred descriptor-open primitive for POSIX `open()` and stdio
 create, and append opens without forcing every write-capable path to truncate.
 Writable file handles use PMM-backed cache pages and flush dirty data on
 `close()`. Existing content is loaded into that cache before partial writes or
-append writes so unwritten bytes are preserved.
+append writes so unwritten bytes are preserved. Flush writes stream from those
+cache pages into FAT16 sector by sector.
 
 ---
 

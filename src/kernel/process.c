@@ -11,6 +11,8 @@
 #include "uapi_errno.h"
 #include "vfs.h"
 
+typedef char process_t_must_fit_in_one_frame[(sizeof(process_t) <= 4096u) ? 1 : -1];
+
 /* ------------------------------------------------------------------ */
 /* Internal helpers                                                   */
 /* ------------------------------------------------------------------ */

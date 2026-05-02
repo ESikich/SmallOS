@@ -194,7 +194,9 @@ pmm_alloc_frame          0x200000 – 0x7FFFFF   reclaimable on process exit
 
 ### FAT16 load buffer rule
 
-`fat16_load()` uses a static BSS buffer (`s_load_buf[256 KB]`), not `kmalloc`. Do not change this to `kmalloc` — each `runelf` call would permanently consume heap.
+`fat16_load()` uses one permanent kernel-heap buffer allocated during
+`fat16_init()` (`s_load_buf[1 MB]`). Do not allocate a fresh load buffer per
+call; each `runelf` call would permanently consume heap.
 
 **Verify after changes with `meminfo`:**
 

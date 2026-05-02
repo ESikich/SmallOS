@@ -86,13 +86,16 @@ The user allocator is simple and deterministic rather than fragmentation-optimiz
 
 # FAT16 Load Buffer
 
-The FAT16 driver keeps a static load buffer in BSS:
+The FAT16 driver keeps one permanent load buffer allocated during
+`fat16_init()`:
 
 ```text
-s_load_buf[256 KB]
+s_load_buf[1 MB]
 ```
 
-It is reused for file loads and ELF loading. Do not convert it to `kmalloc`; doing so would leak heap across `runelf` invocations.
+It is reused for file loads and ELF loading. It is allocated once from the
+kernel bump heap, not per `runelf`, so repeated program launches do not keep
+consuming heap.
 
 The loader copies ELF segment data out of this buffer into PMM-backed frames before returning, so the buffer can be reused immediately after `elf_run_named()`.
 

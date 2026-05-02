@@ -21,10 +21,17 @@ typedef unsigned char  u8;
  *   Sectors 68–99     Root directory (512 entries × 32 bytes)
  *   Sectors 100+      Data region  (cluster 2 = sectors 100–103, etc.)
  *
- * Maximum file size accepted: 256 KB (enough for any ELF in this system).
+ * Maximum file size accepted by the whole-file read and write helpers.
  */
 
-#define FAT16_MAX_FILE_BYTES  (256u * 1024u)
+#define FAT16_MAX_FILE_BYTES  (1024u * 1024u)
+
+typedef int (*fat16_read_source_fn)(void* ctx, u32 offset, u8* out, u32 len);
+
+typedef struct {
+    void* ctx;
+    fat16_read_source_fn read;
+} fat16_data_source_t;
 
 /*
  * fat16_init()
@@ -107,6 +114,18 @@ int fat16_write(const char* name, const u8* data, u32 size);
  * Returns 1 on success, 0 on failure.
  */
 int fat16_write_path(const char* path, const u8* data, u32 size);
+
+/*
+ * fat16_write_path_from_source(path, source, size)
+ *
+ * Create or overwrite a file at a full path, streaming each sector from
+ * the supplied source callback instead of requiring one contiguous buffer.
+ *
+ * Returns 1 on success, 0 on failure.
+ */
+int fat16_write_path_from_source(const char* path,
+                                 const fat16_data_source_t* source,
+                                 u32 size);
 
 /*
  * fat16_mkdir(path)

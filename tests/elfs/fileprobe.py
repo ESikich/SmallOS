@@ -16,6 +16,7 @@ CASES = [
             "truncate reopen: PASS",
             "open append: PASS",
             "open rdwr: PASS",
+            "large write/readback: PASS",
             "fileprobe PASS",
         ],
     )

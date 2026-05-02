@@ -24,6 +24,23 @@ static int read_exact_file(const char* path, unsigned char* buf, unsigned int le
     return r;
 }
 
+static unsigned char large_pattern(unsigned int pos) {
+    return (unsigned char)((pos * 37u + 11u) & 0xFFu);
+}
+
+static void fill_large_chunk(unsigned char* buf, unsigned int base, unsigned int len) {
+    for (unsigned int i = 0; i < len; i++) {
+        buf[i] = large_pattern(base + i);
+    }
+}
+
+static int verify_large_chunk(const unsigned char* buf, unsigned int base, unsigned int len) {
+    for (unsigned int i = 0; i < len; i++) {
+        if (buf[i] != large_pattern(base + i)) return 0;
+    }
+    return 1;
+}
+
 void _start(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -172,6 +189,70 @@ void _start(int argc, char** argv) {
         }
 
         (void)u_file_delete("openmode.tmp");
+    }
+
+    {
+        enum {
+            LARGE_SIZE = 384u * 1024u,
+            LARGE_CHUNK = 4096u
+        };
+        unsigned char* chunk = (unsigned char*)malloc(LARGE_CHUNK);
+        int fd;
+        unsigned int pos;
+        int large_ok = 1;
+
+        if (!chunk) {
+            u_puts("large write/readback: FAIL\n");
+            ok = 0;
+        } else {
+            fd = open("large.tmp", O_WRONLY | O_CREAT | O_TRUNC);
+            if (fd < 0) {
+                large_ok = 0;
+            } else {
+                for (pos = 0; pos < LARGE_SIZE; pos += LARGE_CHUNK) {
+                    fill_large_chunk(chunk, pos, LARGE_CHUNK);
+                    if (write(fd, chunk, LARGE_CHUNK) != (int)LARGE_CHUNK) {
+                        large_ok = 0;
+                        break;
+                    }
+                }
+                if (close(fd) < 0) {
+                    large_ok = 0;
+                }
+            }
+
+            if (large_ok && (u_file_stat("large.tmp", &size, &is_dir) < 0
+                             || size != LARGE_SIZE
+                             || is_dir != 0)) {
+                large_ok = 0;
+            }
+
+            if (large_ok) {
+                fd = open("large.tmp", O_RDONLY);
+                if (fd < 0) {
+                    large_ok = 0;
+                } else {
+                    for (pos = 0; pos < LARGE_SIZE; pos += LARGE_CHUNK) {
+                        int r = read(fd, chunk, LARGE_CHUNK);
+                        if (r != (int)LARGE_CHUNK
+                            || !verify_large_chunk(chunk, pos, LARGE_CHUNK)) {
+                            large_ok = 0;
+                            break;
+                        }
+                    }
+                    close(fd);
+                }
+            }
+
+            if (large_ok) {
+                u_puts("large write/readback: PASS\n");
+            } else {
+                u_puts("large write/readback: FAIL\n");
+                ok = 0;
+            }
+            free(chunk);
+        }
+        (void)u_file_delete("large.tmp");
     }
 
     if (ok) {
