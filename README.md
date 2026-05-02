@@ -22,7 +22,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Page-fault handler that logs `CR2`, the error code, and user-vs-kernel context; user faults terminate only the offending process
 * COM1 serial driver — mirrors all terminal output to QEMU's serial backend for headless testing
 * VGA text-mode display and terminal abstraction
-* PCI bus scan at boot — groundwork for future NIC support
+* PCI bus scan at boot — discovery layer for the e1000 NIC path
 * e1000 NIC bring-up — PCI discovery, MMIO mapping, and DMA ring setup
 * Shell with line editing, history, and command parsing
 * Shell input processing decoupled from IRQ1 via a small event queue
@@ -35,19 +35,19 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Per-process page directories — address space isolation; PD itself freed on exit
 * Ring 3 user mode — hardware-enforced privilege separation
 * Per-process kernel stacks — dedicated PMM frame per process; TSS ESP0 set from it; freed on exit
-* Syscall layer via `int 0x80` (DPL=3 gate): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`, `SYS_READ`, `SYS_YIELD`, `SYS_SLEEP`, `SYS_EXEC`, `SYS_WRITEFILE`, `SYS_WRITEFILE_PATH`, plus fd-backed console/file helpers (`SYS_OPEN_WRITE`, `SYS_WRITEFD`, `SYS_LSEEK`, `SYS_UNLINK`, `SYS_RENAME`, `SYS_STAT`)
+* Syscall layer via `int 0x80` (DPL=3 gate): console, process, heap, cwd, file, directory, and socket calls shared by the kernel and user runtime headers
 * Small VFS boundary for FAT16-backed file handles and path operations; `process.c` owns fd lifetime while `vfs.c` owns file behavior
-* Socket ABI via `int 0x80`: `SYS_SOCKET`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_CONNECT`, `SYS_SEND`, `SYS_RECV`, and `SYS_POLL`
+* Socket ABI via `int 0x80`: `SYS_SOCKET`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_CONNECT`, `SYS_SEND`, `SYS_RECV`, `SYS_POLL`, `SYS_SETSOCKOPT`, and `SYS_GETSOCKNAME`
 * `sys_exit()` is scheduler-owned: it switches to the kernel page directory, marks the current task `PROCESS_STATE_ZOMBIE`, and switches to the next runnable task
 * Shell now runs as an explicit kernel task scheduled by `scheduler.c`
 * **Preemptive round-robin scheduler** — PIT timer IRQ at `SMALLOS_TIMER_HZ`, with a named 20 ms scheduler quantum
 * **`SYS_YIELD`** — voluntary preemption; process surrenders its remaining quantum immediately
-**`SYS_EXEC`** — user process asynchronously spawns a named child ELF and returns `0` on success / `-1` on failure
+* **`SYS_EXEC`** — user process asynchronously spawns a named child ELF and returns `0` on success or a negative errno on failure
 * **`SYS_WRITEFILE`** — user process creates or overwrites a root-directory FAT16 file in one shot
 * **`SYS_WRITEFILE_PATH`** — user process creates or overwrites a FAT16 file at any nested path
 * **ATA PIO driver** — polls the primary IDE channel (`0x1F0`) to read 512-byte sectors from disk in 32-bit protected mode; no DMA or IRQ required
-* **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing all user ELFs; built by `tools/mkfat16.c` with no external dependencies; readable via ATA PIO with nested directory paths, writable at runtime through the kernel VFS shim for root-directory files and nested paths
-* **TCP bring-up task** — minimal kernel-side TCP listener/echo path for end-to-end networking validation before the socket ABI is exposed to user space
+* **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing `/bin`, `apps/`, `tools/`, and sample sources; built by `tools/mkfat16.c` with no external dependencies; readable via ATA PIO with nested directory paths, writable at runtime through the kernel VFS shim for root-directory files and nested paths
+* **TCP service task** — kernel task that drains e1000 RX, dispatches ARP/IPv4/TCP frames, handles retransmit/idle timers, and wakes socket waiters
 * **Guest TCP apps** — `apps/services/tcpecho.elf` proves the socket path end to end, `apps/services/sockeof.elf` pins down peer-close/read EOF semantics, and `apps/services/ftpd.elf` runs the vendored FTP session logic as a normal user-space ELF
 
 ---
@@ -244,9 +244,14 @@ Seeded FAT16 layout:
 - `apps/tests/statprobe` - exercise SYS_STAT and path probing
 - `apps/tests/fileprobe` - exercise small file wrapper helpers
 - `apps/tests/cwdprobe` - exercise process cwd and relative path syscalls
+- `apps/tests/stdioprobe` - exercise stdio EOF/error state and fflush
+- `apps/tests/dirprobe` - exercise opendir/readdir/closedir
+- `apps/tests/errnoprobe` - exercise raw syscall errors and POSIX errno wrappers
 - `apps/tests/sleep_test` - exercise SYS_SLEEP semantics
 - `apps/tests/ptrguard` - exercise syscall pointer validation
+- `apps/tests/spinwkr` - helper used by the preemption regression
 - `apps/tests/preempt_test` - prove timer-driven preemption between runnable tasks
+- `apps/tests/crtprobe` - verify `main(argc, argv)` through `user_crt0`
 - `apps/tests/fault` - fault probe (ud/gp/de/br/pf)
 - `tools/tcc.elf` in `tools/` - SmallOS-hosted TinyCC compiler binary
 - `samples/tccmath.c`, `samples/tccagg.c`, `samples/tcctree.c`, `samples/tccmini.c` at the image root for the guest compiler demo
@@ -280,6 +285,8 @@ kernel_main()
  → sched_init()          initialise runnable task table
  → ata_init()            initialise ATA primary channel
  → pci_init()            scan PCI devices and log discovered network controllers
+ → e1000_init()          bind the QEMU 82540EM NIC and set up DMA rings
+ → tcp_init()            start the TCP/network service kernel task
  → fat16_init()          read BPB, validate FAT16 volume
  → create shell task     explicit kernel task with its own stack
  → process_start_reaper() create and enqueue the zombie reaper task
@@ -330,7 +337,7 @@ The resulting kernel and FAT16 spans are written into the MBR partition table in
 ## Build Tools
 
 ```text
-mkfat16   builds the FAT16 volume containing user ELFs
+mkfat16   builds the seeded FAT16 volume from `[dest=]source` entries
 mkimage   assembles the final bootable disk image
 ```
 

@@ -2,7 +2,7 @@
  * mkfat16.c — SmallOS FAT16 image builder
  *
  * Usage:
- *   mkfat16 output.img file1.elf file2.elf ...
+ *   mkfat16 output.img [dest=]source ...
  *
  * Produces a raw FAT16 disk image (no partition table — the image IS
  * the FAT16 volume).  The image is a fixed 16 MB (32768 sectors).
@@ -16,8 +16,10 @@
  *   Sectors 68–99     Root directory (32 sectors = 512 entries × 32 bytes)
  *   Sectors 100+      Data region  (cluster 2 = sectors 100–103, etc.)
  *
- * Files are stored contiguously starting at cluster 2, four sectors
- * (2048 bytes) per cluster.  Filenames are stored in 8.3 format.
+ * Entries are stored as a small directory tree.  If a destination path is
+ * supplied, intermediate directories are created in the image; otherwise the
+ * source basename is placed at the FAT16 root.  Filenames are stored in 8.3
+ * format.
  *
  * Build:
  *   gcc -o build/tools/mkfat16 tools/mkfat16.c

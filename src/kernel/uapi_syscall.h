@@ -60,8 +60,8 @@ enum {
     /*
      * Socket ABI.
      *
-     * The first cut is intentionally tiny: stream sockets only, IPv4 only,
-     * and a minimal poll surface for blocking server loops.
+     * Intentionally tiny: stream sockets only, IPv4 only, and a minimal poll
+     * surface for blocking server loops.
      */
     SYS_SOCKET     = 23,
     SYS_BIND       = 24,

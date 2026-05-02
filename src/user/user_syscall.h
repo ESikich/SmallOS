@@ -114,8 +114,8 @@ static inline int sys_sleep(uint32_t ticks) {
  * name and argv point into the caller's user address space — the kernel
  * reads them while the caller's CR3 is still active.
  *
- * Returns 0 on success, -1 if the program was not found or could not be
- * loaded.
+ * Returns 0 on success or a negative errno if the program was not found,
+ * could not be loaded, or failed validation.
  */
 static inline int sys_exec(const char* name, int argc, char** argv) {
     return syscall3(SYS_EXEC, (uint32_t)name, (uint32_t)argc, (uint32_t)argv);
@@ -124,11 +124,11 @@ static inline int sys_exec(const char* name, int argc, char** argv) {
 /*
  * sys_open(name)
  *
- * Open a file from the FAT16 partition by name.  The name is matched
- * case-insensitively using 8.3 rules (e.g. "readme.txt", "DATA.BIN").
+ * Open a file from the FAT16 partition by path.  Each component is matched
+ * case-insensitively using 8.3 rules (e.g. "apps/demo/hello.elf").
  *
- * Returns a file descriptor (>= 3) on success, or -1 on failure
- * (file not found, fd table full, name too long).
+ * Returns a file descriptor (>= 3) on success, or a negative errno on
+ * failure (file not found, fd table full, path too long, invalid pointer).
  */
 static inline int sys_open(const char* name) {
     return syscall1(SYS_OPEN, (uint32_t)name);
@@ -163,7 +163,8 @@ static inline int sys_chdir(const char* path) {
 /*
  * sys_close(fd)
  *
- * Close an open file descriptor.  Returns 0 on success, -1 on error.
+ * Close an open file descriptor.  Returns 0 on success or a negative errno
+ * on error.
  */
 static inline int sys_close(int fd) {
     return syscall1(SYS_CLOSE, (uint32_t)fd);
@@ -176,8 +177,8 @@ static inline int sys_close(int fd) {
  * current file position.  Advances the position by the number of bytes
  * actually read.
  *
- * Returns the number of bytes read (0 at end-of-file), or -1 on error
- * (bad fd, invalid buffer, read failure).
+ * Returns the number of bytes read (0 at end-of-file), or a negative errno
+ * on error (bad fd, invalid buffer, read failure).
  */
 static inline int sys_fread(int fd, char* buf, uint32_t len) {
     return syscall3(SYS_FREAD, (uint32_t)fd, (uint32_t)buf, len);
@@ -186,7 +187,8 @@ static inline int sys_fread(int fd, char* buf, uint32_t len) {
 /*
  * sys_writefd(fd, buf, len)
  *
- * Write bytes to an open writable file descriptor.
+ * Write bytes to an open writable file descriptor.  Returns the byte count
+ * or a negative errno.
  */
 static inline int sys_writefd(int fd, const char* buf, uint32_t len) {
     return syscall3(SYS_WRITEFD, (uint32_t)fd, (uint32_t)buf, len);
@@ -195,7 +197,8 @@ static inline int sys_writefd(int fd, const char* buf, uint32_t len) {
 /*
  * sys_lseek(fd, offset, whence)
  *
- * Reposition an open file descriptor.
+ * Reposition an open file descriptor.  Returns the new offset or a negative
+ * errno.
  */
 static inline int sys_lseek(int fd, int offset, int whence) {
     return syscall3(SYS_LSEEK, (uint32_t)fd, (uint32_t)offset, (uint32_t)whence);

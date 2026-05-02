@@ -4,12 +4,12 @@
 #include "../kernel/process.h"
 
 /*
- * Minimal kernel TCP bring-up.
+ * Minimal kernel TCP service.
  *
- * The first cut is a single passive listener that accepts one connection
- * at a time and echoes received payload back to the peer.  It runs as a
- * background kernel task so the rest of the system can keep booting and
- * the existing test suite stays unchanged.
+ * A background kernel task drains NIC receive work, dispatches TCP frames,
+ * manages a tiny set of passive stream slots, handles retransmit/idle timers,
+ * and wakes user-space socket waiters.  It is intentionally narrow but now
+ * backs normal guest services such as tcpecho, sockeof, and ftpd.
  */
 
 void tcp_init(void);

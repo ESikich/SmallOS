@@ -385,8 +385,8 @@ static int sys_read_impl(char* buf, unsigned int len) {
  *   3. The checks happen here, while the caller's CR3 is still active,
  *      so invalid pointers fail before any ELF work begins.
  *
- * Returns 0 on success, -1 if any validation fails or the program was
- * not found.
+ * Returns 0 on success or a negative errno if validation fails or the
+ * program was not found.
  */
 static int sys_exec_impl(const char* name, int argc, char** argv) {
     char kname[EXEC_NAME_MAX];
@@ -573,7 +573,7 @@ static unsigned int sys_brk_impl(unsigned int new_brk) {
  * allocate the lowest free fd slot (>= PROCESS_FD_FIRST)
  * in the current process's fd table, and record name, size, and offset=0.
  *
- * Returns the fd (>= 3) on success, -1 on any failure.
+ * Returns the fd (>= 3) on success or a negative errno on failure.
  */
 static int sys_open_impl(const char* name) {
     char kname[PROCESS_FD_NAME_MAX];
@@ -594,7 +594,8 @@ static int sys_open_impl(const char* name) {
 /*
  * sys_close_impl(fd)
  *
- * Mark the fd slot as free.  Returns 0 on success, -1 on bad fd.
+ * Mark the fd slot as free.  Returns 0 on success or a negative errno
+ * on bad fd/current process state.
  */
 static int sys_close_impl(int fd) {
     process_t* proc = (process_t*)sched_current();

@@ -77,28 +77,28 @@ void fat16_ls_path(const char* path);
 void fat16_ls_path_filtered(const char* path, const char* pattern);
 
 /*
- * fat16_stat(name, out_size)
+ * fat16_stat(path, out_size)
  *
- * Check whether a file exists in the root directory (case-insensitive 8.3)
- * and return its size.  Does not load the file data.
+ * Check whether a file exists at the given path (case-insensitive 8.3 per
+ * component) and return its size.  Does not load the file data.
  *
  * Returns 1 if found (and sets *out_size), 0 if not found or on error.
  * Used by SYS_OPEN to validate a file before recording it in the fd table.
  */
-int fat16_stat(const char* name, u32* out_size);
+int fat16_stat(const char* path, u32* out_size);
 
 /*
- * fat16_load(name, out_size)
+ * fat16_load(path, out_size)
  *
- * Find a file by name in the root directory (case-insensitive 8.3),
- * load its entire contents into a static kernel buffer, and return a
- * pointer to that buffer.  Sets *out_size to the file size in bytes.
+ * Find a file by path (case-insensitive 8.3 per component), load its entire
+ * contents into a static kernel buffer, and return a pointer to that buffer.
+ * Sets *out_size to the file size in bytes.
  *
  * Returns 0 on failure (not found, too large, ATA error).
  * The caller must not free the returned buffer; it is reused across
  * fat16_load() calls.
  */
-const u8* fat16_load(const char* name, u32* out_size);
+const u8* fat16_load(const char* path, u32* out_size);
 
 /*
  * fat16_read_path_to_sink(name, sink, out_size)

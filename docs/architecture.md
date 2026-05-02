@@ -472,7 +472,10 @@ PMM-frame access API.
 
 # FAT16 Partition
 
-A 16 MB FAT16 volume is appended to the disk image directly after the kernel. It contains all user ELFs in the root directory as 8.3-format filenames.
+A 16 MB FAT16 volume is appended to the disk image directly after the kernel.
+The seeded tree uses normal FAT16 8.3 directory entries under `/bin`,
+`/apps/demo`, `/apps/tests`, `/apps/services`, and `/tools`, plus root-level
+sample C sources used by the guest TinyCC smoke tests.
 
 Built by `tools/mkfat16.c` — a host C tool with no external dependencies (`mkfs.vfat` and `mtools` are not required). The tool writes the BPB, both FAT copies, the root directory, and all file data directly.
 
@@ -598,7 +601,8 @@ LBA N+1 ...               fat16.img
 
 ```text
 build/gen/loader2.gen.asm    stack-top values injected
-build/bin/fat16.img          16 MB FAT16 image built by build/tools/mkfat16
+build/bin/fat16.seed.img     16 MB seeded FAT16 image built by build/tools/mkfat16
+.state/fat16.img             mutable FAT16 working copy used by normal runs
 build/tools/mkfat16          host tool for FAT volume construction
 build/tools/mkimage          host tool for final disk image assembly
 build/obj/setjmp.o           assembled from src/kernel/setjmp.asm
@@ -652,9 +656,9 @@ SYS_EXEC — async ELF spawn from the current foreground context; the child runs
 SYS_GETCWD / SYS_CHDIR — per-process cwd state; relative user paths are normalized before VFS or ELF loading
 SYS_OPEN / SYS_OPEN_MODE / SYS_CLOSE / SYS_FREAD — per-process handle table backed by readable/writable handle ops; fd 0/1/2 are console handles, user-opened files start at fd 3+, and VFS-backed file reads cache FAT16 data in PMM-backed pages until close
 SYS_BRK / user heap — per-process heap break managed in user space through `SYS_BRK` and a shared user allocator
-SYS_OPEN_WRITE / SYS_WRITEFD / SYS_LSEEK / SYS_UNLINK / SYS_RENAME / SYS_STAT — VFS-backed writable file handles plus path metadata and file management for compiler-style tools; dirty writable handles flush on close, append/read-write modes preserve existing bytes, and stdout/stderr writes also use fd-backed console handles
-SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_SEND / SYS_RECV / SYS_POLL — socket ABI for passive TCP servers and FTP userland; socket readiness plugs into the same handle poll seam
-TCP bring-up task — minimal kernel TCP listener/echo path used to prove the network plumbing before the socket ABI landed
+SYS_OPEN_WRITE / SYS_WRITEFD / SYS_LSEEK / SYS_FSYNC / SYS_UNLINK / SYS_RENAME / SYS_STAT — VFS-backed writable file handles plus path metadata and file management for compiler-style tools; dirty writable handles flush on close, append/read-write modes preserve existing bytes, and stdout/stderr writes also use fd-backed console handles
+SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_SEND / SYS_RECV / SYS_POLL / SYS_SETSOCKOPT / SYS_GETSOCKNAME — socket ABI for passive TCP servers and FTP userland; socket readiness plugs into the same handle poll seam
+TCP service task — drains NIC RX, dispatches ARP/IPv4/TCP frames, services retransmit/idle timers, and wakes socket waiters
 page-aware copy-from-user validation — syscall pointer arguments are checked against user address space [USER_CODE_BASE, USER_STACK_TOP) and mapped user pages before dereference
 preemptive round-robin scheduler — timer IRQ context switch, `SCHED_QUANTUM_MS` quantum
 ATA PIO driver — 28-bit LBA polling reads from primary IDE channel (0x1F0)

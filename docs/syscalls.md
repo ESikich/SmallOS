@@ -203,7 +203,7 @@ int sys_getcwd(char* buf, uint32_t size);
 
 Copies the calling process's current working directory into `buf` as an
 absolute display path such as `/` or `/apps/demo`. Returns `0` on success or
-`-1` if the user buffer is invalid or too small.
+a negative errno if the user buffer is invalid or too small.
 
 ---
 
@@ -245,7 +245,19 @@ int sys_lseek(int fd, int offset, int whence);
 ```
 
 Repositions a seekable handle. FAT16 file handles support this today; console
-and socket handles return `-1`.
+and socket handles return `-ENOSYS`.
+
+---
+
+### SYS_FSYNC (39)
+
+```c
+int sys_fsync(int fd);
+```
+
+Flushes a writable descriptor. Current streaming FAT16 writes are committed as
+the write calls run, so this is mostly a stdio contract hook: writable file
+streams call it from `fflush()`, and non-writable handles return success.
 
 ---
 
@@ -329,7 +341,7 @@ If `addr` and `addrlen` are supplied, the kernel writes back the peer address us
 int sys_connect(int fd, const struct sockaddr* addr, socklen_t addrlen);
 ```
 
-Currently returns `-1`. Outbound TCP connect support is not wired yet.
+Currently returns `-ENOSYS`. Outbound TCP connect support is not wired yet.
 
 ---
 
@@ -362,7 +374,67 @@ int sys_poll(struct pollfd* fds, nfds_t nfds, int timeout);
 Checks readiness by asking each handle's `poll` operation. Current handle
 support includes socket readiness, writable console descriptors, readable
 console input when a key is already buffered, and basic file readability /
-writability. `timeout` is honored in timer ticks for sleeping waits.
+writability. `timeout` follows the POSIX millisecond convention and is rounded
+up to the configured timer tick rate for sleeping waits.
+
+---
+
+### SYS_MKDIR (31)
+
+```c
+int sys_mkdir(const char* path, uint32_t mode);
+```
+
+Creates a FAT16 directory at `path`. `mode` is accepted for POSIX-shaped
+callers but ignored because SmallOS does not model Unix permission bits.
+
+---
+
+### SYS_RMDIR (32)
+
+```c
+int sys_rmdir(const char* path);
+```
+
+Removes an existing empty FAT16 directory. Removing `/` is rejected by the
+filesystem driver.
+
+---
+
+### SYS_DIRLIST (33)
+
+```c
+int sys_dirlist(const char* path, uint32_t index, struct uapi_dirent* out);
+```
+
+Copies the zero-based directory entry at `index` into `out` and returns `1`.
+Returns `0` when the index is past the end of the directory. The returned
+record contains `d_name`, `d_size`, and `d_is_dir`; user-space `readdir()`
+uses this syscall after `opendir()` validates the directory with `SYS_STAT`.
+
+---
+
+### SYS_SETSOCKOPT (34)
+
+```c
+int sys_setsockopt(int fd, int level, int optname);
+```
+
+Validates that `fd` is a socket and currently returns success for accepted
+options. This keeps common server code that calls `setsockopt(SO_REUSEADDR)`
+portable while the kernel TCP stack stays small.
+
+---
+
+### SYS_GETSOCKNAME (35)
+
+```c
+int sys_getsockname(int fd, struct sockaddr* addr, socklen_t* addrlen);
+```
+
+Writes back the local IPv4 socket address for a socket handle. The current
+implementation reports the socket port and a loopback-style address for
+compatibility with simple user-space service code.
 
 ---
 
@@ -372,7 +444,7 @@ writability. `timeout` is honored in timer ticks for sleeping waits.
 int sys_writefile(const char* name, const char* buf, uint32_t len);
 ```
 
-Creates or overwrites a root-directory FAT16 file in one shot. Returns `0` on success, `-1` on failure.
+Creates or overwrites a root-directory FAT16 file in one shot. Returns `0` on success or a negative errno on failure.
 
 This is the root-only persistence primitive for generated artifacts such as compiler output, assembly listings, or other build products. The kernel validates both the filename and the byte range before calling into the VFS root-write wrapper.
 
@@ -384,9 +456,31 @@ This is the root-only persistence primitive for generated artifacts such as comp
 int sys_writefile_path(const char* path, const char* buf, uint32_t len);
 ```
 
-Creates or overwrites a FAT16 file at an arbitrary path. Returns `0` on success, `-1` on failure.
+Creates or overwrites a FAT16 file at an arbitrary path. Returns `0` on success or a negative errno on failure.
 
 This is the preferred persistence primitive for build tools and compilers because it can emit directly into nested directories such as `apps/demo/` and `apps/tests/`. The kernel validates both the path and the byte range before calling into the VFS path-write wrapper.
+
+---
+
+### SYS_HALT (13)
+
+```c
+int sys_halt(void);
+```
+
+Halts the machine through the kernel system path. Used by the `/bin/halt`
+command ELF and the halt smoke test.
+
+---
+
+### SYS_REBOOT (14)
+
+```c
+int sys_reboot(void);
+```
+
+Requests a machine reboot through the kernel system path. Used by the
+`/bin/reboot` command ELF and the reboot smoke test.
 
 ---
 
@@ -396,7 +490,7 @@ This is the preferred persistence primitive for build tools and compilers becaus
 int sys_exec(const char* name, int argc, char** argv);
 ```
 
-Loads and asynchronously spawns a named ELF program through the kernel VFS layer. Returns `0` on success, `-1` if not found or load fails.
+Loads and asynchronously spawns a named ELF program through the kernel VFS layer. Returns `0` on success or a negative errno if validation, lookup, or load fails.
 
 `sys_exec_impl` copies `name` to a local kernel stack buffer before any VFS or ELF work so the loader does not depend on the caller's user pointer remaining valid. It then calls `elf_run_named()`, which creates the process, seeds its scheduler bootstrap context, enqueues it, and returns immediately.
 
@@ -408,13 +502,15 @@ Loads and asynchronously spawns a named ELF program through the kernel VFS layer
 int sys_open(const char* name);
 ```
 
-Legacy shorthand for `SYS_OPEN_MODE_READ`. Opens a file from the FAT16 root
-directory by name (case-insensitive 8.3 matching). Allocates the lowest free
+Legacy shorthand for `SYS_OPEN_MODE_READ`. Opens a FAT16 file by path
+(case-insensitive 8.3 matching per component). Allocates the lowest free
 slot in the calling process's handle table (fd ≥ 3) and records the filename,
 file size, and an initial read offset of 0. fds 0/1/2 are pre-opened console
 handles.
 
-Returns the fd (≥ 3) on success, or `-1` if the file is not found, the handle table is full (`PROCESS_FD_MAX = 8`), or the name pointer fails user-space validation.
+Returns the fd (≥ 3) on success, or a negative errno if the file is not found,
+the path names a directory, the handle table is full (`PROCESS_FD_MAX = 8`), or
+the name pointer fails user-space validation.
 
 `sys_open_impl` validates the name with page-aware user checks, copies it into a kernel buffer bounded by `PROCESS_FD_NAME_MAX` (128 bytes), then calls through the VFS stat wrapper to confirm the file exists without loading its data.
 
@@ -426,7 +522,9 @@ Returns the fd (≥ 3) on success, or `-1` if the file is not found, the handle 
 int sys_close(int fd);
 ```
 
-Closes an open handle, freeing its slot for reuse. Returns `0` on success, `-1` if the fd is out of range or not currently open.
+Closes an open handle, freeing its slot for reuse. Returns `0` on success or a
+negative errno if the fd is out of range, not currently open, or no current
+process exists.
 
 ---
 
@@ -436,7 +534,7 @@ Closes an open handle, freeing its slot for reuse. Returns `0` on success, `-1` 
 int sys_fread(int fd, char* buf, uint32_t len);
 ```
 
-Reads up to `len` bytes from an open readable handle at `fd` into `buf`. File handles read from the current file position and advance it by the number of bytes actually read. Socket handles read from the TCP receive path. fd `0` reads from the console input buffer with the same blocking behavior as `SYS_READ`. Returns the number of bytes read, `0` at end-of-file / closed socket, or `-1` on error.
+Reads up to `len` bytes from an open readable handle at `fd` into `buf`. File handles read from the current file position and advance it by the number of bytes actually read. Socket handles read from the TCP receive path. fd `0` reads from the console input buffer with the same blocking behavior as `SYS_READ`. Returns the number of bytes read, `0` at end-of-file / closed socket, or a negative errno on error.
 
 For file handles, the read op loads the file once into PMM-backed per-fd cache pages on first use, then copies the requested slice from that cache into the validated user buffer. The cache stays live until `sys_close()` or process teardown, so repeated reads from the same descriptor avoid extra ATA traffic.
 
@@ -509,14 +607,33 @@ sys_writefile(name, buf, len)
 sys_writefile_path(path, buf, len)
 sys_open(name)
 sys_open_write(name)
+sys_open_mode(name, mode)
+sys_getcwd(buf, size)
+sys_chdir(path)
 sys_close(fd)
 sys_fread(fd, buf, len)
 sys_writefd(fd, buf, len)
 sys_lseek(fd, offset, whence)
+sys_fsync(fd)
 sys_unlink(path)
 sys_rename(src, dst)
 sys_stat(path, out_size, out_is_dir)
+sys_socket(domain, type, protocol)
+sys_bind(fd, addr, addrlen)
+sys_listen(fd, backlog)
+sys_accept(fd, addr, addrlen)
+sys_connect(fd, addr, addrlen)
+sys_send(fd, buf, len)
+sys_recv(fd, buf, len)
+sys_poll(fds, nfds, timeout)
+sys_mkdir(path, mode)
+sys_rmdir(path)
+sys_dirlist(path, index, out)
+sys_setsockopt(fd, level, optname, optval, optlen)
+sys_getsockname(fd, addr, addrlen)
 sys_brk(new_brk)
+sys_halt()
+sys_reboot()
 ```
 
 `user_lib.h` higher-level wrappers:

@@ -1,6 +1,7 @@
 # Filesystem
 
-This document defines how the system stores, discovers, and reads files from disk.
+This document defines how the system stores, discovers, reads, and writes files
+on disk.
 
 The current implementation stores a **raw FAT16 volume inside an MBR-partitioned disk image**. Sector 0 contains the partition table, and the FAT16 partition starts immediately after the kernel region. The runtime resolves nested FAT16 paths for reads and directory listings, and it can also create/remove directories in place. Regular file writes now work at nested paths too, and `rm` removes files in place. `cat` prints file contents, `touch` creates or truncates files, and the shell keeps a working directory for `cd` / `pwd` and `ls`. `ls` also accepts simple `*` and `?` wildcards, while still sorting directories before files.
 The filesystem layer also exposes file metadata through `stat`, and the fd
@@ -37,7 +38,9 @@ The FAT16 start LBA is **not** compiled into the kernel. The Makefile computes i
 
 # On-Disk Layout
 
-`fat16.img` is built by `tools/mkfat16.c` as a raw 16 MB FAT16 volume.
+`build/bin/fat16.seed.img` is built by `tools/mkfat16.c` as a raw 16 MB FAT16
+volume. Normal runs copy that seed to `.state/fat16.img`, which is the mutable
+volume appended to `os-image.bin`.
 
 ## Fixed geometry
 
@@ -89,11 +92,11 @@ The image build contract is:
 2. pad it to a 512-byte boundary as `kernel_padded.bin`
 3. compute `kernel_sectors = ceil(kernel.bin / 512)`
 4. compute `fat16_lba = 5 + kernel_sectors`
-5. build `fat16.img`
+5. build `build/bin/fat16.seed.img` and refresh `.state/fat16.img` when needed
 6. assemble:
 
 ```text
-os-image.bin = boot.bin + loader2.bin + kernel_padded.bin + fat16.img
+os-image.bin = boot.bin + loader2.bin + kernel_padded.bin + .state/fat16.img
 ```
 
 ## Why kernel padding matters
@@ -195,10 +198,10 @@ The current FAT16 driver is intentionally narrow.
 - empty-file creation / truncation via `touch`
 - root-directory file creation and overwrite via `fat16_write(name, ...)`
 - nested-path file creation and overwrite via `fat16_write_path(path, ...)`
-- VFS-backed writable file handles with streaming FAT16 writes via `SYS_OPEN_WRITE`, `SYS_WRITEFD`, and `SYS_LSEEK`
+- VFS-backed writable file handles with streaming FAT16 writes via `SYS_OPEN_WRITE`, `SYS_WRITEFD`, `SYS_LSEEK`, and `SYS_FSYNC`
 - file removal and rename/move through `SYS_UNLINK` and `SYS_RENAME`
 - fd-backed console handles for stdin/stdout/stderr
-- socket-backed handles for the current TCP passive listener path via `SYS_SOCKET`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_SEND`, `SYS_RECV`, and `SYS_POLL`
+- socket-backed handles for the current minimal TCP stream path via `SYS_SOCKET`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_SEND`, `SYS_RECV`, `SYS_POLL`, `SYS_SETSOCKOPT`, and `SYS_GETSOCKNAME`
 - case-insensitive 8.3 filename matching
 - FAT chain following for file reads
 - loading one file at a time into a shared static buffer
@@ -207,7 +210,7 @@ The current FAT16 driver is intentionally narrow.
 
 - long filenames (LFN)
 - multiple concurrent file buffers
-- arbitrary transport stacks beyond the current TCP passive listener path
+- arbitrary transport stacks beyond the current minimal TCP stream path
 - mounting arbitrary FAT layouts
 
 Directory scan code explicitly skips:
@@ -219,7 +222,8 @@ Directory scan code explicitly skips:
 
 # Filename Rules
 
-`fat16_load(name, &size)` matches names against root directory entries using uppercase 8.3 semantics.
+`fat16_load(name, &size)` resolves each path component from the root directory
+using uppercase 8.3 semantics.
 
 Examples that match the same file:
 
@@ -512,5 +516,6 @@ The following must stay true unless the implementation is changed everywhere:
 - `vfs_load_file()` currently returns the FAT16 driver's reused static buffer
 - callers copy data out before another file load occurs
 - nested reads/listings use path-aware 8.3 lookup; regular file writes can target the root or a nested path
+- fd-backed writes use FAT16 write-at paths and do not cache the whole output file before committing sectors
 
 Breaking any of these produces either immediate mount failure or silent file corruption.

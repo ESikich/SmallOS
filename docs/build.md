@@ -18,7 +18,7 @@ This image contains:
 boot.bin         stage 1 bootloader   (size declared by boot.asm; currently 512 bytes)
 loader2.bin      stage 2 loader       (size declared by loader2.asm; currently 2048 bytes)
 kernel.bin       kernel               (padded to sector boundary during final image assembly)
-fat16.img        FAT16 partition      (fixed-size FAT volume, stored after the padded kernel)
+.state/fat16.img FAT16 partition     (mutable fixed-size FAT volume, stored after the padded kernel)
 ```
 
 ---
@@ -41,12 +41,16 @@ gcc              → host tool compilation (mkfat16, mkimage)
 build/
 ├── bin/   → final binaries (kernel.elf, kernel.bin,
 │             apps/demo/hello.elf, apps/tests/*.elf,
-│             fat16.img, boot.bin, loader2.bin, tcc-smalos.elf)
+│             fat16.seed.img, boot.bin, loader2.bin, tcc-smalos.elf)
 ├── obj/   → object files and depfiles (.o, .d), mirrored by source subtree
 ├── gen/   → generated source (loader2.gen.asm)
 ├── img/   → final disk image (os-image.bin)
 └── tools/ → host tools (mkfat16, mkimage)
 ```
+
+The generated seed image lives at `build/bin/fat16.seed.img`; normal runs use
+the mutable copy at `.state/fat16.img` so guest writes survive rebuilds until
+`make reset-disk`.
 
 ---
 
@@ -61,7 +65,7 @@ kernel.elf          apps/demo/hello.elf   apps/tests/*.elf   ...
   ↓                      ↓
 kernel.bin         user program ELFs
   ↓                      ↓
-loader2.gen.asm     fat16.img           ← built by build/tools/mkfat16 from all user ELFs
+loader2.gen.asm     fat16.seed.img      ← built by build/tools/mkfat16 from seeded entries
   ↓                      ↓
 loader2.bin          boot.bin
           \            |            /
@@ -326,23 +330,19 @@ $(TOOLS_DIR)/mkfat16: tools/mkfat16.c | dirs
 ## Building
 
 ```bash
-build/tools/mkfat16 build/bin/fat16.img \
-    build/bin/hello.elf \
-    build/bin/ticks.elf \
-    build/bin/args.elf \
-    build/bin/runelf_test.elf \
-    build/bin/readline.elf \
-    build/bin/exec_test.elf \
-    build/bin/fileread.elf \
-    build/bin/compiler_demo.elf \
-    build/bin/heapprobe.elf \
-    build/bin/statprobe.elf \
-    build/bin/fileprobe.elf \
-    build/bin/sleep_test.elf \
-    build/bin/ptrguard.elf \
-    build/bin/preempt_test.elf \
-    build/bin/fault.elf
+build/tools/mkfat16 build/bin/fat16.seed.img \
+    bin/echo.elf=build/bin/echo.elf \
+    apps/demo/hello.elf=build/bin/hello.elf \
+    apps/tests/runelf_test.elf=build/bin/runelf_test.elf \
+    apps/services/ftpd.elf=build/bin/ftpd.elf \
+    tools/tcc.elf=build/bin/tcc-smalos.elf \
+    tccmath.c=samples/tccmath.c
 ```
+
+Each `[dest=]source` argument either seeds the source file at its basename or
+places it at an explicit FAT16 destination path.  The Makefile expands this
+into the full shipped image through `FAT16_*_ENTRIES`; the command above is a
+representative shape rather than the complete invocation.
 
 `mkfat16` produces a raw FAT16 volume containing the shipped apps under
 `bin/`, `apps/demo/`, `apps/tests/`, `apps/services/`, and `tools/`.
@@ -373,8 +373,12 @@ Shipped FAT16 programs:
 - `apps/tests/statprobe` - exercise SYS_STAT and path probing
 - `apps/tests/fileprobe` - exercise file wrapper helpers, rename, unlink, and stat
 - `apps/tests/cwdprobe` - exercise process cwd and relative path syscalls
+- `apps/tests/stdioprobe` - exercise stdio EOF/error state, `clearerr`, and `fflush`
+- `apps/tests/dirprobe` - exercise root and nested directory iteration
+- `apps/tests/errnoprobe` - exercise raw syscall errors and POSIX errno wrappers
 - `apps/tests/sleep_test` - exercise SYS_SLEEP semantics
 - `apps/tests/ptrguard` - exercise syscall pointer validation
+- `apps/tests/spinwkr` - helper spawned by the preemption regression
 - `apps/tests/preempt_test` - prove timer-driven preemption
 - `apps/tests/crtprobe` - verify `main(argc, argv)` via `user_crt0`
 - `apps/tests/fault` - fault probe (ud/gp/de/br/pf)
@@ -385,7 +389,7 @@ Shipped FAT16 programs:
 ## Properties
 
 * fixed-size volume defined by `tools/mkfat16.c`
-* root directory contains shared compiler demo artifacts
+* root directory contains sample C sources and runtime compiler demo artifacts
 * `bin/` contains command-style app ELFs found by bare shell command lookup
 * `apps/demo/` contains the hello demo ELF
 * `apps/tests/` contains the remaining shipped test ELFs
@@ -468,12 +472,12 @@ build/tools/mkimage \
     --boot build/bin/boot.bin \
     --loader build/bin/loader2.bin \
     --kernel build/bin/kernel.bin \
-    --fat16 build/bin/fat16.img \
+    --fat16 .state/fat16.img \
     --out build/img/os-image.bin \
     --sector-size 512 \
     --loader-size 2048 \
-    --boot-loader2-sectors-patch-offset 488 \
-    --boot-fat16-lba-patch-offset 504
+    --boot-partition-table-offset 446 \
+    --boot-partition-entry-size 16
 ```
 
 ## What `mkimage` does
@@ -602,7 +606,7 @@ Cause: simple linker script does not separate read-only and executable sections.
 ```text
 apps/demo/hello.elf ────────────────────┐
 apps/tests/*.elf ───────────────────────┤
-tools/tcc.elf / samples/*.c ────────────┤→ fat16.img ───────┐
+tools/tcc.elf / samples/*.c ────────────┤→ fat16.seed.img → .state/fat16.img ─┐
                                         │                           │
 kernel.bin ───────────────┐             │                           │
                           ├→ loader2.gen.asm → loader2.bin ───────┤
@@ -663,6 +667,6 @@ Replaces CHS `AH=0x02`. Removes the 18-sector-per-track limit. Required because 
 
 # Future Improvements
 
-* True blocking `SYS_READ` — yield to scheduler on empty keyboard buffer rather than busy-polling
-* Per-process file-backed handles backed by the FAT16 driver (`SYS_OPEN`, `SYS_CLOSE`)
-* Copy-from-user validation in syscall pointer arguments
+* Outbound TCP `connect()` support for client-style user programs
+* Richer filesystem metadata such as long filenames or permission bits
+* Environment-variable support for the hosted `main(argc, argv)` runtime path

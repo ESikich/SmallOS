@@ -104,8 +104,8 @@ void kernel_main(void) {
     e1000_init();
 
     /*
-     * TCP bring-up — start a tiny passive listener so the kernel has a
-     * live end-to-end TCP path before the socket ABI lands.
+     * TCP service — drain NIC RX, maintain the tiny TCP state machine,
+     * and wake socket waiters used by guest TCP services.
      */
     tcp_init();
 

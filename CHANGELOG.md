@@ -1,5 +1,17 @@
 # Changelog
 
+## [Current] — Documentation and comment refresh
+
+### Changed
+
+* **Project documentation** (`README.md`, `docs/`)
+  * Refreshed the README, build, architecture, filesystem, execution, and syscall docs to match the current FAT16 seed/mutable image split, path-aware file layout, full syscall surface, and TCP service model.
+  * Updated the shipped FAT16 program lists to include the current stdio, dirent, errno, preemption-helper, and CRT probes.
+
+* **Source comments and help text** (`src/`, `tools/`)
+  * Updated stale comments around `SYS_EXEC`, path-aware FAT16 helpers, socket/TCP service ownership, `mkfat16` destination-path arguments, and the legacy ramdisk tool.
+  * Corrected the `fsls` help description now that it accepts directory paths.
+
 ## [Current] — TinyCC guest runtime cleanup
 
 ### Changed

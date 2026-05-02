@@ -151,7 +151,7 @@ The test suite uses this flow to compile several focused C samples inside the gu
 TinyCC's runtime expectations are part of the user runtime contract in
 [`docs/user-runtime.md`](user-runtime.md).
 
-For the TCP bring-up path, the shell can also launch a long-lived service
+For the TCP service path, the shell can also launch a long-lived service
 with `runelf_nowait apps/services/tcpecho`, `runelf_nowait
 apps/services/sockeof`, or `runelf_nowait apps/services/ftpd`. Those programs
 bind and listen inside the guest, and you connect to them from the host

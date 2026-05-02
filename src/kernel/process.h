@@ -65,7 +65,7 @@ struct fd_entry {
     int  dirty;                            /* 1 if buffered file writes need flush */
     u32  socket_state;                     /* PROCESS_SOCKET_STATE_* */
     u32  socket_port;                      /* listener or peer port */
-    char name[PROCESS_FD_NAME_MAX];        /* filename as passed to SYS_OPEN */
+    char name[PROCESS_FD_NAME_MAX];        /* normalized path for file handles */
     u32  size;                             /* file size in bytes */
     u32  offset;                           /* current read position */
     u32  cache_page_count;                 /* number of cached 4 KB pages */

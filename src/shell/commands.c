@@ -1124,7 +1124,7 @@ static command_entry_t app_commands[] = {
     { "uptime",        "show tick and second counts via ELF", 0 },
     { "pwd",           "print the shell working directory", 0 },
     { "ls",            "list a FAT16 directory",       0 },
-    { "fsls",          "list FAT16 root directory",     0 },
+    { "fsls",          "list a FAT16 directory",       0 },
     { "fsread",        "dump FAT16 file bytes",         0 },
     { "cat",           "print a FAT16 file",            0 },
     { "mkdir",         "create a FAT16 directory",     0 },

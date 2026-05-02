@@ -2,11 +2,12 @@
 #include "errno.h"
 
 /*
- * exec_test — diagnostic SYS_EXEC test for current blocking semantics.
+ * exec_test — diagnostic SYS_EXEC spawn/error test.
  *
- * sys_exec("apps/demo/hello", ...) runs the child through the foreground
- * run-and-wait path. The parent resumes only after the child exits, so
- * this test expects ordered output around the call.
+ * sys_exec("apps/demo/hello", ...) validates user pointers, copies argv into
+ * kernel-owned storage, enqueues the child, and returns immediately.  This
+ * probe checks the success path plus negative errno returns for bad names and
+ * invalid argument counts.
  */
 
 void _start(int argc, char** argv) {
