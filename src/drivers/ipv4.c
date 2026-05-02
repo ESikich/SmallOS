@@ -15,7 +15,7 @@
 
 #define IPV4_PACKET_SIZE    60u
 #define IPV4_PING_ATTEMPTS   3u
-#define IPV4_PING_WAIT_TICKS 200u  /* 2 seconds at the current 100 Hz timer */
+#define IPV4_PING_WAIT_TICKS (2u * SMALLOS_TIMER_HZ)
 
 typedef unsigned short u16;
 

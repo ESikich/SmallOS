@@ -28,8 +28,8 @@
 #define TCP_STATE_ESTABLISHED 2
 #define TCP_STATE_FIN_WAIT    3
 
-#define TCP_RETRY_TICKS      100u
-#define TCP_IDLE_TICKS      1200u
+#define TCP_RETRY_TICKS     (1u * SMALLOS_TIMER_HZ)
+#define TCP_IDLE_TICKS      (12u * SMALLOS_TIMER_HZ)
 #define TCP_MAX_RETRIES        3u
 #define TCP_MAX_FRAME       1518u
 #define TCP_MAX_PAYLOAD    (TCP_MAX_FRAME - 14u - 20u - 20u)

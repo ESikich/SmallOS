@@ -1,0 +1,9 @@
+#ifndef UAPI_TIME_H
+#define UAPI_TIME_H
+
+#define SMALLOS_TIMER_HZ       100u
+#define SMALLOS_MS_PER_SECOND  1000u
+#define SMALLOS_US_PER_SECOND  1000000u
+#define SMALLOS_NS_PER_SECOND  1000000000u
+
+#endif /* UAPI_TIME_H */

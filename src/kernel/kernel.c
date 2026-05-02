@@ -80,7 +80,7 @@ void kernel_main(void) {
     kernel_selfcheck();
 
     keyboard_init();
-    timer_init(100);
+    timer_init(SMALLOS_TIMER_HZ);
     idt_init();
 
     sched_init();

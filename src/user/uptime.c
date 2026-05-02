@@ -8,7 +8,7 @@ void _start(int argc, char** argv) {
     u_put_uint(sys_get_ticks());
     u_putc('\n');
     u_puts("Seconds: ");
-    u_put_uint((uint32_t)(sys_get_ticks() / 100u));
+    u_put_uint((uint32_t)(sys_get_ticks() / SMALLOS_TIMER_HZ));
     u_putc('\n');
     sys_exit(0);
 }

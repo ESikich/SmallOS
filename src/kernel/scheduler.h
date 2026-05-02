@@ -2,6 +2,7 @@
 #define SCHEDULER_H
 
 #include "process.h"
+#include "uapi_time.h"
 
 /*
  * scheduler.h — Preemptive round-robin scheduler
@@ -17,7 +18,9 @@
  */
 
 #define SCHED_MAX_PROCS         8
-#define SCHED_TICKS_PER_QUANTUM 10  /* ~100 ms at 100 Hz */
+#define SCHED_QUANTUM_MS        100u
+#define SCHED_TICKS_PER_QUANTUM \
+    ((SMALLOS_TIMER_HZ * SCHED_QUANTUM_MS + (SMALLOS_MS_PER_SECOND - 1u)) / SMALLOS_MS_PER_SECOND)
 
 /*
  * sched_init()

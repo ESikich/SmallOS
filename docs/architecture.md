@@ -107,7 +107,7 @@ Inside `kernel_main()`:
 4. `memory_init(0x100000)` — bump allocator starts at 1 MB
 5. `pmm_init()` — bitmap allocator covers 0x200000–0x7FFFFF; all frames start free
 6. `kernel_selfcheck()` — confirm the TSS selector, boot stack, heap base, and PMM baseline are intact
-7. `keyboard_init()`, `timer_init(100)`, `idt_init()` — drivers and interrupt table
+7. `keyboard_init()`, `timer_init(SMALLOS_TIMER_HZ)`, `idt_init()` — drivers and interrupt table
 8. `sched_init()` — initialise the scheduler data structures
 9. `ata_init()` — software reset ATA primary channel (`0x1F0`), poll until ready
 10. `pci_init()` — scan PCI config space and log discovered network controllers
@@ -189,7 +189,7 @@ internals of each resource type.
 
 # Scheduler
 
-A round-robin preemptive scheduler runs on every timer tick (100 Hz, quantum = 10 ticks = 100 ms).
+A round-robin preemptive scheduler runs on every timer tick. The hardware rate is `SMALLOS_TIMER_HZ`, and the scheduler quantum is expressed as `SCHED_QUANTUM_MS` rather than a hardcoded tick count.
 
 ## Process table
 
@@ -626,7 +626,7 @@ SYS_OPEN_WRITE / SYS_WRITEFD / SYS_LSEEK / SYS_UNLINK / SYS_RENAME / SYS_STAT �
 SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_SEND / SYS_RECV / SYS_POLL — socket ABI for passive TCP servers and FTP userland; socket readiness plugs into the same handle poll seam
 TCP bring-up task — minimal kernel TCP listener/echo path used to prove the network plumbing before the socket ABI landed
 page-aware copy-from-user validation — syscall pointer arguments are checked against user address space [USER_CODE_BASE, USER_STACK_TOP) and mapped user pages before dereference
-preemptive round-robin scheduler — timer IRQ context switch, 100 ms quantum
+preemptive round-robin scheduler — timer IRQ context switch, `SCHED_QUANTUM_MS` quantum
 ATA PIO driver — 28-bit LBA polling reads from primary IDE channel (0x1F0)
 FAT16 filesystem — ELF programs loaded from 16 MB FAT16 partition on disk
 run/runimg infrastructure removed — `runelf` is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery

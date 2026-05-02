@@ -682,8 +682,7 @@ static unsigned int sys_poll_timeout_ticks(int timeout_ms) {
         return 0u;
     }
 
-    /* timer_init() programs 100 Hz in kernel_main(). */
-    return (unsigned int)((timeout_ms + 9) / 10);
+    return timer_ms_to_ticks_round_up((unsigned int)timeout_ms);
 }
 
 static int sys_poll_impl(syscall_regs_t* regs, struct pollfd* fds,

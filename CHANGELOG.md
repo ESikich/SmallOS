@@ -4,6 +4,11 @@
 
 ### Changed
 
+* **Timer frequency ownership** (`src/kernel/uapi_time.h`, `src/kernel/timer.c`, `src/kernel/scheduler.h`, `src/kernel/syscall.c`, `src/user/user_posix.c`)
+  * The PIT rate now has a shared `SMALLOS_TIMER_HZ` constant instead of open-coded `100` conversions across kernel and userland.
+  * Poll timeouts, TCP/IPv4 retry windows, uptime, and POSIX time shims now derive tick math from the shared timer frequency.
+  * The scheduler quantum is expressed as `SCHED_QUANTUM_MS`, with tick count derived from the configured timer rate.
+
 * **Failed `runelf` input recovery** (`src/shell/commands.c`, `tools/qemu_selftest.py`)
   * `runelf <missing>` now restores interrupts before returning to the shell, so the prompt remains interactive after a failed ELF lookup.
   * The QEMU selftest now sends `runelf poop` followed by `pwd` after the main suite to catch regressions where the prompt is visible but keyboard input no longer reaches the shell.

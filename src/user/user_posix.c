@@ -167,7 +167,7 @@ int getsockname(int fd, struct sockaddr* addr, socklen_t* addrlen) {
 }
 
 time_t time(time_t* out) {
-    time_t now = (time_t)(sys_get_ticks() / 100u);
+    time_t now = (time_t)(sys_get_ticks() / SMALLOS_TIMER_HZ);
     if (out) {
         *out = now;
     }
@@ -186,8 +186,10 @@ struct tm* localtime(const time_t* timep) {
 
 int gettimeofday(struct timeval* tv, struct timezone* tz) {
     if (!tv) return -1;
-    tv->tv_sec = (long)(sys_get_ticks() / 100u);
-    tv->tv_usec = (long)((sys_get_ticks() % 100u) * 10000u);
+    unsigned int ticks = sys_get_ticks();
+    tv->tv_sec = (long)(ticks / SMALLOS_TIMER_HZ);
+    tv->tv_usec = (long)((ticks % SMALLOS_TIMER_HZ) *
+                         (SMALLOS_US_PER_SECOND / SMALLOS_TIMER_HZ));
     if (tz) {
         tz->tz_minuteswest = 0;
         tz->tz_dsttime = 0;
@@ -204,8 +206,8 @@ int clock_gettime(int clock_id, struct timespec* ts) {
     }
 
     ticks = sys_get_ticks();
-    rem = ticks % 100u;
-    ts->tv_sec = (time_t)(ticks / 100u);
-    ts->tv_nsec = (long)(rem * 10000000u);
+    rem = ticks % SMALLOS_TIMER_HZ;
+    ts->tv_sec = (time_t)(ticks / SMALLOS_TIMER_HZ);
+    ts->tv_nsec = (long)(rem * (SMALLOS_NS_PER_SECOND / SMALLOS_TIMER_HZ));
     return 0;
 }

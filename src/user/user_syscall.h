@@ -2,6 +2,7 @@
 #define USER_SYSCALL_H
 
 #include "uapi_syscall.h"
+#include "uapi_time.h"
 #include "uapi_socket.h"
 #include "uapi_poll.h"
 
