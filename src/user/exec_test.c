@@ -1,4 +1,5 @@
 #include "user_lib.h"
+#include "errno.h"
 
 /*
  * exec_test — diagnostic SYS_EXEC test for current blocking semantics.
@@ -41,7 +42,7 @@ void _start(int argc, char** argv) {
         u_put_uint((uint32_t)r2);
     }
     u_putc('\n');
-    if (r2 >= 0) {
+    if (r2 != -ENOENT) {
         ok = 0;
     }
 

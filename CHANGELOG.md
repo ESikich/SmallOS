@@ -4,6 +4,12 @@
 
 ### Changed
 
+* **Errno-aware syscall/runtime errors** (`src/kernel/uapi_errno.h`, `src/kernel/syscall.c`, `src/kernel/process.c`, `src/kernel/vfs.c`, `src/user/user_posix.c`, `src/user/user_stdio.c`, `src/user/errnoprobe.c`, `docs/`)
+  * Added shared UAPI errno constants and moved kernel failures toward raw negative errno returns without changing the syscall calling convention.
+  * POSIX-style user wrappers now translate negative syscall returns to `-1` plus `errno`, while low-level `sys_*` helpers still expose raw kernel values.
+  * `strerror()` and `perror()` now report useful messages, and unsupported runtime stubs such as `execvp()` / `dlopen()` set `ENOSYS`.
+  * Added `errnoprobe` coverage for raw syscall errors, wrapper `errno`, bad fds, missing paths, directories, cwd errors, unsupported exec, and fd exhaustion.
+
 * **Per-process cwd for userland** (`src/kernel/syscall.c`, `src/kernel/process.h`, `src/user/user_syscall.h`, `src/user/user_lib.h`, `src/user/user_posix.c`, `src/user/cwdprobe.c`, `tests/elfs/cwdprobe.py`, `docs/`)
   * Added `SYS_GETCWD` and `SYS_CHDIR`, plus POSIX/user helper wrappers.
   * User file/path syscalls now normalize relative paths against the calling process cwd before entering VFS or ELF loading.

@@ -8,6 +8,7 @@
 #include "shell.h"
 #include "../drivers/tcp.h"
 #include "uapi_poll.h"
+#include "uapi_errno.h"
 #include "vfs.h"
 
 /* ------------------------------------------------------------------ */
@@ -115,7 +116,7 @@ int process_fd_open_file_mode(process_t* proc,
                               u32 size,
                               int readable,
                               int writable) {
-    if (!proc || !name) return -1;
+    if (!proc || !name) return -EINVAL;
 
     for (int fd = PROCESS_FD_FIRST; fd < PROCESS_FD_MAX; fd++) {
         if (!proc->fds[fd].valid) {
@@ -127,7 +128,7 @@ int process_fd_open_file_mode(process_t* proc,
         }
     }
 
-    return -1;
+    return -ENFILE;
 }
 
 int process_fd_open_file(process_t* proc, const char* name, u32 size, int writable) {
@@ -135,7 +136,7 @@ int process_fd_open_file(process_t* proc, const char* name, u32 size, int writab
 }
 
 int process_fd_open_socket(process_t* proc, const char* name) {
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
 
     for (int fd = PROCESS_FD_FIRST; fd < PROCESS_FD_MAX; fd++) {
         if (!proc->fds[fd].valid) {
@@ -155,7 +156,7 @@ int process_fd_open_socket(process_t* proc, const char* name) {
         }
     }
 
-    return -1;
+    return -ENFILE;
 }
 
 void process_fd_close(fd_entry_t* ent) {
@@ -174,8 +175,8 @@ void process_fd_close(fd_entry_t* ent) {
 }
 
 static int process_handle_socket_read(fd_entry_t* ent, char* buf, unsigned int len) {
-    if (!ent || !ent->valid) return -1;
-    if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -1;
+    if (!ent || !ent->valid) return -EBADF;
+    if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -EINVAL;
     if (len == 0) return 0;
 
     tcp_socket_use_port(ent->socket_port);
@@ -192,8 +193,8 @@ static int process_handle_socket_read(fd_entry_t* ent, char* buf, unsigned int l
 }
 
 static int process_handle_socket_write(fd_entry_t* ent, const char* buf, unsigned int len) {
-    if (!ent || !ent->valid) return -1;
-    if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -1;
+    if (!ent || !ent->valid) return -EBADF;
+    if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -EINVAL;
     if (len == 0) return 0;
 
     tcp_socket_use_port(ent->socket_port);
@@ -204,7 +205,7 @@ static int process_handle_socket_seek(fd_entry_t* ent, int offset, int whence) {
     (void)ent;
     (void)offset;
     (void)whence;
-    return -1;
+    return -ENOSYS;
 }
 
 static short process_handle_socket_poll(fd_entry_t* ent, short events) {
@@ -233,8 +234,8 @@ static int process_handle_console_read(fd_entry_t* ent, char* buf, unsigned int 
     process_t* proc = sched_current();
     unsigned int n = 0;
 
-    if (!ent || !ent->valid || ent->writable) return -1;
-    if (!buf) return -1;
+    if (!ent || !ent->valid || ent->writable) return -EBADF;
+    if (!buf) return -EFAULT;
     if (len == 0) return 0;
 
     __asm__ volatile ("sti");
@@ -259,8 +260,8 @@ static int process_handle_console_read(fd_entry_t* ent, char* buf, unsigned int 
 }
 
 static int process_handle_console_write(fd_entry_t* ent, const char* buf, unsigned int len) {
-    if (!ent || !ent->valid || !ent->writable) return -1;
-    if (!buf) return -1;
+    if (!ent || !ent->valid || !ent->writable) return -EBADF;
+    if (!buf) return -EFAULT;
 
     for (unsigned int i = 0; i < len; i++) {
         terminal_putc(buf[i]);
@@ -272,7 +273,7 @@ static int process_handle_console_seek(fd_entry_t* ent, int offset, int whence) 
     (void)ent;
     (void)offset;
     (void)whence;
-    return -1;
+    return -ENOSYS;
 }
 
 static short process_handle_console_poll(fd_entry_t* ent, short events) {
@@ -300,12 +301,14 @@ static void process_handle_socket_close(fd_entry_t* ent) {
 }
 
 int process_fd_read(fd_entry_t* ent, char* buf, unsigned int len) {
-    if (!ent || !ent->ops || !ent->ops->read) return -1;
+    if (!ent || !ent->ops) return -EBADF;
+    if (!ent->ops->read) return -ENOSYS;
     return ent->ops->read(ent, buf, len);
 }
 
 int process_fd_write(fd_entry_t* ent, const char* buf, unsigned int len) {
-    if (!ent || !ent->ops || !ent->ops->write) return -1;
+    if (!ent || !ent->ops) return -EBADF;
+    if (!ent->ops->write) return -ENOSYS;
     return ent->ops->write(ent, buf, len);
 }
 
@@ -315,7 +318,8 @@ short process_fd_poll(fd_entry_t* ent, short events) {
 }
 
 int process_fd_seek(fd_entry_t* ent, int offset, int whence) {
-    if (!ent || !ent->ops || !ent->ops->seek) return -1;
+    if (!ent || !ent->ops) return -EBADF;
+    if (!ent->ops->seek) return -ENOSYS;
     return ent->ops->seek(ent, offset, whence);
 }
 

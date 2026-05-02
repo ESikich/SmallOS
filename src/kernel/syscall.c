@@ -10,12 +10,12 @@
 #include "klib.h"
 #include "../drivers/tcp.h"
 #include "uapi_poll.h"
+#include "uapi_errno.h"
 #include "uapi_dirent.h"
 #include "uapi_socket.h"
 #include "../exec/elf_loader.h"
 #include "vfs.h"
 
-#define SYSCALL_ERR_INVALID   ((unsigned int)-1)
 #define SYSCALL_MAX_WRITE_LEN 4096u
 #define EXEC_NAME_MAX         PROCESS_FD_NAME_MAX
 #define SCHED_RESUME_RETADDR_OFFSET 8u  /* push esp + call return address */
@@ -188,18 +188,18 @@ static int user_buf_ok(unsigned int ptr, unsigned int len) {
  * including the terminator, or -1 on validation failure or truncation.
  */
 static int copy_user_cstr(char* dst, unsigned int dst_size, const char* src) {
-    if (!dst || !src || dst_size == 0) return -1;
+    if (!dst || !src || dst_size == 0) return -EFAULT;
 
     unsigned int ptr = (unsigned int)src;
-    if (ptr < USER_CODE_BASE || ptr >= USER_STACK_TOP) return -1;
+    if (ptr < USER_CODE_BASE || ptr >= USER_STACK_TOP) return -EFAULT;
 
     u32* pd = current_user_pd();
-    if (!pd) return -1;
+    if (!pd) return -EFAULT;
 
     for (unsigned int i = 0; i < dst_size; i++) {
         unsigned int addr = ptr + i;
-        if (addr < USER_CODE_BASE || addr >= USER_STACK_TOP) return -1;
-        if (!user_page_mapped(pd, addr)) return -1;
+        if (addr < USER_CODE_BASE || addr >= USER_STACK_TOP) return -EFAULT;
+        if (!user_page_mapped(pd, addr)) return -EFAULT;
 
         dst[i] = src[i];
         if (dst[i] == '\0') {
@@ -207,17 +207,48 @@ static int copy_user_cstr(char* dst, unsigned int dst_size, const char* src) {
         }
     }
 
-    return -1;
+    return -ENAMETOOLONG;
 }
 
 static int copy_user_path_resolved(char* dst, unsigned int dst_size, const char* src) {
     char raw[PROCESS_FD_NAME_MAX];
     process_t* proc = (process_t*)sched_current();
 
-    if (copy_user_cstr(raw, sizeof(raw), src) <= 1) return -1;
-    if (!proc) return -1;
-    if (!path_build_from(proc->cwd, raw, dst, dst_size)) return -1;
+    int copied = copy_user_cstr(raw, sizeof(raw), src);
+    if (copied < 0) return copied;
+    if (copied <= 1) return -EINVAL;
+    if (!proc) return -EINVAL;
+    if (!path_build_from(proc->cwd, raw, dst, dst_size)) return -ENAMETOOLONG;
     return 1;
+}
+
+static int path_lookup_errno(const char* path) {
+    char prefix[PROCESS_FD_NAME_MAX];
+    u32 size = 0;
+    int is_dir = 0;
+
+    if (!path || path[0] == '\0') {
+        return vfs_is_dir("") ? 0 : -ENOENT;
+    }
+
+    for (unsigned int i = 0; path[i] != '\0'; i++) {
+        if (path[i] != '/') {
+            continue;
+        }
+        if (i == 0 || i >= sizeof(prefix)) {
+            continue;
+        }
+        k_memcpy(prefix, path, i);
+        prefix[i] = '\0';
+        if (vfs_stat(prefix, &size, &is_dir) && !is_dir) {
+            return -ENOTDIR;
+        }
+    }
+
+    if (vfs_stat(path, &size, &is_dir) || vfs_is_dir(path)) {
+        return 0;
+    }
+    return -ENOENT;
 }
 
 /* ------------------------------------------------------------------ */
@@ -226,8 +257,8 @@ static int copy_user_path_resolved(char* dst, unsigned int dst_size, const char*
 
 static int sys_write_impl(const char* buf, unsigned int len) {
     if (len == 0) return 0;
-    if (len > SYSCALL_MAX_WRITE_LEN) return -1;
-    if (!user_buf_ok((unsigned int)buf, len)) return -1;
+    if (len > SYSCALL_MAX_WRITE_LEN) return -EFBIG;
+    if (!user_buf_ok((unsigned int)buf, len)) return -EFAULT;
 
     for (unsigned int i = 0; i < len; i++) {
         terminal_putc(buf[i]);
@@ -273,7 +304,7 @@ static int sys_sleep_impl(syscall_regs_t* regs, unsigned int ticks) {
     if (ticks == 0) return 0;
 
     process_t* proc = (process_t*)sched_current();
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
 
     proc->sleep_until = timer_get_ticks() + ticks;
     proc->state = PROCESS_STATE_SLEEPING;
@@ -325,10 +356,10 @@ static int sys_sleep_impl(syscall_regs_t* regs, unsigned int ticks) {
  */
 static int sys_read_impl(char* buf, unsigned int len) {
     if (len == 0) return 0;
-    if (!user_buf_ok((unsigned int)buf, len)) return -1;
+    if (!user_buf_ok((unsigned int)buf, len)) return -EFAULT;
 
     process_t* proc = (process_t*)sched_current();
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
 
     return process_fd_read(process_fd_get(proc, 0), buf, len);
 }
@@ -362,27 +393,28 @@ static int sys_exec_impl(const char* name, int argc, char** argv) {
     char* kargv[PROCESS_MAX_ARGS + 1];
     unsigned int used = 0;
 
-    if (copy_user_path_resolved(kname, sizeof(kname), name) < 0) return -1;
+    int name_rc = copy_user_path_resolved(kname, sizeof(kname), name);
+    if (name_rc < 0) return name_rc;
 
-    if (argc < 0 || argc > PROCESS_MAX_ARGS) return -1;
+    if (argc < 0 || argc > PROCESS_MAX_ARGS) return -EINVAL;
 
     /* Validate the argv pointer array itself */
     if (argc > 0 && !user_buf_ok((unsigned int)argv,
                                   (unsigned int)argc * sizeof(char*))) {
-        return -1;
+        return -EFAULT;
     }
 
     for (int i = 0; i < argc; i++) {
         int copied = copy_user_cstr(&kargv_data[used],
                                     PROCESS_ARG_BYTES - used,
                                     argv[i]);
-        if (copied < 0) return -1;
+        if (copied < 0) return copied == -ENAMETOOLONG ? -EINVAL : copied;
         kargv[i] = &kargv_data[used];
         used += (unsigned int)copied;
     }
     kargv[argc] = 0;
 
-    return elf_run_named(kname, argc, kargv) ? 0 : -1;
+    return elf_run_named(kname, argc, kargv) ? 0 : -ENOENT;
 }
 
 /*
@@ -393,10 +425,12 @@ static int sys_exec_impl(const char* name, int argc, char** argv) {
  */
 static int sys_writefile_impl(const char* name, const void* buf, unsigned int len) {
     char kname[EXEC_NAME_MAX];
-    if (copy_user_cstr(kname, sizeof(kname), name) <= 1) return -1;
-    if (len > 0 && !user_buf_ok((unsigned int)buf, len)) return -1;
+    int name_rc = copy_user_cstr(kname, sizeof(kname), name);
+    if (name_rc < 0) return name_rc;
+    if (name_rc <= 1) return -EINVAL;
+    if (len > 0 && !user_buf_ok((unsigned int)buf, len)) return -EFAULT;
 
-    return vfs_write_root(kname, (const u8*)buf, len) ? 0 : -1;
+    return vfs_write_root(kname, (const u8*)buf, len) ? 0 : -EIO;
 }
 
 /*
@@ -408,10 +442,11 @@ static int sys_writefile_impl(const char* name, const void* buf, unsigned int le
  */
 static int sys_writefile_path_impl(const char* path, const void* buf, unsigned int len) {
     char kpath[PROCESS_FD_NAME_MAX];
-    if (copy_user_path_resolved(kpath, sizeof(kpath), path) < 0) return -1;
-    if (len > 0 && !user_buf_ok((unsigned int)buf, len)) return -1;
+    int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    if (path_rc < 0) return path_rc;
+    if (len > 0 && !user_buf_ok((unsigned int)buf, len)) return -EFAULT;
 
-    return vfs_write_path(kpath, (const u8*)buf, len) ? 0 : -1;
+    return vfs_write_path(kpath, (const u8*)buf, len) ? 0 : -EIO;
 }
 
 /*
@@ -539,15 +574,16 @@ static unsigned int sys_brk_impl(unsigned int new_brk) {
  */
 static int sys_open_impl(const char* name) {
     char kname[PROCESS_FD_NAME_MAX];
-    if (copy_user_path_resolved(kname, sizeof(kname), name) < 0) return -1;
+    int path_rc = copy_user_path_resolved(kname, sizeof(kname), name);
+    if (path_rc < 0) return path_rc;
 
-    /* Check the file exists and get its size */
     u32 file_size = 0;
-    if (!vfs_stat(kname, &file_size, 0)) return -1;
+    int is_dir = 0;
+    if (!vfs_stat(kname, &file_size, &is_dir)) return path_lookup_errno(kname);
+    if (is_dir) return -EISDIR;
 
-    /* Allocate an fd slot in the current process */
     process_t* proc = (process_t*)sched_current();
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
 
     return process_fd_open_file(proc, kname, file_size, 0);
 }
@@ -559,9 +595,9 @@ static int sys_open_impl(const char* name) {
  */
 static int sys_close_impl(int fd) {
     process_t* proc = (process_t*)sched_current();
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
     fd_entry_t* ent = process_fd_get(proc, fd);
-    if (!ent) return -1;
+    if (!ent) return -EBADF;
 
     process_fd_close(ent);
     return 0;
@@ -569,10 +605,11 @@ static int sys_close_impl(int fd) {
 
 static int sys_open_write_impl(const char* name) {
     char kname[PROCESS_FD_NAME_MAX];
-    if (copy_user_path_resolved(kname, sizeof(kname), name) < 0) return -1;
+    int path_rc = copy_user_path_resolved(kname, sizeof(kname), name);
+    if (path_rc < 0) return path_rc;
 
     process_t* proc = (process_t*)sched_current();
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
 
     int fd = process_fd_open_file(proc, kname, 0, 1);
     fd_entry_t* ent = process_fd_get(proc, fd);
@@ -597,27 +634,28 @@ static int sys_open_mode_impl(const char* name, unsigned int mode) {
     int exists;
     int fd;
 
-    if ((mode & ~supported) != 0) return -1;
-    if (!readable && !writable) return -1;
-    if ((trunc || append || create) && !writable) return -1;
-    if (copy_user_path_resolved(kname, sizeof(kname), name) < 0) return -1;
+    if ((mode & ~supported) != 0) return -EINVAL;
+    if (!readable && !writable) return -EINVAL;
+    if ((trunc || append || create) && !writable) return -EINVAL;
+    int path_rc = copy_user_path_resolved(kname, sizeof(kname), name);
+    if (path_rc < 0) return path_rc;
 
     exists = vfs_stat(kname, &file_size, &is_dir);
-    if (exists && is_dir) return -1;
-    if (!exists && !create) return -1;
+    if (exists && is_dir) return -EISDIR;
+    if (!exists && !create) return path_lookup_errno(kname);
     if (!exists) file_size = 0;
     if (trunc) file_size = 0;
 
     process_t* proc = (process_t*)sched_current();
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
 
     fd = process_fd_open_file_mode(proc, kname, file_size, readable, writable);
-    if (fd < 0) return -1;
+    if (fd < 0) return fd;
 
     fd_entry_t* ent = process_fd_get(proc, fd);
     if (!ent) {
         sys_close_impl(fd);
-        return -1;
+        return -EBADF;
     }
     if (writable && (trunc || !exists)) {
         ent->dirty = 1;
@@ -626,7 +664,7 @@ static int sys_open_mode_impl(const char* name, unsigned int mode) {
     if (append) {
         if (process_fd_seek(ent, 0, 2) < 0) {
             sys_close_impl(fd);
-            return -1;
+            return -EINVAL;
         }
     }
 
@@ -637,18 +675,18 @@ static int copy_user_sockaddr_in(struct sockaddr_in* dst,
                                  const struct sockaddr* src,
                                  unsigned int len) {
     if (!dst || !src) {
-        return -1;
+        return -EFAULT;
     }
     if (len < sizeof(struct sockaddr_in)) {
-        return -1;
+        return -EINVAL;
     }
     if (!user_buf_ok((unsigned int)src, sizeof(struct sockaddr_in))) {
-        return -1;
+        return -EFAULT;
     }
 
     k_memcpy(dst, src, sizeof(struct sockaddr_in));
     if (dst->sin_family != AF_INET) {
-        return -1;
+        return -EINVAL;
     }
     return 0;
 }
@@ -663,10 +701,10 @@ static unsigned short swap_u16(unsigned short value) {
 
 static int sys_socket_impl(int domain, int type, int protocol) {
     process_t* proc = (process_t*)sched_current();
-    if (!proc) return -1;
-    if (domain != AF_INET) return -1;
-    if (type != SOCK_STREAM) return -1;
-    if (protocol != 0 && protocol != IPPROTO_TCP) return -1;
+    if (!proc) return -EINVAL;
+    if (domain != AF_INET) return -EINVAL;
+    if (type != SOCK_STREAM) return -EINVAL;
+    if (protocol != 0 && protocol != IPPROTO_TCP) return -EINVAL;
 
     return process_fd_open_socket(proc, "socket");
 }
@@ -676,11 +714,12 @@ static int sys_bind_impl(int fd, const struct sockaddr* addr, unsigned int addrl
     fd_entry_t* ent;
     struct sockaddr_in sa;
 
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
     ent = process_fd_get(proc, fd);
-    if (!socket_fd_is_socket(ent)) return -1;
-    if (ent->socket_state != PROCESS_SOCKET_STATE_OPEN) return -1;
-    if (copy_user_sockaddr_in(&sa, addr, addrlen) < 0) return -1;
+    if (!socket_fd_is_socket(ent)) return -EBADF;
+    if (ent->socket_state != PROCESS_SOCKET_STATE_OPEN) return -EINVAL;
+    int sa_rc = copy_user_sockaddr_in(&sa, addr, addrlen);
+    if (sa_rc < 0) return sa_rc;
 
     ent->socket_port = swap_u16(sa.sin_port);
     ent->socket_state = PROCESS_SOCKET_STATE_BOUND;
@@ -691,17 +730,17 @@ static int sys_listen_impl(int fd, int backlog) {
     process_t* proc = (process_t*)sched_current();
     fd_entry_t* ent;
 
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
     (void)backlog;
 
     ent = process_fd_get(proc, fd);
-    if (!socket_fd_is_socket(ent)) return -1;
-    if (ent->socket_state != PROCESS_SOCKET_STATE_BOUND) return -1;
-    if (ent->socket_port == 0u) return -1;
+    if (!socket_fd_is_socket(ent)) return -EBADF;
+    if (ent->socket_state != PROCESS_SOCKET_STATE_BOUND) return -EINVAL;
+    if (ent->socket_port == 0u) return -EINVAL;
 
     tcp_socket_use_port(ent->socket_port);
-    if (tcp_socket_bind(ent->socket_port) < 0) return -1;
-    if (tcp_socket_listen() < 0) return -1;
+    if (tcp_socket_bind(ent->socket_port) < 0) return -EACCES;
+    if (tcp_socket_listen() < 0) return -EIO;
     ent->socket_state = PROCESS_SOCKET_STATE_LISTENER;
     return 0;
 }
@@ -716,10 +755,10 @@ static int sys_accept_impl(syscall_regs_t* regs,
     unsigned int peer_port;
     int new_fd;
 
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
     ent = process_fd_get(proc, fd);
-    if (!socket_fd_is_socket(ent)) return -1;
-    if (ent->socket_state != PROCESS_SOCKET_STATE_LISTENER) return -1;
+    if (!socket_fd_is_socket(ent)) return -EBADF;
+    if (ent->socket_state != PROCESS_SOCKET_STATE_LISTENER) return -EINVAL;
     tcp_socket_use_port(ent->socket_port);
 
     __asm__ __volatile__("sti");
@@ -731,12 +770,12 @@ static int sys_accept_impl(syscall_regs_t* regs,
     __asm__ __volatile__("cli");
 
     new_fd = process_fd_open_socket(proc, "socket");
-    if (new_fd < 0) return -1;
+    if (new_fd < 0) return new_fd;
     {
         fd_entry_t* new_ent = process_fd_get(proc, new_fd);
         if (!socket_fd_is_socket(new_ent)) {
             process_fd_close(new_ent);
-            return -1;
+            return -EBADF;
         }
         new_ent->socket_state = PROCESS_SOCKET_STATE_CONNECTED;
         new_ent->socket_port = ent->socket_port;
@@ -749,15 +788,15 @@ static int sys_accept_impl(syscall_regs_t* regs,
         struct sockaddr_in sa;
         if (!user_buf_ok((unsigned int)addrlen, sizeof(unsigned int))) {
             process_fd_close(process_fd_get(proc, new_fd));
-            return -1;
+            return -EFAULT;
         }
         if (*addrlen < sizeof(struct sockaddr_in)) {
             process_fd_close(process_fd_get(proc, new_fd));
-            return -1;
+            return -EINVAL;
         }
         if (!user_buf_ok((unsigned int)addr, sizeof(struct sockaddr_in))) {
             process_fd_close(process_fd_get(proc, new_fd));
-            return -1;
+            return -EFAULT;
         }
         k_memset(&sa, 0, sizeof(sa));
         sa.sin_family = AF_INET;
@@ -775,24 +814,24 @@ static int sys_connect_impl(int fd, const struct sockaddr* addr, unsigned int ad
     process_t* proc = (process_t*)sched_current();
     fd_entry_t* ent;
 
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
     ent = process_fd_get(proc, fd);
-    if (!socket_fd_is_socket(ent)) return -1;
+    if (!socket_fd_is_socket(ent)) return -EBADF;
     (void)addr;
     (void)addrlen;
-    return -1;
+    return -ENOSYS;
 }
 
 static int sys_send_impl(int fd, const void* buf, unsigned int len) {
     process_t* proc = (process_t*)sched_current();
     fd_entry_t* ent;
 
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
     if (len == 0u) return 0;
-    if (!user_buf_ok((unsigned int)buf, len)) return -1;
+    if (!user_buf_ok((unsigned int)buf, len)) return -EFAULT;
 
     ent = process_fd_get(proc, fd);
-    if (!socket_fd_is_socket(ent)) return -1;
+    if (!socket_fd_is_socket(ent)) return -EBADF;
     return process_fd_write(ent, (const char*)buf, len);
 }
 
@@ -800,13 +839,13 @@ static int sys_recv_impl(syscall_regs_t* regs, int fd, void* buf, unsigned int l
     process_t* proc = (process_t*)sched_current();
     fd_entry_t* ent;
 
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
     if (len == 0u) return 0;
-    if (!user_buf_ok((unsigned int)buf, len)) return -1;
+    if (!user_buf_ok((unsigned int)buf, len)) return -EFAULT;
 
     ent = process_fd_get(proc, fd);
-    if (!socket_fd_is_socket(ent)) return -1;
-    if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -1;
+    if (!socket_fd_is_socket(ent)) return -EBADF;
+    if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -EINVAL;
     tcp_socket_use_port(ent->socket_port);
 
     while (!tcp_socket_recv_ready()) {
@@ -861,9 +900,9 @@ static int sys_poll_impl(syscall_regs_t* regs, struct pollfd* fds,
     unsigned int deadline;
     int infinite_wait;
 
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
     if (nfds == 0u) return 0;
-    if (!user_buf_ok((unsigned int)fds, nfds * sizeof(struct pollfd))) return -1;
+    if (!user_buf_ok((unsigned int)fds, nfds * sizeof(struct pollfd))) return -EFAULT;
 
     infinite_wait = (timeout < 0);
     timeout_ticks = infinite_wait ? 0u : sys_poll_timeout_ticks(timeout);
@@ -900,14 +939,16 @@ static int sys_poll_impl(syscall_regs_t* regs, struct pollfd* fds,
 static int sys_mkdir_impl(const char* path, unsigned int mode) {
     char kpath[PROCESS_FD_NAME_MAX];
     (void)mode;
-    if (copy_user_path_resolved(kpath, sizeof(kpath), path) < 0) return -1;
-    return vfs_mkdir(kpath) ? 0 : -1;
+    int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    if (path_rc < 0) return path_rc;
+    return vfs_mkdir(kpath) ? 0 : -EIO;
 }
 
 static int sys_rmdir_impl(const char* path) {
     char kpath[PROCESS_FD_NAME_MAX];
-    if (copy_user_path_resolved(kpath, sizeof(kpath), path) < 0) return -1;
-    return vfs_rmdir(kpath) ? 0 : -1;
+    int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    if (path_rc < 0) return path_rc;
+    return vfs_rmdir(kpath) ? 0 : path_lookup_errno(kpath);
 }
 
 static int sys_dirlist_impl(const char* path, unsigned int index, uapi_dirent_t* out) {
@@ -915,9 +956,10 @@ static int sys_dirlist_impl(const char* path, unsigned int index, uapi_dirent_t*
     char name[UAPI_DIRENT_NAME_MAX];
     unsigned int size = 0;
     int is_dir = 0;
-    if (copy_user_path_resolved(kpath, sizeof(kpath), path) < 0) return -1;
-    if (!out) return -1;
-    if (!user_buf_ok((unsigned int)out, sizeof(*out))) return -1;
+    int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    if (path_rc < 0) return path_rc;
+    if (!out) return -EFAULT;
+    if (!user_buf_ok((unsigned int)out, sizeof(*out))) return -EFAULT;
     if (!vfs_dirent_at(kpath, index, name, sizeof(name), &size, &is_dir)) {
         return 0;
     }
@@ -932,9 +974,9 @@ static int sys_setsockopt_impl(int fd, int level, int optname) {
     process_t* proc = (process_t*)sched_current();
     fd_entry_t* ent;
 
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
     ent = process_fd_get(proc, fd);
-    if (!socket_fd_is_socket(ent)) return -1;
+    if (!socket_fd_is_socket(ent)) return -EBADF;
     (void)level;
     (void)optname;
     return 0;
@@ -945,13 +987,13 @@ static int sys_getsockname_impl(int fd, struct sockaddr* addr, unsigned int* add
     fd_entry_t* ent;
     struct sockaddr_in sa;
 
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
     ent = process_fd_get(proc, fd);
-    if (!socket_fd_is_socket(ent)) return -1;
-    if (!addr || !addrlen) return -1;
-    if (!user_buf_ok((unsigned int)addrlen, sizeof(unsigned int))) return -1;
-    if (*addrlen < sizeof(struct sockaddr_in)) return -1;
-    if (!user_buf_ok((unsigned int)addr, sizeof(struct sockaddr_in))) return -1;
+    if (!socket_fd_is_socket(ent)) return -EBADF;
+    if (!addr || !addrlen) return -EFAULT;
+    if (!user_buf_ok((unsigned int)addrlen, sizeof(unsigned int))) return -EFAULT;
+    if (*addrlen < sizeof(struct sockaddr_in)) return -EINVAL;
+    if (!user_buf_ok((unsigned int)addr, sizeof(struct sockaddr_in))) return -EFAULT;
 
     k_memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET;
@@ -963,57 +1005,62 @@ static int sys_getsockname_impl(int fd, struct sockaddr* addr, unsigned int* add
 }
 
 static int sys_writefd_impl(int fd, const char* buf, unsigned int len) {
-    if (fd < 0 || fd >= PROCESS_FD_MAX) return -1;
+    if (fd < 0 || fd >= PROCESS_FD_MAX) return -EBADF;
     if (len == 0) return 0;
-    if (!user_buf_ok((unsigned int)buf, len)) return -1;
+    if (!user_buf_ok((unsigned int)buf, len)) return -EFAULT;
 
     process_t* proc = (process_t*)sched_current();
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
 
     fd_entry_t* ent = process_fd_get(proc, fd);
-    if (!ent) return -1;
+    if (!ent) return -EBADF;
     return process_fd_write(ent, buf, len);
 }
 
 static int sys_lseek_impl(int fd, int offset, int whence) {
-    if (fd < 0 || fd >= PROCESS_FD_MAX) return -1;
+    if (fd < 0 || fd >= PROCESS_FD_MAX) return -EBADF;
 
     process_t* proc = (process_t*)sched_current();
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
 
     fd_entry_t* ent = process_fd_get(proc, fd);
-    if (!ent) return -1;
+    if (!ent) return -EBADF;
     return process_fd_seek(ent, offset, whence);
 }
 
 static int sys_unlink_impl(const char* path) {
     char kpath[PROCESS_FD_NAME_MAX];
-    if (copy_user_path_resolved(kpath, sizeof(kpath), path) < 0) return -1;
-    return vfs_unlink(kpath) ? 0 : -1;
+    int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    if (path_rc < 0) return path_rc;
+    if (vfs_is_dir(kpath)) return -EISDIR;
+    return vfs_unlink(kpath) ? 0 : path_lookup_errno(kpath);
 }
 
 static int sys_rename_impl(const char* src, const char* dst) {
     char ksrc[PROCESS_FD_NAME_MAX];
     char kdst[PROCESS_FD_NAME_MAX];
-    if (copy_user_path_resolved(ksrc, sizeof(ksrc), src) < 0) return -1;
-    if (copy_user_path_resolved(kdst, sizeof(kdst), dst) < 0) return -1;
-    return vfs_rename(ksrc, kdst) ? 0 : -1;
+    int src_rc = copy_user_path_resolved(ksrc, sizeof(ksrc), src);
+    if (src_rc < 0) return src_rc;
+    int dst_rc = copy_user_path_resolved(kdst, sizeof(kdst), dst);
+    if (dst_rc < 0) return dst_rc;
+    return vfs_rename(ksrc, kdst) ? 0 : path_lookup_errno(ksrc);
 }
 
 static int sys_stat_impl(const char* path, unsigned int* out_size, int* out_is_dir) {
     char kpath[PROCESS_FD_NAME_MAX];
     u32 size = 0;
     int is_dir = 0;
-    if (copy_user_path_resolved(kpath, sizeof(kpath), path) < 0) return -1;
+    int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    if (path_rc < 0) return path_rc;
 
-    if (!vfs_stat(kpath, &size, &is_dir)) return -1;
+    if (!vfs_stat(kpath, &size, &is_dir)) return path_lookup_errno(kpath);
 
     if (out_size) {
-        if (!user_buf_ok((unsigned int)out_size, sizeof(unsigned int))) return -1;
+        if (!user_buf_ok((unsigned int)out_size, sizeof(unsigned int))) return -EFAULT;
         *out_size = size;
     }
     if (out_is_dir) {
-        if (!user_buf_ok((unsigned int)out_is_dir, sizeof(int))) return -1;
+        if (!user_buf_ok((unsigned int)out_is_dir, sizeof(int))) return -EFAULT;
         *out_is_dir = is_dir;
     }
     return 0;
@@ -1023,13 +1070,14 @@ static int sys_getcwd_impl(char* buf, unsigned int size) {
     process_t* proc = (process_t*)sched_current();
     unsigned int pos = 0;
 
-    if (!proc || !buf || size == 0) return -1;
-    if (!user_buf_ok((unsigned int)buf, size)) return -1;
+    if (!proc) return -EINVAL;
+    if (!buf || size == 0) return -EFAULT;
+    if (!user_buf_ok((unsigned int)buf, size)) return -EFAULT;
 
-    if (size < 2) return -1;
+    if (size < 2) return -EINVAL;
     buf[pos++] = '/';
     for (unsigned int i = 0; proc->cwd[i] != '\0'; i++) {
-        if (pos + 1 >= size) return -1;
+        if (pos + 1 >= size) return -EINVAL;
         buf[pos++] = proc->cwd[i];
     }
     buf[pos] = '\0';
@@ -1040,23 +1088,28 @@ static int sys_chdir_impl(const char* path) {
     char kpath[PROCESS_CWD_MAX];
     process_t* proc = (process_t*)sched_current();
 
-    if (!proc) return -1;
-    if (copy_user_path_resolved(kpath, sizeof(kpath), path) < 0) return -1;
-    if (!vfs_is_dir(kpath)) return -1;
+    if (!proc) return -EINVAL;
+    int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    if (path_rc < 0) return path_rc;
+    if (!vfs_is_dir(kpath)) {
+        u32 size = 0;
+        int is_dir = 0;
+        return vfs_stat(kpath, &size, &is_dir) ? -ENOTDIR : path_lookup_errno(kpath);
+    }
 
     k_memcpy(proc->cwd, kpath, (k_size_t)k_strlen(kpath) + 1u);
     return 0;
 }
 
 static int sys_fread_impl(int fd, char* buf, unsigned int len) {
-    if (fd < 0 || fd >= PROCESS_FD_MAX) return -1;
+    if (fd < 0 || fd >= PROCESS_FD_MAX) return -EBADF;
     if (len == 0) return 0;
-    if (!user_buf_ok((unsigned int)buf, len)) return -1;
+    if (!user_buf_ok((unsigned int)buf, len)) return -EFAULT;
 
     process_t* proc = (process_t*)sched_current();
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
     fd_entry_t* ent = process_fd_get(proc, fd);
-    if (!ent) return -1;
+    if (!ent) return -EBADF;
     return process_fd_read(ent, buf, len);
 }
 
@@ -1153,7 +1206,7 @@ void syscall_handler_main(syscall_regs_t* regs) {
             fd_entry_t* ent = process_fd_get(proc, fd);
             if (ent && ent->writable) {
                 if (!process_fd_flush(ent)) {
-                    regs->eax = SYSCALL_ERR_INVALID;
+                    regs->eax = (unsigned int)-EIO;
                     break;
                 }
             }
@@ -1286,7 +1339,7 @@ void syscall_handler_main(syscall_regs_t* regs) {
             break;
 
         default:
-            regs->eax = SYSCALL_ERR_INVALID;
+            regs->eax = (unsigned int)-ENOSYS;
             break;
     }
 }

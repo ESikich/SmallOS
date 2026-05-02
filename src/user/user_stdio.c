@@ -1,5 +1,6 @@
 #define USER_LIB_NO_STRING_IMPL
 #include "user_stdio.h"
+#include "errno.h"
 
 static FILE s_stdin = { 0, 1, 0, 1, 0, 0 };
 static FILE s_stdout = { 1, 0, 1, 1, 0, 0 };
@@ -677,7 +678,8 @@ void perror(const char* s) {
         u_puts(s);
         u_puts(": ");
     }
-    u_puts("error\n");
+    u_puts(strerror(errno));
+    u_putc('\n');
 }
 
 char* strcat(char* dest, const char* src) {
@@ -1127,6 +1129,7 @@ char* getenv(const char* name) {
 void* dlopen(const char* filename, int flag) {
     (void)filename;
     (void)flag;
+    errno = ENOSYS;
     return 0;
 }
 
@@ -1142,5 +1145,6 @@ void* dlsym(void* handle, char* symbol) {
 
 int dlclose(void* handle) {
     (void)handle;
-    return 0;
+    errno = ENOSYS;
+    return -1;
 }

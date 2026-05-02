@@ -30,6 +30,33 @@ return value → eax
 
 ---
 
+## Error Convention
+
+Syscalls return non-negative results on success and negative errno values on
+failure. Low-level `sys_*` helpers expose those raw values directly; POSIX-style
+user runtime wrappers return `-1` and set `errno` to the positive error code.
+
+Initial shared errno values:
+
+| Name | Value | Meaning |
+| --- | ---: | --- |
+| `EPERM` | 1 | operation not permitted |
+| `ENOENT` | 2 | no such file or directory |
+| `EIO` | 5 | input/output error |
+| `EBADF` | 9 | bad file descriptor |
+| `ENOMEM` | 12 | out of memory |
+| `EACCES` | 13 | permission denied |
+| `EFAULT` | 14 | bad user address |
+| `ENOTDIR` | 20 | not a directory |
+| `EISDIR` | 21 | is a directory |
+| `EINVAL` | 22 | invalid argument |
+| `ENFILE` | 23 | descriptor table full |
+| `EFBIG` | 27 | file too large |
+| `ENAMETOOLONG` | 36 | path or name too long |
+| `ENOSYS` | 38 | function not implemented |
+
+---
+
 ## Current Syscalls
 
 ### SYS_WRITE (1)
@@ -38,7 +65,8 @@ return value → eax
 int sys_write(const char* buf, uint32_t len);
 ```
 
-Writes `len` bytes from `buf` to terminal. Returns bytes written or `-1`.
+Writes `len` bytes from `buf` to terminal. Returns bytes written or a negative
+errno value.
 This remains available as the low-level terminal write primitive used by
 `u_puts()` and early/simple user helpers. The normal POSIX/stdio path now
 writes `stdout` and `stderr` through fd-backed console handles via
@@ -82,7 +110,7 @@ Writes a single character. Returns 1.
 int sys_read(char* buf, uint32_t len);
 ```
 
-Blocks until keyboard input is available, echoing each character. Terminates early on newline (included in returned data). Returns bytes read or `-1`.
+Blocks until keyboard input is available, echoing each character. Terminates early on newline (included in returned data). Returns bytes read or a negative errno value.
 
 `SYS_READ` is now implemented as a read from fd `0`, which is initialized as a console handle in every user process. The console handle uses true scheduler-aware blocking: when `kb_buf` is empty it sets the process state to `PROCESS_STATE_WAITING` and registers it as the keyboard waiter via `keyboard_set_waiting_process()`, then executes `hlt`. The timer IRQ fires normally; `sched_tick` sees the task is `WAITING`, skips it, and switches to another runnable task. When a keypress arrives, `process_key_consumer()` pushes the character into `kb_buf`, sets the waiting process back to `PROCESS_STATE_RUNNING`, and clears the waiter slot. On the next scheduler pass the process is selected, resumes after the `hlt`, and drains the buffer normally.
 
@@ -505,7 +533,7 @@ u_stat(...)        query path metadata
 ## Design Notes
 
 * Programs run in ring 3 — hardware-enforced privilege separation
-* All pointer arguments to syscalls are validated with page-aware user checks before kernel dereference — pointers below `USER_CODE_BASE` (0x400000), spanning above `USER_STACK_TOP` (0xC0000000), or touching an unmapped user page are rejected with `-1`
+* All pointer arguments to syscalls are validated with page-aware user checks before kernel dereference — pointers below `USER_CODE_BASE` (0x400000), spanning above `USER_STACK_TOP` (0xC0000000), or touching an unmapped user page are rejected with `-EFAULT`
 * `SYS_EXEC` copies the user `name` and `argv[]` strings into kernel buffers before handing them to the ELF loader, so the loader never depends on caller memory staying stable after validation
 * Each process owns a cwd. Kernel path syscalls normalize `.` / `..`, accept absolute paths with a leading slash, and resolve relative paths against that process cwd before entering VFS or ELF loading.
 * `SYS_YIELD` and the timer path use the same stub layout, but the real scheduler resume ESP is `esp - 8`, not raw `esp`

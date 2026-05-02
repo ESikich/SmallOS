@@ -248,7 +248,7 @@ The old explicit parent-tracking statics are gone. The current design relies on 
 
 - copy program name into a kernel buffer
 - call `elf_run_named()`
-- return `0` on success, `-1` on failure
+- return `0` on success, or a negative errno such as `-ENOENT` / `-EFAULT` on failure
 
 `elf_run_named()` follows the same scheduler-owned ELF launch path as shell commands: create the process, seed its bootstrap context, enqueue it, and return immediately.
 

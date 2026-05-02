@@ -11,7 +11,7 @@ CASES = [
             "[3] sys_exec returned 0",
             'hello from elf via int 0x80',
             'argv[0] = "apps/demo/hello"',
-            "[5] bad name returned -1",
+            "[5] bad name returned -2",
             "[6] exec_test done",
         ],
         timeout=60.0,

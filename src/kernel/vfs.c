@@ -3,6 +3,7 @@
 #include "klib.h"
 #include "pmm.h"
 #include "uapi_poll.h"
+#include "uapi_errno.h"
 
 #define VFS_FILE_CACHE_MAX_BYTES (PROCESS_FD_CACHE_PAGES * 4096u)
 
@@ -77,11 +78,11 @@ static int vfs_file_read(fd_entry_t* ent, char* buf, unsigned int len) {
     unsigned int to_copy;
     unsigned int src_off;
 
-    if (!ent || !ent->valid || !ent->readable) return -1;
+    if (!ent || !ent->valid || !ent->readable) return -EBADF;
     if (len == 0) return 0;
     if (ent->offset >= ent->size) return 0;
 
-    if (!vfs_file_load_cache(ent)) return -1;
+    if (!vfs_file_load_cache(ent)) return -EIO;
 
     remaining = ent->size - ent->offset;
     to_copy = (len < remaining) ? len : remaining;
@@ -99,15 +100,15 @@ static int vfs_file_read(fd_entry_t* ent, char* buf, unsigned int len) {
 }
 
 static int vfs_file_write(fd_entry_t* ent, const char* buf, unsigned int len) {
-    if (!ent || !ent->valid || !ent->writable) return -1;
+    if (!ent || !ent->valid || !ent->writable) return -EBADF;
     if (len == 0) return 0;
     if (ent->size > 0 && ent->cache_page_count == 0) {
-        if (!vfs_file_load_cache(ent)) return -1;
+        if (!vfs_file_load_cache(ent)) return -EIO;
     }
 
     unsigned int end = ent->offset + len;
-    if (end < ent->offset) return -1;
-    if (!vfs_file_ensure_capacity(ent, end)) return -1;
+    if (end < ent->offset) return -EFBIG;
+    if (!vfs_file_ensure_capacity(ent, end)) return -EFBIG;
 
     for (unsigned int i = 0; i < len; i++) {
         unsigned int pos = ent->offset + i;
@@ -129,7 +130,7 @@ static int vfs_file_seek(fd_entry_t* ent, int offset, int whence) {
     unsigned int base;
     int new_off;
 
-    if (!ent || !ent->valid) return -1;
+    if (!ent || !ent->valid) return -EBADF;
 
     if (whence == 0) {
         base = 0;
@@ -138,11 +139,11 @@ static int vfs_file_seek(fd_entry_t* ent, int offset, int whence) {
     } else if (whence == 2) {
         base = ent->size;
     } else {
-        return -1;
+        return -EINVAL;
     }
 
     new_off = (int)base + offset;
-    if (new_off < 0) return -1;
+    if (new_off < 0) return -EINVAL;
     ent->offset = (unsigned int)new_off;
     return new_off;
 }

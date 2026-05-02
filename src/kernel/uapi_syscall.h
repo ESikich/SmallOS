@@ -18,7 +18,7 @@
  *
  * Error convention:
  *   negative value means error
- *   -1 is the current generic error return
+ *   failures should use -errno values from uapi_errno.h
  *
  * Notes:
  *   - This ABI is currently used by user-space ELF programs.

@@ -6,8 +6,21 @@
 #include "time.h"
 #include "sys/time.h"
 #include "fcntl.h"
+#include "errno.h"
 
 int errno = 0;
+
+static int errno_from_raw(int raw) {
+    if (raw < 0) {
+        errno = -raw;
+        return -1;
+    }
+    return raw;
+}
+
+static void set_errno(int value) {
+    errno = value;
+}
 
 static uint32_t open_flags_to_mode(int flags) {
     uint32_t mode = 0;
@@ -35,48 +48,49 @@ static uint32_t open_flags_to_mode(int flags) {
 }
 
 int open(const char* path, int flags, ...) {
-    return sys_open_mode(path, open_flags_to_mode(flags));
+    return errno_from_raw(sys_open_mode(path, open_flags_to_mode(flags)));
 }
 
 int close(int fd) {
-    return sys_close(fd);
+    return errno_from_raw(sys_close(fd));
 }
 
 int read(int fd, void* buf, unsigned int len) {
-    return sys_fread(fd, (char*)buf, len);
+    return errno_from_raw(sys_fread(fd, (char*)buf, len));
 }
 
 int write(int fd, const void* buf, unsigned int len) {
-    return sys_writefd(fd, (const char*)buf, len);
+    return errno_from_raw(sys_writefd(fd, (const char*)buf, len));
 }
 
 int lseek(int fd, int offset, int whence) {
-    return sys_lseek(fd, offset, whence);
+    return errno_from_raw(sys_lseek(fd, offset, whence));
 }
 
 int unlink(const char* path) {
-    return sys_unlink(path);
+    return errno_from_raw(sys_unlink(path));
 }
 
 int rename(const char* src, const char* dst) {
-    return sys_rename(src, dst);
+    return errno_from_raw(sys_rename(src, dst));
 }
 
 int mkdir(const char* path, unsigned int mode) {
-    return sys_mkdir(path, mode);
+    return errno_from_raw(sys_mkdir(path, mode));
 }
 
 int rmdir(const char* path) {
-    return sys_rmdir(path);
+    return errno_from_raw(sys_rmdir(path));
 }
 
 int stat(const char* path, struct stat* st) {
     uint32_t size = 0;
     int is_dir = 0;
     if (!st) {
+        set_errno(EFAULT);
         return -1;
     }
-    if (sys_stat(path, &size, &is_dir) < 0) {
+    if (errno_from_raw(sys_stat(path, &size, &is_dir)) < 0) {
         return -1;
     }
     memset(st, 0, sizeof(*st));
@@ -87,7 +101,10 @@ int stat(const char* path, struct stat* st) {
 
 int fstat(int fd, struct stat* st) {
     (void)fd;
-    if (!st) return -1;
+    if (!st) {
+        set_errno(EFAULT);
+        return -1;
+    }
     memset(st, 0, sizeof(*st));
     st->st_mode = S_IFREG;
     return 0;
@@ -101,7 +118,7 @@ int access(const char* path, int mode) {
     uint32_t size = 0;
     int is_dir = 0;
     (void)mode;
-    return sys_stat(path, &size, &is_dir);
+    return errno_from_raw(sys_stat(path, &size, &is_dir));
 }
 
 int remove(const char* path) {
@@ -111,39 +128,40 @@ int remove(const char* path) {
 int execvp(const char* file, char* const argv[]) {
     (void)file;
     (void)argv;
+    set_errno(ENOSYS);
     return -1;
 }
 
 int socket(int domain, int type, int protocol) {
-    return sys_socket(domain, type, protocol);
+    return errno_from_raw(sys_socket(domain, type, protocol));
 }
 
 int bind(int fd, const struct sockaddr* addr, socklen_t addrlen) {
-    return sys_bind(fd, addr, addrlen);
+    return errno_from_raw(sys_bind(fd, addr, addrlen));
 }
 
 int listen(int fd, int backlog) {
-    return sys_listen(fd, backlog);
+    return errno_from_raw(sys_listen(fd, backlog));
 }
 
 int accept(int fd, struct sockaddr* addr, socklen_t* addrlen) {
-    return sys_accept(fd, addr, addrlen);
+    return errno_from_raw(sys_accept(fd, addr, addrlen));
 }
 
 int connect(int fd, const struct sockaddr* addr, socklen_t addrlen) {
-    return sys_connect(fd, addr, addrlen);
+    return errno_from_raw(sys_connect(fd, addr, addrlen));
 }
 
 int send(int fd, const void* buf, unsigned int len) {
-    return sys_send(fd, buf, len);
+    return errno_from_raw(sys_send(fd, buf, len));
 }
 
 int recv(int fd, void* buf, unsigned int len) {
-    return sys_recv(fd, buf, len);
+    return errno_from_raw(sys_recv(fd, buf, len));
 }
 
 int poll(struct pollfd* fds, nfds_t nfds, int timeout) {
-    return sys_poll(fds, nfds, timeout);
+    return errno_from_raw(sys_poll(fds, nfds, timeout));
 }
 
 char* realpath(const char* path, char* resolved_path) {
@@ -157,25 +175,43 @@ char* realpath(const char* path, char* resolved_path) {
 }
 
 char* strerror(int errnum) {
-    (void)errnum;
-    return "error";
+    switch (errnum) {
+        case EPERM: return "operation not permitted";
+        case ENOENT: return "no such file or directory";
+        case EIO: return "input/output error";
+        case EBADF: return "bad file descriptor";
+        case ENOMEM: return "out of memory";
+        case EACCES: return "permission denied";
+        case EFAULT: return "bad address";
+        case EINVAL: return "invalid argument";
+        case ENOSYS: return "function not implemented";
+        case ENOTDIR: return "not a directory";
+        case EISDIR: return "is a directory";
+        case ENFILE: return "file table full";
+        case ENAMETOOLONG: return "file name too long";
+        case EFBIG: return "file too large";
+        default: return "unknown error";
+    }
 }
 
 char* getcwd(char* buf, unsigned int size) {
-    if (!buf || size == 0) return 0;
-    return sys_getcwd(buf, size) < 0 ? 0 : buf;
+    if (!buf || size == 0) {
+        set_errno(EFAULT);
+        return 0;
+    }
+    return errno_from_raw(sys_getcwd(buf, size)) < 0 ? 0 : buf;
 }
 
 int chdir(const char* path) {
-    return sys_chdir(path);
+    return errno_from_raw(sys_chdir(path));
 }
 
 int setsockopt(int fd, int level, int optname, const void* optval, unsigned int optlen) {
-    return sys_setsockopt(fd, level, optname, optval, (socklen_t)optlen);
+    return errno_from_raw(sys_setsockopt(fd, level, optname, optval, (socklen_t)optlen));
 }
 
 int getsockname(int fd, struct sockaddr* addr, socklen_t* addrlen) {
-    return sys_getsockname(fd, addr, addrlen);
+    return errno_from_raw(sys_getsockname(fd, addr, addrlen));
 }
 
 time_t time(time_t* out) {
@@ -197,7 +233,10 @@ struct tm* localtime(const time_t* timep) {
 }
 
 int gettimeofday(struct timeval* tv, struct timezone* tz) {
-    if (!tv) return -1;
+    if (!tv) {
+        set_errno(EFAULT);
+        return -1;
+    }
     unsigned int ticks = sys_get_ticks();
     tv->tv_sec = (long)(ticks / SMALLOS_TIMER_HZ);
     tv->tv_usec = (long)((ticks % SMALLOS_TIMER_HZ) *
@@ -214,6 +253,7 @@ int clock_gettime(int clock_id, struct timespec* ts) {
     unsigned int rem;
 
     if (!ts || clock_id != CLOCK_REALTIME) {
+        set_errno(EINVAL);
         return -1;
     }
 

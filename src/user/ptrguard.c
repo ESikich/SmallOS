@@ -1,4 +1,5 @@
 #include "user_lib.h"
+#include "errno.h"
 
 /*
  * ptrguard is a narrow regression test for syscall pointer validation.
@@ -65,31 +66,31 @@ void _start(int argc, char** argv) {
 
     /* Plain invalid buffers should be rejected before the kernel deref. */
     check_int("sys_write invalid buf",
-              -1,
+              -EFAULT,
               sys_write((const char*)0x1234, 4));
 
     check_int("sys_read invalid buf",
-              -1,
+              -EFAULT,
               sys_read((char*)0x1234, 4));
 
     check_int("sys_open invalid name",
-              -1,
+              -EFAULT,
               sys_open((const char*)0x1234));
 
     check_int("sys_open_mode invalid name",
-              -1,
+              -EFAULT,
               sys_open_mode((const char*)0x1234, SYS_OPEN_MODE_READ));
 
     check_int("sys_writefile invalid name",
-              -1,
+              -EFAULT,
               sys_writefile((const char*)0x1234, "x", 1));
 
     check_int("sys_writefile_path invalid name",
-              -1,
+              -EFAULT,
               sys_writefile_path((const char*)0x1234, "x", 1));
 
     check_int("sys_writefile_path invalid buf",
-              -1,
+              -EFAULT,
               sys_writefile_path("apps/demo/ptrguard.txt", (const char*)0x1234, 1));
 
     {
@@ -98,7 +99,7 @@ void _start(int argc, char** argv) {
         check_true("sys_open hello", fd >= 3);
         if (fd >= 3) {
             check_int("sys_fread invalid buf",
-                      -1,
+                      -EFAULT,
                       sys_fread(fd, (char*)0x1234, 4));
             sys_close(fd);
         }
@@ -108,7 +109,7 @@ void _start(int argc, char** argv) {
         /* sys_exec should copy argv into kernel storage and reject junk. */
         char* bad_argv[] = { (char*)0x1234, 0 };
         check_int("sys_exec invalid argv",
-                  -1,
+                  -EFAULT,
                   sys_exec("apps/demo/hello", 1, bad_argv));
     }
 

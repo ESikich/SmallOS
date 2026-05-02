@@ -612,6 +612,7 @@ process_t abstraction — per-process struct (PD, kernel stack, exit ctx, sched_
 per-process page directories — address space isolation, fully reclaimed on exit
 ring-3 ELF execution (hardware privilege enforcement)
 int 0x80 syscall interface (DPL=3 gate, TSS stack switch)
+negative errno syscall convention — kernel returns raw `-errno`; POSIX user wrappers translate to `-1` plus `errno`
 argv copied into process_t kernel storage before CR3 switches
 clean process exit via `PROCESS_STATE_ZOMBIE` transition and later reap from a safe stack
 physical memory manager (bitmap, all frames reclaimed on exit — no leak)

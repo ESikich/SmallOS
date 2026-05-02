@@ -952,6 +952,7 @@ static void cmd_selftest(command_t* cmd) {
     static char* statprobe_argv[] = { "apps/tests/statprobe", "alpha", "beta", 0 };
     static char* fileprobe_argv[] = { "apps/tests/fileprobe", "alpha", "beta", 0 };
     static char* cwdprobe_argv[] = { "apps/tests/cwdprobe", "alpha", "beta", 0 };
+    static char* errnoprobe_argv[] = { "apps/tests/errnoprobe", "alpha", "beta", 0 };
     static char* sleep_argv[] = { "apps/tests/sleep_test", "alpha", "beta", 0 };
     static char* ptrguard_argv[] = { "apps/tests/ptrguard", "alpha", "beta", 0 };
     static char* preempt_argv[] = { "apps/tests/preempt_test", "alpha", "beta", 0 };
@@ -975,6 +976,7 @@ static void cmd_selftest(command_t* cmd) {
         { "statprobe",   "apps/tests/statprobe",  1, statprobe_argv,   0 },
         { "fileprobe",   "apps/tests/fileprobe",  1, fileprobe_argv,   0 },
         { "cwdprobe",    "apps/tests/cwdprobe",   1, cwdprobe_argv,    0 },
+        { "errnoprobe",  "apps/tests/errnoprobe", 1, errnoprobe_argv,  0 },
         { "sleep_test",  "apps/tests/sleep_test", 1, sleep_argv,       0 },
         { "ptrguard",    "apps/tests/ptrguard",   1, ptrguard_argv,    0 }, /* syscall pointer regression */
         { "preempt_test","apps/tests/preempt_test",1, preempt_argv,     0 }, /* timer-preemption regression */
@@ -1072,6 +1074,7 @@ static program_entry_t programs[] = {
     { "apps/tests/statprobe",  "exercise SYS_STAT and path probing" },
     { "apps/tests/fileprobe",  "exercise small file wrapper helpers" },
     { "apps/tests/cwdprobe",   "exercise process cwd and relative paths" },
+    { "apps/tests/errnoprobe", "exercise errno-aware runtime errors" },
     { "apps/tests/sleep_test", "exercise SYS_SLEEP semantics" },
     { "apps/tests/ptrguard",   "exercise syscall pointer validation" },
     { "apps/tests/preempt_test","prove timer-driven preemption" },
