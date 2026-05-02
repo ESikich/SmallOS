@@ -54,10 +54,6 @@
   * Moved `strtok_r`, `gmtime_r`, `strftime`, and `opendir` / `readdir` / `closedir` out of the FTP compatibility shim and into normal runtime modules.
   * Deleted the broad `ftp_compat.c` runtime grab-bag and isolated the current `crypt()` auth shim in `user_crypt.c`.
 
-* **FTP service object build** (`src/user/ftpd.c`, `Makefile`, `src/user/stdlib.h`, `src/user/user_stdio.h`, `src/user/user_syscall.h`, `third_party/ftp_server/`)
-  * Stopped including vendored FTP `.c` files from `ftpd.c`; the SmallOS build now compiles and links the FTP server sources as normal objects.
-  * Kept the session-completion bridge explicit as `ftpd_session_exit()` and made userland `exit()` / `sys_exit()` visibly non-returning.
-
 * **Unified fd-backed handles and VFS file backend** (`src/kernel/process.c`, `src/kernel/process.h`, `src/kernel/vfs.c`, `src/kernel/vfs.h`, `src/kernel/syscall.c`, `src/user/user_stdio.c`, `src/user/user_posix.c`, `docs/`)
   * `process_handle_ops_t` now covers `read`, `write`, `seek`, `poll`, `flush`, and `close` for file, socket, and console handles.
   * fd `0`, `1`, and `2` are real console handles; `printf`/`fprintf(stdout, ...)`/`fprintf(stderr, ...)` now route through `SYS_WRITEFD` instead of a stdio-only console special case.

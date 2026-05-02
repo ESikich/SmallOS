@@ -78,9 +78,8 @@ static inline int sys_putc(char c) {
     return syscall1(SYS_PUTC, (uint32_t)(unsigned char)c);
 }
 
-static inline _Noreturn void sys_exit(int code) {
+static inline void sys_exit(int code) {
     (void)syscall1(SYS_EXIT, (uint32_t)code);
-    for (;;) {}
 }
 
 static inline uint32_t sys_get_ticks(void) {

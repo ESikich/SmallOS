@@ -97,7 +97,7 @@ float strtof(const char* nptr, char** endptr);
 long double strtold(const char* nptr, char** endptr);
 double strtod(const char* nptr, char** endptr);
 long double ldexpl(long double x, int exp);
-_Noreturn void exit(int);
+void exit(int);
 char* getenv(const char* name);
 
 void* dlopen(const char* filename, int flag);
