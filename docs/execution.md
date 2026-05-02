@@ -53,7 +53,7 @@ Important current-state facts:
 - ELF launch and exit are now scheduler-owned: `elf_run_image()` seeds a bootstrap context, enqueues the task, and returns `process_t*`
 - the scheduler supports kernel tasks, ELF tasks, voluntary yielding, timer-driven sleeping, and timer-driven switching; `runelf` blocks with `process_wait()`, while `runelf_nowait` returns immediately
 - user ELFs now have a small freestanding runtime layer with a heap allocator,
-  fd-backed console streams, buffered VFS-backed file handles,
+  fd-backed console streams, streaming VFS-backed file handles,
   `stat`/`rename`/`unlink`, `lseek`, and socket wrappers, which is enough for
   compiler-style tools and small network services
 - the shipped `tools/tcc.elf` compiler binary links the generic SmallOS `user_crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from FAT16, write the results back to disk, and then those generated ELFs can be executed immediately

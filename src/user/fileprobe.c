@@ -192,8 +192,81 @@ void _start(int argc, char** argv) {
     }
 
     {
+        unsigned char readback[600];
+        int fd = open("sector.tmp", O_WRONLY | O_CREAT | O_TRUNC);
+        int sector_ok = 1;
+
+        if (fd < 0) {
+            sector_ok = 0;
+        } else {
+            for (unsigned int i = 0; i < sizeof(readback); i++) {
+                readback[i] = (unsigned char)('A' + (i % 23u));
+            }
+            if (write(fd, readback, sizeof(readback)) != (int)sizeof(readback)
+                || close(fd) < 0) {
+                sector_ok = 0;
+            }
+        }
+
+        fd = open("sector.tmp", O_RDWR);
+        if (fd < 0
+            || lseek(fd, 510, SEEK_SET) != 510
+            || write(fd, "WXYZ", 4) != 4
+            || close(fd) < 0
+            || read_exact_file("sector.tmp", readback, sizeof(readback)) != (int)sizeof(readback)
+            || readback[508] != (unsigned char)('A' + (508u % 23u))
+            || readback[509] != (unsigned char)('A' + (509u % 23u))
+            || readback[510] != 'W'
+            || readback[511] != 'X'
+            || readback[512] != 'Y'
+            || readback[513] != 'Z'
+            || readback[514] != (unsigned char)('A' + (514u % 23u))) {
+            sector_ok = 0;
+        }
+
+        if (sector_ok) {
+            u_puts("partial sector boundary: PASS\n");
+        } else {
+            u_puts("partial sector boundary: FAIL\n");
+            ok = 0;
+        }
+        (void)u_file_delete("sector.tmp");
+    }
+
+    {
+        unsigned char gap[701];
+        int gap_ok = 1;
+        int fd = open("gap.tmp", O_WRONLY | O_CREAT | O_TRUNC);
+
+        if (fd < 0
+            || lseek(fd, 700, SEEK_SET) != 700
+            || write(fd, "Q", 1) != 1
+            || close(fd) < 0
+            || u_file_stat("gap.tmp", &size, &is_dir) < 0
+            || size != sizeof(gap)
+            || is_dir != 0
+            || read_exact_file("gap.tmp", gap, sizeof(gap)) != (int)sizeof(gap)
+            || gap[700] != 'Q') {
+            gap_ok = 0;
+        }
+        for (unsigned int i = 0; gap_ok && i < 700u; i++) {
+            if (gap[i] != 0) {
+                gap_ok = 0;
+            }
+        }
+
+        if (gap_ok) {
+            u_puts("seek gap zero fill: PASS\n");
+        } else {
+            u_puts("seek gap zero fill: FAIL\n");
+            ok = 0;
+        }
+        (void)u_file_delete("gap.tmp");
+    }
+
+    {
         enum {
-            LARGE_SIZE = 2u * 1024u * 1024u,
+            LARGE_SIZE = 6u * 1024u * 1024u,
             LARGE_CHUNK = 4096u
         };
         unsigned char* chunk = (unsigned char*)malloc(LARGE_CHUNK);

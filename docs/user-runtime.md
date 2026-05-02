@@ -114,13 +114,15 @@ FAT16-backed file descriptors support:
 - flush
 - close-time writeback
 
-The user-visible fd API is preserved while FAT writes are still cache-backed
-internally. Flushes stream sectors from those cache pages into FAT16 rather
-than requiring one contiguous kernel writeback buffer.
+The user-visible fd API is preserved while FAT writes stream directly through
+FAT16 write-at. Small reads still use the kernel page cache; writes invalidate
+that read cache for the descriptor.
 
-Current fd-backed regular files can grow to 4 MB. The older whole-file
-`fat16_load()` helper still has a 1 MB static-buffer limit, so new runtime file
-IO should prefer descriptors when it needs seek, append, or larger readback.
+Current fd-backed regular files are bounded by FAT/free space and the FAT16
+driver's safety limit for the 16 MB test volume. The older whole-file
+`fat16_load()` helper still has a 1 MB static-buffer limit, so runtime file IO
+should prefer descriptors when it needs seek, append, writes, or larger
+readback.
 
 ---
 
@@ -172,8 +174,9 @@ tracked normally:
 
 `fflush(stream)` calls `SYS_FSYNC` for writable file streams. That makes it
 meaningful even though userland stdio is unbuffered: it asks the kernel VFS
-layer to flush any dirty file cache to FAT16. Console streams treat `fflush`
-as success.
+layer to commit any dirty writable descriptor state. FAT16 fd writes now stream
+to disk as they arrive, so `fflush` is usually a confirmation point rather than
+a whole-file rewrite. Console streams treat `fflush` as success.
 
 ---
 
@@ -222,7 +225,7 @@ on normal runtime behavior:
 - fd-backed stdio streams
 - meaningful `fflush`
 - directory traversal through `opendir` / `readdir`
-- FAT16 writeback through normal fd writes and flush/close
+- FAT16 writeback through normal streaming fd writes and flush/close
 
 The TinyCC acceptance gate is the guest compiler suite:
 
@@ -243,7 +246,7 @@ change explicitly updates the TinyCC contract and tests in the same patch.
 Runtime coverage currently lives in guest ELF probes:
 
 - `fileread` - raw fd read/EOF/bad-fd behavior
-- `fileprobe` - POSIX open modes, write/readback, seek, append, rename/delete
+- `fileprobe` - POSIX open modes, large write/readback, seek, append, partial-sector writes, zero-filled gaps, rename/delete
 - `cwdprobe` - process cwd, relative opens, `realpath`, `access`
 - `statprobe` - `SYS_STAT`, POSIX `stat`, `access`
 - `stdioprobe` - EOF/error state, `clearerr`, `fflush`, invalid stdio ops

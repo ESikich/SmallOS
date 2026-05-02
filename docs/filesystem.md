@@ -8,7 +8,7 @@ path now routes file, socket, and console descriptors through a generic
 per-process handle table. FAT16-backed file handles and path operations are
 wrapped by the small kernel VFS layer in `src/kernel/vfs.c`, which currently
 maps directly onto the FAT16 driver. Writable handles support `rename`,
-`unlink`, `lseek`, buffered `write`, and close-time flush operations for
+`unlink`, `lseek`, streaming `write`, and flush/close operations for
 toolchain-style programs.
 
 ---
@@ -195,7 +195,7 @@ The current FAT16 driver is intentionally narrow.
 - empty-file creation / truncation via `touch`
 - root-directory file creation and overwrite via `fat16_write(name, ...)`
 - nested-path file creation and overwrite via `fat16_write_path(path, ...)`
-- VFS-backed writable file handles with buffered output via `SYS_OPEN_WRITE`, `SYS_WRITEFD`, and `SYS_LSEEK`
+- VFS-backed writable file handles with streaming FAT16 writes via `SYS_OPEN_WRITE`, `SYS_WRITEFD`, and `SYS_LSEEK`
 - file removal and rename/move through `SYS_UNLINK` and `SYS_RENAME`
 - fd-backed console handles for stdin/stdout/stderr
 - socket-backed handles for the current TCP passive listener path via `SYS_SOCKET`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_SEND`, `SYS_RECV`, and `SYS_POLL`
@@ -285,8 +285,9 @@ This buffer:
 - must not be assumed stable across another filesystem load
 
 Code that needs to read a file without flattening it into this 1 MB buffer can
-use the sink-oriented read path. VFS uses that for fd-backed file loads, copying
-sectors into per-fd PMM cache pages as FAT16 walks the cluster chain.
+use the sink-oriented or read-at paths. VFS keeps the PMM page cache for small
+fd reads, then falls back to direct FAT16 read-at for files larger than the fd
+cache.
 
 The driver also uses a separate static cluster scratch buffer so it does not
 need a large stack allocation while copying cluster data.
@@ -305,16 +306,16 @@ If a file is larger, `fat16_load()` fails with:
 fat16: file too large
 ```
 
-Fd-backed reads and writes can currently cache and flush files up to:
+Small fd reads can currently use a page-backed cache up to:
 
 ```text
 4 MB
 ```
 
-That fd cache is page-backed, not one contiguous kernel buffer. VFS stores
-cache frame numbers as PMM physical addresses and dereferences them through the
-shared high kernel PMM alias. User buffers are still copied under the current
-process page directory.
+That fd cache is page-backed, not one contiguous kernel buffer. Larger fd reads
+stream from FAT16 sectors directly. Fd writes no longer require caching the
+whole file; practical write size is bounded by FAT/free space and the current
+15 MB safety limit for this 16 MB test volume.
 
 ## Empty files
 
@@ -329,15 +330,18 @@ cluster, and readback reports a zero-byte file.
 `fat16_write(name, data, size)` creates or overwrites a root-directory file from
 a contiguous buffer. The shell's `touch` and compiler-style write paths use
 `fat16_write_path(path, ...)` when they need to target nested directories.
-Fd-backed flushes use `fat16_write_path_from_source(...)` so VFS can stream
-each sector from PMM cache pages without first flattening the file into one
-temporary buffer.
+Fd-backed writes use `fat16_write_at_path(...)`, writing user chunks directly to
+the target file offset without first caching the whole file. The older
+`fat16_write_path_from_source(...)` whole-file rewrite path remains for simple
+path helpers such as `touch`, `cp`, and `SYS_WRITEFILE_PATH`.
 
 The FAT16 write path is intentionally narrow:
 
 - 8.3 filename matching
-- fd writes are buffered in VFS-owned PMM pages and flushed through a FAT16 source callback
+- fd writes stream through FAT16 write-at and update the descriptor size/offset
 - FAT16 data reads can stream into a caller-provided sink callback
+- partial-sector writes read/patch/write existing sectors so surrounding bytes are preserved
+- seek-past-EOF writes zero-fill the gap before writing new data
 - no long filenames
 - no concurrent writer support
 
@@ -345,12 +349,12 @@ At runtime, the kernel:
 
 1. loads FAT1 and the root directory into temporary working buffers
 2. resolves the destination entry or finds a free slot in the target parent
-3. allocates enough free clusters for the new file contents
-4. writes the data clusters to disk
-5. commits the updated FAT copies and root directory entry
+3. allocates additional clusters only when the write extends the chain
+4. writes full sectors directly and patches partial sectors in place
+5. commits only the FAT sectors that changed and the directory sector containing the file entry
 
 This small VFS boundary is enough for compiler-style tools to emit generated artifacts such as `compiler.out` without exposing FAT16 details to every syscall path.
-It is also enough for SmallOS-hosted compiler binaries to create temp files, rename outputs into place, and inspect candidate paths before writing. The next filesystem rewrite can grow this seam into streaming cluster allocation or mount-style backends without pushing that complexity back into `syscall.c`.
+It is also enough for SmallOS-hosted compiler binaries to create temp files, rename outputs into place, and inspect candidate paths before writing. The next filesystem rewrite can grow this boundary into mount-style backends without pushing that complexity back into `syscall.c`.
 
 ## Creating and Removing Directories
 

@@ -190,43 +190,50 @@ static int vfs_page_sink_write(void* ctx, u32 offset, const u8* data, u32 len) {
 }
 
 static int vfs_file_read(fd_entry_t* ent, char* buf, unsigned int len) {
-    unsigned int remaining;
-    unsigned int to_copy;
-    unsigned int src_off;
+    u32 read_len = 0;
 
     if (!ent || !ent->valid || !ent->readable) return -EBADF;
     if (len == 0) return 0;
     if (ent->offset >= ent->size) return 0;
 
-    if (!vfs_file_load_cache(ent)) return -EIO;
+    if (ent->size <= VFS_FILE_CACHE_MAX_BYTES) {
+        unsigned int remaining;
+        unsigned int to_copy;
+        unsigned int src_off;
 
-    remaining = ent->size - ent->offset;
-    to_copy = (len < remaining) ? len : remaining;
-    src_off = ent->offset;
+        if (!vfs_file_load_cache(ent)) return -EIO;
 
-    if (!vfs_copy_from_cache(ent, src_off, (u8*)buf, to_copy)) return -EIO;
+        remaining = ent->size - ent->offset;
+        to_copy = (len < remaining) ? len : remaining;
+        src_off = ent->offset;
 
-    ent->offset += to_copy;
-    return (int)to_copy;
+        if (!vfs_copy_from_cache(ent, src_off, (u8*)buf, to_copy)) return -EIO;
+
+        ent->offset += to_copy;
+        return (int)to_copy;
+    }
+
+    if (!fat16_read_at_path(ent->name, ent->offset, (u8*)buf, len, &read_len)) {
+        return -EIO;
+    }
+
+    ent->offset += read_len;
+    return (int)read_len;
 }
 
 static int vfs_file_write(fd_entry_t* ent, const char* buf, unsigned int len) {
     if (!ent || !ent->valid || !ent->writable) return -EBADF;
     if (len == 0) return 0;
-    if (ent->size > 0 && ent->cache_page_count == 0) {
-        if (!vfs_file_load_cache(ent)) return -EIO;
-    }
 
     unsigned int end = ent->offset + len;
     if (end < ent->offset) return -EFBIG;
-    if (!vfs_file_ensure_capacity(ent, end)) return -EFBIG;
-    if (!vfs_copy_to_cache(ent, ent->offset, (const u8*)buf, len)) return -EIO;
+    if (!fat16_write_at_path(ent->name, ent->offset, (const u8*)buf, len, &ent->size, 1)) {
+        return -EIO;
+    }
 
     ent->offset = end;
-    if (ent->offset > ent->size) {
-        ent->size = ent->offset;
-    }
-    ent->dirty = 1;
+    vfs_file_cache_free(ent);
+    ent->dirty = 0;
     return (int)len;
 }
 

@@ -161,7 +161,7 @@ int sys_open_write(const char* name);
 ```
 
 Legacy shorthand for `SYS_OPEN_MODE_WRITE | SYS_OPEN_MODE_CREATE |
-SYS_OPEN_MODE_TRUNC`. Opens a FAT16 file for buffered write/truncate and
+SYS_OPEN_MODE_TRUNC`. Opens a FAT16 file for streaming write/truncate and
 returns a writable file-backed handle. New runtime code should prefer
 `SYS_OPEN_MODE` so read/write/append/truncate intent is explicit.
 
@@ -186,10 +186,9 @@ SYS_OPEN_MODE_APPEND
 This is the preferred descriptor-open primitive for POSIX `open()` and stdio
 `fopen()` because it can represent read-only, write-truncate, read/write,
 create, and append opens without forcing every write-capable path to truncate.
-Writable file handles use PMM-backed cache pages and flush dirty data on
-`close()`. Existing content is loaded into that cache before partial writes or
-append writes so unwritten bytes are preserved. Flush writes stream from those
-cache pages into FAT16 sector by sector.
+Writable file handles stream writes through FAT16 at the descriptor offset.
+Partial-sector writes preserve surrounding bytes, append starts at the current
+file size, and seek-past-EOF writes zero-fill the gap.
 
 ---
 
@@ -226,7 +225,10 @@ resolve relative paths through the same process cwd.
 int sys_writefd(int fd, const char* buf, uint32_t len);
 ```
 
-Writes bytes to an open writable handle. Returns bytes written or `-1` on error.
+Writes bytes to an open writable handle. Returns bytes written or a negative
+errno-style value on error. FAT16 file descriptors stream the bytes to the
+current file offset, allocate clusters as the file grows, preserve untouched
+bytes in partial sectors, and zero-fill gaps created by seek-past-EOF writes.
 Descriptors `1` and `2` are fd-backed console handles, so `write(1, ...)`,
 `write(2, ...)`, `printf`, and `fprintf(stderr, ...)` all travel through this
 same handle path. User-opened files and sockets still start at fd `3`.
@@ -521,7 +523,7 @@ u_puts(...)        sys_write wrapper
 u_putc(...)        sys_putc wrapper
 u_put_uint(...)    decimal integer output
 u_readline(...)    sys_read + null-terminate + strip newline
-u_open_write(...)  buffered write/truncate open
+u_open_write(...)  streaming write/truncate open
 u_writefd(...)     write to writable handle
 u_lseek(...)       reposition writable handle
 u_unlink(...)      remove FAT16 file

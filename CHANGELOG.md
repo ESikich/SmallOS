@@ -4,11 +4,18 @@
 
 ### Changed
 
+* **Streaming FAT16 fd writes** (`src/drivers/fat16.*`, `src/kernel/vfs.c`, `src/kernel/syscall.c`, `src/user/fileprobe.c`, `docs/`)
+  * Added FAT16 read-at/write-at primitives for fd-backed file IO.
+  * VFS writes now stream user chunks directly to FAT16 instead of caching the whole file and rewriting it on flush.
+  * Partial-sector writes preserve surrounding bytes, and seek-past-EOF writes zero-fill the gap.
+  * Small fd reads keep the PMM read cache; larger fd reads stream directly from FAT16, so practical fd file size is now FAT/free-space bound rather than cache bound.
+  * `fileprobe` now covers a 6 MB descriptor write/readback, partial-sector boundary writes, and sparse-style gap zero filling.
+
 * **Filesystem write/readback scaling** (`src/drivers/fat16.*`, `src/kernel/vfs.c`, `src/kernel/process.h`, `src/user/fileprobe.c`, `docs/`)
-  * Split FAT16's whole-file load limit from fd-backed write/read limits: `fat16_load()` keeps its 1 MB static buffer, while fd-backed FAT16 handles can now cache and flush files up to 4 MB.
+  * Split FAT16's whole-file load limit from fd-backed IO limits: `fat16_load()` keeps its 1 MB static buffer, while fd-backed reads can cache files up to 4 MB and larger fd IO can use streaming paths.
   * Added a FAT16 sink read path so VFS can stream cluster data into PMM-backed cache pages instead of requiring one contiguous load buffer.
   * VFS now copies PMM cache frames through the kernel page directory when running under a user process page directory, avoiding corruption when cache frames overlap the user ELF virtual window.
-  * `fileprobe` now writes and reads back a 2 MB file through normal descriptor IO.
+  * `fileprobe` added descriptor write/readback coverage through normal descriptor IO.
 
 * **Errno-aware syscall/runtime errors** (`src/kernel/uapi_errno.h`, `src/kernel/syscall.c`, `src/kernel/process.c`, `src/kernel/vfs.c`, `src/user/user_posix.c`, `src/user/user_stdio.c`, `src/user/errnoprobe.c`, `docs/`)
   * Added shared UAPI errno constants and moved kernel failures toward raw negative errno returns without changing the syscall calling convention.
@@ -67,7 +74,7 @@
   * FAT16-backed file handles and path operations now sit behind a small `vfs` boundary, leaving `process.c` to own descriptor lifetime and generic handle dispatch.
   * ELF program lookup now uses `vfs_load_file()` instead of calling the FAT16 driver directly.
   * Shell file reads and simple mutations (`fsread`, `cat`, `mkdir`, `rmdir`, `rm`, `touch`, `mv`) now use the same VFS wrappers as the syscall layer.
-  * `fileprobe` now covers seek-overwrite and truncate-on-open-write behavior so the buffered write path has direct regression coverage.
+  * `fileprobe` now covers seek-overwrite and truncate-on-open-write behavior so the fd write path has direct regression coverage.
 
 * **ELF loader page setup** (`src/exec/elf_loader.c`)
   * The ELF loader now preserves already-present page-table entries when preparing a process image and only allocates fresh frames for pages that are not mapped yet.

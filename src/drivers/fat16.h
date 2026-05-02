@@ -25,7 +25,7 @@ typedef unsigned char  u8;
  */
 
 #define FAT16_MAX_LOAD_FILE_BYTES   (1024u * 1024u)
-#define FAT16_MAX_WRITE_FILE_BYTES  (4u * 1024u * 1024u)
+#define FAT16_MAX_WRITE_FILE_BYTES  (15u * 1024u * 1024u)
 
 typedef int (*fat16_read_source_fn)(void* ctx, u32 offset, u8* out, u32 len);
 typedef int (*fat16_write_sink_fn)(void* ctx, u32 offset, const u8* data, u32 len);
@@ -113,6 +113,12 @@ int fat16_read_path_to_sink(const char* name,
                             const fat16_data_sink_t* sink,
                             u32* out_size);
 
+int fat16_read_at_path(const char* path,
+                       u32 offset,
+                       u8* out,
+                       u32 len,
+                       u32* out_read);
+
 /*
  * fat16_write(name, data, size)
  *
@@ -146,6 +152,13 @@ int fat16_write_path(const char* path, const u8* data, u32 size);
 int fat16_write_path_from_source(const char* path,
                                  const fat16_data_source_t* source,
                                  u32 size);
+
+int fat16_write_at_path(const char* path,
+                        u32 offset,
+                        const u8* data,
+                        u32 len,
+                        u32* inout_size,
+                        int create);
 
 /*
  * fat16_mkdir(path)

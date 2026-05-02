@@ -615,9 +615,10 @@ static int sys_open_write_impl(const char* name) {
     if (!proc) return -EINVAL;
 
     int fd = process_fd_open_file(proc, kname, 0, 1);
-    fd_entry_t* ent = process_fd_get(proc, fd);
-    if (ent) {
-        ent->dirty = 1;
+    if (fd < 0) return fd;
+    if (!vfs_write_path(kname, 0, 0)) {
+        sys_close_impl(fd);
+        return -EIO;
     }
     return fd;
 }
@@ -646,8 +647,7 @@ static int sys_open_mode_impl(const char* name, unsigned int mode) {
     exists = vfs_stat(kname, &file_size, &is_dir);
     if (exists && is_dir) return -EISDIR;
     if (!exists && !create) return path_lookup_errno(kname);
-    if (!exists) file_size = 0;
-    if (trunc) file_size = 0;
+    if (!exists || trunc) file_size = 0;
 
     process_t* proc = (process_t*)sched_current();
     if (!proc) return -EINVAL;
@@ -660,8 +660,12 @@ static int sys_open_mode_impl(const char* name, unsigned int mode) {
         sys_close_impl(fd);
         return -EBADF;
     }
-    if (writable && (trunc || !exists)) {
-        ent->dirty = 1;
+
+    if (!exists || trunc) {
+        if (!vfs_write_path(kname, 0, 0)) {
+            sys_close_impl(fd);
+            return -EIO;
+        }
     }
 
     if (append) {

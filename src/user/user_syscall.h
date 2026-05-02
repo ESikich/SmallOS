@@ -137,7 +137,7 @@ static inline int sys_open(const char* name) {
 /*
  * sys_open_write(name)
  *
- * Open a FAT16 file for buffered write/truncate.
+ * Open a FAT16 file for streaming write/truncate.
  */
 static inline int sys_open_write(const char* name) {
     return syscall1(SYS_OPEN_WRITE, (uint32_t)name);
