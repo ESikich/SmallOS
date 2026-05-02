@@ -4,6 +4,11 @@
 
 ### Changed
 
+* **Per-process cwd for userland** (`src/kernel/syscall.c`, `src/kernel/process.h`, `src/user/user_syscall.h`, `src/user/user_lib.h`, `src/user/user_posix.c`, `src/user/cwdprobe.c`, `tests/elfs/cwdprobe.py`, `docs/`)
+  * Added `SYS_GETCWD` and `SYS_CHDIR`, plus POSIX/user helper wrappers.
+  * User file/path syscalls now normalize relative paths against the calling process cwd before entering VFS or ELF loading.
+  * `cwdprobe` is now shipped and tested as a guest ELF.
+
 * **Mode-aware file opens** (`src/kernel/syscall.c`, `src/kernel/process.*`, `src/kernel/vfs.*`, `src/user/user_stdio.c`, `src/user/user_posix.c`, `tests/elfs/fileprobe.py`, `docs/`)
   * Added `SYS_OPEN_MODE` so POSIX `open()` and stdio `fopen()` can express read, write, create, truncate, append, and read/write intent directly.
   * File descriptors now track readable, writable, and dirty state separately; append and read/write opens preserve existing bytes instead of forcing every writable open through truncate semantics.

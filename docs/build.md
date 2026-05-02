@@ -237,6 +237,7 @@ src/user/compiler_demo.c
 src/user/heapprobe.c
 src/user/statprobe.c
 src/user/fileprobe.c
+src/user/cwdprobe.c
 src/user/sleep_test.c
 src/user/ptrguard.c
 src/user/preempt_test.c
@@ -338,6 +339,7 @@ Shipped FAT16 programs:
 - `apps/tests/heapprobe` - exercise malloc/free/realloc/calloc
 - `apps/tests/statprobe` - exercise SYS_STAT and path probing
 - `apps/tests/fileprobe` - exercise file wrapper helpers, rename, unlink, and stat
+- `apps/tests/cwdprobe` - exercise process cwd and relative path syscalls
 - `apps/tests/sleep_test` - exercise SYS_SLEEP semantics
 - `apps/tests/ptrguard` - exercise syscall pointer validation
 - `apps/tests/preempt_test` - prove timer-driven preemption

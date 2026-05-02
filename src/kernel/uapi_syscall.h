@@ -77,7 +77,9 @@ enum {
     SYS_DIRLIST    = 33,
     SYS_SETSOCKOPT = 34,
     SYS_GETSOCKNAME = 35,
-    SYS_OPEN_MODE   = 36   /* mode-aware open; ebx=path ecx=SYS_OPEN_MODE_* */
+    SYS_OPEN_MODE   = 36,  /* mode-aware open; ebx=path ecx=SYS_OPEN_MODE_* */
+    SYS_GETCWD      = 37,  /* copy process cwd into user buffer */
+    SYS_CHDIR       = 38   /* change process cwd */
 };
 
 #endif

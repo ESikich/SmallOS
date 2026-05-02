@@ -163,15 +163,11 @@ char* strerror(int errnum) {
 
 char* getcwd(char* buf, unsigned int size) {
     if (!buf || size == 0) return 0;
-    if (size < 2) return 0;
-    buf[0] = '/';
-    buf[1] = '\0';
-    return buf;
+    return sys_getcwd(buf, size) < 0 ? 0 : buf;
 }
 
 int chdir(const char* path) {
-    (void)path;
-    return 0;
+    return sys_chdir(path);
 }
 
 int setsockopt(int fd, int level, int optname, const void* optval, unsigned int optlen) {

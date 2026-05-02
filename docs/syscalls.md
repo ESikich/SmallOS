@@ -164,6 +164,33 @@ append writes so unwritten bytes are preserved.
 
 ---
 
+### SYS_GETCWD (37)
+
+```c
+int sys_getcwd(char* buf, uint32_t size);
+```
+
+Copies the calling process's current working directory into `buf` as an
+absolute display path such as `/` or `/apps/demo`. Returns `0` on success or
+`-1` if the user buffer is invalid or too small.
+
+---
+
+### SYS_CHDIR (38)
+
+```c
+int sys_chdir(const char* path);
+```
+
+Changes the calling process's current working directory. Relative paths are
+resolved against the process cwd, `.` and `..` are normalized, and the result
+must name an existing FAT16 directory. File-oriented syscalls such as
+`SYS_OPEN`, `SYS_OPEN_MODE`, `SYS_STAT`, `SYS_RENAME`, `SYS_UNLINK`,
+`SYS_MKDIR`, `SYS_RMDIR`, `SYS_DIRLIST`, `SYS_WRITEFILE_PATH`, and `SYS_EXEC`
+resolve relative paths through the same process cwd.
+
+---
+
 ### SYS_WRITEFD (18)
 
 ```c
@@ -480,6 +507,7 @@ u_stat(...)        query path metadata
 * Programs run in ring 3 — hardware-enforced privilege separation
 * All pointer arguments to syscalls are validated with page-aware user checks before kernel dereference — pointers below `USER_CODE_BASE` (0x400000), spanning above `USER_STACK_TOP` (0xC0000000), or touching an unmapped user page are rejected with `-1`
 * `SYS_EXEC` copies the user `name` and `argv[]` strings into kernel buffers before handing them to the ELF loader, so the loader never depends on caller memory staying stable after validation
+* Each process owns a cwd. Kernel path syscalls normalize `.` / `..`, accept absolute paths with a leading slash, and resolve relative paths against that process cwd before entering VFS or ELF loading.
 * `SYS_YIELD` and the timer path use the same stub layout, but the real scheduler resume ESP is `esp - 8`, not raw `esp`
 * EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`
 * The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.

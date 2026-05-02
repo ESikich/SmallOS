@@ -79,6 +79,7 @@ struct fd_entry {
 #define PROCESS_NAME_MAX  32
 #define PROCESS_MAX_ARGS  16
 #define PROCESS_ARG_BYTES 256
+#define PROCESS_CWD_MAX   PROCESS_FD_NAME_MAX
 
 typedef struct {
     u32*            pd;
@@ -95,6 +96,7 @@ typedef struct {
     char            user_arg_data[PROCESS_ARG_BYTES];
     unsigned int    heap_base;
     unsigned int    heap_brk;
+    char            cwd[PROCESS_CWD_MAX];  /* canonical path without leading slash */
     char            name[PROCESS_NAME_MAX];
     fd_entry_t      fds[PROCESS_FD_MAX];   /* per-process open handles */
 } process_t;

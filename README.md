@@ -230,6 +230,7 @@ Seeded FAT16 layout:
 - `apps/tests/heapprobe` - exercise malloc/free/realloc/calloc
 - `apps/tests/statprobe` - exercise SYS_STAT and path probing
 - `apps/tests/fileprobe` - exercise small file wrapper helpers
+- `apps/tests/cwdprobe` - exercise process cwd and relative path syscalls
 - `apps/tests/sleep_test` - exercise SYS_SLEEP semantics
 - `apps/tests/ptrguard` - exercise syscall pointer validation
 - `apps/tests/preempt_test` - prove timer-driven preemption between runnable tasks

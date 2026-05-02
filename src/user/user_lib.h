@@ -129,6 +129,14 @@ static inline int u_stat(const char* path, uint32_t* out_size, int* out_is_dir) 
     return sys_stat(path, out_size, out_is_dir);
 }
 
+static inline int u_getcwd(char* buf, uint32_t size) {
+    return sys_getcwd(buf, size);
+}
+
+static inline int u_chdir(const char* path) {
+    return sys_chdir(path);
+}
+
 /*
  * u_readline(buf, maxlen)
  *

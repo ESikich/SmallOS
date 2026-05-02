@@ -152,6 +152,14 @@ static inline int sys_open_mode(const char* name, uint32_t mode) {
     return syscall2(SYS_OPEN_MODE, (uint32_t)name, mode);
 }
 
+static inline int sys_getcwd(char* buf, uint32_t size) {
+    return syscall2(SYS_GETCWD, (uint32_t)buf, size);
+}
+
+static inline int sys_chdir(const char* path) {
+    return syscall1(SYS_CHDIR, (uint32_t)path);
+}
+
 /*
  * sys_close(fd)
  *

@@ -20,6 +20,109 @@
 #define EXEC_NAME_MAX         PROCESS_FD_NAME_MAX
 #define SCHED_RESUME_RETADDR_OFFSET 8u  /* push esp + call return address */
 
+static int path_is_sep(char c) {
+    return c == '/' || c == '\\';
+}
+
+static int path_add_component(char comps[][32], int* count, const char* component) {
+    if (*count >= 16) {
+        return 0;
+    }
+
+    int len = 0;
+    while (component[len] != '\0') {
+        if (len >= 31) {
+            return 0;
+        }
+        len++;
+    }
+
+    for (int i = 0; i < len; i++) {
+        comps[*count][i] = component[i];
+    }
+    comps[*count][len] = '\0';
+    (*count)++;
+    return 1;
+}
+
+static int path_build_from(const char* base, const char* path, char* out, unsigned int out_size) {
+    char comps[16][32];
+    const char* sources[2];
+    int source_count = 0;
+    int count = 0;
+
+    if (!path || !out || out_size == 0) {
+        return 0;
+    }
+
+    if (base && base[0] != '\0' && !path_is_sep(path[0])) {
+        sources[source_count++] = base;
+    }
+    sources[source_count++] = path;
+
+    for (int s = 0; s < source_count; s++) {
+        const char* cursor = sources[s];
+        while (*cursor) {
+            while (*cursor && path_is_sep(*cursor)) {
+                cursor++;
+            }
+            if (*cursor == '\0') {
+                break;
+            }
+
+            char component[32];
+            int len = 0;
+            while (cursor[len] && !path_is_sep(cursor[len])) {
+                if (len >= 31) {
+                    return 0;
+                }
+                component[len] = cursor[len];
+                len++;
+            }
+            component[len] = '\0';
+            cursor += len;
+
+            if (k_strcmp(component, ".")) {
+                continue;
+            }
+            if (k_strcmp(component, "..")) {
+                if (count > 0) {
+                    count--;
+                }
+                continue;
+            }
+            if (!path_add_component(comps, &count, component)) {
+                return 0;
+            }
+        }
+    }
+
+    if (count == 0) {
+        out[0] = '\0';
+        return 1;
+    }
+
+    unsigned int pos = 0;
+    for (int i = 0; i < count; i++) {
+        unsigned int len = 0;
+        while (comps[i][len] != '\0') {
+            len++;
+        }
+
+        if (pos + len + (i > 0 ? 1u : 0u) + 1u > out_size) {
+            return 0;
+        }
+        if (i > 0) {
+            out[pos++] = '/';
+        }
+        for (unsigned int j = 0; j < len; j++) {
+            out[pos++] = comps[i][j];
+        }
+    }
+    out[pos] = '\0';
+    return 1;
+}
+
 /* ------------------------------------------------------------------ */
 /* Copy-from-user validation                                          */
 /* ------------------------------------------------------------------ */
@@ -105,6 +208,16 @@ static int copy_user_cstr(char* dst, unsigned int dst_size, const char* src) {
     }
 
     return -1;
+}
+
+static int copy_user_path_resolved(char* dst, unsigned int dst_size, const char* src) {
+    char raw[PROCESS_FD_NAME_MAX];
+    process_t* proc = (process_t*)sched_current();
+
+    if (copy_user_cstr(raw, sizeof(raw), src) <= 1) return -1;
+    if (!proc) return -1;
+    if (!path_build_from(proc->cwd, raw, dst, dst_size)) return -1;
+    return 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -249,7 +362,7 @@ static int sys_exec_impl(const char* name, int argc, char** argv) {
     char* kargv[PROCESS_MAX_ARGS + 1];
     unsigned int used = 0;
 
-    if (copy_user_cstr(kname, sizeof(kname), name) <= 1) return -1;
+    if (copy_user_path_resolved(kname, sizeof(kname), name) < 0) return -1;
 
     if (argc < 0 || argc > PROCESS_MAX_ARGS) return -1;
 
@@ -295,7 +408,7 @@ static int sys_writefile_impl(const char* name, const void* buf, unsigned int le
  */
 static int sys_writefile_path_impl(const char* path, const void* buf, unsigned int len) {
     char kpath[PROCESS_FD_NAME_MAX];
-    if (copy_user_cstr(kpath, sizeof(kpath), path) <= 1) return -1;
+    if (copy_user_path_resolved(kpath, sizeof(kpath), path) < 0) return -1;
     if (len > 0 && !user_buf_ok((unsigned int)buf, len)) return -1;
 
     return vfs_write_path(kpath, (const u8*)buf, len) ? 0 : -1;
@@ -426,7 +539,7 @@ static unsigned int sys_brk_impl(unsigned int new_brk) {
  */
 static int sys_open_impl(const char* name) {
     char kname[PROCESS_FD_NAME_MAX];
-    if (copy_user_cstr(kname, sizeof(kname), name) <= 1) return -1;
+    if (copy_user_path_resolved(kname, sizeof(kname), name) < 0) return -1;
 
     /* Check the file exists and get its size */
     u32 file_size = 0;
@@ -456,7 +569,7 @@ static int sys_close_impl(int fd) {
 
 static int sys_open_write_impl(const char* name) {
     char kname[PROCESS_FD_NAME_MAX];
-    if (copy_user_cstr(kname, sizeof(kname), name) <= 1) return -1;
+    if (copy_user_path_resolved(kname, sizeof(kname), name) < 0) return -1;
 
     process_t* proc = (process_t*)sched_current();
     if (!proc) return -1;
@@ -487,7 +600,7 @@ static int sys_open_mode_impl(const char* name, unsigned int mode) {
     if ((mode & ~supported) != 0) return -1;
     if (!readable && !writable) return -1;
     if ((trunc || append || create) && !writable) return -1;
-    if (copy_user_cstr(kname, sizeof(kname), name) <= 1) return -1;
+    if (copy_user_path_resolved(kname, sizeof(kname), name) < 0) return -1;
 
     exists = vfs_stat(kname, &file_size, &is_dir);
     if (exists && is_dir) return -1;
@@ -787,13 +900,13 @@ static int sys_poll_impl(syscall_regs_t* regs, struct pollfd* fds,
 static int sys_mkdir_impl(const char* path, unsigned int mode) {
     char kpath[PROCESS_FD_NAME_MAX];
     (void)mode;
-    if (copy_user_cstr(kpath, sizeof(kpath), path) <= 1) return -1;
+    if (copy_user_path_resolved(kpath, sizeof(kpath), path) < 0) return -1;
     return vfs_mkdir(kpath) ? 0 : -1;
 }
 
 static int sys_rmdir_impl(const char* path) {
     char kpath[PROCESS_FD_NAME_MAX];
-    if (copy_user_cstr(kpath, sizeof(kpath), path) <= 1) return -1;
+    if (copy_user_path_resolved(kpath, sizeof(kpath), path) < 0) return -1;
     return vfs_rmdir(kpath) ? 0 : -1;
 }
 
@@ -802,7 +915,7 @@ static int sys_dirlist_impl(const char* path, unsigned int index, uapi_dirent_t*
     char name[UAPI_DIRENT_NAME_MAX];
     unsigned int size = 0;
     int is_dir = 0;
-    if (copy_user_cstr(kpath, sizeof(kpath), path) <= 1) return -1;
+    if (copy_user_path_resolved(kpath, sizeof(kpath), path) < 0) return -1;
     if (!out) return -1;
     if (!user_buf_ok((unsigned int)out, sizeof(*out))) return -1;
     if (!vfs_dirent_at(kpath, index, name, sizeof(name), &size, &is_dir)) {
@@ -875,15 +988,15 @@ static int sys_lseek_impl(int fd, int offset, int whence) {
 
 static int sys_unlink_impl(const char* path) {
     char kpath[PROCESS_FD_NAME_MAX];
-    if (copy_user_cstr(kpath, sizeof(kpath), path) <= 1) return -1;
+    if (copy_user_path_resolved(kpath, sizeof(kpath), path) < 0) return -1;
     return vfs_unlink(kpath) ? 0 : -1;
 }
 
 static int sys_rename_impl(const char* src, const char* dst) {
     char ksrc[PROCESS_FD_NAME_MAX];
     char kdst[PROCESS_FD_NAME_MAX];
-    if (copy_user_cstr(ksrc, sizeof(ksrc), src) <= 1) return -1;
-    if (copy_user_cstr(kdst, sizeof(kdst), dst) <= 1) return -1;
+    if (copy_user_path_resolved(ksrc, sizeof(ksrc), src) < 0) return -1;
+    if (copy_user_path_resolved(kdst, sizeof(kdst), dst) < 0) return -1;
     return vfs_rename(ksrc, kdst) ? 0 : -1;
 }
 
@@ -891,7 +1004,7 @@ static int sys_stat_impl(const char* path, unsigned int* out_size, int* out_is_d
     char kpath[PROCESS_FD_NAME_MAX];
     u32 size = 0;
     int is_dir = 0;
-    if (copy_user_cstr(kpath, sizeof(kpath), path) <= 1) return -1;
+    if (copy_user_path_resolved(kpath, sizeof(kpath), path) < 0) return -1;
 
     if (!vfs_stat(kpath, &size, &is_dir)) return -1;
 
@@ -903,6 +1016,35 @@ static int sys_stat_impl(const char* path, unsigned int* out_size, int* out_is_d
         if (!user_buf_ok((unsigned int)out_is_dir, sizeof(int))) return -1;
         *out_is_dir = is_dir;
     }
+    return 0;
+}
+
+static int sys_getcwd_impl(char* buf, unsigned int size) {
+    process_t* proc = (process_t*)sched_current();
+    unsigned int pos = 0;
+
+    if (!proc || !buf || size == 0) return -1;
+    if (!user_buf_ok((unsigned int)buf, size)) return -1;
+
+    if (size < 2) return -1;
+    buf[pos++] = '/';
+    for (unsigned int i = 0; proc->cwd[i] != '\0'; i++) {
+        if (pos + 1 >= size) return -1;
+        buf[pos++] = proc->cwd[i];
+    }
+    buf[pos] = '\0';
+    return 0;
+}
+
+static int sys_chdir_impl(const char* path) {
+    char kpath[PROCESS_CWD_MAX];
+    process_t* proc = (process_t*)sched_current();
+
+    if (!proc) return -1;
+    if (copy_user_path_resolved(kpath, sizeof(kpath), path) < 0) return -1;
+    if (!vfs_is_dir(kpath)) return -1;
+
+    k_memcpy(proc->cwd, kpath, (k_size_t)k_strlen(kpath) + 1u);
     return 0;
 }
 
@@ -1132,6 +1274,15 @@ void syscall_handler_main(syscall_regs_t* regs) {
             regs->eax = (unsigned int)sys_getsockname_impl((int)regs->ebx,
                                                            (struct sockaddr*)regs->ecx,
                                                            (unsigned int*)regs->edx);
+            break;
+
+        case SYS_GETCWD:
+            regs->eax = (unsigned int)sys_getcwd_impl((char*)regs->ebx,
+                                                      regs->ecx);
+            break;
+
+        case SYS_CHDIR:
+            regs->eax = (unsigned int)sys_chdir_impl((const char*)regs->ebx);
             break;
 
         default:
