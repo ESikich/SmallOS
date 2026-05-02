@@ -189,7 +189,15 @@ class FtpClient:
         data = self.pasv()
         self.command(command, "150")
         data.sendall(payload)
+        time.sleep(0.25)
         data.shutdown(socket.SHUT_WR)
+        deadline = time.time() + self.timeout_s
+        while time.time() < deadline:
+            try:
+                if not data.recv(1):
+                    break
+            except socket.timeout:
+                break
         data.close()
         self.read_expect("226", command)
 
@@ -237,11 +245,16 @@ def run_ftp_smoke(args):
             raise RuntimeError(f"banner expected 220, got: {' | '.join(banner)}")
         print(f"banner: {' | '.join(banner)}")
 
+        ftp.command("USER nope", "331")
+        ftp.command("PASS nope", "530")
         ftp.command("USER ftp", "331")
         ftp.command("PASS ftp", "230")
         ftp.command("SYST", "2")
         ftp.command("PWD", "257")
         ftp.command("CWD /", "250")
+        ftp.command("CWD /NO_SUCH_DIR", "550")
+        ftp.command("DELE NO_SUCH.TXT", "550")
+        ftp.command("RMD NO_SUCH_DIR", "550")
 
         listing = ftp.download("LIST")
         list_text = listing.decode("ascii", errors="replace")
@@ -258,9 +271,38 @@ def run_ftp_smoke(args):
         ftp.upload(f"STOR {args.stor_path}", payload)
         print(f"STOR uploaded bytes: {len(payload)}")
 
+        uploaded = ftp.download(f"RETR {args.stor_path}")
+        if uploaded != payload:
+            raise RuntimeError(
+                "RETR uploaded root file did not match STOR payload: "
+                f"expected {len(payload)} {payload!r}, got {len(uploaded)} {uploaded[:64]!r}"
+            )
+
         listing = ftp.download("LIST")
         if args.stor_path.upper() not in listing.decode("ascii", errors="replace").upper():
             raise RuntimeError("LIST after STOR did not include uploaded file")
+
+        ftp.command(f"DELE {args.stor_path}", "250")
+
+        nested_payload = args.nested_payload.encode("ascii")
+        ftp.command(f"MKD {args.nested_dir}", "257")
+        ftp.command(f"CWD {args.nested_dir}", "250")
+        ftp.command("PWD", "257")
+        ftp.upload(f"STOR {args.nested_file}", nested_payload)
+        nested = ftp.download(f"RETR {args.nested_file}")
+        if nested != nested_payload:
+            raise RuntimeError(
+                "RETR nested uploaded file did not match STOR payload: "
+                f"expected {len(nested_payload)} {nested_payload!r}, got {len(nested)} {nested[:64]!r}"
+            )
+
+        nested_listing = ftp.download("LIST")
+        if args.nested_file.upper() not in nested_listing.decode("ascii", errors="replace").upper():
+            raise RuntimeError("nested LIST did not include uploaded file")
+
+        ftp.command(f"DELE {args.nested_file}", "250")
+        ftp.command("CWD /", "250")
+        ftp.command(f"RMD {args.nested_dir}", "250")
 
         ftp.command("QUIT", "221")
         print("FTP smoke PASS")
@@ -278,6 +320,9 @@ def main():
     parser.add_argument("--retr-path", default="apps/demo/hello.elf")
     parser.add_argument("--stor-path", default="PY_SMOKE.TXT")
     parser.add_argument("--stor-payload", default="ftp smoke payload\r\n")
+    parser.add_argument("--nested-dir", default="PYFTP")
+    parser.add_argument("--nested-file", default="NEST.TXT")
+    parser.add_argument("--nested-payload", default="nested ftp smoke payload\r\n")
     parser.add_argument("--timeout", type=float, default=120.0)
     args = parser.parse_args()
 

@@ -167,8 +167,8 @@ host.
 
 `make ftp-smoke` runs the FTP path end to end: it boots QEMU with control and
 passive-data host forwarding, starts `apps/services/ftpd`, logs in as
-`ftp`/`ftp`, runs `LIST`, `RETR`, `STOR`, and verifies that the uploaded file
-appears in a later listing.
+`ftp`/`ftp`, checks negative replies, and verifies `LIST`, `RETR`, `STOR`
+readback, `DELE`, nested directory cleanup, and `RMD`.
 
 `make test` boots the image headlessly, runs the shell `selftest`
 command, feeds the interactive `readline` prompt, and checks every

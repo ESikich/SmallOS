@@ -157,7 +157,8 @@ hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000
 ```
 
 `make ftp-smoke` sets those forwards, launches `ftpd`, and verifies login,
-directory listing, download, upload, and listing-after-upload.
+negative path replies, directory listing, download, upload readback, delete,
+and `RMD` cleanup.
 
 ---
 

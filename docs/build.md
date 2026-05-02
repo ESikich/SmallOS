@@ -107,7 +107,8 @@ commands on their own.
 
 `make ftp-smoke` boots QEMU with user-network host forwarding for FTP control
 port `2121` and passive data port `30000`, starts `apps/services/ftpd`, then
-drives `LIST`, `RETR`, and `STOR` from the host.
+drives login, negative path checks, `LIST`, `RETR`, `STOR` readback,
+`DELE`, and `RMD` cleanup from the host.
 
 For networking, the default `run` and `test` targets keep using QEMU's
 user-network NAT so CI stays simple. `make run-tap` and

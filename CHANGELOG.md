@@ -42,7 +42,8 @@
   * `tools/tcc.elf` now uses that generic CRT adapter and runs TinyCC's normal hosted CLI `main()` path.
 
 * **FTP smoke harness** (`Makefile`, `tools/ftp_smoke.py`, `README.md`, `docs/build.md`, `docs/execution.md`)
-  * Added `make ftp-smoke`, which boots QEMU with FTP control and passive data host forwarding, launches `apps/services/ftpd`, and verifies login, `LIST`, `RETR`, `STOR`, and listing-after-upload.
+  * Added `make ftp-smoke`, which boots QEMU with FTP control and passive data host forwarding, launches `apps/services/ftpd`, and verifies login, `LIST`, `RETR`, `STOR`, and upload cleanup.
+  * Expanded the smoke to cover bad auth/path replies, uploaded-file readback, nested directory upload/delete cleanup, and `RMD`.
   * Documented that passive FTP needs both guest port `2121` and guest port `30000` forwarded when using QEMU user networking.
 
 * **Unified fd-backed handles and VFS file backend** (`src/kernel/process.c`, `src/kernel/process.h`, `src/kernel/vfs.c`, `src/kernel/vfs.h`, `src/kernel/syscall.c`, `src/user/user_stdio.c`, `src/user/user_posix.c`, `docs/`)
