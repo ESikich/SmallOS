@@ -4,6 +4,10 @@
 
 ### Changed
 
+* **Shell input echo path** (`src/shell/shell.c`)
+  * Ordinary character appends now echo directly instead of redrawing the full prompt line on every keypress.
+  * The shell task now uses an explicit `sti; hlt` idle wait so keyboard interrupts can wake the prompt predictably.
+
 * **Timer frequency ownership** (`src/kernel/uapi_time.h`, `src/kernel/timer.c`, `src/kernel/scheduler.h`, `src/kernel/syscall.c`, `src/user/user_posix.c`)
   * The PIT rate now has a shared `SMALLOS_TIMER_HZ` constant instead of open-coded `100` conversions across kernel and userland.
   * Poll timeouts, TCP/IPv4 retry windows, uptime, and POSIX time shims now derive tick math from the shared timer frequency.

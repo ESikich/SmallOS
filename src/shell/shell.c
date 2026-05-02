@@ -44,9 +44,9 @@ typedef struct {
 } shell_event_t;
 
 static shell_event_t event_queue[SHELL_EVENT_QUEUE_SIZE];
-static int event_head = 0;
-static int event_tail = 0;
-static int event_count = 0;
+static volatile int event_head = 0;
+static volatile int event_tail = 0;
+static volatile int event_count = 0;
 
 static int path_is_sep(char c) {
     return c == '/' || c == '\\';
@@ -216,6 +216,11 @@ static void shell_render_current_line(void) {
     terminal_set_cursor(prompt_row, start + editor.cursor);
 }
 
+static int shell_can_fast_echo_append(void) {
+    int cursor_col = prompt_col + prompt_len + editor.cursor;
+    return editor.cursor == editor.len && cursor_col >= 0 && cursor_col < 79;
+}
+
 static void shell_start_prompt(void) {
     prompt_len = shell_prompt_length();
     shell_put_prompt();
@@ -370,8 +375,13 @@ void shell_poll(void) {
 
                     shell_start_prompt();
                 } else if (ev.c != '\t') {
+                    int fast_echo = shell_can_fast_echo_append();
                     if (line_editor_insert(&editor, ev.c)) {
-                        shell_render_current_line();
+                        if (fast_echo) {
+                            terminal_putc(ev.c);
+                        } else {
+                            shell_render_current_line();
+                        }
                     }
                 }
                 break;
@@ -448,7 +458,7 @@ void shell_task_main(void) {
 
     for (;;) {
         if (event_count == 0) {
-            __asm__ __volatile__("hlt");
+            __asm__ __volatile__("sti; hlt");
         }
         shell_poll();
     }
