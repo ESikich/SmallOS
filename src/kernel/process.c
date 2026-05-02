@@ -8,6 +8,7 @@
 #include "keyboard.h"
 #include "shell.h"
 #include "../drivers/tcp.h"
+#include "uapi_poll.h"
 
 #define FREAD_CACHE_MAX_BYTES (PROCESS_FD_CACHE_PAGES * 4096u)
 #define FWRITE_CACHE_MAX_BYTES (PROCESS_FD_CACHE_PAGES * 4096u)
@@ -59,6 +60,12 @@ static void str_copy_n(char* dst, const char* src, unsigned int n) {
     dst[i] = '\0';
 }
 
+static int process_handle_console_read(fd_entry_t* ent, char* buf, unsigned int len);
+static int process_handle_console_write(fd_entry_t* ent, const char* buf, unsigned int len);
+static int process_handle_console_seek(fd_entry_t* ent, int offset, int whence);
+static short process_handle_console_poll(fd_entry_t* ent, short events);
+static void process_handle_console_close(fd_entry_t* ent);
+
 void process_fd_cache_free(fd_entry_t* ent) {
     if (!ent) return;
 
@@ -73,22 +80,64 @@ void process_fd_cache_free(fd_entry_t* ent) {
 }
 
 static int process_handle_file_flush(fd_entry_t* ent);
+static int process_fd_seek_file(fd_entry_t* ent, int offset, int whence);
+static int process_handle_file_read(fd_entry_t* ent, char* buf, unsigned int len);
+static int process_handle_file_write(fd_entry_t* ent, const char* buf, unsigned int len);
+static int process_handle_file_seek(fd_entry_t* ent, int offset, int whence);
+static short process_handle_file_poll(fd_entry_t* ent, short events);
 static void process_handle_file_close(fd_entry_t* ent);
+static int process_handle_socket_read(fd_entry_t* ent, char* buf, unsigned int len);
+static int process_handle_socket_write(fd_entry_t* ent, const char* buf, unsigned int len);
+static int process_handle_socket_seek(fd_entry_t* ent, int offset, int whence);
+static short process_handle_socket_poll(fd_entry_t* ent, short events);
 static void process_handle_socket_close(fd_entry_t* ent);
 
 static const process_handle_ops_t s_file_handle_ops = {
+    .read = process_handle_file_read,
+    .write = process_handle_file_write,
+    .seek = process_handle_file_seek,
+    .poll = process_handle_file_poll,
     .flush = process_handle_file_flush,
     .close = process_handle_file_close,
 };
 
 static const process_handle_ops_t s_socket_handle_ops = {
+    .read = process_handle_socket_read,
+    .write = process_handle_socket_write,
+    .seek = process_handle_socket_seek,
+    .poll = process_handle_socket_poll,
     .flush = 0,
     .close = process_handle_socket_close,
 };
 
+static const process_handle_ops_t s_console_handle_ops = {
+    .read = process_handle_console_read,
+    .write = process_handle_console_write,
+    .seek = process_handle_console_seek,
+    .poll = process_handle_console_poll,
+    .flush = 0,
+    .close = process_handle_console_close,
+};
+
+static void process_init_standard_fds(process_t* proc) {
+    if (!proc) return;
+
+    proc->fds[0].valid = 1;
+    proc->fds[0].kind = PROCESS_HANDLE_KIND_CONSOLE;
+    proc->fds[0].ops = &s_console_handle_ops;
+    proc->fds[0].writable = 0;
+
+    for (int fd = 1; fd <= 2; fd++) {
+        proc->fds[fd].valid = 1;
+        proc->fds[fd].kind = PROCESS_HANDLE_KIND_CONSOLE;
+        proc->fds[fd].ops = &s_console_handle_ops;
+        proc->fds[fd].writable = 1;
+    }
+}
+
 fd_entry_t* process_fd_get(process_t* proc, int fd) {
     if (!proc) return 0;
-    if (fd < PROCESS_FD_FIRST || fd >= PROCESS_FD_MAX) return 0;
+    if (fd < 0 || fd >= PROCESS_FD_MAX) return 0;
     if (!proc->fds[fd].valid) return 0;
     return &proc->fds[fd];
 }
@@ -140,6 +189,10 @@ int process_fd_open_socket(process_t* proc, const char* name) {
 
 void process_fd_close(fd_entry_t* ent) {
     if (!ent) return;
+
+    if (ent->writable) {
+        (void)process_fd_flush(ent);
+    }
 
     if (ent->ops && ent->ops->close) {
         ent->ops->close(ent);
@@ -219,9 +272,154 @@ static int process_handle_file_flush(fd_entry_t* ent) {
     return fat16_write_path(ent->name, s_write_flush_buf, ent->size);
 }
 
+static int process_handle_file_read(fd_entry_t* ent, char* buf, unsigned int len) {
+    return process_fd_read_file(ent, buf, len);
+}
+
+static int process_handle_file_write(fd_entry_t* ent, const char* buf, unsigned int len) {
+    return process_fd_write_file(ent, buf, len);
+}
+
+static int process_handle_file_seek(fd_entry_t* ent, int offset, int whence) {
+    return process_fd_seek_file(ent, offset, whence);
+}
+
+static short process_handle_file_poll(fd_entry_t* ent, short events) {
+    short revents = 0;
+
+    if (!ent || !ent->valid) return POLLERR;
+    if ((events & POLLIN) && !ent->writable) {
+        revents |= POLLIN;
+    }
+    if ((events & POLLOUT) && ent->writable) {
+        revents |= POLLOUT;
+    }
+    return revents;
+}
+
 static void process_handle_file_close(fd_entry_t* ent) {
     if (!ent) return;
     process_fd_cache_free(ent);
+    k_memset(ent, 0, sizeof(*ent));
+}
+
+static int process_handle_socket_read(fd_entry_t* ent, char* buf, unsigned int len) {
+    if (!ent || !ent->valid) return -1;
+    if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -1;
+    if (len == 0) return 0;
+
+    tcp_socket_use_port(ent->socket_port);
+    __asm__ __volatile__("sti");
+    while (!tcp_socket_recv_ready()) {
+        if (!tcp_socket_connection_established()) {
+            __asm__ __volatile__("cli");
+            return 0;
+        }
+        __asm__ __volatile__("hlt");
+    }
+    __asm__ __volatile__("cli");
+    return tcp_socket_recv(buf, len);
+}
+
+static int process_handle_socket_write(fd_entry_t* ent, const char* buf, unsigned int len) {
+    if (!ent || !ent->valid) return -1;
+    if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -1;
+    if (len == 0) return 0;
+
+    tcp_socket_use_port(ent->socket_port);
+    return tcp_socket_send(buf, len);
+}
+
+static int process_handle_socket_seek(fd_entry_t* ent, int offset, int whence) {
+    (void)ent;
+    (void)offset;
+    (void)whence;
+    return -1;
+}
+
+static short process_handle_socket_poll(fd_entry_t* ent, short events) {
+    short revents = 0;
+
+    if (!ent || !ent->valid) return POLLERR;
+    tcp_socket_use_port(ent->socket_port);
+
+    if (ent->socket_state == PROCESS_SOCKET_STATE_LISTENER) {
+        if ((events & POLLIN) && tcp_socket_accept_ready()) {
+            revents |= POLLIN;
+        }
+    } else if (ent->socket_state == PROCESS_SOCKET_STATE_CONNECTED) {
+        if ((events & POLLIN) && tcp_socket_recv_ready()) {
+            revents |= POLLIN;
+        }
+        if ((events & POLLOUT) && tcp_socket_connection_established()) {
+            revents |= POLLOUT;
+        }
+    }
+
+    return revents;
+}
+
+static int process_handle_console_read(fd_entry_t* ent, char* buf, unsigned int len) {
+    process_t* proc = sched_current();
+    unsigned int n = 0;
+
+    if (!ent || !ent->valid || ent->writable) return -1;
+    if (!buf) return -1;
+    if (len == 0) return 0;
+
+    __asm__ volatile ("sti");
+
+    while (n < len) {
+        while (!keyboard_buf_available()) {
+            if (proc) {
+                proc->state = PROCESS_STATE_WAITING;
+                keyboard_set_waiting_process(proc);
+            }
+            __asm__ volatile ("hlt");
+        }
+
+        char c = keyboard_buf_pop();
+        terminal_putc(c);
+        buf[n++] = c;
+        if (c == '\n') break;
+    }
+
+    __asm__ volatile ("cli");
+    return (int)n;
+}
+
+static int process_handle_console_write(fd_entry_t* ent, const char* buf, unsigned int len) {
+    if (!ent || !ent->valid || !ent->writable) return -1;
+    if (!buf) return -1;
+
+    for (unsigned int i = 0; i < len; i++) {
+        terminal_putc(buf[i]);
+    }
+    return (int)len;
+}
+
+static int process_handle_console_seek(fd_entry_t* ent, int offset, int whence) {
+    (void)ent;
+    (void)offset;
+    (void)whence;
+    return -1;
+}
+
+static short process_handle_console_poll(fd_entry_t* ent, short events) {
+    short revents = 0;
+
+    if (!ent || !ent->valid) return POLLERR;
+    if (!ent->writable && (events & POLLIN) && keyboard_buf_available()) {
+        revents |= POLLIN;
+    }
+    if (ent->writable && (events & POLLOUT)) {
+        revents |= POLLOUT;
+    }
+    return revents;
+}
+
+static void process_handle_console_close(fd_entry_t* ent) {
+    if (!ent) return;
     k_memset(ent, 0, sizeof(*ent));
 }
 
@@ -229,6 +427,26 @@ static void process_handle_socket_close(fd_entry_t* ent) {
     if (!ent) return;
     tcp_socket_handle_close(ent);
     k_memset(ent, 0, sizeof(*ent));
+}
+
+int process_fd_read(fd_entry_t* ent, char* buf, unsigned int len) {
+    if (!ent || !ent->ops || !ent->ops->read) return -1;
+    return ent->ops->read(ent, buf, len);
+}
+
+int process_fd_write(fd_entry_t* ent, const char* buf, unsigned int len) {
+    if (!ent || !ent->ops || !ent->ops->write) return -1;
+    return ent->ops->write(ent, buf, len);
+}
+
+short process_fd_poll(fd_entry_t* ent, short events) {
+    if (!ent || !ent->ops || !ent->ops->poll) return POLLERR;
+    return ent->ops->poll(ent, events);
+}
+
+int process_fd_seek(fd_entry_t* ent, int offset, int whence) {
+    if (!ent || !ent->ops || !ent->ops->seek) return -1;
+    return ent->ops->seek(ent, offset, whence);
 }
 
 int process_fd_flush(fd_entry_t* ent) {
@@ -259,7 +477,7 @@ int process_fd_write_file(fd_entry_t* ent, const char* buf, unsigned int len) {
     return (int)len;
 }
 
-int process_fd_seek(fd_entry_t* ent, int offset, int whence) {
+static int process_fd_seek_file(fd_entry_t* ent, int offset, int whence) {
     unsigned int base;
     int new_off;
 
@@ -351,6 +569,7 @@ process_t* process_create(const char* name) {
     proc->state = PROCESS_STATE_UNUSED;
     proc->heap_base = USER_HEAP_BASE;
     proc->heap_brk = USER_HEAP_BASE;
+    process_init_standard_fds(proc);
     if (name) {
         str_copy_n(proc->name, name, PROCESS_NAME_MAX);
     }
@@ -397,7 +616,11 @@ void process_destroy(process_t* proc) {
     }
 
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
-        process_fd_cache_free(&proc->fds[i]);
+        if (proc->fds[i].valid) {
+            process_fd_close(&proc->fds[i]);
+        } else {
+            process_fd_cache_free(&proc->fds[i]);
+        }
     }
 
     if (proc->pd) {

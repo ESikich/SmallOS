@@ -39,8 +39,10 @@ int sys_write(const char* buf, uint32_t len);
 ```
 
 Writes `len` bytes from `buf` to terminal. Returns bytes written or `-1`.
-The user-space stdio layer uses this path for `stdout` and `stderr`; open file
-descriptors use `SYS_WRITEFD` instead.
+This remains available as the low-level terminal write primitive used by
+`u_puts()` and early/simple user helpers. The normal POSIX/stdio path now
+writes `stdout` and `stderr` through fd-backed console handles via
+`SYS_WRITEFD`.
 
 ---
 
@@ -82,7 +84,7 @@ int sys_read(char* buf, uint32_t len);
 
 Blocks until keyboard input is available, echoing each character. Terminates early on newline (included in returned data). Returns bytes read or `-1`.
 
-`sys_read_impl` uses true scheduler-aware blocking: when `kb_buf` is empty it sets the process state to `PROCESS_STATE_WAITING` and registers it as the keyboard waiter via `keyboard_set_waiting_process()`, then executes `hlt`. The timer IRQ fires normally; `sched_tick` sees the task is `WAITING`, skips it, and switches to another runnable task. When a keypress arrives, `process_key_consumer()` pushes the character into `kb_buf`, sets the waiting process back to `PROCESS_STATE_RUNNING`, and clears the waiter slot. On the next scheduler pass the process is selected, resumes after the `hlt`, and drains the buffer normally.
+`SYS_READ` is now implemented as a read from fd `0`, which is initialized as a console handle in every user process. The console handle uses true scheduler-aware blocking: when `kb_buf` is empty it sets the process state to `PROCESS_STATE_WAITING` and registers it as the keyboard waiter via `keyboard_set_waiting_process()`, then executes `hlt`. The timer IRQ fires normally; `sched_tick` sees the task is `WAITING`, skips it, and switches to another runnable task. When a keypress arrives, `process_key_consumer()` pushes the character into `kb_buf`, sets the waiting process back to `PROCESS_STATE_RUNNING`, and clears the waiter slot. On the next scheduler pass the process is selected, resumes after the `hlt`, and drains the buffer normally.
 
 `sti` is issued before the first `hlt` so IRQ1 can fire during the wait. `cli` is restored before returning, matching the IF=0 postcondition expected by the syscall gate.
 
@@ -141,8 +143,9 @@ int sys_writefd(int fd, const char* buf, uint32_t len);
 ```
 
 Writes bytes to an open writable handle. Returns bytes written or `-1` on error.
-File descriptors `0`, `1`, and `2` are reserved by the process model, so this
-syscall is for user-opened handles starting at fd `3`.
+Descriptors `1` and `2` are fd-backed console handles, so `write(1, ...)`,
+`write(2, ...)`, `printf`, and `fprintf(stderr, ...)` all travel through this
+same handle path. User-opened files and sockets still start at fd `3`.
 
 ---
 
@@ -152,7 +155,8 @@ syscall is for user-opened handles starting at fd `3`.
 int sys_lseek(int fd, int offset, int whence);
 ```
 
-Repositions a writable handle.
+Repositions a seekable handle. FAT16 file handles support this today; console
+and socket handles return `-1`.
 
 ---
 
@@ -266,7 +270,10 @@ Receives bytes from an established stream socket. The current server-side path b
 int sys_poll(struct pollfd* fds, nfds_t nfds, int timeout);
 ```
 
-Checks readiness for listening and connected socket handles. `timeout` is currently ignored.
+Checks readiness by asking each handle's `poll` operation. Current handle
+support includes socket readiness, writable console descriptors, readable
+console input when a key is already buffered, and basic file readability /
+writability. `timeout` is honored in timer ticks for sleeping waits.
 
 ---
 
@@ -312,7 +319,7 @@ Loads and asynchronously spawns a named ELF program from the FAT16 partition. Re
 int sys_open(const char* name);
 ```
 
-Opens a file from the FAT16 root directory by name (case-insensitive 8.3 matching). Allocates the lowest free slot in the calling process's handle table (fd ≥ 3) and records the filename, file size, and an initial read offset of 0. fds 0/1/2 are reserved.
+Opens a file from the FAT16 root directory by name (case-insensitive 8.3 matching). Allocates the lowest free slot in the calling process's handle table (fd ≥ 3) and records the filename, file size, and an initial read offset of 0. fds 0/1/2 are pre-opened console handles.
 
 Returns the fd (≥ 3) on success, or `-1` if the file is not found, the handle table is full (`PROCESS_FD_MAX = 8`), or the name pointer fails user-space validation.
 
@@ -336,9 +343,9 @@ Closes an open handle, freeing its slot for reuse. Returns `0` on success, `-1` 
 int sys_fread(int fd, char* buf, uint32_t len);
 ```
 
-Reads up to `len` bytes from the open file-backed handle at `fd` into `buf`, starting at the current file position. Advances the position by the number of bytes actually read. Returns the number of bytes read, `0` at end-of-file, or `-1` on error (bad handle, invalid buffer, read failure).
+Reads up to `len` bytes from an open readable handle at `fd` into `buf`. File handles read from the current file position and advance it by the number of bytes actually read. Socket handles read from the TCP receive path. fd `0` reads from the console input buffer with the same blocking behavior as `SYS_READ`. Returns the number of bytes read, `0` at end-of-file / closed socket, or `-1` on error.
 
-`sys_fread_impl` loads the file once into PMM-backed per-fd cache pages on first use, then copies the requested slice from that cache into the validated user buffer. The cache stays live until `sys_close()` or process teardown, so repeated reads from the same descriptor avoid extra ATA traffic.
+For file handles, the read op loads the file once into PMM-backed per-fd cache pages on first use, then copies the requested slice from that cache into the validated user buffer. The cache stays live until `sys_close()` or process teardown, so repeated reads from the same descriptor avoid extra ATA traffic.
 
 ---
 
@@ -444,7 +451,7 @@ u_stat(...)        query path metadata
 * `SYS_YIELD` and the timer path use the same stub layout, but the real scheduler resume ESP is `esp - 8`, not raw `esp`
 * EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`
 * The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.
-* fd 0/1/2 are reserved by convention; user-opened files start at fd 3. The handle table (`fd_entry_t fds[PROCESS_FD_MAX]`) lives inside `process_t` and is zero-initialized by `process_create()`; file-backed entries carry their own ops table, so close/flush behavior stays owned by `process.c` rather than the syscall dispatcher.
+* fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`); user-opened files and sockets start at fd 3. The handle table (`fd_entry_t fds[PROCESS_FD_MAX]`) lives inside `process_t`. Every handle carries an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`, so resource behavior stays owned by `process.c` rather than the syscall dispatcher.
 * `SYS_WRITEFILE` is the simplest root-only persistence path for user tools that want to emit a generated artifact without managing an fd-based write stream.
 * `SYS_WRITEFILE_PATH` is the preferred path-aware persistence primitive for compilers and build tools, especially when writing into nested directories.
 

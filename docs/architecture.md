@@ -167,7 +167,21 @@ so the scripted `shelltest` / `selftest` command tables are kept in static
 storage rather than on the stack. That avoids trampling `process_t` state during
 the longest regression paths.
 
-The handle array is generic rather than file-specific now: each slot carries its own kind and ops table, so file-backed handles own their flush/close behavior inside `process.c` while socket-backed handles can plug into the same lifetime path without teaching `syscall.c` about resource internals.
+The handle array is generic rather than file-specific now. `process_create()`
+pre-opens fd `0`, `1`, and `2` as console handles for stdin/stdout/stderr.
+User-opened files and sockets start at fd `3`.
+
+Each handle slot carries its own kind and ops table:
+
+```text
+read / write / seek / poll / flush / close
+```
+
+File handles own their cache, seek, flush, and close behavior inside
+`process.c`; socket handles own their TCP send/receive/poll/close behavior;
+console handles own terminal writes and keyboard-buffer reads. `syscall.c`
+therefore stays focused on user-pointer validation and dispatch instead of
+knowing the internals of each resource type.
 
 ---
 
@@ -600,14 +614,14 @@ argv copied into process_t kernel storage before CR3 switches
 clean process exit via `PROCESS_STATE_ZOMBIE` transition and later reap from a safe stack
 physical memory manager (bitmap, all frames reclaimed on exit — no leak)
 per-process kernel stacks (PMM frame per process, freed on exit)
-SYS_READ — true blocking keyboard input: parks process in PROCESS_STATE_WAITING, woken by keyboard IRQ via process_key_consumer()
+SYS_READ / fd 0 — true blocking keyboard input through the console handle: parks process in PROCESS_STATE_WAITING, woken by keyboard IRQ via process_key_consumer()
 SYS_YIELD — voluntary preemption via sched_yield_now()
 SYS_SLEEP — timed sleep: parks process in PROCESS_STATE_SLEEPING and wakes via the timer IRQ once the deadline is reached
 SYS_EXEC — async ELF spawn from the current foreground context; the child runs independently and the parent returns immediately in `runelf_nowait` / `sys_exec`
-SYS_OPEN / SYS_CLOSE / SYS_FREAD — per-process file-backed handle table backed by FAT16; fds 0/1/2 reserved, user files start at fd 3+, and `SYS_FREAD` caches file data in PMM-backed pages until close
+SYS_OPEN / SYS_CLOSE / SYS_FREAD — per-process handle table backed by handle ops; fd 0/1/2 are console handles, user-opened files start at fd 3+, and file reads cache FAT16 data in PMM-backed pages until close
 SYS_BRK / user heap — per-process heap break managed in user space through `SYS_BRK` and a shared user allocator
-SYS_OPEN_WRITE / SYS_WRITEFD / SYS_LSEEK / SYS_UNLINK / SYS_RENAME / SYS_STAT — writable file-backed handles plus path metadata and file management for compiler-style tools
-SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_SEND / SYS_RECV / SYS_POLL — initial socket ABI for passive TCP servers and later FTP userland
+SYS_OPEN_WRITE / SYS_WRITEFD / SYS_LSEEK / SYS_UNLINK / SYS_RENAME / SYS_STAT — writable file-backed handles plus path metadata and file management for compiler-style tools; stdout/stderr writes also use fd-backed console handles
+SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_SEND / SYS_RECV / SYS_POLL — socket ABI for passive TCP servers and FTP userland; socket readiness plugs into the same handle poll seam
 TCP bring-up task — minimal kernel TCP listener/echo path used to prove the network plumbing before the socket ABI landed
 page-aware copy-from-user validation — syscall pointer arguments are checked against user address space [USER_CODE_BASE, USER_STACK_TOP) and mapped user pages before dereference
 preemptive round-robin scheduler — timer IRQ context switch, 100 ms quantum

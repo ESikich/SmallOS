@@ -7,10 +7,13 @@ Current handoff for the next implementation pass.
 - `make test` is green on the current tree.
 - A minimal kernel TCP bring-up path already exists in `src/drivers/tcp.c` and `src/drivers/tcp.h`.
 - The hostfwd smoke path is proven end to end with `apps/services/tcpecho.elf`.
-- The process/file layer now has a generic per-process handle seam in:
+- The process/file/socket/console layer now has a generic per-process handle seam in:
   - `src/kernel/process.c`
   - `src/kernel/process.h`
   - `src/kernel/syscall.c`
+- Handle ops now cover `read`, `write`, `seek`, `poll`, `flush`, and `close`;
+  fd `0`, `1`, and `2` are real console handles, and user-opened files/sockets
+  start at fd `3`.
 - A first-pass socket syscall ABI exists:
   - `socket`
   - `bind`

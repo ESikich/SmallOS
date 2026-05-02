@@ -8,9 +8,10 @@
   * `tools/tcc.elf` now uses a SmallOS-side entry wrapper that calls libtcc directly instead of relying on TinyCC's hosted CLI `main()` path.
   * The guest compiler docs now describe that wrapper so the TinyCC smoke path is documented as a SmallOS-specific front end.
 
-* **User stdio console routing** (`src/user/user_stdio.c`, `docs/syscalls.md`)
-  * `printf`/`fprintf(stdout, ...)`/`fprintf(stderr, ...)` now use the console `SYS_WRITE` path for fd `1` and `2`, while file-backed streams still go through `SYS_WRITEFD`.
-  * The syscall docs now spell out the reserved fd `0/1/2` convention.
+* **Unified fd-backed handles** (`src/kernel/process.c`, `src/kernel/process.h`, `src/kernel/syscall.c`, `src/user/user_stdio.c`, `src/user/user_posix.c`, `docs/`)
+  * `process_handle_ops_t` now covers `read`, `write`, `seek`, `poll`, `flush`, and `close` for file, socket, and console handles.
+  * fd `0`, `1`, and `2` are real console handles; `printf`/`fprintf(stdout, ...)`/`fprintf(stderr, ...)` now route through `SYS_WRITEFD` instead of a stdio-only console special case.
+  * `syscall.c` now focuses on user-pointer validation and fd dispatch for read/write/seek/poll paths.
 
 * **ELF loader page setup** (`src/exec/elf_loader.c`)
   * The ELF loader now preserves already-present page-table entries when preparing a process image and only allocates fresh frames for pages that are not mapped yet.

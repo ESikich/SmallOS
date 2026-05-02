@@ -48,7 +48,10 @@ Important current-state facts:
 - **ELF user programs** are loaded into their own page directory and do execute in ring 3
 - ELF launch and exit are now scheduler-owned: `elf_run_image()` seeds a bootstrap context, enqueues the task, and returns `process_t*`
 - the scheduler supports kernel tasks, ELF tasks, voluntary yielding, timer-driven sleeping, and timer-driven switching; `runelf` blocks with `process_wait()`, while `runelf_nowait` returns immediately
-- user ELFs now have a small freestanding runtime layer with a heap allocator, buffered process-owned file handles, `stat`/`rename`/`unlink`, and `lseek`, which is enough for compiler-style tools
+- user ELFs now have a small freestanding runtime layer with a heap allocator,
+  fd-backed console streams, buffered process-owned file handles,
+  `stat`/`rename`/`unlink`, `lseek`, and socket wrappers, which is enough for
+  compiler-style tools and small network services
 - the shipped `tools/tcc.elf` compiler binary runs through a SmallOS-side libtcc wrapper, can compile guest C sources from FAT16, write the results back to disk, and then those generated ELFs can be executed immediately
 - QEMU user networking is still the default for `make run` / `make test`, but `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT
 - `pinggw` only proves the QEMU gateway works; `pingpublic` and `netcheck` are the manual probes for "can I reach beyond the gateway?"
@@ -249,7 +252,11 @@ The old explicit parent-tracking statics are gone. The current design relies on 
 
 `elf_run_named()` follows the same scheduler-owned ELF launch path as shell commands: create the process, seed its bootstrap context, enqueue it, and return immediately.
 
-The file-oriented syscalls used by shell tools and compiler demos now share the process-owned handle table in `process.c`, so `syscall.c` stays focused on validation and dispatch instead of handle lifetime.
+The file, console, and socket syscalls used by shell tools, TinyCC, and the
+FTP/TCP smoke apps now share the process-owned handle table in `process.c`.
+Each handle has ops for `read`, `write`, `seek`, `poll`, `flush`, and `close`,
+so `syscall.c` stays focused on validation and dispatch instead of handle
+lifetime or resource-specific behavior.
 
 ---
 

@@ -3,7 +3,11 @@
 This document defines how the system stores, discovers, and reads files from disk.
 
 The current implementation stores a **raw FAT16 volume inside an MBR-partitioned disk image**. Sector 0 contains the partition table, and the FAT16 partition starts immediately after the kernel region. The runtime resolves nested FAT16 paths for reads and directory listings, and it can also create/remove directories in place. Regular file writes now work at nested paths too, and `rm` removes files in place. `cat` prints file contents, `touch` creates or truncates files, and the shell keeps a working directory for `cd` / `pwd` and `ls`. `ls` also accepts simple `*` and `?` wildcards, while still sorting directories before files.
-The filesystem layer also exposes file metadata through `stat`, and the writable-fd path now supports `rename`, `unlink`, `lseek`, and buffered `write` operations for toolchain-style programs.
+The filesystem layer also exposes file metadata through `stat`, and the fd
+path now routes file, socket, and console descriptors through a generic
+per-process handle table. FAT16-backed writable handles support `rename`,
+`unlink`, `lseek`, buffered `write`, and close-time flush operations for
+toolchain-style programs.
 
 ---
 
@@ -191,6 +195,7 @@ The current FAT16 driver is intentionally narrow.
 - nested-path file creation and overwrite via `fat16_write_path(path, ...)`
 - writable file-backed handles with buffered output via `SYS_OPEN_WRITE`, `SYS_WRITEFD`, and `SYS_LSEEK`
 - file removal and rename/move through `SYS_UNLINK` and `SYS_RENAME`
+- fd-backed console handles for stdin/stdout/stderr
 - socket-backed handles for the current TCP passive listener path via `SYS_SOCKET`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_SEND`, `SYS_RECV`, and `SYS_POLL`
 - case-insensitive 8.3 filename matching
 - FAT chain following for file reads
@@ -312,10 +317,10 @@ That is a behavior choice in the current code, not a FAT16 requirement.
 one shot. The shell's `touch` and compiler-style write paths use
 `fat16_write_path(path, ...)` when they need to target nested directories.
 
-The write path is intentionally narrow:
+The FAT16 write path is intentionally narrow:
 
 - 8.3 filename matching
-- no general buffered fd write API
+- fd writes are buffered in process-owned PMM pages and flushed through the FAT16 one-shot writer
 - no long filenames
 - no concurrent writer support
 
@@ -327,7 +332,7 @@ At runtime, the kernel:
 4. writes the data clusters to disk
 5. commits the updated FAT copies and root directory entry
 
-This is enough for compiler-style tools to emit generated artifacts such as `compiler.out` without a full VFS or buffered fd write API.
+This is enough for compiler-style tools to emit generated artifacts such as `compiler.out` without a full VFS or streaming cluster allocator.
 It is also enough for SmallOS-hosted compiler binaries to create temp files, rename outputs into place, and inspect candidate paths before writing.
 
 ## Creating and Removing Directories

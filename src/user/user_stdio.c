@@ -52,21 +52,11 @@ static FILE* console_stream(FILE* base, int fd) {
 
 static int stream_write_raw(FILE* stream, const void* ptr, size_t size) {
     if (!stream || !stream->writable) return -1;
-    if (stream->is_console) {
-        const char* p = (const char*)ptr;
-        for (size_t i = 0; i < size; i++) {
-            sys_putc(p[i]);
-        }
-        return (int)size;
-    }
     return u_writefd(stream->fd, (const char*)ptr, (uint32_t)size);
 }
 
 static int stream_read_raw(FILE* stream, void* ptr, size_t size) {
     if (!stream || !stream->readable) return -1;
-    if (stream->is_console) {
-        return sys_read((char*)ptr, (uint32_t)size);
-    }
     return sys_fread(stream->fd, (char*)ptr, (uint32_t)size);
 }
 

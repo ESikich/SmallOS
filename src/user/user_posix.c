@@ -31,10 +31,6 @@ int read(int fd, void* buf, unsigned int len) {
 }
 
 int write(int fd, const void* buf, unsigned int len) {
-    if (fd == 1 || fd == 2) {
-        sys_write((const char*)buf, len);
-        return (int)len;
-    }
     return sys_writefd(fd, (const char*)buf, len);
 }
 

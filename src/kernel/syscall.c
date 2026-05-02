@@ -215,35 +215,9 @@ static int sys_read_impl(char* buf, unsigned int len) {
     if (!user_buf_ok((unsigned int)buf, len)) return -1;
 
     process_t* proc = (process_t*)sched_current();
+    if (!proc) return -1;
 
-    unsigned int n = 0;
-
-    __asm__ volatile ("sti");
-
-    while (n < len) {
-        /* Park until at least one character is available. */
-        while (!keyboard_buf_available()) {
-            if (proc) {
-                proc->state = PROCESS_STATE_WAITING;
-                keyboard_set_waiting_process(proc);
-            }
-            __asm__ volatile ("hlt");
-            /*
-             * Execution resumes here after the timer IRQ switches back to
-             * this task.  proc->state has been set to RUNNING by
-             * process_key_consumer() before the scheduler selected us again.
-             * Re-check the buffer — if it is still empty we park again.
-             */
-        }
-
-        char c = keyboard_buf_pop();
-        terminal_putc(c);
-        buf[n++] = c;
-        if (c == '\n') break;
-    }
-
-    __asm__ volatile ("cli");
-    return (int)n;
+    return process_fd_read(process_fd_get(proc, 0), buf, len);
 }
 
 /*
@@ -650,9 +624,7 @@ static int sys_send_impl(int fd, const void* buf, unsigned int len) {
 
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -1;
-    if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -1;
-    tcp_socket_use_port(ent->socket_port);
-    return tcp_socket_send(buf, len);
+    return process_fd_write(ent, (const char*)buf, len);
 }
 
 static int sys_recv_impl(syscall_regs_t* regs, int fd, void* buf, unsigned int len) {
@@ -687,29 +659,7 @@ static int sys_recv_impl(syscall_regs_t* regs, int fd, void* buf, unsigned int l
 
 static short sys_poll_revents_for_fd(process_t* proc, struct pollfd* pfd) {
     fd_entry_t* ent = process_fd_get(proc, pfd->fd);
-    short revents = 0;
-
-    if (!socket_fd_is_socket(ent)) {
-        return POLLERR;
-    }
-    tcp_socket_use_port(ent->socket_port);
-
-    if (ent->socket_state == PROCESS_SOCKET_STATE_LISTENER) {
-        if (tcp_socket_accept_ready() && (pfd->events & POLLIN)) {
-            revents |= POLLIN;
-        }
-    } else if (ent->socket_state == PROCESS_SOCKET_STATE_BOUND) {
-        /* Bound-but-not-listening sockets are not yet ready. */
-    } else if (ent->socket_state == PROCESS_SOCKET_STATE_CONNECTED) {
-        if ((pfd->events & POLLIN) && tcp_socket_recv_ready()) {
-            revents |= POLLIN;
-        }
-        if ((pfd->events & POLLOUT) && tcp_socket_connection_established()) {
-            revents |= POLLOUT;
-        }
-    }
-
-    return revents;
+    return process_fd_poll(ent, pfd->events);
 }
 
 static unsigned int sys_poll_snapshot(process_t* proc, struct pollfd* fds,
@@ -845,7 +795,7 @@ static int sys_getsockname_impl(int fd, struct sockaddr* addr, unsigned int* add
 }
 
 static int sys_writefd_impl(int fd, const char* buf, unsigned int len) {
-    if (fd < PROCESS_FD_FIRST || fd >= PROCESS_FD_MAX) return -1;
+    if (fd < 0 || fd >= PROCESS_FD_MAX) return -1;
     if (len == 0) return 0;
     if (!user_buf_ok((unsigned int)buf, len)) return -1;
 
@@ -854,17 +804,11 @@ static int sys_writefd_impl(int fd, const char* buf, unsigned int len) {
 
     fd_entry_t* ent = process_fd_get(proc, fd);
     if (!ent) return -1;
-    if (socket_fd_is_socket(ent)) {
-        tcp_socket_use_port(ent->socket_port);
-        if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -1;
-        return tcp_socket_send(buf, len);
-    }
-    if (!ent->writable) return -1;
-    return process_fd_write_file(ent, buf, len);
+    return process_fd_write(ent, buf, len);
 }
 
 static int sys_lseek_impl(int fd, int offset, int whence) {
-    if (fd < PROCESS_FD_FIRST || fd >= PROCESS_FD_MAX) return -1;
+    if (fd < 0 || fd >= PROCESS_FD_MAX) return -1;
 
     process_t* proc = (process_t*)sched_current();
     if (!proc) return -1;
@@ -921,7 +865,7 @@ static int sys_stat_impl(const char* path, unsigned int* out_size, int* out_is_d
 }
 
 static int sys_fread_impl(int fd, char* buf, unsigned int len) {
-    if (fd < PROCESS_FD_FIRST || fd >= PROCESS_FD_MAX) return -1;
+    if (fd < 0 || fd >= PROCESS_FD_MAX) return -1;
     if (len == 0) return 0;
     if (!user_buf_ok((unsigned int)buf, len)) return -1;
 
@@ -929,21 +873,7 @@ static int sys_fread_impl(int fd, char* buf, unsigned int len) {
     if (!proc) return -1;
     fd_entry_t* ent = process_fd_get(proc, fd);
     if (!ent) return -1;
-    if (socket_fd_is_socket(ent)) {
-        tcp_socket_use_port(ent->socket_port);
-        if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -1;
-        __asm__ __volatile__("sti");
-        while (!tcp_socket_recv_ready()) {
-            if (!tcp_socket_connection_established()) {
-                __asm__ __volatile__("cli");
-                return 0;
-            }
-            __asm__ __volatile__("hlt");
-        }
-        __asm__ __volatile__("cli");
-        return tcp_socket_recv(buf, len);
-    }
-    return process_fd_read_file(ent, buf, len);
+    return process_fd_read(ent, buf, len);
 }
 
 void syscall_handler_main(syscall_regs_t* regs) {

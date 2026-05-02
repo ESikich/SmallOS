@@ -35,7 +35,8 @@ typedef struct fd_entry fd_entry_t;
 typedef enum {
     PROCESS_HANDLE_KIND_NONE  = 0,
     PROCESS_HANDLE_KIND_FILE  = 1,
-    PROCESS_HANDLE_KIND_SOCKET = 2
+    PROCESS_HANDLE_KIND_SOCKET = 2,
+    PROCESS_HANDLE_KIND_CONSOLE = 3
 } process_handle_kind_t;
 
 typedef enum {
@@ -47,6 +48,10 @@ typedef enum {
 } process_socket_state_t;
 
 typedef struct process_handle_ops {
+    int  (*read)(fd_entry_t* ent, char* buf, unsigned int len);
+    int  (*write)(fd_entry_t* ent, const char* buf, unsigned int len);
+    int  (*seek)(fd_entry_t* ent, int offset, int whence);
+    short (*poll)(fd_entry_t* ent, short events);
     int  (*flush)(fd_entry_t* ent);
     void (*close)(fd_entry_t* ent);
 } process_handle_ops_t;
@@ -107,6 +112,9 @@ int        process_fd_open_file(process_t* proc,
                                 int writable);
 int        process_fd_open_socket(process_t* proc, const char* name);
 void       process_fd_close(fd_entry_t* ent);
+int        process_fd_read(fd_entry_t* ent, char* buf, unsigned int len);
+int        process_fd_write(fd_entry_t* ent, const char* buf, unsigned int len);
+short      process_fd_poll(fd_entry_t* ent, short events);
 int        process_fd_flush(fd_entry_t* ent);
 int        process_fd_seek(fd_entry_t* ent, int offset, int whence);
 int        process_fd_read_file(fd_entry_t* ent, char* buf, unsigned int len);

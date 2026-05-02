@@ -36,9 +36,11 @@ It prints `kernel: selfcheck PASS` when the live TSS selector, boot stack,
 heap base, and PMM free-frame baseline all match the boot contract. If any of
 those invariants drift, the kernel halts before the shell starts.
 
-File-backed handles are owned by `process.c`, not the syscall dispatcher.
-If we add a new resource type later, it should get a handle kind and ops table
-so close/flush lifetime stays local to the owning module.
+Handles are owned by `process.c`, not the syscall dispatcher. fd `0`, `1`,
+and `2` are real console handles created with each process; user-opened files
+and sockets start at fd `3`. If we add a new resource type later, it should
+get a handle kind and ops table for `read`, `write`, `seek`, `poll`, `flush`,
+and `close` so resource behavior stays local to the owning module.
 
 Do not use `-fda` (floppy). LBA extended reads require hard disk mode.
 
@@ -211,7 +213,7 @@ meminfo              ← still identical after second run
 * Do not rely on shell input buffers for process data.
 * All user-process arguments must be copied into process-owned storage before execution.
 * Pointers passed into a process must remain valid for the entire lifetime of that process.
-* File-backed handles are lifetime-owned by `process.c`; `syscall.c` should only validate arguments and dispatch.
+* Handles are lifetime-owned by `process.c`; `syscall.c` should only validate arguments and dispatch through handle ops.
 
 ---
 
