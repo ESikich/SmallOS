@@ -383,10 +383,14 @@ Useful signals:
 ## Adding a New User Program
 
 1. Create `src/user/myprog.c` with `void _start(int argc, char** argv)`
-2. End with `sys_exit(0)`
+2. End with `sys_exit(status)`
 3. Add `myprog` to `USER_PROGS` in Makefile — automatically included in the FAT16 image
 4. `make clean && make`
 5. `runelf myprog`
+
+For hosted-style user programs, define `int main(int argc, char** argv)` and
+link `src/user/user_crt0.c`; the CRT adapter supplies `_start` and exits with
+`main`'s return value.
 
 ---
 

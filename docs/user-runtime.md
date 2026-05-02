@@ -209,8 +209,9 @@ directory listing behavior should stay aligned with `dirprobe`.
 # TinyCC Expectations
 
 `tools/tcc.elf` is built from vendored TinyCC sources plus the SmallOS runtime.
-It is still launched through `src/user/tcc_entry.c`, but it now relies on more
-normal runtime behavior:
+It links `src/user/user_crt0.c`, so the kernel still enters `_start(argc, argv)`
+while TinyCC itself runs through its upstream `main(argc, argv)` path. It relies
+on normal runtime behavior:
 
 - cwd-aware file opens
 - normalized path handling through `realpath`

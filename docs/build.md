@@ -289,10 +289,11 @@ Multiple programs sharing `-Ttext-segment 0x400000` is safe because each `runelf
 ## Properties
 
 * fixed virtual address `0x400000` — must match where the ELF loader maps segments
-* entry point `_start(int argc, char** argv)`
-* no runtime, no libc
+* default entry point `_start(int argc, char** argv)`
+* hosted-style tools may link `src/user/user_crt0.c` and provide `main(int argc, char** argv)`
+* SmallOS runtime only, no external libc
 * output via syscalls only (`sys_write`, `sys_putc`)
-* must call `sys_exit(0)` before returning from `_start`
+* direct `_start` programs must call `sys_exit(status)`; `user_crt0` does that for `main`
 
 ---
 
@@ -348,8 +349,8 @@ Shipped FAT16 programs:
 - `apps/tests/ptrguard` - exercise syscall pointer validation
 - `apps/tests/preempt_test` - prove timer-driven preemption
 - `apps/tests/fault` - fault probe (ud/gp/de/br/pf)
-- `tools/tcc.elf` - SmallOS-hosted TinyCC compiler binary driven by a
-  SmallOS-side libtcc wrapper
+- `tools/tcc.elf` - SmallOS-hosted TinyCC compiler binary linked through
+  `src/user/user_crt0.c`
 - `samples/tccmath.c`, `samples/tccagg.c`, `samples/tcctree.c`, `samples/tccmini.c` - guest compiler test inputs used by the shell selftests
 
 ## Properties

@@ -37,9 +37,9 @@
   * `runelf <missing>` now restores interrupts before returning to the shell, so the prompt remains interactive after a failed ELF lookup.
   * The QEMU selftest now sends `runelf poop` followed by `pwd` after the main suite to catch regressions where the prompt is visible but keyboard input no longer reaches the shell.
 
-* **SmallOS-side TinyCC wrapper** (`src/user/tcc_entry.c`, `docs/build.md`, `docs/execution.md`, `docs/architecture.md`, `README.md`)
-  * `tools/tcc.elf` now uses a SmallOS-side entry wrapper that calls libtcc directly instead of relying on TinyCC's hosted CLI `main()` path.
-  * The guest compiler docs now describe that wrapper so the TinyCC smoke path is documented as a SmallOS-specific front end.
+* **Generic user CRT entry adapter** (`src/user/user_crt0.c`, `Makefile`, `docs/build.md`, `docs/execution.md`, `docs/architecture.md`)
+  * Hosted-ish user programs can now link `user_crt0` and define `main(argc, argv)` while the kernel launch ABI remains `_start(argc, argv)`.
+  * `tools/tcc.elf` now uses that generic CRT adapter and runs TinyCC's normal hosted CLI `main()` path.
 
 * **Unified fd-backed handles and VFS file backend** (`src/kernel/process.c`, `src/kernel/process.h`, `src/kernel/vfs.c`, `src/kernel/vfs.h`, `src/kernel/syscall.c`, `src/user/user_stdio.c`, `src/user/user_posix.c`, `docs/`)
   * `process_handle_ops_t` now covers `read`, `write`, `seek`, `poll`, `flush`, and `close` for file, socket, and console handles.

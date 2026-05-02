@@ -397,6 +397,10 @@ Entry point convention:
 void _start(int argc, char** argv)
 ```
 
+That convention remains the kernel launch ABI. Hosted-style user programs can
+instead link `src/user/user_crt0.c`, define `main(int argc, char** argv)`, and
+let the CRT adapter call `sys_exit(main(argc, argv))`.
+
 Programs are linked at fixed virtual address `0x400000`, loaded into private user mappings, and entered through `iret` into CPL=3. They use the `int 0x80` syscall ABI for kernel services.
 
 ---
@@ -639,7 +643,7 @@ ATA PIO driver — 28-bit LBA polling reads from primary IDE channel (0x1F0)
 FAT16 filesystem — ELF programs loaded from 16 MB FAT16 partition on disk
 run/runimg infrastructure removed — `runelf` is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
 interactive shell with meminfo / ataread / fsls / fsread / mkdir / rmdir / runelf commands
-guest TinyCC compiler path — `tools/tcc.elf` runs inside SmallOS through a SmallOS-side libtcc wrapper and compiles guest C samples during `make test`
+guest TinyCC compiler path — `tools/tcc.elf` runs inside SmallOS through `user_crt0` and TinyCC's normal `main`, then compiles guest C samples during `make test`
 ```
 
 Foundation for:
