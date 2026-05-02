@@ -250,6 +250,20 @@ void sched_exit_current(unsigned int esp) {
     }
 }
 
+void sched_kill(process_t* proc, unsigned int esp) {
+    if (!proc) return;
+
+    if (proc == sched_current()) {
+        sched_exit_current(esp);
+        for (;;) {
+            __asm__ __volatile__("cli; hlt");
+        }
+    }
+
+    proc->state = PROCESS_STATE_ZOMBIE;
+    sched_dequeue(proc);
+}
+
 process_t* sched_current(void) {
     if (s_current_idx < 0 || s_current_idx >= s_count) {
         return 0;

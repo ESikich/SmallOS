@@ -403,6 +403,13 @@ void tcp_socket_set_waiter(process_t* proc) {
     s_socket_waiter_port = proc ? s_active_port : 0u;
 }
 
+void tcp_socket_clear_waiter(process_t* proc) {
+    if (s_socket_waiter == proc) {
+        s_socket_waiter = 0;
+        s_socket_waiter_port = 0;
+    }
+}
+
 void tcp_socket_wake_waiter(void) {
     tcp_wake_waiter();
 }

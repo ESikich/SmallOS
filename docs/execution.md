@@ -260,6 +260,7 @@ The old explicit parent-tracking statics are gone. The current design relies on 
 - `runelf_nowait` launches the child and returns immediately; the reaper task frees it after exit
 - `SYS_EXEC` children are also unclaimed — freed by the reaper
 - interactive foreground input is tracked with `process_set_foreground(proc)` / `process_get_foreground()`
+- Ctrl+C is delivered to the current foreground process as a terminal interrupt. It exits that process with status `130` and restores the waiting shell path; it is not delivered as a byte from `SYS_READ`.
 - process destruction is either explicit via `process_wait()` or automatic via `sched_reap_zombies()`
 
 ---

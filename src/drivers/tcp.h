@@ -26,6 +26,7 @@ int  tcp_socket_recv(void* buf, unsigned int len);
 int  tcp_socket_send(const void* buf, unsigned int len);
 unsigned int tcp_socket_poll_events(void);
 void tcp_socket_set_waiter(process_t* proc);
+void tcp_socket_clear_waiter(process_t* proc);
 void tcp_socket_wake_waiter(void);
 unsigned int tcp_socket_peer_ip(void);
 unsigned int tcp_socket_peer_port(void);

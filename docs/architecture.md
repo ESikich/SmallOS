@@ -370,7 +370,8 @@ keyboard IRQ → keyboard_handle_irq()
   ↓
   [shell consumer]              [process consumer]
   shell_key_consumer()          process_key_consumer()
-  enqueue shell_event_t         keyboard_buf_push_char(ascii)
+  enqueue shell_event_t         ASCII → keyboard_buf_push_char()
+                                Ctrl+C → terminate foreground process
   ↓                             ↓
   shell_task_main()             SYS_READ drains kb_buf
   drains queue via shell_poll()
@@ -386,6 +387,7 @@ The active consumer is managed by `keyboard_set_consumer()`:
 - `shell_init()` registers `shell_key_consumer` at boot
 - `process_set_foreground(proc)` clears `kb_buf` (discarding any stale input, e.g. the Enter that launched `runelf`), then registers `process_key_consumer` when a user process takes the foreground
 - `process_key_consumer` pushes ASCII into `kb_buf`; after each push it checks `keyboard_get_waiting_process()` and, if a process is parked in `PROCESS_STATE_WAITING`, sets it back to `PROCESS_STATE_RUNNING` and clears the waiter slot so the scheduler picks it up
+- Ctrl+C is handled by `process_key_consumer` as a terminal interrupt. It prints `^C`, clears pending console/socket waiters, assigns exit status `130`, and kills the foreground process. If the foreground process was interrupted while actively running, IRQ1 delivers the pending interrupt using the saved IRQ frame ESP and switches away immediately.
 - `process_set_foreground(0)` calls `shell_register_consumer()` to restore the shell consumer on exit
 
 The keyboard driver makes no routing decisions. It decodes scancodes and calls whoever is registered.

@@ -198,7 +198,8 @@ void irq0_handler_main(unsigned int esp) {
     sched_tick(esp - SCHED_RESUME_RETADDR_OFFSET);
 }
 
-void irq1_handler_main(void) {
+void irq1_handler_main(unsigned int esp) {
     outb(0x20, 0x20);   /* EOI first — keep PIC unmasked before IRQ-side work */
     keyboard_handle_irq();
+    process_deliver_pending_terminal_interrupt(esp - SCHED_RESUME_RETADDR_OFFSET);
 }

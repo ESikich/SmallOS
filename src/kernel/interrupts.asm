@@ -103,7 +103,9 @@ irq1_stub:
     mov fs, ax
     mov gs, ax
 
+    push esp
     call irq1_handler_main
+    add esp, 4
 
     pop gs
     pop fs

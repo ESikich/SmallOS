@@ -18,12 +18,14 @@ typedef char process_t_must_fit_in_one_frame[(sizeof(process_t) <= 4096u) ? 1 : 
 /* ------------------------------------------------------------------ */
 
 static process_t* s_foreground = 0;
+static volatile int s_terminal_interrupt_pending = 0;
+
+#define PROCESS_TERMINATED_BY_CTRL_C 130
 
 /*
  * process_key_consumer — keyboard consumer active while a user process
- * holds the foreground.  Only ASCII characters are meaningful to user
- * programs; non-ASCII key events (arrows, function keys, etc.) are
- * silently ignored.
+ * holds the foreground.  Ctrl+C is handled as a terminal interrupt for
+ * the foreground process; ordinary ASCII is buffered for SYS_READ.
  *
  * True-blocking SYS_READ wake-up:
  *   After pushing the character into kb_buf, check whether a process is
@@ -31,11 +33,32 @@ static process_t* s_foreground = 0;
  *   and clear the waiting slot so the scheduler will pick it up on the
  *   next pass.
  *
- *   This runs entirely in IRQ1 context (IF=0).  The only work done is a
- *   state-flag write and a pointer clear — no allocation, no stack switch,
- *   no blocking.
+ *   This runs entirely in IRQ1 context (IF=0).  It must not allocate or
+ *   block; if Ctrl+C interrupts the currently running process, it records
+ *   a pending terminal interrupt and lets irq1_handler_main switch away
+ *   after keyboard_handle_irq() returns with the saved IRQ frame ESP.
  */
 static void process_key_consumer(key_event_t ev) {
+    if (ev.ctrl && ev.key == KEY_C) {
+        process_t* proc = s_foreground;
+        if (!proc) return;
+
+        terminal_puts("^C\n");
+        keyboard_buf_clear();
+        if (keyboard_get_waiting_process() == (void*)proc) {
+            keyboard_set_waiting_process(0);
+        }
+        tcp_socket_clear_waiter(proc);
+
+        proc->exit_status = PROCESS_TERMINATED_BY_CTRL_C;
+        if (proc == sched_current()) {
+            s_terminal_interrupt_pending = 1;
+        } else {
+            sched_kill(proc, 0);
+        }
+        return;
+    }
+
     if (!ev.ascii) return;
 
     keyboard_buf_push_char(ev.ascii);
@@ -457,6 +480,7 @@ void process_destroy(process_t* proc) {
     if (keyboard_get_waiting_process() == (void*)proc) {
         keyboard_set_waiting_process(0);
     }
+    tcp_socket_clear_waiter(proc);
 
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
         if (proc->fds[i].valid) {
@@ -500,6 +524,27 @@ void process_set_foreground(process_t* proc) {
 
 process_t* process_get_foreground(void) {
     return s_foreground;
+}
+
+void process_deliver_pending_terminal_interrupt(unsigned int esp) {
+    process_t* proc;
+
+    if (!s_terminal_interrupt_pending) return;
+
+    proc = sched_current();
+    if (!proc || proc != s_foreground) {
+        s_terminal_interrupt_pending = 0;
+        return;
+    }
+
+    s_terminal_interrupt_pending = 0;
+    proc->exit_status = PROCESS_TERMINATED_BY_CTRL_C;
+    if (keyboard_get_waiting_process() == (void*)proc) {
+        keyboard_set_waiting_process(0);
+    }
+    tcp_socket_clear_waiter(proc);
+    paging_switch(paging_get_kernel_pd());
+    sched_kill(proc, esp);
 }
 
 int process_wait(process_t* proc) {

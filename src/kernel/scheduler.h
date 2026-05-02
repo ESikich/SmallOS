@@ -97,6 +97,17 @@ void sched_yield_now(unsigned int esp);
 void sched_exit_current(unsigned int esp);
 
 /*
+ * sched_kill(proc, esp)
+ *
+ * Asynchronously terminate a scheduled task.  If proc is the current task,
+ * this follows the same no-return switch-away path as sched_exit_current().
+ * If proc is not current, it is marked ZOMBIE and removed from the run queue;
+ * a waiter that already owns the process_t remains responsible for destroying
+ * it from a safe stack.
+ */
+void sched_kill(process_t* proc, unsigned int esp);
+
+/*
  * sched_current()
  *
  * Returns the process_t* in the scheduler's current slot, or 0 when no

@@ -152,9 +152,10 @@ vector 33 → irq1_stub → irq1_handler_main
 ```
 
 ```c
-void irq1_handler_main(void) {
+void irq1_handler_main(unsigned int esp) {
     outb(0x20, 0x20);       /* EOI first — keep PIC unmasked before IRQ-side work */
     keyboard_handle_irq();
+    process_deliver_pending_terminal_interrupt(esp - SCHED_RESUME_RETADDR_OFFSET);
 }
 ```
 
@@ -162,7 +163,7 @@ void irq1_handler_main(void) {
 
 The active consumer is set via `keyboard_set_consumer()`:
 - `shell_key_consumer` (registered by `shell_init`) — enqueues `shell_event_t` entries for `shell_poll()` to drain on the shell task's stack
-- `process_key_consumer` (registered by `process_set_foreground`) — pushes ASCII into `kb_buf` for `SYS_READ`; ignores non-ASCII
+- `process_key_consumer` (registered by `process_set_foreground`) — pushes ASCII into `kb_buf` for `SYS_READ`; Ctrl+C requests foreground-process termination instead of entering the input buffer
 
 EOI is sent before `keyboard_handle_irq()` so the PIC is unmasked before any consumer logic runs.
 

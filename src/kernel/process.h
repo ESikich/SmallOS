@@ -141,6 +141,17 @@ void       process_set_foreground(process_t* proc);
 process_t* process_get_foreground(void);
 
 /*
+ * Terminal interrupt delivery.
+ *
+ * Ctrl+C is interpreted by the foreground process input consumer as a request
+ * to terminate the current foreground process with the conventional status
+ * 130.  IRQ1 calls process_deliver_pending_terminal_interrupt() after the
+ * keyboard consumer returns so a currently running foreground process can be
+ * switched away using the IRQ frame ESP.
+ */
+void       process_deliver_pending_terminal_interrupt(unsigned int esp);
+
+/*
  * Wait for a process to reach ZOMBIE, then destroy it from the current
  * safe stack and return its exit status.
  */
