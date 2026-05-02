@@ -990,6 +990,34 @@ char* strtok(char* s, const char* delim) {
     return s;
 }
 
+char* strtok_r(char* s, const char* delim, char** saveptr) {
+    char* cur;
+    char* end;
+
+    if (s) {
+        cur = s;
+    } else if (saveptr && *saveptr) {
+        cur = *saveptr;
+    } else {
+        return 0;
+    }
+
+    cur += strspn(cur, delim);
+    if (*cur == '\0') {
+        if (saveptr) *saveptr = 0;
+        return 0;
+    }
+
+    end = cur + strcspn(cur, delim);
+    if (*end != '\0') {
+        *end = '\0';
+        if (saveptr) *saveptr = end + 1;
+    } else if (saveptr) {
+        *saveptr = 0;
+    }
+    return cur;
+}
+
 void qsort(void* base, size_t nmemb, size_t size, int (*compar)(const void*, const void*)) {
     unsigned char* a = (unsigned char*)base;
     unsigned char* tmp = (unsigned char*)malloc(size);

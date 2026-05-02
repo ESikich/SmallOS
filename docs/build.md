@@ -92,10 +92,10 @@ harness is exercising the full matrix.
 
 The guest suite also exercises the SmallOS-hosted TinyCC compiler
 (`tools/tcc.elf`) by compiling several sample C files inside the guest
-and immediately running the generated ELFs. `tools/tcc.elf` is driven by a
-SmallOS-side wrapper around libtcc so it can run cleanly in the freestanding
-guest runtime. Those generated binaries are stored under `apps/tests/`, while
-the shipped hello demo lives under `apps/demo/`.
+and immediately running the generated ELFs. `tools/tcc.elf` links the generic
+SmallOS CRT adapter and runs TinyCC's normal hosted CLI `main()` path inside
+the freestanding guest runtime. Those generated binaries are stored under
+`apps/tests/`, while the shipped hello demo lives under `apps/demo/`.
 
 The user runtime behavior that those tests depend on is documented in
 [`docs/user-runtime.md`](user-runtime.md), including `errno`, cwd-aware
@@ -263,10 +263,9 @@ src/user/user_posix.c
 All use `user_lib.h` and `user_syscall.h`. No libc, no hosted runtime, and no dynamic linking.
 
 The guest compiler toolchain ships as `tools/tcc.elf`, built from the vendored
-TinyCC sources with a SmallOS-target wrapper. The guest entry point is a
-SmallOS-side driver that calls libtcc directly instead of relying on TinyCC's
-hosted CLI `main()`, which keeps the compiler path stable in the freestanding
-guest runtime. The shell selftests compile `samples/tccmath.c`,
+TinyCC sources with the generic SmallOS CRT adapter. The guest entry point
+bridges the kernel `_start(argc, argv)` launch ABI to TinyCC's normal
+`main(argc, argv)` path. The shell selftests compile `samples/tccmath.c`,
 `samples/tccagg.c`, `samples/tcctree.c`, and `samples/tccmini.c` inside the
 guest with that compiler.
 

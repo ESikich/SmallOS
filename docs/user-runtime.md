@@ -201,7 +201,7 @@ FAT16 display names follow the existing filesystem presentation rules:
 - iteration returns `NULL` at EOF
 - invalid handles set `errno = EBADF`
 
-The FTP compatibility layer uses the same public directory runtime, so FTP
+FTP uses the same public directory runtime as other user programs, so FTP
 directory listing behavior should stay aligned with `dirprobe`.
 
 ---
