@@ -97,6 +97,10 @@ SmallOS-side wrapper around libtcc so it can run cleanly in the freestanding
 guest runtime. Those generated binaries are stored under `apps/tests/`, while
 the shipped hello demo lives under `apps/demo/`.
 
+The user runtime behavior that those tests depend on is documented in
+[`docs/user-runtime.md`](user-runtime.md), including `errno`, cwd-aware
+wrappers, stdio, directory traversal, and TinyCC expectations.
+
 `make smoke` runs the dedicated reboot and halt smoke checks.  Use
 `make smoke-reboot` or `make smoke-halt` to exercise those shell
 commands on their own.

@@ -2,6 +2,10 @@
 
 This document describes how commands are dispatched, how ELF programs are loaded, and how the current scheduler / syscall model actually behaves.
 
+For the C runtime contract exposed to those ELF programs, including cwd,
+`errno`, fd wrappers, stdio, and directory APIs, see
+[`docs/user-runtime.md`](user-runtime.md).
+
 It reflects the current code in:
 
 - `src/shell/shell.c`
@@ -136,6 +140,9 @@ runelf out.elf
 ```
 
 The test suite uses this flow to compile several focused C samples inside the guest and then run the generated ELFs. The produced binaries are written back under the `apps/tests/` subtree so the shell can execute them by path.
+
+TinyCC's runtime expectations are part of the user runtime contract in
+[`docs/user-runtime.md`](user-runtime.md).
 
 For the TCP bring-up path, the shell can also launch a long-lived service
 with `runelf_nowait apps/services/tcpecho` or `runelf_nowait

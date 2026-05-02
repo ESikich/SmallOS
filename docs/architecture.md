@@ -16,6 +16,8 @@ The Makefile consumes these declarations while building `os-image.bin`, and pass
 # Architecture Overview
 
 This document describes how SmallOS boots, initializes, and executes programs.
+For the ring-3 C runtime contract used by user ELFs, see
+[`docs/user-runtime.md`](user-runtime.md).
 
 ---
 
@@ -184,6 +186,10 @@ socket handles own their TCP send/receive/poll/close behavior, and console
 handles own terminal writes and keyboard-buffer reads. `syscall.c` therefore
 stays focused on user-pointer validation and dispatch instead of knowing the
 internals of each resource type.
+
+The user-space view of this fd table, including POSIX wrappers, stdio stream
+state, cwd-relative path handling, and directory traversal, is documented in
+[`docs/user-runtime.md`](user-runtime.md).
 
 ---
 
