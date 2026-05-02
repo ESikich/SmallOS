@@ -82,8 +82,8 @@ struct fd_entry {
 #define PROCESS_CWD_MAX   PROCESS_FD_NAME_MAX
 
 typedef struct {
-    u32*            pd;
-    u32             kernel_stack_frame;
+    u32*            pd;                 /* PMM physical page-directory frame */
+    u32             kernel_stack_frame; /* PMM physical kernel-stack frame */
     unsigned int    sched_esp;
     volatile process_state_t state;
     int             exit_status;

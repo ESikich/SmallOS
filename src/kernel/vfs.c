@@ -8,7 +8,6 @@
 #include "uapi_errno.h"
 
 #define VFS_FILE_CACHE_MAX_BYTES (PROCESS_FD_CACHE_PAGES * 4096u)
-#define VFS_COPY_CHUNK_BYTES 512u
 
 typedef struct {
     fd_entry_t* ent;
@@ -20,35 +19,8 @@ typedef struct {
 
 static int vfs_page_sink_write(void* ctx, u32 offset, const u8* data, u32 len);
 
-/*
- * PMM file-cache frames may live in the physical range that user process page
- * directories remap for ELF code. Touch them through the kernel PD; keep user
- * buffers copied before or after these windows while the process PD is active.
- */
-static u32* vfs_current_user_pd(void) {
-    process_t* proc = sched_current();
-    if (!proc || !proc->pd) return 0;
-    return proc->pd;
-}
-
-static u32* vfs_enter_kernel_pd(void) {
-    u32* old_pd = vfs_current_user_pd();
-    if (old_pd) {
-        paging_switch(paging_get_kernel_pd());
-    }
-    return old_pd;
-}
-
-static void vfs_leave_kernel_pd(u32* old_pd) {
-    if (old_pd) {
-        paging_switch(old_pd);
-    }
-}
-
 static void vfs_zero_frame(u32 frame) {
-    u32* old_pd = vfs_enter_kernel_pd();
-    k_memset((void*)frame, 0, 4096u);
-    vfs_leave_kernel_pd(old_pd);
+    k_memset(paging_phys_to_kernel_virt(frame), 0, 4096u);
 }
 
 static int vfs_cache_page_frame(fd_entry_t* ent, u32 page_idx, u32* out_frame) {
@@ -57,10 +29,8 @@ static int vfs_cache_page_frame(fd_entry_t* ent, u32 page_idx, u32* out_frame) {
         return 0;
     }
 
-    u32* old_pd = vfs_enter_kernel_pd();
-    u32* cache_pages = (u32*)ent->cache_pages_frame;
+    u32* cache_pages = (u32*)paging_phys_to_kernel_virt(ent->cache_pages_frame);
     *out_frame = cache_pages[page_idx];
-    vfs_leave_kernel_pd(old_pd);
 
     return *out_frame ? 1 : 0;
 }
@@ -70,10 +40,8 @@ static int vfs_set_cache_page_frame(fd_entry_t* ent, u32 page_idx, u32 frame) {
         return 0;
     }
 
-    u32* old_pd = vfs_enter_kernel_pd();
-    u32* cache_pages = (u32*)ent->cache_pages_frame;
+    u32* cache_pages = (u32*)paging_phys_to_kernel_virt(ent->cache_pages_frame);
     cache_pages[page_idx] = frame;
-    vfs_leave_kernel_pd(old_pd);
 
     return 1;
 }
@@ -96,9 +64,8 @@ static int vfs_copy_from_cache(fd_entry_t* ent, u32 offset, u8* out, u32 len) {
             return 0;
         }
 
-        u32* old_pd = vfs_enter_kernel_pd();
-        k_memcpy(out + copied, (const void*)(frame + page_off), chunk);
-        vfs_leave_kernel_pd(old_pd);
+        const u8* page = (const u8*)paging_phys_to_kernel_virt(frame);
+        k_memcpy(out + copied, page + page_off, chunk);
 
         copied += chunk;
     }
@@ -126,9 +93,8 @@ static int vfs_copy_to_cache(fd_entry_t* ent, u32 offset, const u8* data, u32 le
             return 0;
         }
 
-        u32* old_pd = vfs_enter_kernel_pd();
-        k_memcpy((void*)(frame + page_off), data + copied, chunk);
-        vfs_leave_kernel_pd(old_pd);
+        u8* page = (u8*)paging_phys_to_kernel_virt(frame);
+        k_memcpy(page + page_off, data + copied, chunk);
 
         copied += chunk;
     }
@@ -238,17 +204,7 @@ static int vfs_file_read(fd_entry_t* ent, char* buf, unsigned int len) {
     to_copy = (len < remaining) ? len : remaining;
     src_off = ent->offset;
 
-    for (u32 copied = 0; copied < to_copy;) {
-        u8 chunk[VFS_COPY_CHUNK_BYTES];
-        u32 n = to_copy - copied;
-
-        if (n > sizeof(chunk)) n = sizeof(chunk);
-        if (!vfs_copy_from_cache(ent, src_off + copied, chunk, n)) {
-            return -EIO;
-        }
-        k_memcpy(buf + copied, chunk, n);
-        copied += n;
-    }
+    if (!vfs_copy_from_cache(ent, src_off, (u8*)buf, to_copy)) return -EIO;
 
     ent->offset += to_copy;
     return (int)to_copy;
@@ -264,17 +220,7 @@ static int vfs_file_write(fd_entry_t* ent, const char* buf, unsigned int len) {
     unsigned int end = ent->offset + len;
     if (end < ent->offset) return -EFBIG;
     if (!vfs_file_ensure_capacity(ent, end)) return -EFBIG;
-    for (unsigned int copied = 0; copied < len;) {
-        u8 chunk[VFS_COPY_CHUNK_BYTES];
-        unsigned int n = len - copied;
-
-        if (n > sizeof(chunk)) n = sizeof(chunk);
-        k_memcpy(chunk, buf + copied, n);
-        if (!vfs_copy_to_cache(ent, ent->offset + copied, chunk, n)) {
-            return -EIO;
-        }
-        copied += n;
-    }
+    if (!vfs_copy_to_cache(ent, ent->offset, (const u8*)buf, len)) return -EIO;
 
     ent->offset = end;
     if (ent->offset > ent->size) {

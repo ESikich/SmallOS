@@ -311,10 +311,10 @@ Fd-backed reads and writes can currently cache and flush files up to:
 4 MB
 ```
 
-That fd cache is page-backed, not one contiguous kernel buffer. Because user
-ELFs have a private mapping at `0x400000`, VFS copies cache pages through the
-kernel page directory when a PMM frame lands in that range, while user buffers
-are copied under the process page directory.
+That fd cache is page-backed, not one contiguous kernel buffer. VFS stores
+cache frame numbers as PMM physical addresses and dereferences them through the
+shared high kernel PMM alias. User buffers are still copied under the current
+process page directory.
 
 ## Empty files
 

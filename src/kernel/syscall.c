@@ -140,11 +140,12 @@ static u32* current_user_pd(void) {
  * in the given page directory.
  */
 static int user_page_mapped(u32* pd, unsigned int addr) {
-    u32 pde = pd[addr >> 22];
+    u32* pd_virt = (u32*)paging_phys_to_kernel_virt((u32)pd);
+    u32 pde = pd_virt[addr >> 22];
     if (!(pde & PAGE_PRESENT)) return 0;
     if (!(pde & PAGE_USER))    return 0;
 
-    u32* pt = (u32*)(pde & ~0xFFFu);
+    u32* pt = (u32*)paging_phys_to_kernel_virt(pde & ~0xFFFu);
     u32 pte = pt[(addr >> 12) & 0x3FF];
     if (!(pte & PAGE_PRESENT)) return 0;
     if (!(pte & PAGE_USER))    return 0;
@@ -473,12 +474,14 @@ static void heap_unmap_page(u32* pd, unsigned int virt) {
     unsigned int pd_index = virt >> 22;
     unsigned int pt_index = (virt >> 12) & 0x3FFu;
 
-    u32 pde = pd[pd_index];
+    u32* pd_virt = (u32*)paging_phys_to_kernel_virt((u32)pd);
+    u32 pde = pd_virt[pd_index];
     if (!(pde & PAGE_PRESENT)) {
         return;
     }
 
-    u32* pt = (u32*)(pde & ~0xFFFu);
+    u32 pt_phys = pde & ~0xFFFu;
+    u32* pt = (u32*)paging_phys_to_kernel_virt(pt_phys);
     u32 pte = pt[pt_index];
     if (!(pte & PAGE_PRESENT)) {
         return;
@@ -489,8 +492,8 @@ static void heap_unmap_page(u32* pd, unsigned int virt) {
     __asm__ __volatile__("invlpg (%0)" : : "r"(virt) : "memory");
 
     if (heap_page_table_empty(pt)) {
-        pd[pd_index] = 0;
-        pmm_free_frame((u32)pt);
+        pd_virt[pd_index] = 0;
+        pmm_free_frame(pt_phys);
     }
 }
 
@@ -537,7 +540,7 @@ static unsigned int sys_brk_impl(unsigned int new_brk) {
                 }
                 return cur_brk;
             }
-            k_memset((void*)frame, 0, PAGE_SIZE);
+            k_memset(paging_phys_to_kernel_virt(frame), 0, PAGE_SIZE);
             paging_map_page(pd, addr, frame, PAGE_WRITE | PAGE_USER);
             mapped = addr + PAGE_SIZE;
         }

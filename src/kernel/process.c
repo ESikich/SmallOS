@@ -371,7 +371,7 @@ process_t* process_create(const char* name) {
         return 0;
     }
 
-    process_t* proc = (process_t*)frame;
+    process_t* proc = (process_t*)paging_phys_to_kernel_virt(frame);
     proc_zero(proc);
 
     proc->state = PROCESS_STATE_UNUSED;
@@ -401,7 +401,8 @@ process_t* process_create_kernel_task(const char* name, void (*entry)(void)) {
     proc->state = PROCESS_STATE_RUNNING;
 
     {
-        unsigned int* stack_top = (unsigned int*)(proc->kernel_stack_frame + 4096u);
+        unsigned int* stack_top =
+            (unsigned int*)((u8*)paging_phys_to_kernel_virt(proc->kernel_stack_frame) + PAGE_SIZE);
         stack_top--;
         *stack_top = (unsigned int)process_kernel_task_bootstrap;
         proc->sched_esp = (unsigned int)stack_top;
@@ -444,7 +445,7 @@ void process_destroy(process_t* proc) {
     }
 
     proc->state = PROCESS_STATE_EXITED;
-    pmm_free_frame((u32)proc);
+    pmm_free_frame(paging_kernel_virt_to_phys(proc));
 }
 
 process_t* process_get_current(void) {

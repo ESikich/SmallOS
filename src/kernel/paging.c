@@ -16,7 +16,7 @@
  *
  * Per-process page directories
  * ----------------------------
- * Each process gets a fresh page directory from pmm_alloc_frame().
+ * Each process gets a fresh physical page directory from pmm_alloc_frame().
  * Kernel PD entries (indices 0 and 2–1023) are copied in so that kernel
  * code, VGA, heap, and stack remain accessible after CR3 switch.
  *
@@ -37,6 +37,8 @@
 
 #define PD_ENTRIES  1024
 #define PT_ENTRIES  1024
+#define KERNEL_PMM_MAP_PD_INDEX (KERNEL_PMM_MAP_BASE >> 22)
+#define KERNEL_PMM_MAP_TABLES   ((KERNEL_PMM_MAP_SIZE + 0x3FFFFFu) >> 22)
 
 /* PD index 1 covers 0x400000–0x7FFFFF — the private ELF region. */
 #define USER_PD_INDEX   1
@@ -44,6 +46,8 @@
 static u32 kernel_page_directory[PD_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
 static u32 low_page_table_0[PT_ENTRIES]      __attribute__((aligned(PAGE_SIZE)));
 static u32 low_page_table_1[PT_ENTRIES]      __attribute__((aligned(PAGE_SIZE)));
+static u32 pmm_map_page_tables[KERNEL_PMM_MAP_TABLES][PT_ENTRIES]
+    __attribute__((aligned(PAGE_SIZE)));
 
 /* ------------------------------------------------------------------ */
 /* Internal helpers                                                     */
@@ -67,6 +71,24 @@ static void enable_paging(void) {
     __asm__ __volatile__("mov %0, %%cr0" : : "r"(cr0) : "memory");
 }
 
+static int paging_virt_is_pmm_alias(u32 virt) {
+    return virt >= KERNEL_PMM_MAP_BASE && virt < KERNEL_PMM_MAP_END;
+}
+
+static u32* paging_pd_virt(u32* pd) {
+    if (pd == kernel_page_directory) {
+        return pd;
+    }
+    return (u32*)paging_phys_to_kernel_virt((u32)pd);
+}
+
+static u32* paging_pt_virt(u32 phys) {
+    if (paging_phys_is_pmm_frame(phys)) {
+        return (u32*)paging_phys_to_kernel_virt(phys);
+    }
+    return (u32*)phys;
+}
+
 /* ------------------------------------------------------------------ */
 /* Public API                                                           */
 /* ------------------------------------------------------------------ */
@@ -84,10 +106,46 @@ void paging_init(void) {
     }
     kernel_page_directory[1] = (u32)low_page_table_1 | PAGE_PRESENT | PAGE_WRITE;
 
+    /*
+     * High kernel alias for all PMM-managed frames. The low identity map
+     * remains for boot compatibility, but PMM frames should be dereferenced
+     * through this stable supervisor-only window.
+     */
+    for (u32 t = 0; t < KERNEL_PMM_MAP_TABLES; t++) {
+        for (u32 i = 0; i < PT_ENTRIES; i++) {
+            u32 page = t * PT_ENTRIES + i;
+            if (page < PMM_NUM_FRAMES) {
+                pmm_map_page_tables[t][i] =
+                    (PMM_BASE + page * PAGE_SIZE) | PAGE_PRESENT | PAGE_WRITE;
+            }
+        }
+        kernel_page_directory[KERNEL_PMM_MAP_PD_INDEX + t] =
+            (u32)pmm_map_page_tables[t] | PAGE_PRESENT | PAGE_WRITE;
+    }
+
     /* All other PD entries stay zero (not present). */
 
     flush_cr3((u32)kernel_page_directory);
     enable_paging();
+}
+
+int paging_phys_is_pmm_frame(u32 phys) {
+    return phys >= PMM_BASE && phys < PMM_BASE + PMM_SIZE;
+}
+
+void* paging_phys_to_kernel_virt(u32 phys) {
+    if (!paging_phys_is_pmm_frame(phys)) {
+        paging_panic();
+    }
+    return (void*)(KERNEL_PMM_MAP_BASE + (phys - PMM_BASE));
+}
+
+u32 paging_kernel_virt_to_phys(const void* virt_ptr) {
+    u32 virt = (u32)virt_ptr;
+    if (!paging_virt_is_pmm_alias(virt)) {
+        paging_panic();
+    }
+    return PMM_BASE + (virt - KERNEL_PMM_MAP_BASE);
 }
 
 /*
@@ -105,13 +163,14 @@ void paging_init(void) {
 void paging_map_page(u32* pd, u32 virt, u32 phys, u32 flags) {
     u32 pd_index = virt >> 22;
     u32 pt_index = (virt >> 12) & 0x3FF;
+    u32* pd_virt = paging_pd_virt(pd);
 
     flags |= PAGE_PRESENT;
 
     u32* pt;
 
-    if (pd[pd_index] & PAGE_PRESENT) {
-        pt = (u32*)(pd[pd_index] & ~0xFFFu);
+    if (pd_virt[pd_index] & PAGE_PRESENT) {
+        pt = paging_pt_virt(pd_virt[pd_index] & ~0xFFFu);
     } else {
         if (pd == kernel_page_directory) {
             pt = (u32*)kmalloc_page();
@@ -119,10 +178,11 @@ void paging_map_page(u32* pd, u32 virt, u32 phys, u32 flags) {
         } else {
             u32 frame = pmm_alloc_frame();
             if (!frame) paging_panic();
-            pt = (u32*)frame;
+            pt = (u32*)paging_phys_to_kernel_virt(frame);
         }
         k_memset(pt, 0, PAGE_SIZE);
-        pd[pd_index] = (u32)pt | PAGE_PRESENT | PAGE_WRITE | PAGE_USER;
+        pd_virt[pd_index] = (pd == kernel_page_directory ? (u32)pt : paging_kernel_virt_to_phys(pt)) |
+                            PAGE_PRESENT | PAGE_WRITE | PAGE_USER;
     }
 
     pt[pt_index] = (phys & ~0xFFFu) | flags;
@@ -140,14 +200,14 @@ u32* paging_get_kernel_pd(void) {
  * that process_pd_destroy() can free it on exit, closing the 4 KB-per-
  * runelf heap leak that existed when kmalloc_page() was used here.
  *
- * The PD frame is identity-mapped (phys == virt), so the returned pointer
- * is valid for both CR3 loads and direct kernel writes.
+ * The returned value is the physical PD frame address cast to u32*. Kernel
+ * code must translate it through the PMM alias before dereferencing.
  */
 u32* process_pd_create(void) {
     u32 frame = pmm_alloc_frame();
     if (!frame) paging_panic();
 
-    u32* pd = (u32*)frame;
+    u32* pd = (u32*)paging_phys_to_kernel_virt(frame);
     k_memset(pd, 0, PAGE_SIZE);
 
     /*
@@ -161,7 +221,7 @@ u32* process_pd_create(void) {
         pd[i] = kernel_page_directory[i];
     }
 
-    return pd;
+    return (u32*)frame;
 }
 
 /*
@@ -189,15 +249,17 @@ u32* process_pd_create(void) {
  */
 void process_pd_destroy(u32* pd) {
     if (!pd) return;
+    u32* pd_virt = paging_pd_virt(pd);
 
     for (u32 i = 0; i < PD_ENTRIES; i++) {
         /* Skip entries shared from the kernel PD. */
-        if (pd[i] == kernel_page_directory[i]) continue;
+        if (pd_virt[i] == kernel_page_directory[i]) continue;
 
         /* Skip entries that aren't present. */
-        if (!(pd[i] & PAGE_PRESENT)) continue;
+        if (!(pd_virt[i] & PAGE_PRESENT)) continue;
 
-        u32* pt = (u32*)(pd[i] & ~0xFFFu);
+        u32 pt_phys = pd_virt[i] & ~0xFFFu;
+        u32* pt = paging_pt_virt(pt_phys);
 
         /* Free every physical frame mapped in this private page table. */
         for (u32 j = 0; j < PT_ENTRIES; j++) {
@@ -207,10 +269,10 @@ void process_pd_destroy(u32* pd) {
         }
 
         /* Every process-private page table is PMM-backed. */
-        pmm_free_frame((u32)pt);
+        pmm_free_frame(pt_phys);
 
         /* Clear the PDE so a stale CR3 can't reach freed memory. */
-        pd[i] = 0;
+        pd_virt[i] = 0;
     }
 
     /* Free the page directory frame itself — allocated from PMM. */
@@ -218,5 +280,11 @@ void process_pd_destroy(u32* pd) {
 }
 
 void paging_switch(u32* pd) {
-    flush_cr3((u32)pd);
+    if (pd == kernel_page_directory) {
+        flush_cr3((u32)pd);
+    } else if (paging_virt_is_pmm_alias((u32)pd)) {
+        flush_cr3(paging_kernel_virt_to_phys(pd));
+    } else {
+        flush_cr3((u32)pd);
+    }
 }

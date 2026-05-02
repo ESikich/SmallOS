@@ -102,7 +102,8 @@ The loader copies ELF segment data out of this buffer into PMM-backed frames bef
 Fd-backed file reads and writes do not need to fit inside this static buffer.
 They use reclaimable PMM cache pages owned by the open descriptor and stream
 FAT16 sectors into or out of those pages. VFS accesses those PMM frames through
-the kernel page directory when a frame address overlaps a user process mapping.
+the high kernel PMM alias (`KERNEL_PMM_MAP_BASE`), so file-cache frames remain
+reachable under every process page directory without switching CR3.
 
 ---
 
@@ -112,6 +113,8 @@ the kernel page directory when a frame address overlaps a user process mapping.
 
 - Use `kmalloc` / `kmalloc_page` only for permanent structures
 - Use `pmm_alloc_frame()` for anything that must be reclaimed
+- Treat `pmm_alloc_frame()` results as physical addresses; translate with
+  `paging_phys_to_kernel_virt()` before dereferencing
 - Keep BSS zeroed before paging and PMM initialization
 
 ## User space

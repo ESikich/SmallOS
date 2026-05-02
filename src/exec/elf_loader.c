@@ -85,7 +85,8 @@ static void elf_user_task_bootstrap(void) {
         }
     }
 
-    tss_set_kernel_stack(proc->kernel_stack_frame + PAGE_SIZE);
+    tss_set_kernel_stack((unsigned int)paging_phys_to_kernel_virt(proc->kernel_stack_frame) +
+                         PAGE_SIZE);
     paging_switch(proc->pd);
 
     elf_enter_ring3(proc->user_entry,
@@ -126,7 +127,8 @@ static int elf_seed_sched_context(process_t* proc,
     }
 
     {
-        unsigned int* stack_top = (unsigned int*)(proc->kernel_stack_frame + PAGE_SIZE);
+        unsigned int* stack_top =
+            (unsigned int*)((u8*)paging_phys_to_kernel_virt(proc->kernel_stack_frame) + PAGE_SIZE);
         stack_top--;
         *stack_top = (unsigned int)elf_user_task_bootstrap;
         proc->sched_esp = (unsigned int)stack_top;
@@ -170,8 +172,10 @@ process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
             u32 pt_idx = (page_virt >> 12) & 0x3FF;
             u32* pt = 0;
 
-            if (proc->pd[pd_idx] & PAGE_PRESENT) {
-                pt = (u32*)(proc->pd[pd_idx] & ~0xFFFu);
+            u32* pd = (u32*)paging_phys_to_kernel_virt((u32)proc->pd);
+
+            if (pd[pd_idx] & PAGE_PRESENT) {
+                pt = (u32*)paging_phys_to_kernel_virt(pd[pd_idx] & ~0xFFFu);
             }
 
             if (!pt || !(pt[pt_idx] & PAGE_PRESENT)) {
@@ -182,7 +186,7 @@ process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
                     return 0;
                 }
 
-                k_memset((void*)frame_phys, 0, PAGE_SIZE);
+                k_memset(paging_phys_to_kernel_virt(frame_phys), 0, PAGE_SIZE);
                 paging_map_page(proc->pd, page_virt, frame_phys,
                                 PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
             } else {
@@ -200,8 +204,9 @@ process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
                 u32 pd_idx   = va >> 22;
                 u32 pt_idx   = (va >> 12) & 0x3FF;
                 u32 page_off = va & 0xFFFu;
-                u32* pt      = (u32*)(proc->pd[pd_idx] & ~0xFFFu);
-                u8*  dst     = (u8*)(pt[pt_idx] & ~0xFFFu);
+                u32* pd      = (u32*)paging_phys_to_kernel_virt((u32)proc->pd);
+                u32* pt      = (u32*)paging_phys_to_kernel_virt(pd[pd_idx] & ~0xFFFu);
+                u8*  dst     = (u8*)paging_phys_to_kernel_virt(pt[pt_idx] & ~0xFFFu);
 
                 u32 chunk = PAGE_SIZE - page_off;
                 if (copied + chunk > filesz) {
@@ -225,7 +230,7 @@ process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
                 return 0;
             }
 
-            k_memset((void*)stack_frame_phys, 0, PAGE_SIZE);
+            k_memset(paging_phys_to_kernel_virt(stack_frame_phys), 0, PAGE_SIZE);
             paging_map_page(proc->pd, stack_virt, stack_frame_phys,
                             PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
         }

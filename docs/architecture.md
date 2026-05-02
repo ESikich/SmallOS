@@ -436,6 +436,8 @@ Programs are linked at fixed virtual address `0x400000`, loaded into private use
 0x00400000 – 0x007FFFFF   user ELF segments (private, PAGE_USER | PAGE_WRITE)
 0xBFFFF000                user stack page (private, PAGE_USER | PAGE_WRITE)
 0xC0000000 – 0xFFFFFFFF   shared kernel mappings (supervisor-only)
+0xE0000000 – 0xE05FFFFF   shared kernel PMM alias, mapping physical
+                          0x00200000 – 0x007FFFFF
 ```
 
 ## Process Paging Ownership
@@ -449,6 +451,12 @@ User processes own their paging structures:
 Kernel mappings remain shared from `kernel_page_directory` and are never reclaimed by per-process teardown.
 
 `process_pd_destroy()` walks the user PDE range, frees all mapped user frames, frees each private user page table, then frees the page directory frame itself.
+
+PMM-owned memory is stored and passed around as physical frame addresses.
+Kernel code dereferences that memory through `paging_phys_to_kernel_virt()`;
+page tables and CR3 continue to contain physical addresses. The low identity
+map remains for boot compatibility and early kernel-owned memory, not as the
+PMM-frame access API.
 
 ---
 
@@ -511,7 +519,7 @@ elf_run_image(data, argc, argv)
   ↓
 validate ELF magic
 process_create("elf")           → allocate process_t from PMM
-process_pd_create()             → fresh PD (pmm_alloc_frame), kernel entries shared
+process_pd_create()             → fresh physical PD frame (pmm_alloc_frame), kernel entries shared
 map ELF segments                → pmm_alloc_frame() per page, PAGE_USER at 0x400000
 map user stack                  → pmm_alloc_frame(), PAGE_USER at 0xBFFFF000
 alloc kernel stack              → pmm_alloc_frame(), per-process ring-0 stack for syscalls/interrupts

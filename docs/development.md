@@ -151,7 +151,7 @@ Kernel must load its own GDT early in `kernel_main()`, before interrupts are ena
 
 `tss_set_kernel_stack(esp0)` is the supported interface for updating TSS.ESP0.
 
-It must be called before every `iret` into ring 3. For a process-owned kernel stack, the value must be `kernel_stack_frame + PAGE_SIZE`. `elf_user_task_bootstrap()` sets it before first ring-3 entry for a user task, and scheduler-driven context switches apply the incoming process's `next_esp0` through `sched_switch` via `tss_set_kernel_stack()`.
+It must be called before every `iret` into ring 3. For a process-owned kernel stack, the value must be `paging_phys_to_kernel_virt(kernel_stack_frame) + PAGE_SIZE`. `elf_user_task_bootstrap()` sets it before first ring-3 entry for a user task, and scheduler-driven context switches apply the incoming process's `next_esp0` through `sched_switch` via `tss_set_kernel_stack()`.
 
 Do not reintroduce `tss_get_esp0_ptr()` or any pointer-based access into the packed TSS structure.
 
@@ -192,6 +192,12 @@ pmm_alloc_frame          0x200000 – 0x7FFFFF   reclaimable on process exit
 
 `pmm_alloc_frame` is for everything reclaimed on exit: `process_t` structs, process page directories, ELF frames, stack frames, all process-private page tables, kernel stack frames, and embedded per-process handle tables.
 
+PMM frame values are physical addresses, not normal C pointers. Page tables,
+CR3 values, fd cache entries, `process_t::pd`, and `process_t::kernel_stack_frame`
+store those physical addresses. Convert only at the point of kernel access with
+`paging_phys_to_kernel_virt()`, and convert aliases back with
+`paging_kernel_virt_to_phys()` before freeing a PMM-backed object.
+
 ### FAT16 load buffer rule
 
 `fat16_load()` uses one permanent kernel-heap buffer allocated during
@@ -200,8 +206,8 @@ call; each `runelf` call would permanently consume heap.
 
 Fd-backed file IO uses PMM cache pages instead. Those pages can sit in the same
 physical range that a user process maps privately for its ELF image, so VFS
-must copy cache data through the kernel page directory rather than directly
-dereferencing PMM frame addresses while a user page directory is active.
+must copy cache data through the high kernel PMM alias rather than directly
+dereferencing PMM frame addresses.
 
 **Verify after changes with `meminfo`:**
 

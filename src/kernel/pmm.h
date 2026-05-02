@@ -19,9 +19,9 @@
  *                          user ELF frames, user stack frames, process
  *                          page directories, and private page tables.
  *                          6 MB = 1536 frames = 192 bytes of bitmap.
- *                          Ceiling matches the 8 MB identity-map limit,
- *                          so all PMM frames are directly accessible as
- *                          pointers in kernel C code (phys == virt).
+ *                          pmm_alloc_frame() returns physical addresses;
+ *                          kernel code must use paging_phys_to_kernel_virt()
+ *                          before dereferencing PMM-backed memory.
  *
  * The two ranges are disjoint — pmm_alloc_frame() and kmalloc_page()
  * can never return the same physical address.

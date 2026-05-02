@@ -2,6 +2,7 @@
 #define PAGING_H
 
 #include "types.h"
+#include "pmm.h"
 
 #define PAGE_PRESENT    0x001
 #define PAGE_WRITE      0x002
@@ -9,6 +10,18 @@
 
 #define PAGE_SIZE       4096u
 #define PAGE_ALIGN(a)   (((a) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1))
+
+/*
+ * Stable kernel virtual alias for PMM-owned physical frames.
+ *
+ * pmm_alloc_frame() returns physical frame addresses.  Kernel code must
+ * translate those physical addresses through this window before dereferencing
+ * them. Page tables, CR3 values, and ownership fields still store physical
+ * addresses.
+ */
+#define KERNEL_PMM_MAP_BASE 0xE0000000u
+#define KERNEL_PMM_MAP_SIZE PMM_SIZE
+#define KERNEL_PMM_MAP_END  (KERNEL_PMM_MAP_BASE + KERNEL_PMM_MAP_SIZE)
 
 /*
  * Canonical virtual addresses for user processes.
@@ -36,12 +49,16 @@
  */
 void paging_init(void);
 
+void* paging_phys_to_kernel_virt(u32 phys);
+u32 paging_kernel_virt_to_phys(const void* virt);
+int paging_phys_is_pmm_frame(u32 phys);
+
 /*
  * paging_map_page(pd, virt, phys, flags)
  *
  * Maps a single 4 KB page in the given page directory.
  *
- *   pd    – virtual/physical address of the page directory to modify
+ *   pd    – kernel_page_directory or a PMM physical page directory value
  *   virt  – virtual address (rounded down to page boundary)
  *   phys  – physical address (rounded down to page boundary)
  *   flags – PAGE_PRESENT | PAGE_WRITE | PAGE_USER as needed
@@ -77,8 +94,9 @@ u32* paging_get_kernel_pd(void);
  * after switching CR3. PD index 1 (0x400000–0x7FFFFF) is left empty so
  * the process gets a private mapping there for its ELF.
  *
- * Returns a pointer to the new page directory (page-aligned, identity-
- * mapped so the value is usable as both a virtual and physical address).
+ * Returns the physical frame address of the new page directory cast to u32*.
+ * The value is suitable for CR3/page-table storage; translate before direct
+ * kernel dereference.
  * Returns 0 (via paging_panic — halts) on allocation failure.
  */
 u32* process_pd_create(void);
