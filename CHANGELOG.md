@@ -56,8 +56,7 @@
 
 * **FTP service object build** (`src/user/ftpd.c`, `Makefile`, `src/user/stdlib.h`, `src/user/user_stdio.h`, `src/user/user_syscall.h`, `third_party/ftp_server/`)
   * Stopped including vendored FTP `.c` files from `ftpd.c`; the SmallOS build now compiles and links the FTP server sources as normal objects.
-  * Added a returning upstream `ftp_session_serve()` API so SmallOS can handle one client session without redefining `exit()` or using a `setjmp` bridge.
-  * Made userland `exit()` / `sys_exit()` visibly non-returning.
+  * Kept the session-completion bridge explicit as `ftpd_session_exit()` and made userland `exit()` / `sys_exit()` visibly non-returning.
 
 * **Unified fd-backed handles and VFS file backend** (`src/kernel/process.c`, `src/kernel/process.h`, `src/kernel/vfs.c`, `src/kernel/vfs.h`, `src/kernel/syscall.c`, `src/user/user_stdio.c`, `src/user/user_posix.c`, `docs/`)
   * `process_handle_ops_t` now covers `read`, `write`, `seek`, `poll`, `flush`, and `close` for file, socket, and console handles.
