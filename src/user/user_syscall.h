@@ -201,6 +201,10 @@ static inline int sys_lseek(int fd, int offset, int whence) {
     return syscall3(SYS_LSEEK, (uint32_t)fd, (uint32_t)offset, (uint32_t)whence);
 }
 
+static inline int sys_fsync(int fd) {
+    return syscall1(SYS_FSYNC, (uint32_t)fd);
+}
+
 /*
  * sys_unlink(path)
  *

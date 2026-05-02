@@ -12,6 +12,8 @@ typedef struct u_file_stream {
     int is_console;
     int has_unget;
     int unget_ch;
+    int eof;
+    int error;
 } FILE;
 
 extern FILE* stdin;
@@ -35,6 +37,9 @@ int getchar(void);
 char* gets(char* s);
 int ungetc(int c, FILE* stream);
 int fflush(FILE* stream);
+int feof(FILE* stream);
+int ferror(FILE* stream);
+void clearerr(FILE* stream);
 int fseek(FILE* stream, long offset, int whence);
 long ftell(FILE* stream);
 int fputc(int c, FILE* stream);

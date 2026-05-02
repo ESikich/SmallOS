@@ -1,4 +1,6 @@
 #include "user_lib.h"
+#include "stdlib.h"
+#include "unistd.h"
 
 static int streq(const char* a, const char* b) {
     unsigned int i = 0;
@@ -57,6 +59,21 @@ void _start(int argc, char** argv) {
         sys_close(fd);
     }
     u_puts("cwdprobe open relative: PASS\n");
+
+    {
+        char resolved[128];
+        if (!realpath("../demo/./hello.elf", resolved) || !streq(resolved, "/apps/demo/hello.elf")) {
+            u_puts("cwdprobe realpath relative: FAIL\n");
+            sys_exit(1);
+        }
+        u_puts("cwdprobe realpath relative: PASS\n");
+    }
+
+    if (access("hello.elf", R_OK) != 0 || access("missing.elf", F_OK) == 0) {
+        u_puts("cwdprobe access relative: FAIL\n");
+        sys_exit(1);
+    }
+    u_puts("cwdprobe access relative: PASS\n");
 
     {
         int fd = u_open_write("cwdprobe.txt");

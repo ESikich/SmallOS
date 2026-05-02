@@ -2,6 +2,7 @@
 #include "ata.h"
 #include "../drivers/terminal.h"
 #include "../kernel/klib.h"
+#include "../kernel/memory.h"
 
 /* ------------------------------------------------------------------ */
 /* Volume geometry — must match mkfat16.c exactly                      */
@@ -66,16 +67,16 @@ static u8 s_dir_buf[CLUSTER_BYTES] __attribute__((aligned(2)));
 static u8 s_dir_buf2[CLUSTER_BYTES] __attribute__((aligned(2)));
 
 /*
- * Static ELF load buffer — reused across fat16_load() calls.
- * Lives in BSS (zeroed at boot, never freed).  Since ELF programs run
- * sequentially (one foreground process at a time), there is no aliasing
- * risk.  The caller (elf_run_image) copies all data into PMM frames
- * before returning, so the buffer is safe to reuse on the next call.
+ * ELF load buffer — reused across fat16_load() calls.
+ * Allocated from the kernel bump heap so large ELF loads cannot cross the
+ * legacy VGA/BIOS hole at 0xA0000.  The caller (elf_run_image) copies all
+ * data into PMM frames before returning, so the buffer is safe to reuse on
+ * the next call.
  *
  * A separate static cluster scratch buffer is used to avoid a 2048-byte
  * allocation on the kernel stack inside hot paths that stream cluster data.
  */
-static u8 s_load_buf[FAT16_MAX_FILE_BYTES];
+static u8* s_load_buf = 0;
 
 typedef struct {
     int is_root;
@@ -1539,6 +1540,14 @@ static int match_83(const u8 dir_name[11], const char* name) {
 /* ------------------------------------------------------------------ */
 
 int fat16_init(void) {
+    if (!s_load_buf) {
+        s_load_buf = (u8*)kmalloc(FAT16_MAX_FILE_BYTES);
+        if (!s_load_buf) {
+            terminal_puts("fat16: cannot allocate load buffer\n");
+            return 0;
+        }
+    }
+
     /*
      * Step 1: read sector 0 of the whole disk to get the FAT16 LBA
      * from the MBR partition table.

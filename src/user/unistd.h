@@ -6,6 +6,11 @@
 
 typedef int ssize_t;
 
+#define F_OK 0
+#define X_OK 1
+#define W_OK 2
+#define R_OK 4
+
 int close(int fd);
 int read(int fd, void* buf, unsigned int len);
 int write(int fd, const void* buf, unsigned int len);

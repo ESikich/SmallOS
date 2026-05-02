@@ -1,4 +1,6 @@
 #include "user_lib.h"
+#include "sys/stat.h"
+#include "unistd.h"
 
 static void check_stat(const char* label, const char* path) {
     uint32_t size = 0;
@@ -25,6 +27,21 @@ void _start(int argc, char** argv) {
     check_stat("demo_dir", "apps/demo");
     check_stat("demo_hello", "apps/demo/hello.elf");
     check_stat("tests_dir", "apps/tests");
+    {
+        struct stat st;
+        if (stat("apps/./tests/../demo", &st) == 0 && S_ISDIR(st.st_mode)) {
+            u_puts("statprobe posix dir: PASS\n");
+        } else {
+            u_puts("statprobe posix dir: FAIL\n");
+            sys_exit(1);
+        }
+    }
+    if (access("apps/demo/hello.elf", R_OK) == 0 && access("apps/demo/nope.elf", F_OK) < 0) {
+        u_puts("statprobe access: PASS\n");
+    } else {
+        u_puts("statprobe access: FAIL\n");
+        sys_exit(1);
+    }
     u_puts("statprobe PASS\n");
     sys_exit(0);
 }

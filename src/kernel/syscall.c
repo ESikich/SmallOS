@@ -1028,6 +1028,18 @@ static int sys_lseek_impl(int fd, int offset, int whence) {
     return process_fd_seek(ent, offset, whence);
 }
 
+static int sys_fsync_impl(int fd) {
+    if (fd < 0 || fd >= PROCESS_FD_MAX) return -EBADF;
+
+    process_t* proc = (process_t*)sched_current();
+    if (!proc) return -EINVAL;
+
+    fd_entry_t* ent = process_fd_get(proc, fd);
+    if (!ent) return -EBADF;
+    if (!ent->writable) return 0;
+    return process_fd_flush(ent) ? 0 : -EIO;
+}
+
 static int sys_unlink_impl(const char* path) {
     char kpath[PROCESS_FD_NAME_MAX];
     int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
@@ -1336,6 +1348,10 @@ void syscall_handler_main(syscall_regs_t* regs) {
 
         case SYS_CHDIR:
             regs->eax = (unsigned int)sys_chdir_impl((const char*)regs->ebx);
+            break;
+
+        case SYS_FSYNC:
+            regs->eax = (unsigned int)sys_fsync_impl((int)regs->ebx);
             break;
 
         default:

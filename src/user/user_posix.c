@@ -6,6 +6,7 @@
 #include "time.h"
 #include "sys/time.h"
 #include "fcntl.h"
+#include "unistd.h"
 #include "errno.h"
 
 int errno = 0;
@@ -117,7 +118,10 @@ int lstat(const char* path, struct stat* st) {
 int access(const char* path, int mode) {
     uint32_t size = 0;
     int is_dir = 0;
-    (void)mode;
+    if ((mode & ~(R_OK | W_OK | X_OK)) != 0) {
+        set_errno(EINVAL);
+        return -1;
+    }
     return errno_from_raw(sys_stat(path, &size, &is_dir));
 }
 
@@ -165,12 +169,82 @@ int poll(struct pollfd* fds, nfds_t nfds, int timeout) {
 }
 
 char* realpath(const char* path, char* resolved_path) {
-    if (!path) return 0;
-    if (!resolved_path) {
-        resolved_path = (char*)malloc(strlen(path) + 1u);
-        if (!resolved_path) return 0;
+    char cwd[128];
+    char comps[16][32];
+    const char* sources[2];
+    int source_count = 0;
+    int count = 0;
+    unsigned int pos = 0;
+
+    if (!path || !*path) {
+        set_errno(EINVAL);
+        return 0;
     }
-    strcpy(resolved_path, path);
+    if (!resolved_path) {
+        resolved_path = (char*)malloc(128);
+        if (!resolved_path) {
+            set_errno(ENOMEM);
+            return 0;
+        }
+    }
+
+    if (path[0] != '/') {
+        if (!getcwd(cwd, sizeof(cwd))) {
+            return 0;
+        }
+        sources[source_count++] = cwd;
+    }
+    sources[source_count++] = path;
+
+    for (int s = 0; s < source_count; s++) {
+        const char* cursor = sources[s];
+        while (*cursor) {
+            char component[32];
+            int len = 0;
+
+            while (*cursor == '/' || *cursor == '\\') cursor++;
+            if (*cursor == '\0') break;
+
+            while (cursor[len] && cursor[len] != '/' && cursor[len] != '\\') {
+                if (len >= 31) {
+                    set_errno(ENAMETOOLONG);
+                    return 0;
+                }
+                component[len] = cursor[len];
+                len++;
+            }
+            component[len] = '\0';
+            cursor += len;
+
+            if (strcmp(component, ".") == 0) {
+                continue;
+            }
+            if (strcmp(component, "..") == 0) {
+                if (count > 0) count--;
+                continue;
+            }
+            if (count >= 16) {
+                set_errno(ENAMETOOLONG);
+                return 0;
+            }
+            strcpy(comps[count++], component);
+        }
+    }
+
+    resolved_path[pos++] = '/';
+    for (int i = 0; i < count; i++) {
+        unsigned int len = strlen(comps[i]);
+        if (pos + len + (i + 1 < count ? 1u : 0u) + 1u > 128u) {
+            set_errno(ENAMETOOLONG);
+            return 0;
+        }
+        memcpy(resolved_path + pos, comps[i], len);
+        pos += len;
+        if (i + 1 < count) {
+            resolved_path[pos++] = '/';
+        }
+    }
+    resolved_path[pos] = '\0';
     return resolved_path;
 }
 

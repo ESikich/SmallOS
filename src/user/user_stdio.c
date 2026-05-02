@@ -2,9 +2,9 @@
 #include "user_stdio.h"
 #include "errno.h"
 
-static FILE s_stdin = { 0, 1, 0, 1, 0, 0 };
-static FILE s_stdout = { 1, 0, 1, 1, 0, 0 };
-static FILE s_stderr = { 2, 0, 1, 1, 0, 0 };
+static FILE s_stdin = { 0, 1, 0, 1, 0, 0, 0, 0 };
+static FILE s_stdout = { 1, 0, 1, 1, 0, 0, 0, 0 };
+static FILE s_stderr = { 2, 0, 1, 1, 0, 0, 0, 0 };
 
 FILE* stdin = &s_stdin;
 FILE* stdout = &s_stdout;
@@ -49,10 +49,27 @@ static int fd_from_mode(const char* mode, const char* path) {
     return sys_open_mode(path, flags);
 }
 
+static void stdio_set_errno_from_raw(int raw) {
+    if (raw < 0) {
+        errno = -raw;
+    }
+}
+
+static int stream_fail(FILE* stream, int err) {
+    if (stream) stream->error = 1;
+    if (err) errno = err;
+    return -1;
+}
+
 static FILE* file_from_fd(int fd, const char* mode) {
     if (fd < 0) return 0;
+    if (!mode_allows_read(mode) && !mode_allows_write(mode)) {
+        errno = EINVAL;
+        return 0;
+    }
     FILE* f = (FILE*)malloc(sizeof(FILE));
     if (!f) {
+        errno = ENOMEM;
         sys_close(fd);
         return 0;
     }
@@ -62,6 +79,8 @@ static FILE* file_from_fd(int fd, const char* mode) {
     f->is_console = 0;
     f->has_unget = 0;
     f->unget_ch = 0;
+    f->eof = 0;
+    f->error = 0;
     return f;
 }
 
@@ -72,17 +91,33 @@ static FILE* console_stream(FILE* base, int fd) {
     base->is_console = 1;
     base->has_unget = 0;
     base->unget_ch = 0;
+    base->eof = 0;
+    base->error = 0;
     return base;
 }
 
 static int stream_write_raw(FILE* stream, const void* ptr, size_t size) {
-    if (!stream || !stream->writable) return -1;
-    return u_writefd(stream->fd, (const char*)ptr, (uint32_t)size);
+    int r;
+    if (!stream || !stream->writable) return stream_fail(stream, EBADF);
+    r = u_writefd(stream->fd, (const char*)ptr, (uint32_t)size);
+    if (r < 0) {
+        stdio_set_errno_from_raw(r);
+        stream_fail(stream, errno ? errno : EIO);
+    }
+    return r;
 }
 
 static int stream_read_raw(FILE* stream, void* ptr, size_t size) {
-    if (!stream || !stream->readable) return -1;
-    return sys_fread(stream->fd, (char*)ptr, (uint32_t)size);
+    int r;
+    if (!stream || !stream->readable) return stream_fail(stream, EBADF);
+    r = sys_fread(stream->fd, (char*)ptr, (uint32_t)size);
+    if (r < 0) {
+        stdio_set_errno_from_raw(r);
+        stream_fail(stream, errno ? errno : EIO);
+    } else if (r == 0 && size > 0) {
+        stream->eof = 1;
+    }
+    return r;
 }
 
 FILE* fopen(const char* path, const char* mode) {
@@ -104,13 +139,23 @@ FILE* freopen(const char* path, const char* mode, FILE* stream) {
     stream->is_console = 0;
     stream->has_unget = 0;
     stream->unget_ch = 0;
+    stream->eof = 0;
+    stream->error = 0;
     return stream->fd < 0 ? 0 : stream;
 }
 
 int fclose(FILE* stream) {
     if (!stream) return -1;
     if (stream->is_console) return 0;
+    if (fflush(stream) < 0) {
+        int saved = errno;
+        sys_close(stream->fd);
+        free(stream);
+        errno = saved;
+        return -1;
+    }
     int r = sys_close(stream->fd);
+    stdio_set_errno_from_raw(r);
     free(stream);
     return r;
 }
@@ -128,6 +173,7 @@ size_t fwrite(const void* ptr, size_t size, size_t nmemb, FILE* stream) {
     if (want == 0) return 0;
     int r = stream_write_raw(stream, ptr, want);
     if (r < 0) return 0;
+    if ((size_t)r < want && stream) stream->error = 1;
     return (size_t)r / size;
 }
 
@@ -180,12 +226,35 @@ int ungetc(int c, FILE* stream) {
     if (!stream || c == EOF) return EOF;
     stream->has_unget = 1;
     stream->unget_ch = c & 0xFF;
+    stream->eof = 0;
     return c;
 }
 
 int fflush(FILE* stream) {
-    (void)stream;
+    int r;
+    if (!stream) return 0;
+    if (!stream->writable) return 0;
+    if (stream->is_console) return 0;
+    r = sys_fsync(stream->fd);
+    if (r < 0) {
+        stdio_set_errno_from_raw(r);
+        return stream_fail(stream, errno ? errno : EBADF);
+    }
     return 0;
+}
+
+int feof(FILE* stream) {
+    return stream ? stream->eof : 0;
+}
+
+int ferror(FILE* stream) {
+    return stream ? stream->error : 0;
+}
+
+void clearerr(FILE* stream) {
+    if (!stream) return;
+    stream->eof = 0;
+    stream->error = 0;
 }
 
 int fputc(int c, FILE* stream) {
@@ -201,12 +270,24 @@ int fputs(const char* s, FILE* stream) {
 
 int fseek(FILE* stream, long offset, int whence) {
     if (!stream || stream->is_console) return -1;
-    return sys_lseek(stream->fd, (int)offset, whence);
+    int r = sys_lseek(stream->fd, (int)offset, whence);
+    if (r < 0) {
+        stdio_set_errno_from_raw(r);
+        stream->error = 1;
+    } else {
+        stream->eof = 0;
+    }
+    return r;
 }
 
 long ftell(FILE* stream) {
     if (!stream || stream->is_console) return -1;
-    return (long)sys_lseek(stream->fd, 0, SEEK_CUR);
+    int r = sys_lseek(stream->fd, 0, SEEK_CUR);
+    if (r < 0) {
+        stdio_set_errno_from_raw(r);
+        stream->error = 1;
+    }
+    return (long)r;
 }
 
 int putchar(int c) {
