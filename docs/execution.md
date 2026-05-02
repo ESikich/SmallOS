@@ -149,6 +149,16 @@ with `runelf_nowait apps/services/tcpecho` or `runelf_nowait
 apps/services/ftpd`. Those programs bind and listen inside the guest, and
 you connect to them from the host through QEMU `hostfwd`.
 
+The FTP service uses passive data connections, so a host-driven smoke needs
+both the control port and passive data port forwarded:
+
+```text
+hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000
+```
+
+`make ftp-smoke` sets those forwards, launches `ftpd`, and verifies login,
+directory listing, download, upload, and listing-after-upload.
+
 ---
 
 # ELF Load Path

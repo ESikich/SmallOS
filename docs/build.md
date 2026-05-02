@@ -105,6 +105,10 @@ wrappers, stdio, directory traversal, and TinyCC expectations.
 `make smoke-reboot` or `make smoke-halt` to exercise those shell
 commands on their own.
 
+`make ftp-smoke` boots QEMU with user-network host forwarding for FTP control
+port `2121` and passive data port `30000`, starts `apps/services/ftpd`, then
+drives `LIST`, `RETR`, and `STOR` from the host.
+
 For networking, the default `run` and `test` targets keep using QEMU's
 user-network NAT so CI stays simple. `make run-tap` and
 `make run-headless-tap` switch the e1000 NIC over to a host TAP device

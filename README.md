@@ -153,7 +153,7 @@ qemu-system-i386 \
   -drive format=raw,file=build/img/os-image.bin \
   -boot c -m 32 \
   -serial file:/tmp/smallos-serial.log \
-  -nic user,model=e1000,mac=52:54:00:12:34:56,hostfwd=tcp::2462-:2323,hostfwd=tcp::2121-:2121 \
+  -nic user,model=e1000,mac=52:54:00:12:34:56,hostfwd=tcp::2462-:2323,hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000 \
   -display none \
   -monitor unix:/tmp/smallos-monitor.sock,server,nowait \
   -daemonize -pidfile /tmp/smallos.pid
@@ -161,7 +161,14 @@ qemu-system-i386 \
 
 Then run `runelf_nowait apps/services/tcpecho` or `runelf_nowait
 apps/services/ftpd` in the guest shell and connect from the host to
-`127.0.0.1:2462` or `127.0.0.1:2121` respectively.
+`127.0.0.1:2462` or `127.0.0.1:2121` respectively. FTP passive transfers
+also need the passive data port, currently guest `30000`, forwarded to the
+host.
+
+`make ftp-smoke` runs the FTP path end to end: it boots QEMU with control and
+passive-data host forwarding, starts `apps/services/ftpd`, logs in as
+`ftp`/`ftp`, runs `LIST`, `RETR`, `STOR`, and verifies that the uploaded file
+appears in a later listing.
 
 `make test` boots the image headlessly, runs the shell `selftest`
 command, feeds the interactive `readline` prompt, and checks every
