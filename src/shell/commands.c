@@ -1049,6 +1049,18 @@ static command_entry_t commands[] = {
 
 #define COMMAND_COUNT (sizeof(commands) / sizeof(commands[0]))
 
+unsigned int commands_count(void) {
+    return COMMAND_COUNT;
+}
+
+const char* commands_name_at(unsigned int index) {
+    if (index >= COMMAND_COUNT) {
+        return 0;
+    }
+
+    return commands[index].name;
+}
+
 typedef struct {
     const char* name;
     const char* help;

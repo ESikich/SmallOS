@@ -12,5 +12,7 @@ typedef struct {
 } command_entry_t;
 
 void commands_execute(command_t* cmd);
+unsigned int commands_count(void);
+const char* commands_name_at(unsigned int index);
 
 #endif

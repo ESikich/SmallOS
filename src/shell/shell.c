@@ -36,6 +36,7 @@ typedef enum {
     SHELL_EVENT_DELETE,
     SHELL_EVENT_HISTORY_UP,
     SHELL_EVENT_HISTORY_DOWN,
+    SHELL_EVENT_COMPLETE,
 } shell_event_type_t;
 
 typedef struct {
@@ -43,13 +44,54 @@ typedef struct {
     char c;
 } shell_event_t;
 
+typedef enum {
+    SHELL_COMPLETION_NONE = 0,
+    SHELL_COMPLETION_COMMAND,
+    SHELL_COMPLETION_PATH,
+} shell_completion_kind_t;
+
 static shell_event_t event_queue[SHELL_EVENT_QUEUE_SIZE];
 static volatile int event_head = 0;
 static volatile int event_tail = 0;
 static volatile int event_count = 0;
 
+static shell_completion_kind_t completion_kind = SHELL_COMPLETION_NONE;
+static char completion_prefix[LINE_EDITOR_MAX];
+static char completion_dir[SHELL_PATH_MAX];
+static int completion_token_start = 0;
+static unsigned int completion_next_index = 0;
+
 static int path_is_sep(char c) {
     return c == '/' || c == '\\';
+}
+
+static int shell_char_equal_ci(char a, char b) {
+    if (a >= 'a' && a <= 'z') {
+        a = (char)(a - 32);
+    }
+    if (b >= 'a' && b <= 'z') {
+        b = (char)(b - 32);
+    }
+    return a == b;
+}
+
+static int shell_starts_with_ci(const char* s, const char* prefix) {
+    int i = 0;
+    while (prefix[i]) {
+        if (!shell_char_equal_ci(s[i], prefix[i])) {
+            return 0;
+        }
+        i++;
+    }
+    return 1;
+}
+
+static void shell_completion_reset(void) {
+    completion_kind = SHELL_COMPLETION_NONE;
+    completion_prefix[0] = '\0';
+    completion_dir[0] = '\0';
+    completion_token_start = 0;
+    completion_next_index = 0;
 }
 
 static int path_add_component(char comps[][32], int* count, const char* component) {
@@ -228,6 +270,7 @@ static void shell_start_prompt(void) {
     prompt_col = terminal_get_col() - prompt_len;
 
     line_editor_clear(&editor);
+    shell_completion_reset();
 
     history_index = -1;
     saved_current[0] = '\0';
@@ -296,6 +339,319 @@ static void shell_set_editor_text(const char* s) {
     shell_render_current_line();
 }
 
+static void shell_insert_text(const char* s) {
+    int changed = 0;
+
+    for (int i = 0; s[i] != '\0'; i++) {
+        if (!line_editor_insert(&editor, s[i])) {
+            break;
+        }
+        changed = 1;
+    }
+
+    if (changed) {
+        shell_render_current_line();
+    }
+}
+
+static void shell_common_prefix(char* common, unsigned int common_size, const char* name) {
+    unsigned int i = 0;
+
+    if (!common || common_size == 0u || !name) {
+        return;
+    }
+    (void)common_size;
+
+    while (common[i] && name[i] && shell_char_equal_ci(common[i], name[i])) {
+        i++;
+    }
+    common[i] = '\0';
+}
+
+static void shell_replace_token(int token_start, const char* text) {
+    if (token_start < 0 || token_start > editor.cursor) {
+        return;
+    }
+
+    while (editor.cursor > token_start) {
+        line_editor_backspace(&editor);
+    }
+
+    shell_insert_text(text);
+}
+
+static int shell_command_match_at(const char* prefix,
+                                  unsigned int start,
+                                  char* out,
+                                  unsigned int out_size,
+                                  unsigned int* out_next_index) {
+    unsigned int count = commands_count();
+
+    for (unsigned int i = start; i < count; i++) {
+        const char* name = commands_name_at(i);
+        if (name && k_starts_with(name, prefix)) {
+            k_strncpy(out, name, out_size);
+            if (out_next_index) {
+                *out_next_index = i + 1u;
+            }
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static void shell_complete_command(const char* prefix, int token_start) {
+    char common[LINE_EDITOR_MAX];
+    char match[LINE_EDITOR_MAX];
+    unsigned int matches = 0;
+    unsigned int count = commands_count();
+
+    common[0] = '\0';
+    for (unsigned int i = 0; i < count; i++) {
+        const char* name = commands_name_at(i);
+        if (!name || !k_starts_with(name, prefix)) {
+            continue;
+        }
+
+        if (matches == 0) {
+            k_strncpy(common, name, sizeof(common));
+        } else {
+            shell_common_prefix(common, sizeof(common), name);
+        }
+        matches++;
+    }
+
+    if (matches == 0) {
+        return;
+    }
+
+    int prefix_len = k_strlen(prefix);
+    if (matches == 1) {
+        shell_insert_text(common + prefix_len);
+        shell_insert_text(" ");
+        return;
+    }
+
+    if (k_strlen(common) > prefix_len) {
+        shell_insert_text(common + prefix_len);
+        return;
+    }
+
+    if (!shell_command_match_at(prefix, 0, match, sizeof(match), &completion_next_index)) {
+        return;
+    }
+
+    completion_kind = SHELL_COMPLETION_COMMAND;
+    k_strncpy(completion_prefix, prefix, sizeof(completion_prefix));
+    completion_dir[0] = '\0';
+    completion_token_start = token_start;
+    shell_replace_token(token_start, match);
+}
+
+static int shell_split_completion_path(const char* token,
+                                       char* dir_input,
+                                       unsigned int dir_input_size,
+                                       const char** leaf_prefix) {
+    const char* last_sep = 0;
+    unsigned int dir_len;
+
+    if (!token || !dir_input || dir_input_size == 0u || !leaf_prefix) {
+        return 0;
+    }
+
+    for (const char* p = token; *p; p++) {
+        if (path_is_sep(*p)) {
+            last_sep = p;
+        }
+    }
+
+    if (!last_sep) {
+        dir_input[0] = '\0';
+        *leaf_prefix = token;
+        return 1;
+    }
+
+    if (last_sep == token) {
+        dir_input[0] = '/';
+        dir_input[1] = '\0';
+        *leaf_prefix = last_sep + 1;
+        return 1;
+    }
+
+    dir_len = (unsigned int)(last_sep - token);
+    if (dir_len + 1u > dir_input_size) {
+        return 0;
+    }
+
+    for (unsigned int i = 0; i < dir_len; i++) {
+        dir_input[i] = token[i];
+    }
+    dir_input[dir_len] = '\0';
+    *leaf_prefix = last_sep + 1;
+    return 1;
+}
+
+static int shell_path_match_at(const char* dir,
+                               const char* prefix,
+                               unsigned int start,
+                               char* out,
+                               unsigned int out_size,
+                               unsigned int* out_next_index) {
+    char name[64];
+    unsigned int size = 0;
+    int is_dir = 0;
+
+    for (unsigned int index = start; vfs_dirent_at(dir, index, name, sizeof(name), &size, &is_dir); index++) {
+        (void)size;
+        (void)is_dir;
+        if (shell_starts_with_ci(name, prefix)) {
+            k_strncpy(out, name, out_size);
+            if (out_next_index) {
+                *out_next_index = index + 1u;
+            }
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static void shell_complete_path(const char* token, int token_start) {
+    char dir_input[SHELL_PATH_MAX];
+    char dir[SHELL_PATH_MAX];
+    char name[64];
+    char common[64];
+    char match[64];
+    const char* leaf_prefix = 0;
+    int leaf_start = token_start;
+    unsigned int matches = 0;
+    unsigned int size = 0;
+    int is_dir = 0;
+
+    if (!shell_split_completion_path(token, dir_input, sizeof(dir_input), &leaf_prefix)) {
+        return;
+    }
+    leaf_start = token_start + (int)(leaf_prefix - token);
+    if (!shell_resolve_path(dir_input, dir, sizeof(dir))) {
+        return;
+    }
+
+    common[0] = '\0';
+    for (unsigned int index = 0; vfs_dirent_at(dir, index, name, sizeof(name), &size, &is_dir); index++) {
+        (void)size;
+        (void)is_dir;
+        if (!shell_starts_with_ci(name, leaf_prefix)) {
+            continue;
+        }
+
+        if (matches == 0) {
+            k_strncpy(common, name, sizeof(common));
+        } else {
+            shell_common_prefix(common, sizeof(common), name);
+        }
+        matches++;
+    }
+
+    if (matches == 0) {
+        return;
+    }
+
+    int prefix_len = k_strlen(leaf_prefix);
+    if (matches == 1) {
+        shell_insert_text(common + prefix_len);
+        if (common[k_strlen(common) - 1] != '/') {
+            shell_insert_text(" ");
+        }
+        return;
+    }
+
+    if (k_strlen(common) > prefix_len) {
+        shell_insert_text(common + prefix_len);
+        return;
+    }
+
+    if (!shell_path_match_at(dir, leaf_prefix, 0, match, sizeof(match), &completion_next_index)) {
+        return;
+    }
+
+    completion_kind = SHELL_COMPLETION_PATH;
+    k_strncpy(completion_prefix, leaf_prefix, sizeof(completion_prefix));
+    k_strncpy(completion_dir, dir, sizeof(completion_dir));
+    completion_token_start = leaf_start;
+    shell_replace_token(leaf_start, match);
+}
+
+static int shell_cycle_completion(void) {
+    char match[LINE_EDITOR_MAX];
+    unsigned int next_index = 0;
+
+    if (completion_kind == SHELL_COMPLETION_COMMAND) {
+        if (!shell_command_match_at(completion_prefix, completion_next_index,
+                                    match, sizeof(match), &next_index)) {
+            if (!shell_command_match_at(completion_prefix, 0,
+                                        match, sizeof(match), &next_index)) {
+                shell_completion_reset();
+                return 0;
+            }
+        }
+    } else if (completion_kind == SHELL_COMPLETION_PATH) {
+        if (!shell_path_match_at(completion_dir, completion_prefix, completion_next_index,
+                                 match, sizeof(match), &next_index)) {
+            if (!shell_path_match_at(completion_dir, completion_prefix, 0,
+                                     match, sizeof(match), &next_index)) {
+                shell_completion_reset();
+                return 0;
+            }
+        }
+    } else {
+        return 0;
+    }
+
+    completion_next_index = next_index;
+    shell_replace_token(completion_token_start, match);
+    return 1;
+}
+
+static void shell_complete(void) {
+    int token_start = editor.cursor;
+    int command_position = 1;
+    char token[LINE_EDITOR_MAX];
+    int token_len = 0;
+
+    while (token_start > 0 && editor.buf[token_start - 1] != ' ') {
+        token_start--;
+    }
+
+    for (int i = 0; i < token_start; i++) {
+        if (editor.buf[i] != ' ') {
+            command_position = 0;
+            break;
+        }
+    }
+
+    while (token_start + token_len < editor.cursor && token_len < LINE_EDITOR_MAX - 1) {
+        token[token_len] = editor.buf[token_start + token_len];
+        token_len++;
+    }
+    token[token_len] = '\0';
+
+    if (completion_kind != SHELL_COMPLETION_NONE &&
+        completion_token_start >= token_start &&
+        completion_token_start <= editor.cursor &&
+        shell_cycle_completion()) {
+        return;
+    }
+
+    shell_completion_reset();
+
+    if (command_position) {
+        shell_complete_command(token, token_start);
+    } else {
+        shell_complete_path(token, token_start);
+    }
+}
+
 static void shell_execute(const char* input) {
     char buf[LINE_EDITOR_MAX];
     int i = 0;
@@ -326,6 +682,8 @@ static void shell_key_consumer(key_event_t ev) {
     if (ev.ascii) {
         if (ev.ascii == '\b') {
             shell_enqueue_event(SHELL_EVENT_BACKSPACE, 0);
+        } else if (ev.ascii == '\t') {
+            shell_enqueue_event(SHELL_EVENT_COMPLETE, 0);
         } else {
             shell_enqueue_event(SHELL_EVENT_INPUT_CHAR, ev.ascii);
         }
@@ -366,6 +724,7 @@ void shell_poll(void) {
     while (shell_dequeue_event(&ev)) {
         switch (ev.type) {
             case SHELL_EVENT_INPUT_CHAR:
+                shell_completion_reset();
                 if (ev.c == '\n') {
                     terminal_set_cursor(prompt_row, prompt_col + prompt_len + editor.len);
                     terminal_putc('\n');
@@ -387,38 +746,45 @@ void shell_poll(void) {
                 break;
 
             case SHELL_EVENT_BACKSPACE:
+                shell_completion_reset();
                 if (line_editor_backspace(&editor)) {
                     shell_render_current_line();
                 }
                 break;
 
             case SHELL_EVENT_MOVE_LEFT:
+                shell_completion_reset();
                 line_editor_move_left(&editor);
                 terminal_set_cursor(prompt_row, prompt_col + prompt_len + editor.cursor);
                 break;
 
             case SHELL_EVENT_MOVE_RIGHT:
+                shell_completion_reset();
                 line_editor_move_right(&editor);
                 terminal_set_cursor(prompt_row, prompt_col + prompt_len + editor.cursor);
                 break;
 
             case SHELL_EVENT_MOVE_HOME:
+                shell_completion_reset();
                 line_editor_move_home(&editor);
                 terminal_set_cursor(prompt_row, prompt_col + prompt_len + editor.cursor);
                 break;
 
             case SHELL_EVENT_MOVE_END:
+                shell_completion_reset();
                 line_editor_move_end(&editor);
                 terminal_set_cursor(prompt_row, prompt_col + prompt_len + editor.cursor);
                 break;
 
             case SHELL_EVENT_DELETE:
+                shell_completion_reset();
                 if (line_editor_delete(&editor)) {
                     shell_render_current_line();
                 }
                 break;
 
             case SHELL_EVENT_HISTORY_UP:
+                shell_completion_reset();
                 if (history_count == 0) {
                     break;
                 }
@@ -434,6 +800,7 @@ void shell_poll(void) {
                 break;
 
             case SHELL_EVENT_HISTORY_DOWN:
+                shell_completion_reset();
                 if (history_index == -1) {
                     break;
                 }
@@ -445,6 +812,10 @@ void shell_poll(void) {
                     history_index = -1;
                     shell_set_editor_text(saved_current);
                 }
+                break;
+
+            case SHELL_EVENT_COMPLETE:
+                shell_complete();
                 break;
 
             default:
