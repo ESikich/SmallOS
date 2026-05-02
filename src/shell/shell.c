@@ -6,7 +6,7 @@
 #include "memory.h"
 #include "commands.h"
 #include "parse.h"
-#include "fat16.h"
+#include "vfs.h"
 #include "klib.h"
 #include "keyboard.h"
 
@@ -242,7 +242,7 @@ int shell_set_cwd(const char* path) {
         return 0;
     }
 
-    if (!fat16_is_dir(resolved)) {
+    if (!vfs_is_dir(resolved)) {
         return 0;
     }
 

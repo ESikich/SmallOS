@@ -307,9 +307,9 @@ This is the preferred persistence primitive for build tools and compilers becaus
 int sys_exec(const char* name, int argc, char** argv);
 ```
 
-Loads and asynchronously spawns a named ELF program from the FAT16 partition. Returns `0` on success, `-1` if not found or load fails.
+Loads and asynchronously spawns a named ELF program through the kernel VFS layer. Returns `0` on success, `-1` if not found or load fails.
 
-`sys_exec_impl` copies `name` to a local kernel stack buffer before any FAT16 or ELF work so the loader does not depend on the caller's user pointer remaining valid. It then calls `elf_run_named()`, which creates the process, seeds its scheduler bootstrap context, enqueues it, and returns immediately.
+`sys_exec_impl` copies `name` to a local kernel stack buffer before any VFS or ELF work so the loader does not depend on the caller's user pointer remaining valid. It then calls `elf_run_named()`, which creates the process, seeds its scheduler bootstrap context, enqueues it, and returns immediately.
 
 ---
 

@@ -5,7 +5,7 @@
 #include "pmm.h"
 #include "process.h"
 #include "scheduler.h"
-#include "fat16.h"
+#include "vfs.h"
 #include "terminal.h"
 #include "gdt.h"
 #include "klib.h"
@@ -272,7 +272,7 @@ process_t* elf_run_named(const char* name, int argc, char** argv) {
             if (len + 4u < sizeof(alt_name)) {
                 k_memcpy(alt_name, name, len);
                 k_memcpy(alt_name + len, ".elf", 5);
-                data = fat16_load(alt_name, &size);
+                data = vfs_load_file(alt_name, &size);
                 if (data) {
                     name = alt_name;
                 }
@@ -280,7 +280,7 @@ process_t* elf_run_named(const char* name, int argc, char** argv) {
         }
 
         if (!data) {
-            data = fat16_load(name, &size);
+            data = vfs_load_file(name, &size);
         }
     }
 

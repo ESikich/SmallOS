@@ -17,6 +17,7 @@
   * fd `0`, `1`, and `2` are real console handles; `printf`/`fprintf(stdout, ...)`/`fprintf(stderr, ...)` now route through `SYS_WRITEFD` instead of a stdio-only console special case.
   * `syscall.c` now focuses on user-pointer validation and fd dispatch for read/write/seek/poll paths.
   * FAT16-backed file handles and path operations now sit behind a small `vfs` boundary, leaving `process.c` to own descriptor lifetime and generic handle dispatch.
+  * ELF program lookup now uses `vfs_load_file()` instead of calling the FAT16 driver directly.
   * `fileprobe` now covers seek-overwrite and truncate-on-open-write behavior so the buffered write path has direct regression coverage.
 
 * **ELF loader page setup** (`src/exec/elf_loader.c`)

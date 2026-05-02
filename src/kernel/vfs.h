@@ -6,7 +6,9 @@
 const process_handle_ops_t* vfs_file_ops(void);
 void vfs_file_init(fd_entry_t* ent, const char* path, u32 size, int writable);
 
+const u8* vfs_load_file(const char* path, u32* out_size);
 int vfs_stat(const char* path, u32* out_size, int* out_is_dir);
+int vfs_is_dir(const char* path);
 int vfs_write_root(const char* name, const u8* data, u32 size);
 int vfs_write_path(const char* path, const u8* data, u32 size);
 int vfs_unlink(const char* path);

@@ -494,8 +494,8 @@ ata_read_sectors(lba, count, buf)
 ```text
 runelf apps/demo/hello arg1
   ↓
-fat16_load("hello", &size)
-  → search FAT16 directory tree, follow cluster chain, load into s_load_buf
+vfs_load_file("hello", &size)
+  → backend lookup, follow cluster chain, load into s_load_buf
   ↓
 elf_run_image(data, argc, argv)
   ↓

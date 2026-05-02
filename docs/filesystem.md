@@ -364,7 +364,7 @@ runelf <name>
   ↓
 elf_run_named(name, argc, argv)
   ↓
-fat16_load(name, &size)
+vfs_load_file(name, &size)
   ↓
 elf_run_image(image, argc, argv)
 ```
@@ -475,7 +475,7 @@ The filesystem behavior is jointly defined by these files:
 - `src/drivers/fat16.[ch]` — FAT16 runtime driver
 - `src/kernel/vfs.[ch]` — kernel VFS shim for FAT16-backed file handles and path operations
 - `Makefile` — image layout, kernel padding, FAT16 LBA patch
-- `src/exec/elf_loader.c` — main runtime consumer of `fat16_load()`
+- `src/exec/elf_loader.c` — runtime ELF loader that reads program images through `vfs_load_file()`
 
 When changing the filesystem, check all of them together.
 
@@ -490,7 +490,7 @@ The following must stay true unless the implementation is changed everywhere:
 - FAT16 start LBA is patched into sector 0 offset 504
 - `fat16_init()` reads sector 0 to discover the start LBA at runtime
 - FAT16 geometry in `fat16.c` matches `mkfat16.c`
-- `fat16_load()` returns a pointer into a reused static buffer
+- `vfs_load_file()` currently returns the FAT16 driver's reused static buffer
 - callers copy data out before another file load occurs
 - nested reads/listings use path-aware 8.3 lookup; regular file writes can target the root or a nested path
 

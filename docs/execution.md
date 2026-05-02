@@ -20,7 +20,7 @@ There are currently **two external program paths**:
 ```text
 shell command
   → runelf <name> [args]
-  → fat16_load()
+  → vfs_load_file()
   → elf_run_image()
   → sched_enqueue(proc)
   → process_wait(proc)
@@ -32,7 +32,7 @@ shell command
 
 shell command
   → runelf_nowait <name> [args]
-  → fat16_load()
+  → vfs_load_file()
   → elf_run_image()
   → sched_enqueue(proc)
   → return immediately
@@ -151,8 +151,8 @@ you connect to them from the host through QEMU `hostfwd`.
 `elf_run_named(name, argc, argv)` does:
 
 ```text
-fat16_load(name, &size)
-  → case-insensitive FAT16 path lookup
+vfs_load_file(name, &size)
+  → backend file lookup
   → follow cluster chain with ATA PIO reads
   → copy file into static FAT16 load buffer
   → return pointer to buffer
@@ -408,8 +408,8 @@ The entry point receives a normal C-style `(int argc, char** argv)` call frame.
 
 The following must remain true:
 
-- `fat16_init()` must run after `ata_init()` and before any FAT16 file load
-- `fat16_load()` results must be copied before another FAT16 load reuses the static buffer
+- `fat16_init()` must run after `ata_init()` and before any VFS-backed FAT16 file load
+- `vfs_load_file()` / `fat16_load()` results must be copied before another FAT16 load reuses the static buffer
 - every user process must have a valid kernel stack frame before ring-3 entry
 - `tss_set_kernel_stack()` must match the process that will next return from ring 3 into the kernel
   - this is enforced by `elf_user_task_bootstrap()` on first entry, not by the earlier `elf_run_image()` setup path

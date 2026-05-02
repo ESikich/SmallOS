@@ -204,6 +204,10 @@ void vfs_file_init(fd_entry_t* ent, const char* path, u32 size, int writable) {
     k_memcpy(ent->name, path, (k_size_t)k_strlen(path) + 1u);
 }
 
+const u8* vfs_load_file(const char* path, u32* out_size) {
+    return fat16_load(path, out_size);
+}
+
 int vfs_stat(const char* path, u32* out_size, int* out_is_dir) {
     u32 size = 0;
 
@@ -228,6 +232,10 @@ int vfs_stat(const char* path, u32* out_size, int* out_is_dir) {
         *out_is_dir = 1;
     }
     return 1;
+}
+
+int vfs_is_dir(const char* path) {
+    return fat16_is_dir(path);
 }
 
 int vfs_write_root(const char* name, const u8* data, u32 size) {
