@@ -10,6 +10,7 @@ DRIVERS_DIR=$(SRC_DIR)/drivers
 SHELL_DIR=$(SRC_DIR)/shell
 EXEC_DIR=$(SRC_DIR)/exec
 USER_DIR=$(SRC_DIR)/user
+FTP_SERVER_DIR=third_party/ftp_server/src
 
 BUILD_DIR=build
 OBJ_DIR=$(BUILD_DIR)/obj
@@ -87,6 +88,7 @@ KERNEL_C_SRCS=\
 USER_PROGS=echo about uptime halt reboot hello ticks args runelf_test readline exec_test fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe fault sleep_test ptrguard spinwkr preempt_test tcpecho sockeof ftpd
 USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
 USER_RUNTIME_SRCS=$(USER_DIR)/user_alloc.c $(USER_DIR)/user_stdio.c $(USER_DIR)/user_posix.c $(USER_DIR)/user_time.c $(USER_DIR)/user_dirent.c $(USER_DIR)/user_crypt.c $(USER_DIR)/setjmp.asm
+FTP_SERVER_SRCS=$(addprefix $(FTP_SERVER_DIR)/,ftp_log.c ftp_reply.c ftp_cmd.c ftp_path.c ftp_data.c ftp_session.c)
 FAT16_ROOT_ENTRIES=echo.elf=$(BIN_DIR)/echo.elf about.elf=$(BIN_DIR)/about.elf uptime.elf=$(BIN_DIR)/uptime.elf halt.elf=$(BIN_DIR)/halt.elf reboot.elf=$(BIN_DIR)/reboot.elf
 FAT16_DEMO_ENTRIES=apps/demo/hello.elf=$(BIN_DIR)/hello.elf
 FAT16_TEST_ENTRIES=apps/tests/ticks.elf=$(BIN_DIR)/ticks.elf apps/tests/args.elf=$(BIN_DIR)/args.elf apps/tests/runelf_test.elf=$(BIN_DIR)/runelf_test.elf apps/tests/readline.elf=$(BIN_DIR)/readline.elf apps/tests/exec_test.elf=$(BIN_DIR)/exec_test.elf apps/tests/fileread.elf=$(BIN_DIR)/fileread.elf apps/tests/compiler_demo.elf=$(BIN_DIR)/compiler_demo.elf apps/tests/heapprobe.elf=$(BIN_DIR)/heapprobe.elf apps/tests/statprobe.elf=$(BIN_DIR)/statprobe.elf apps/tests/fileprobe.elf=$(BIN_DIR)/fileprobe.elf apps/tests/cwdprobe.elf=$(BIN_DIR)/cwdprobe.elf apps/tests/stdioprobe.elf=$(BIN_DIR)/stdioprobe.elf apps/tests/dirprobe.elf=$(BIN_DIR)/dirprobe.elf apps/tests/errnoprobe.elf=$(BIN_DIR)/errnoprobe.elf apps/tests/fault.elf=$(BIN_DIR)/fault.elf apps/tests/sleep_test.elf=$(BIN_DIR)/sleep_test.elf apps/tests/ptrguard.elf=$(BIN_DIR)/ptrguard.elf apps/tests/spinwkr.elf=$(BIN_DIR)/spinwkr.elf apps/tests/preempt_test.elf=$(BIN_DIR)/preempt_test.elf
@@ -102,11 +104,13 @@ USER_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(USER_SRCS))
 USER_RUNTIME_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(filter $(USER_DIR)/%.c,$(USER_RUNTIME_SRCS))) \
                  $(patsubst $(USER_DIR)/%.asm,$(OBJ_DIR)/user/%.o,$(filter $(USER_DIR)/%.asm,$(USER_RUNTIME_SRCS)))
 USER_CRT0_OBJ=$(OBJ_DIR)/user/user_crt0.o
+FTP_SERVER_OBJS=$(patsubst $(FTP_SERVER_DIR)/%.c,$(OBJ_DIR)/ftp_server/%.o,$(FTP_SERVER_SRCS))
 USER_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_PROGS)))
 
 OBJ_SUBDIRS=$(sort \
 	$(dir $(KERNEL_OBJS)) \
 	$(dir $(USER_OBJS)) \
+	$(dir $(FTP_SERVER_OBJS)) \
 )
 
 BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
@@ -141,6 +145,9 @@ $(OBJ_DIR)/user/%.o: $(USER_DIR)/%.c | dirs
 $(OBJ_DIR)/user/%.o: $(USER_DIR)/%.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
+$(OBJ_DIR)/ftp_server/%.o: $(FTP_SERVER_DIR)/%.c | dirs
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -Dexit=ftpd_session_exit -MF $(@:.o=.d) -c $< -o $@
+
 $(TINYCC_SMALOS_OBJ): $(CURDIR)/third_party/tinycc/tcc.c $(TINYCC_CONFIG_STAMP) | dirs
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Os -ffunction-sections -fdata-sections -I$(TINYCC_DIR) -I$(CURDIR)/third_party/tinycc -DTCC_TARGET_I386 -DTCC_TARGET_SMALLOS -c $< -o $@
 
@@ -154,6 +161,9 @@ $(BIN_DIR)/kernel.bin: $(BIN_DIR)/kernel.elf | dirs
 	$(OBJCOPY) -O binary $< $@
 
 $(BIN_DIR)/%.elf: $(OBJ_DIR)/user/%.o $(USER_RUNTIME_OBJS) | dirs
+	$(LD) $(USER_LDFLAGS) $^ -o $@
+
+$(BIN_DIR)/ftpd.elf: $(OBJ_DIR)/user/ftpd.o $(FTP_SERVER_OBJS) $(USER_RUNTIME_OBJS) | dirs
 	$(LD) $(USER_LDFLAGS) $^ -o $@
 
 $(TOOLS_DIR)/mkfat16: tools/mkfat16.c | dirs

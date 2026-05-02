@@ -2,23 +2,11 @@
 #include "dirent.h"
 #include "poll.h"
 #include "setjmp.h"
+#include "unistd.h"
 #include "sys/socket.h"
 #include "arpa/inet.h"
 
 #include "../../third_party/ftp_server/include/ftp_server.h"
-
-static void ftp_session_exit(int code);
-
-#define exit ftp_session_exit
-#include "../../third_party/ftp_server/src/ftp_log.c"
-#define write_all ftp_reply_write_all
-#include "../../third_party/ftp_server/src/ftp_reply.c"
-#undef write_all
-#include "../../third_party/ftp_server/src/ftp_cmd.c"
-#include "../../third_party/ftp_server/src/ftp_path.c"
-#include "../../third_party/ftp_server/src/ftp_data.c"
-#include "../../third_party/ftp_server/src/ftp_session.c"
-#undef exit
 
 #define FTPD_PORT 2121u
 #define FTPD_PASV_PORT 30000u
@@ -26,7 +14,7 @@ static void ftp_session_exit(int code);
 static jmp_buf s_session_exit_env;
 static int s_session_exit_code;
 
-static void ftp_session_exit(int code) {
+void ftpd_session_exit(int code) {
     s_session_exit_code = code;
     longjmp(s_session_exit_env, 1);
 }
