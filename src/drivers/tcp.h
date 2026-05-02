@@ -21,6 +21,7 @@ int  tcp_socket_accept_ready(void);
 void tcp_socket_mark_accepted(void);
 int  tcp_socket_connection_established(void);
 int  tcp_socket_recv_ready(void);
+int  tcp_socket_peer_closed(void);
 int  tcp_socket_recv(void* buf, unsigned int len);
 int  tcp_socket_send(const void* buf, unsigned int len);
 unsigned int tcp_socket_poll_events(void);

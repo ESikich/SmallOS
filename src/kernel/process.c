@@ -224,6 +224,9 @@ static short process_handle_socket_poll(fd_entry_t* ent, short events) {
         if ((events & POLLIN) && tcp_socket_recv_ready()) {
             revents |= POLLIN;
         }
+        if ((events & POLLHUP) && tcp_socket_peer_closed()) {
+            revents |= POLLHUP;
+        }
         if ((events & POLLOUT) && tcp_socket_connection_established()) {
             revents |= POLLOUT;
         }

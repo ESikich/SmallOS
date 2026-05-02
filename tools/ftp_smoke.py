@@ -189,15 +189,7 @@ class FtpClient:
         data = self.pasv()
         self.command(command, "150")
         data.sendall(payload)
-        time.sleep(0.25)
         data.shutdown(socket.SHUT_WR)
-        deadline = time.time() + self.timeout_s
-        while time.time() < deadline:
-            try:
-                if not data.recv(1):
-                    break
-            except socket.timeout:
-                break
         data.close()
         self.read_expect("226", command)
 

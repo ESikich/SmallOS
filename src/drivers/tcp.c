@@ -57,6 +57,7 @@ typedef struct {
     u8 rx_buf[TCP_MAX_PAYLOAD];
     u32 rx_len;
     u32 rx_off;
+    int peer_closed;
 } tcp_slot_t;
 
 #define TCP_MAX_SLOTS 4
@@ -111,6 +112,7 @@ static tcp_slot_t* tcp_active_slot(void) {
 #define s_socket_rx_buf (tcp_active_slot()->rx_buf)
 #define s_socket_rx_len (tcp_active_slot()->rx_len)
 #define s_socket_rx_off (tcp_active_slot()->rx_off)
+#define s_socket_peer_closed (tcp_active_slot()->peer_closed)
 
 static u16 tcp_read_u16_be(const u8* buf, u32 off) {
     return (u16)(((u16)buf[off] << 8) | (u16)buf[off + 1]);
@@ -350,6 +352,7 @@ static void tcp_reset_connection(void) {
     s_conn.state = TCP_STATE_CLOSED;
     s_socket_rx_len = 0u;
     s_socket_rx_off = 0u;
+    s_socket_peer_closed = 0;
     s_socket_connection_accepted = 0;
     if (s_socket_waiter && s_socket_waiter_port == s_active_port) {
         s_socket_waiter->state = PROCESS_STATE_RUNNING;
@@ -459,7 +462,11 @@ int tcp_socket_connection_established(void) {
 }
 
 int tcp_socket_recv_ready(void) {
-    return s_socket_rx_len > s_socket_rx_off;
+    return s_socket_rx_len > s_socket_rx_off || s_socket_peer_closed;
+}
+
+int tcp_socket_peer_closed(void) {
+    return s_socket_peer_closed;
 }
 
 int tcp_socket_recv(void* buf, unsigned int len) {
@@ -469,7 +476,7 @@ int tcp_socket_recv(void* buf, unsigned int len) {
     if (!buf) {
         return -1;
     }
-    if (s_conn.state != TCP_STATE_ESTABLISHED) {
+    if (s_conn.state != TCP_STATE_ESTABLISHED && !s_socket_peer_closed) {
         return -1;
     }
 
@@ -784,18 +791,8 @@ static void tcp_echo_payload(const u8* frame,
     }
 
     if (flags & TCP_FIN) {
-        tcp_send_segment(TCP_LOCAL_IP,
-                         s_conn.remote_ip,
-                         s_conn.remote_mac,
-                         s_socket_listener_port,
-                         s_conn.remote_port,
-                         s_conn.local_seq_next,
-                         s_conn.remote_seq_next,
-                         (u8)(TCP_FIN | TCP_ACK),
-                         0,
-                         0);
-        s_conn.local_seq_next += 1u;
-        tcp_reset_connection();
+        s_socket_peer_closed = 1;
+        tcp_wake_waiter();
     }
 }
 
