@@ -13,7 +13,7 @@
 #include "uapi_dirent.h"
 #include "uapi_socket.h"
 #include "../exec/elf_loader.h"
-#include "fat16.h"
+#include "vfs.h"
 
 #define SYSCALL_ERR_INVALID   ((unsigned int)-1)
 #define SYSCALL_MAX_WRITE_LEN 4096u
@@ -283,7 +283,7 @@ static int sys_writefile_impl(const char* name, const void* buf, unsigned int le
     if (copy_user_cstr(kname, sizeof(kname), name) <= 1) return -1;
     if (len > 0 && !user_buf_ok((unsigned int)buf, len)) return -1;
 
-    return fat16_write(kname, (const u8*)buf, len) ? 0 : -1;
+    return vfs_write_root(kname, (const u8*)buf, len) ? 0 : -1;
 }
 
 /*
@@ -298,7 +298,7 @@ static int sys_writefile_path_impl(const char* path, const void* buf, unsigned i
     if (copy_user_cstr(kpath, sizeof(kpath), path) <= 1) return -1;
     if (len > 0 && !user_buf_ok((unsigned int)buf, len)) return -1;
 
-    return fat16_write_path(kpath, (const u8*)buf, len) ? 0 : -1;
+    return vfs_write_path(kpath, (const u8*)buf, len) ? 0 : -1;
 }
 
 /*
@@ -418,8 +418,8 @@ static unsigned int sys_brk_impl(unsigned int new_brk) {
 /*
  * sys_open_impl(name)
  *
- * Validate the filename, confirm the file exists on the FAT16 partition
- * via fat16_stat(), allocate the lowest free fd slot (>= PROCESS_FD_FIRST)
+ * Validate the filename, confirm the file exists through the VFS layer,
+ * allocate the lowest free fd slot (>= PROCESS_FD_FIRST)
  * in the current process's fd table, and record name, size, and offset=0.
  *
  * Returns the fd (>= 3) on success, -1 on any failure.
@@ -430,7 +430,7 @@ static int sys_open_impl(const char* name) {
 
     /* Check the file exists and get its size */
     u32 file_size = 0;
-    if (!fat16_stat(kname, &file_size)) return -1;
+    if (!vfs_stat(kname, &file_size, 0)) return -1;
 
     /* Allocate an fd slot in the current process */
     process_t* proc = (process_t*)sched_current();
@@ -733,13 +733,13 @@ static int sys_mkdir_impl(const char* path, unsigned int mode) {
     char kpath[PROCESS_FD_NAME_MAX];
     (void)mode;
     if (copy_user_cstr(kpath, sizeof(kpath), path) <= 1) return -1;
-    return fat16_mkdir(kpath) ? 0 : -1;
+    return vfs_mkdir(kpath) ? 0 : -1;
 }
 
 static int sys_rmdir_impl(const char* path) {
     char kpath[PROCESS_FD_NAME_MAX];
     if (copy_user_cstr(kpath, sizeof(kpath), path) <= 1) return -1;
-    return fat16_rmdir(kpath) ? 0 : -1;
+    return vfs_rmdir(kpath) ? 0 : -1;
 }
 
 static int sys_dirlist_impl(const char* path, unsigned int index, uapi_dirent_t* out) {
@@ -750,7 +750,7 @@ static int sys_dirlist_impl(const char* path, unsigned int index, uapi_dirent_t*
     if (copy_user_cstr(kpath, sizeof(kpath), path) <= 1) return -1;
     if (!out) return -1;
     if (!user_buf_ok((unsigned int)out, sizeof(*out))) return -1;
-    if (!fat16_dirent_at(kpath, index, name, sizeof(name), &size, &is_dir)) {
+    if (!vfs_dirent_at(kpath, index, name, sizeof(name), &size, &is_dir)) {
         return 0;
     }
     k_memset(out, 0, sizeof(*out));
@@ -821,7 +821,7 @@ static int sys_lseek_impl(int fd, int offset, int whence) {
 static int sys_unlink_impl(const char* path) {
     char kpath[PROCESS_FD_NAME_MAX];
     if (copy_user_cstr(kpath, sizeof(kpath), path) <= 1) return -1;
-    return fat16_rm(kpath) ? 0 : -1;
+    return vfs_unlink(kpath) ? 0 : -1;
 }
 
 static int sys_rename_impl(const char* src, const char* dst) {
@@ -829,37 +829,24 @@ static int sys_rename_impl(const char* src, const char* dst) {
     char kdst[PROCESS_FD_NAME_MAX];
     if (copy_user_cstr(ksrc, sizeof(ksrc), src) <= 1) return -1;
     if (copy_user_cstr(kdst, sizeof(kdst), dst) <= 1) return -1;
-    return fat16_move(ksrc, kdst) ? 0 : -1;
+    return vfs_rename(ksrc, kdst) ? 0 : -1;
 }
 
 static int sys_stat_impl(const char* path, unsigned int* out_size, int* out_is_dir) {
     char kpath[PROCESS_FD_NAME_MAX];
     u32 size = 0;
+    int is_dir = 0;
     if (copy_user_cstr(kpath, sizeof(kpath), path) <= 1) return -1;
 
-    if (fat16_stat(kpath, &size)) {
-        if (out_size) {
-            if (!user_buf_ok((unsigned int)out_size, sizeof(unsigned int))) return -1;
-            *out_size = size;
-        }
-        if (out_is_dir) {
-            if (!user_buf_ok((unsigned int)out_is_dir, sizeof(int))) return -1;
-            *out_is_dir = 0;
-        }
-        return 0;
-    }
-
-    if (!fat16_is_dir(kpath)) {
-        return -1;
-    }
+    if (!vfs_stat(kpath, &size, &is_dir)) return -1;
 
     if (out_size) {
         if (!user_buf_ok((unsigned int)out_size, sizeof(unsigned int))) return -1;
-        *out_size = 0;
+        *out_size = size;
     }
     if (out_is_dir) {
         if (!user_buf_ok((unsigned int)out_is_dir, sizeof(int))) return -1;
-        *out_is_dir = 1;
+        *out_is_dir = is_dir;
     }
     return 0;
 }

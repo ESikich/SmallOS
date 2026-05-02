@@ -49,7 +49,7 @@ Important current-state facts:
 - ELF launch and exit are now scheduler-owned: `elf_run_image()` seeds a bootstrap context, enqueues the task, and returns `process_t*`
 - the scheduler supports kernel tasks, ELF tasks, voluntary yielding, timer-driven sleeping, and timer-driven switching; `runelf` blocks with `process_wait()`, while `runelf_nowait` returns immediately
 - user ELFs now have a small freestanding runtime layer with a heap allocator,
-  fd-backed console streams, buffered process-owned file handles,
+  fd-backed console streams, buffered VFS-backed file handles,
   `stat`/`rename`/`unlink`, `lseek`, and socket wrappers, which is enough for
   compiler-style tools and small network services
 - the shipped `tools/tcc.elf` compiler binary runs through a SmallOS-side libtcc wrapper, can compile guest C sources from FAT16, write the results back to disk, and then those generated ELFs can be executed immediately
@@ -254,8 +254,9 @@ The old explicit parent-tracking statics are gone. The current design relies on 
 
 The file, console, and socket syscalls used by shell tools, TinyCC, and the
 FTP/TCP smoke apps now share the process-owned handle table in `process.c`.
-Each handle has ops for `read`, `write`, `seek`, `poll`, `flush`, and `close`,
-so `syscall.c` stays focused on validation and dispatch instead of handle
+Each handle has ops for `read`, `write`, `seek`, `poll`, `flush`, and `close`.
+FAT16-backed file behavior and path operations sit behind `vfs.c`, so
+`syscall.c` stays focused on validation and dispatch instead of handle
 lifetime or resource-specific behavior.
 
 ---

@@ -12,6 +12,8 @@ CASES = [
             "stat tmp: PASS",
             "rename: PASS",
             "delete: PASS",
+            "seek overwrite: PASS",
+            "truncate reopen: PASS",
             "fileprobe PASS",
         ],
     )

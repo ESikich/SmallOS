@@ -177,11 +177,13 @@ Each handle slot carries its own kind and ops table:
 read / write / seek / poll / flush / close
 ```
 
-File handles own their cache, seek, flush, and close behavior inside
-`process.c`; socket handles own their TCP send/receive/poll/close behavior;
-console handles own terminal writes and keyboard-buffer reads. `syscall.c`
-therefore stays focused on user-pointer validation and dispatch instead of
-knowing the internals of each resource type.
+`process.c` owns descriptor allocation, lifetime, and generic dispatch. The
+resource backends own the behavior behind each handle: FAT16-backed file
+handles are initialized by `vfs_file_init()` and implemented in `vfs.c`,
+socket handles own their TCP send/receive/poll/close behavior, and console
+handles own terminal writes and keyboard-buffer reads. `syscall.c` therefore
+stays focused on user-pointer validation and dispatch instead of knowing the
+internals of each resource type.
 
 ---
 
@@ -618,9 +620,9 @@ SYS_READ / fd 0 — true blocking keyboard input through the console handle: par
 SYS_YIELD — voluntary preemption via sched_yield_now()
 SYS_SLEEP — timed sleep: parks process in PROCESS_STATE_SLEEPING and wakes via the timer IRQ once the deadline is reached
 SYS_EXEC — async ELF spawn from the current foreground context; the child runs independently and the parent returns immediately in `runelf_nowait` / `sys_exec`
-SYS_OPEN / SYS_CLOSE / SYS_FREAD — per-process handle table backed by handle ops; fd 0/1/2 are console handles, user-opened files start at fd 3+, and file reads cache FAT16 data in PMM-backed pages until close
+SYS_OPEN / SYS_CLOSE / SYS_FREAD — per-process handle table backed by handle ops; fd 0/1/2 are console handles, user-opened files start at fd 3+, and VFS-backed file reads cache FAT16 data in PMM-backed pages until close
 SYS_BRK / user heap — per-process heap break managed in user space through `SYS_BRK` and a shared user allocator
-SYS_OPEN_WRITE / SYS_WRITEFD / SYS_LSEEK / SYS_UNLINK / SYS_RENAME / SYS_STAT — writable file-backed handles plus path metadata and file management for compiler-style tools; stdout/stderr writes also use fd-backed console handles
+SYS_OPEN_WRITE / SYS_WRITEFD / SYS_LSEEK / SYS_UNLINK / SYS_RENAME / SYS_STAT — VFS-backed writable file handles plus path metadata and file management for compiler-style tools; stdout/stderr writes also use fd-backed console handles
 SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_SEND / SYS_RECV / SYS_POLL — socket ABI for passive TCP servers and FTP userland; socket readiness plugs into the same handle poll seam
 TCP bring-up task — minimal kernel TCP listener/echo path used to prove the network plumbing before the socket ABI landed
 page-aware copy-from-user validation — syscall pointer arguments are checked against user address space [USER_CODE_BASE, USER_STACK_TOP) and mapped user pages before dereference

@@ -4,14 +4,20 @@
 
 ### Changed
 
+* **Failed `runelf` input recovery** (`src/shell/commands.c`, `tools/qemu_selftest.py`)
+  * `runelf <missing>` now restores interrupts before returning to the shell, so the prompt remains interactive after a failed ELF lookup.
+  * The QEMU selftest now sends `runelf poop` followed by `pwd` after the main suite to catch regressions where the prompt is visible but keyboard input no longer reaches the shell.
+
 * **SmallOS-side TinyCC wrapper** (`src/user/tcc_entry.c`, `docs/build.md`, `docs/execution.md`, `docs/architecture.md`, `README.md`)
   * `tools/tcc.elf` now uses a SmallOS-side entry wrapper that calls libtcc directly instead of relying on TinyCC's hosted CLI `main()` path.
   * The guest compiler docs now describe that wrapper so the TinyCC smoke path is documented as a SmallOS-specific front end.
 
-* **Unified fd-backed handles** (`src/kernel/process.c`, `src/kernel/process.h`, `src/kernel/syscall.c`, `src/user/user_stdio.c`, `src/user/user_posix.c`, `docs/`)
+* **Unified fd-backed handles and VFS file backend** (`src/kernel/process.c`, `src/kernel/process.h`, `src/kernel/vfs.c`, `src/kernel/vfs.h`, `src/kernel/syscall.c`, `src/user/user_stdio.c`, `src/user/user_posix.c`, `docs/`)
   * `process_handle_ops_t` now covers `read`, `write`, `seek`, `poll`, `flush`, and `close` for file, socket, and console handles.
   * fd `0`, `1`, and `2` are real console handles; `printf`/`fprintf(stdout, ...)`/`fprintf(stderr, ...)` now route through `SYS_WRITEFD` instead of a stdio-only console special case.
   * `syscall.c` now focuses on user-pointer validation and fd dispatch for read/write/seek/poll paths.
+  * FAT16-backed file handles and path operations now sit behind a small `vfs` boundary, leaving `process.c` to own descriptor lifetime and generic handle dispatch.
+  * `fileprobe` now covers seek-overwrite and truncate-on-open-write behavior so the buffered write path has direct regression coverage.
 
 * **ELF loader page setup** (`src/exec/elf_loader.c`)
   * The ELF loader now preserves already-present page-table entries when preparing a process image and only allocates fresh frames for pages that are not mapped yet.

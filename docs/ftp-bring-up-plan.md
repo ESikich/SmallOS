@@ -10,6 +10,8 @@ Current handoff for the next implementation pass.
 - The process/file/socket/console layer now has a generic per-process handle seam in:
   - `src/kernel/process.c`
   - `src/kernel/process.h`
+  - `src/kernel/vfs.c`
+  - `src/kernel/vfs.h`
   - `src/kernel/syscall.c`
 - Handle ops now cover `read`, `write`, `seek`, `poll`, `flush`, and `close`;
   fd `0`, `1`, and `2` are real console handles, and user-opened files/sockets

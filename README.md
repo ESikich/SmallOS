@@ -36,6 +36,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Ring 3 user mode — hardware-enforced privilege separation
 * Per-process kernel stacks — dedicated PMM frame per process; TSS ESP0 set from it; freed on exit
 * Syscall layer via `int 0x80` (DPL=3 gate): `SYS_WRITE`, `SYS_EXIT`, `SYS_GET_TICKS`, `SYS_PUTC`, `SYS_READ`, `SYS_YIELD`, `SYS_SLEEP`, `SYS_EXEC`, `SYS_WRITEFILE`, `SYS_WRITEFILE_PATH`, plus fd-backed console/file helpers (`SYS_OPEN_WRITE`, `SYS_WRITEFD`, `SYS_LSEEK`, `SYS_UNLINK`, `SYS_RENAME`, `SYS_STAT`)
+* Small VFS boundary for FAT16-backed file handles and path operations; `process.c` owns fd lifetime while `vfs.c` owns file behavior
 * Socket ABI via `int 0x80`: `SYS_SOCKET`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_CONNECT`, `SYS_SEND`, `SYS_RECV`, and `SYS_POLL`
 * `sys_exit()` is scheduler-owned: it switches to the kernel page directory, marks the current task `PROCESS_STATE_ZOMBIE`, and switches to the next runnable task
 * Shell now runs as an explicit kernel task scheduled by `scheduler.c`
@@ -45,7 +46,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * **`SYS_WRITEFILE`** — user process creates or overwrites a root-directory FAT16 file in one shot
 * **`SYS_WRITEFILE_PATH`** — user process creates or overwrites a FAT16 file at any nested path
 * **ATA PIO driver** — polls the primary IDE channel (`0x1F0`) to read 512-byte sectors from disk in 32-bit protected mode; no DMA or IRQ required
-* **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing all user ELFs; built by `tools/mkfat16.c` with no external dependencies; readable via ATA PIO with nested directory paths, writable at runtime for root-directory files and nested paths
+* **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing all user ELFs; built by `tools/mkfat16.c` with no external dependencies; readable via ATA PIO with nested directory paths, writable at runtime through the kernel VFS shim for root-directory files and nested paths
 * **TCP bring-up task** — minimal kernel-side TCP listener/echo path for end-to-end networking validation before the socket ABI is exposed to user space
 * **Guest TCP apps** — `apps/services/tcpecho.elf` proves the socket path end to end, and `apps/services/ftpd.elf` runs the vendored FTP session logic as a normal user-space ELF
 
@@ -59,7 +60,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 ├── src/
 │   ├── boot/       boot.asm, loader2.asm, kernel_entry.asm
 │   ├── kernel/     kernel.c, gdt, idt, paging, memory, pmm, process,
-│   │               scheduler, sched_switch.asm, syscall, timer, system, setjmp
+│   │               scheduler, sched_switch.asm, syscall, timer, system, setjmp, vfs
 │   ├── drivers/    keyboard, screen, terminal, ata, fat16
 │   ├── shell/      shell, line_editor, parse, commands
 │   ├── exec/       elf_loader
@@ -218,7 +219,7 @@ Seeded FAT16 layout:
 - `apps/tests/runelf_test` - verify ELF loading, syscalls, and stack setup
 - `apps/tests/readline` - interactive SYS_READ demo
 - `apps/tests/exec_test` - exercise SYS_EXEC semantics
-- `apps/tests/fileread` - exercise process-owned file handles via SYS_OPEN / SYS_FREAD / SYS_CLOSE
+- `apps/tests/fileread` - exercise VFS-backed file handles via SYS_OPEN / SYS_FREAD / SYS_CLOSE
 - `apps/tests/compiler_demo` - exercise SYS_WRITEFILE, SYS_WRITEFILE_PATH, and readback
 - `apps/tests/heapprobe` - exercise malloc/free/realloc/calloc
 - `apps/tests/statprobe` - exercise SYS_STAT and path probing

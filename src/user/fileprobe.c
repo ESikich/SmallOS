@@ -7,6 +7,13 @@ static int starts_with(const unsigned char* buf, const unsigned char* ref, unsig
     return 1;
 }
 
+static int bytes_equal(const unsigned char* a, const unsigned char* b, unsigned int len) {
+    for (unsigned int i = 0; i < len; i++) {
+        if (a[i] != b[i]) return 0;
+    }
+    return 1;
+}
+
 void _start(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -72,6 +79,49 @@ void _start(int argc, char** argv) {
         u_puts("delete: FAIL\n");
         ok = 0;
     }
+
+    if (u_file_open_write(&f, "seektest.tmp") < 0) {
+        u_puts("seek overwrite: FAIL\n");
+        ok = 0;
+    } else {
+        static const unsigned char seed[] = "ABCDE";
+        static const unsigned char patch[] = "xy";
+        static const unsigned char expect[] = "ABxyE";
+        unsigned char readback[sizeof(expect) - 1];
+
+        if (u_file_write(&f, seed, sizeof(seed) - 1) != (int)(sizeof(seed) - 1)
+            || u_file_seek(&f, 2, 0) != 2
+            || u_file_write(&f, patch, sizeof(patch) - 1) != (int)(sizeof(patch) - 1)
+            || u_file_close(&f) < 0
+            || u_file_open_read(&f, "seektest.tmp") < 0
+            || u_file_read(&f, readback, sizeof(readback)) != (int)sizeof(readback)
+            || !bytes_equal(readback, expect, sizeof(readback))) {
+            u_puts("seek overwrite: FAIL\n");
+            ok = 0;
+        } else {
+            u_puts("seek overwrite: PASS\n");
+        }
+        u_file_close(&f);
+    }
+
+    if (u_file_open_write(&f, "seektest.tmp") < 0) {
+        u_puts("truncate reopen: FAIL\n");
+        ok = 0;
+    } else {
+        static const unsigned char one[] = "Z";
+        if (u_file_write(&f, one, sizeof(one) - 1) != (int)(sizeof(one) - 1)
+            || u_file_close(&f) < 0
+            || u_file_stat("seektest.tmp", &size, &is_dir) < 0
+            || size != 1
+            || is_dir != 0) {
+            u_puts("truncate reopen: FAIL\n");
+            ok = 0;
+        } else {
+            u_puts("truncate reopen: PASS\n");
+        }
+    }
+
+    (void)u_file_delete("seektest.tmp");
 
     if (ok) {
         u_puts("fileprobe PASS\n");

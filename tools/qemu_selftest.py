@@ -160,6 +160,36 @@ def verify_cases(cases, transcript):
     return overall_pass
 
 
+def run_interactive_regressions(sock, log, start_offset, deadline):
+    buf = ""
+    log_offset = start_offset
+
+    tee_stdout("\n[interactive-regression] ")
+    send_text(sock, "runelf poop")
+    send_key(sock, "ret")
+
+    saw_failed = False
+    while time.time() < deadline:
+        chunk, log_offset = read_new(log, log_offset)
+        if chunk:
+            tee_stdout(chunk)
+            buf += chunk
+            if "runelf: failed" in buf and not saw_failed:
+                saw_failed = True
+                send_text(sock, "pwd")
+                send_key(sock, "ret")
+            if saw_failed and "pwd: /" in buf:
+                print("[runelf_missing_keeps_input] PASS")
+                return True, log_offset
+            if len(buf) > TRANSCRIPT_LIMIT:
+                buf = buf[-TRANSCRIPT_TRIM:]
+        else:
+            time.sleep(0.05)
+
+    print("[runelf_missing_keeps_input] FAIL")
+    return False, log_offset
+
+
 def shutdown_qemu(sock, pidfile, result_pass):
     try:
         monitor_send(sock, "quit")
@@ -227,6 +257,8 @@ def main():
 
         transcript, log_offset = collect_selftest_transcript(sock, log, log_offset, deadline, cases)
         overall_pass = verify_cases(cases, transcript)
+        interactive_pass, log_offset = run_interactive_regressions(sock, log, log_offset, deadline)
+        overall_pass = overall_pass and interactive_pass
 
     return shutdown_qemu(sock, args.pidfile, overall_pass)
 

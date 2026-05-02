@@ -36,11 +36,13 @@ It prints `kernel: selfcheck PASS` when the live TSS selector, boot stack,
 heap base, and PMM free-frame baseline all match the boot contract. If any of
 those invariants drift, the kernel halts before the shell starts.
 
-Handles are owned by `process.c`, not the syscall dispatcher. fd `0`, `1`,
-and `2` are real console handles created with each process; user-opened files
-and sockets start at fd `3`. If we add a new resource type later, it should
-get a handle kind and ops table for `read`, `write`, `seek`, `poll`, `flush`,
-and `close` so resource behavior stays local to the owning module.
+Descriptor slots are owned by `process.c`, not the syscall dispatcher. fd `0`,
+`1`, and `2` are real console handles created with each process; user-opened
+files and sockets start at fd `3`. FAT16-backed file handles and path helpers
+live behind `vfs.c`, while `process.c` keeps the generic fd lifetime and
+dispatch rules. If we add a new resource type later, it should get a handle
+kind and ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`
+so resource behavior stays local to the owning module.
 
 Do not use `-fda` (floppy). LBA extended reads require hard disk mode.
 
@@ -213,7 +215,7 @@ meminfo              ← still identical after second run
 * Do not rely on shell input buffers for process data.
 * All user-process arguments must be copied into process-owned storage before execution.
 * Pointers passed into a process must remain valid for the entire lifetime of that process.
-* Handles are lifetime-owned by `process.c`; `syscall.c` should only validate arguments and dispatch through handle ops.
+* Descriptor lifetime is owned by `process.c`; file behavior is owned by `vfs.c`; `syscall.c` should only validate arguments and dispatch through handle or VFS ops.
 
 ---
 

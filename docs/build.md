@@ -318,7 +318,7 @@ Shipped FAT16 programs:
 - `apps/tests/runelf_test` - verify ELF loading, syscalls, and stack setup
 - `apps/tests/readline` - interactive SYS_READ demo
 - `apps/tests/exec_test` - exercise SYS_EXEC semantics
-- `apps/tests/fileread` - exercise process-owned file handles via SYS_OPEN / SYS_FREAD / SYS_CLOSE
+- `apps/tests/fileread` - exercise VFS-backed file handles via SYS_OPEN / SYS_FREAD / SYS_CLOSE
 - `apps/tests/compiler_demo` - exercise SYS_WRITEFILE, SYS_WRITEFILE_PATH, and readback
 - `apps/tests/heapprobe` - exercise malloc/free/realloc/calloc
 - `apps/tests/statprobe` - exercise SYS_STAT and path probing

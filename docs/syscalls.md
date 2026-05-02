@@ -285,7 +285,7 @@ int sys_writefile(const char* name, const char* buf, uint32_t len);
 
 Creates or overwrites a root-directory FAT16 file in one shot. Returns `0` on success, `-1` on failure.
 
-This is the root-only persistence primitive for generated artifacts such as compiler output, assembly listings, or other build products. The kernel validates both the filename and the byte range before calling into `fat16_write()`.
+This is the root-only persistence primitive for generated artifacts such as compiler output, assembly listings, or other build products. The kernel validates both the filename and the byte range before calling into the VFS root-write wrapper.
 
 ---
 
@@ -297,7 +297,7 @@ int sys_writefile_path(const char* path, const char* buf, uint32_t len);
 
 Creates or overwrites a FAT16 file at an arbitrary path. Returns `0` on success, `-1` on failure.
 
-This is the preferred persistence primitive for build tools and compilers because it can emit directly into nested directories such as `apps/demo/` and `apps/tests/`. The kernel validates both the path and the byte range before calling into `fat16_write_path()`.
+This is the preferred persistence primitive for build tools and compilers because it can emit directly into nested directories such as `apps/demo/` and `apps/tests/`. The kernel validates both the path and the byte range before calling into the VFS path-write wrapper.
 
 ---
 
@@ -323,7 +323,7 @@ Opens a file from the FAT16 root directory by name (case-insensitive 8.3 matchin
 
 Returns the fd (≥ 3) on success, or `-1` if the file is not found, the handle table is full (`PROCESS_FD_MAX = 8`), or the name pointer fails user-space validation.
 
-`sys_open_impl` validates the name with page-aware user checks, copies it into a kernel buffer bounded by `PROCESS_FD_NAME_MAX` (128 bytes), then calls `fat16_stat()` to confirm the file exists without loading its data.
+`sys_open_impl` validates the name with page-aware user checks, copies it into a kernel buffer bounded by `PROCESS_FD_NAME_MAX` (128 bytes), then calls through the VFS stat wrapper to confirm the file exists without loading its data.
 
 ---
 
@@ -451,7 +451,7 @@ u_stat(...)        query path metadata
 * `SYS_YIELD` and the timer path use the same stub layout, but the real scheduler resume ESP is `esp - 8`, not raw `esp`
 * EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`
 * The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.
-* fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`); user-opened files and sockets start at fd 3. The handle table (`fd_entry_t fds[PROCESS_FD_MAX]`) lives inside `process_t`. Every handle carries an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`, so resource behavior stays owned by `process.c` rather than the syscall dispatcher.
+* fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`); user-opened files and sockets start at fd 3. The handle table (`fd_entry_t fds[PROCESS_FD_MAX]`) lives inside `process_t`. Every handle carries an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`. `process.c` owns fd lifetime and dispatch, while `vfs.c` owns FAT16-backed file behavior; the syscall dispatcher should not grow resource-specific state machines.
 * `SYS_WRITEFILE` is the simplest root-only persistence path for user tools that want to emit a generated artifact without managing an fd-based write stream.
 * `SYS_WRITEFILE_PATH` is the preferred path-aware persistence primitive for compilers and build tools, especially when writing into nested directories.
 

@@ -677,6 +677,7 @@ static void cmd_runelf(command_t* cmd) {
     }
 
     if (!proc) {
+        __asm__ __volatile__("sti");
         terminal_puts("runelf: failed\n");
         return;
     }

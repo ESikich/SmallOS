@@ -5,7 +5,9 @@ This document defines how the system stores, discovers, and reads files from dis
 The current implementation stores a **raw FAT16 volume inside an MBR-partitioned disk image**. Sector 0 contains the partition table, and the FAT16 partition starts immediately after the kernel region. The runtime resolves nested FAT16 paths for reads and directory listings, and it can also create/remove directories in place. Regular file writes now work at nested paths too, and `rm` removes files in place. `cat` prints file contents, `touch` creates or truncates files, and the shell keeps a working directory for `cd` / `pwd` and `ls`. `ls` also accepts simple `*` and `?` wildcards, while still sorting directories before files.
 The filesystem layer also exposes file metadata through `stat`, and the fd
 path now routes file, socket, and console descriptors through a generic
-per-process handle table. FAT16-backed writable handles support `rename`,
+per-process handle table. FAT16-backed file handles and path operations are
+wrapped by the small kernel VFS layer in `src/kernel/vfs.c`, which currently
+maps directly onto the FAT16 driver. Writable handles support `rename`,
 `unlink`, `lseek`, buffered `write`, and close-time flush operations for
 toolchain-style programs.
 
@@ -193,7 +195,7 @@ The current FAT16 driver is intentionally narrow.
 - empty-file creation / truncation via `touch`
 - root-directory file creation and overwrite via `fat16_write(name, ...)`
 - nested-path file creation and overwrite via `fat16_write_path(path, ...)`
-- writable file-backed handles with buffered output via `SYS_OPEN_WRITE`, `SYS_WRITEFD`, and `SYS_LSEEK`
+- VFS-backed writable file handles with buffered output via `SYS_OPEN_WRITE`, `SYS_WRITEFD`, and `SYS_LSEEK`
 - file removal and rename/move through `SYS_UNLINK` and `SYS_RENAME`
 - fd-backed console handles for stdin/stdout/stderr
 - socket-backed handles for the current TCP passive listener path via `SYS_SOCKET`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_SEND`, `SYS_RECV`, and `SYS_POLL`
@@ -320,7 +322,7 @@ one shot. The shell's `touch` and compiler-style write paths use
 The FAT16 write path is intentionally narrow:
 
 - 8.3 filename matching
-- fd writes are buffered in process-owned PMM pages and flushed through the FAT16 one-shot writer
+- fd writes are buffered in VFS-owned PMM pages and flushed through the FAT16 one-shot writer
 - no long filenames
 - no concurrent writer support
 
@@ -332,8 +334,8 @@ At runtime, the kernel:
 4. writes the data clusters to disk
 5. commits the updated FAT copies and root directory entry
 
-This is enough for compiler-style tools to emit generated artifacts such as `compiler.out` without a full VFS or streaming cluster allocator.
-It is also enough for SmallOS-hosted compiler binaries to create temp files, rename outputs into place, and inspect candidate paths before writing.
+This small VFS boundary is enough for compiler-style tools to emit generated artifacts such as `compiler.out` without exposing FAT16 details to every syscall path.
+It is also enough for SmallOS-hosted compiler binaries to create temp files, rename outputs into place, and inspect candidate paths before writing. The next filesystem rewrite can grow this seam into streaming cluster allocation or mount-style backends without pushing that complexity back into `syscall.c`.
 
 ## Creating and Removing Directories
 
@@ -471,6 +473,7 @@ The filesystem behavior is jointly defined by these files:
 - `tools/mkfat16.c` — host-side FAT16 image builder
 - `src/drivers/ata.[ch]` — ATA PIO sector reads
 - `src/drivers/fat16.[ch]` — FAT16 runtime driver
+- `src/kernel/vfs.[ch]` — kernel VFS shim for FAT16-backed file handles and path operations
 - `Makefile` — image layout, kernel padding, FAT16 LBA patch
 - `src/exec/elf_loader.c` — main runtime consumer of `fat16_load()`
 

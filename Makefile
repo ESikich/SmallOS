@@ -66,6 +66,7 @@ KERNEL_C_SRCS=\
 	$(KERNEL_DIR)/klib.c \
 	$(KERNEL_DIR)/memory.c \
 	$(KERNEL_DIR)/pmm.c \
+	$(KERNEL_DIR)/vfs.c \
 	$(KERNEL_DIR)/process.c \
 	$(KERNEL_DIR)/scheduler.c \
 	$(SHELL_DIR)/parse.c \

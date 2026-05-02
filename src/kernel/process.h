@@ -17,7 +17,7 @@ typedef enum {
 } process_state_t;
 
 /* ------------------------------------------------------------------ */
-/* Per-process file descriptor table                                  */
+/* Per-process descriptor handle table                                */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -94,7 +94,7 @@ typedef struct {
     unsigned int    heap_base;
     unsigned int    heap_brk;
     char            name[PROCESS_NAME_MAX];
-    fd_entry_t      fds[PROCESS_FD_MAX];   /* per-process open file table */
+    fd_entry_t      fds[PROCESS_FD_MAX];   /* per-process open handles */
 } process_t;
 
 /* ------------------------------------------------------------------ */
@@ -104,7 +104,6 @@ typedef struct {
 process_t* process_create(const char* name);
 process_t* process_create_kernel_task(const char* name, void (*entry)(void));
 void       process_destroy(process_t* proc);
-void       process_fd_cache_free(fd_entry_t* ent);
 fd_entry_t* process_fd_get(process_t* proc, int fd);
 int        process_fd_open_file(process_t* proc,
                                 const char* name,
@@ -117,8 +116,6 @@ int        process_fd_write(fd_entry_t* ent, const char* buf, unsigned int len);
 short      process_fd_poll(fd_entry_t* ent, short events);
 int        process_fd_flush(fd_entry_t* ent);
 int        process_fd_seek(fd_entry_t* ent, int offset, int whence);
-int        process_fd_read_file(fd_entry_t* ent, char* buf, unsigned int len);
-int        process_fd_write_file(fd_entry_t* ent, const char* buf, unsigned int len);
 void       process_claim_for_wait(process_t* proc);
 
 process_t* process_get_current(void);
