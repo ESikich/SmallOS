@@ -9,6 +9,7 @@
 #include "arp.h"
 #include "ipv4.h"
 #include "fat16.h"
+#include "vfs.h"
 #include "process.h"
 #include "klib.h"
 
@@ -476,7 +477,7 @@ static void cmd_fsread(command_t* cmd) {
     }
 
     unsigned int size = 0;
-    const unsigned char* data = fat16_load(path, &size);
+    const unsigned char* data = vfs_load_file(path, &size);
     if (!data) {
         terminal_puts("fsread: load failed\n");
         return;
@@ -510,7 +511,7 @@ static void cmd_cat(command_t* cmd) {
     }
 
     unsigned int size = 0;
-    const unsigned char* data = fat16_load(path, &size);
+    const unsigned char* data = vfs_load_file(path, &size);
     if (!data) {
         terminal_puts("cat: failed\n");
         return;
@@ -532,7 +533,7 @@ static void cmd_mkdir(command_t* cmd) {
         return;
     }
 
-    if (!fat16_mkdir(path)) {
+    if (!vfs_mkdir(path)) {
         terminal_puts("mkdir: failed\n");
         return;
     }
@@ -553,7 +554,7 @@ static void cmd_rmdir(command_t* cmd) {
         return;
     }
 
-    if (!fat16_rmdir(path)) {
+    if (!vfs_rmdir(path)) {
         terminal_puts("rmdir: failed\n");
         return;
     }
@@ -574,7 +575,7 @@ static void cmd_rm(command_t* cmd) {
         return;
     }
 
-    if (!fat16_rm(path)) {
+    if (!vfs_unlink(path)) {
         terminal_puts("rm: failed\n");
         return;
     }
@@ -595,7 +596,7 @@ static void cmd_touch(command_t* cmd) {
         return;
     }
 
-    if (!fat16_write_path(path, 0, 0)) {
+    if (!vfs_write_path(path, 0, 0)) {
         terminal_puts("touch: failed\n");
         return;
     }
@@ -647,7 +648,7 @@ static void cmd_mv(command_t* cmd) {
         return;
     }
 
-    if (!fat16_move(src, dst)) {
+    if (!vfs_rename(src, dst)) {
         terminal_puts("mv: failed\n");
         return;
     }

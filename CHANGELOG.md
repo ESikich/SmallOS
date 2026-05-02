@@ -18,6 +18,7 @@
   * `syscall.c` now focuses on user-pointer validation and fd dispatch for read/write/seek/poll paths.
   * FAT16-backed file handles and path operations now sit behind a small `vfs` boundary, leaving `process.c` to own descriptor lifetime and generic handle dispatch.
   * ELF program lookup now uses `vfs_load_file()` instead of calling the FAT16 driver directly.
+  * Shell file reads and simple mutations (`fsread`, `cat`, `mkdir`, `rmdir`, `rm`, `touch`, `mv`) now use the same VFS wrappers as the syscall layer.
   * `fileprobe` now covers seek-overwrite and truncate-on-open-write behavior so the buffered write path has direct regression coverage.
 
 * **ELF loader page setup** (`src/exec/elf_loader.c`)
