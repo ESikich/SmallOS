@@ -46,6 +46,20 @@ void _start(int argc, char** argv) {
         ok = 0;
     }
 
-    u_puts("[6] exec_test done\n");
+    u_puts("[6] calling sys_exec with too many args\n");
+    int r3 = sys_exec("apps/demo/hello", 17, av);
+    u_puts("[7] too many args returned ");
+    if (r3 < 0) {
+        u_putc('-');
+        u_put_uint((uint32_t)(-r3));
+    } else {
+        u_put_uint((uint32_t)r3);
+    }
+    u_putc('\n');
+    if (r3 != -EINVAL) {
+        ok = 0;
+    }
+
+    u_puts("[8] exec_test done\n");
     sys_exit(ok ? 0 : 1);
 }

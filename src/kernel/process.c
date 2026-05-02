@@ -338,6 +338,40 @@ void process_claim_for_wait(process_t* proc) {
     proc->reaper_claimed = 1;
 }
 
+/*
+ * Copy launch argv into process-owned storage.  The incoming argv may point at
+ * shell parser storage or at a temporary SYS_EXEC validation buffer; after this
+ * returns, bootstrap uses only proc->user_arg_data/user_argv.
+ */
+int process_set_args(process_t* proc, int argc, char** argv) {
+    unsigned int used = 0;
+
+    if (!proc) return -EINVAL;
+    if (argc < 0 || argc > PROCESS_MAX_ARGS) return -EINVAL;
+    if (argc > 0 && !argv) return -EFAULT;
+
+    proc->user_argc = 0;
+    proc->user_argv[0] = 0;
+    proc->user_arg_data[0] = '\0';
+
+    for (int i = 0; i < argc; i++) {
+        if (!argv[i]) return -EFAULT;
+
+        int len = k_strlen(argv[i]) + 1;
+        if (used + (unsigned int)len > PROCESS_ARG_BYTES) {
+            return -EINVAL;
+        }
+
+        proc->user_argv[i] = &proc->user_arg_data[used];
+        k_memcpy(proc->user_argv[i], argv[i], (k_size_t)len);
+        used += (unsigned int)len;
+    }
+
+    proc->user_argc = argc;
+    proc->user_argv[argc] = 0;
+    return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Kernel-task bootstrap                                              */
 /* ------------------------------------------------------------------ */

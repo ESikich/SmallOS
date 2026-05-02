@@ -53,6 +53,7 @@
 * **Generic user CRT entry adapter** (`src/user/user_crt0.c`, `Makefile`, `docs/build.md`, `docs/execution.md`, `docs/architecture.md`)
   * Hosted-ish user programs can now link `user_crt0` and define `main(argc, argv)` while the kernel launch ABI remains `_start(argc, argv)`.
   * `tools/tcc.elf` now uses that generic CRT adapter and runs TinyCC's normal hosted CLI `main()` path.
+  * `process_set_args()` now owns the process-side argc/argv copy, guarantees `argv[argc] == NULL`, and is covered by a CRT-linked `crtprobe` regression.
 
 * **FTP smoke harness** (`Makefile`, `tools/ftp_smoke.py`, `README.md`, `docs/build.md`, `docs/execution.md`)
   * Added `make ftp-smoke`, which boots QEMU with FTP control and passive data host forwarding, launches `apps/services/ftpd`, and verifies login, `LIST`, `RETR`, `STOR`, and upload cleanup.

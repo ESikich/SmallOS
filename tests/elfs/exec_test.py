@@ -12,7 +12,8 @@ CASES = [
             'hello from elf via int 0x80',
             'argv[0] = "apps/demo/hello"',
             "[5] bad name returned -2",
-            "[6] exec_test done",
+            "[7] too many args returned -22",
+            "[8] exec_test done",
         ],
         timeout=60.0,
     )

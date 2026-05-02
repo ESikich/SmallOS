@@ -958,6 +958,7 @@ static void cmd_selftest(command_t* cmd) {
     static char* sleep_argv[] = { "apps/tests/sleep_test", "alpha", "beta", 0 };
     static char* ptrguard_argv[] = { "apps/tests/ptrguard", "alpha", "beta", 0 };
     static char* preempt_argv[] = { "apps/tests/preempt_test", "alpha", "beta", 0 };
+    static char* crtprobe_argv[] = { "apps/tests/crtprobe.elf", "alpha", "nested/path", "longish-argument-0123456789abcdef", 0 };
     static char* fault_ud_argv[] = { "apps/tests/fault", "ud", 0 };
     static char* fault_gp_argv[] = { "apps/tests/fault", "gp", 0 };
     static char* fault_de_argv[] = { "apps/tests/fault", "de", 0 };
@@ -984,6 +985,7 @@ static void cmd_selftest(command_t* cmd) {
         { "sleep_test",  "apps/tests/sleep_test", 1, sleep_argv,       0 },
         { "ptrguard",    "apps/tests/ptrguard",   1, ptrguard_argv,    0 }, /* syscall pointer regression */
         { "preempt_test","apps/tests/preempt_test",1, preempt_argv,     0 }, /* timer-preemption regression */
+        { "crtprobe",    "apps/tests/crtprobe.elf",4, crtprobe_argv,    7 },
         { "fault ud",    "apps/tests/fault",      2, fault_ud_argv,    6 },
         { "fault gp",    "apps/tests/fault",      2, fault_gp_argv,   13 },
         { "fault de",    "apps/tests/fault",      2, fault_de_argv,    0 },
@@ -1084,6 +1086,7 @@ static program_entry_t programs[] = {
     { "apps/tests/sleep_test", "exercise SYS_SLEEP semantics" },
     { "apps/tests/ptrguard",   "exercise syscall pointer validation" },
     { "apps/tests/preempt_test","prove timer-driven preemption" },
+    { "apps/tests/crtprobe",   "verify user_crt0 main startup" },
     { "apps/tests/fault",      "fault probe (ud/gp/de/br/pf)" },
 };
 

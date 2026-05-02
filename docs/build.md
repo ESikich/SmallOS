@@ -78,6 +78,12 @@ loader2.bin          boot.bin
 
 `make verify` is the one-shot preflight target: it runs both layout checks, then `make test`, then `make smoke`.
 
+Most freestanding test ELFs define `_start(argc, argv)` directly and link with
+the common user runtime objects. Hosted-ish programs define
+`main(argc, argv)` and link `src/user/user_crt0.c`, which supplies `_start` and
+exits with `main`'s return value. `tools/tcc.elf` and `apps/tests/crtprobe.elf`
+use that CRT path; there is no TinyCC-specific startup wrapper.
+
 ## Automated Guest Test
 
 `make test` boots the finished image headlessly, launches the shell
@@ -357,6 +363,7 @@ Shipped FAT16 programs:
 - `apps/tests/sleep_test` - exercise SYS_SLEEP semantics
 - `apps/tests/ptrguard` - exercise syscall pointer validation
 - `apps/tests/preempt_test` - prove timer-driven preemption
+- `apps/tests/crtprobe` - verify `main(argc, argv)` via `user_crt0`
 - `apps/tests/fault` - fault probe (ud/gp/de/br/pf)
 - `tools/tcc.elf` - SmallOS-hosted TinyCC compiler binary linked through
   `src/user/user_crt0.c`

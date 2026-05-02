@@ -129,7 +129,11 @@ if (!elf_run_named(cmd->argv[1], cmd->argc - 1, &cmd->argv[1])) {
 }
 ```
 
-That means `argv[0]` inside the ELF process is the program name passed to `runelf`, and the rest of the shell tokens follow as normal argv entries. Nested paths such as `runelf apps/demo/hello alpha beta` are supported as long as the FAT16 image contains the target entry.
+That means `argv[0]` inside the ELF process is the launch token passed after
+`runelf`, and the rest of the shell tokens follow as normal argv entries. For
+`runelf hello alpha beta`, `argv[0]` is `hello`; for
+`runelf apps/demo/hello alpha beta`, `argv[0]` is `apps/demo/hello`. Nested
+paths and explicit `.elf` suffixes are preserved in argv as written.
 
 There is **no active `runimg` command path** in the current shell command table.
 
@@ -406,7 +410,7 @@ Properties of the current setup:
 When `runelf apps/demo/hello a b` is invoked, the ELF sees:
 
 - `argc = 3`
-- `argv[0] = "hello"`
+- `argv[0] = "apps/demo/hello"`
 - `argv[1] = "a"`
 - `argv[2] = "b"`
 
@@ -428,16 +432,19 @@ The entry point receives a normal C-style `(int argc, char** argv)` call frame.
 This is the launch contract for every user ELF:
 
 - the kernel enters the ELF symbol selected by `-e`, normally `_start`
-- `_start` receives `argc` and `argv`
+- the low-level entry ABI is `void _start(int argc, char** argv)`
 - `argv[argc]` is `NULL`
 - `argv` strings and the pointer array live on the initial user stack
+- `process_set_args()` owns the process-side argc/argv copy before ring-3 entry
 - there is no `envp` yet
 - returning from `_start` is unsupported unless a CRT layer converts the return value into `sys_exit`
 
 `src/user/user_crt0.c` is that CRT layer for hosted-ish programs. It keeps the
 kernel ABI at `_start(argc, argv)`, calls `main(argc, argv)`, and exits with
 the returned status. TinyCC is linked this way so its upstream `main` path can
-run normally.
+run normally. Direct `_start(argc, argv)` programs remain supported for
+low-level probes and freestanding tests; new hosted-ish programs should prefer
+`int main(int argc, char** argv)` plus `user_crt0`.
 
 ---
 

@@ -153,7 +153,7 @@ typedef struct {
     void          (*kernel_entry)(void);    /* kernel task entry point             */
     unsigned int    user_entry;             /* first ring-3 EIP for ELF tasks      */
     int             user_argc;              /* saved argc for bootstrap            */
-    char*           user_argv[16];          /* saved argv pointers                 */
+    char*           user_argv[17];          /* saved argv pointers plus NULL       */
     char            user_arg_data[256];     /* argv string storage (kernel-side)   */
     char            name[32];               /* null-terminated process name        */
     fd_entry_t      fds[8];                 /* per-process handle slots            */
@@ -162,7 +162,10 @@ typedef struct {
 
 For runnable tasks, `sched_esp` is the saved kernel resume stack pointer used by the scheduler. Kernel tasks and ELF tasks can both have a valid seeded `sched_esp` before their first timer-driven switch.
 
-`user_arg_data` / `user_argv` hold copies of the argv strings inside the `process_t` PMM frame — independent of the shell input buffer and valid after CR3 switches.
+`process_set_args()` copies argv strings into `user_arg_data`, populates
+`user_argv`, and guarantees `user_argv[user_argc] == NULL`. This process-owned
+storage is independent of the shell input buffer or syscall caller memory and
+remains valid until the process exits.
 
 The shell task itself is just another kernel task with a small 4 KB kernel stack,
 so the scripted `shelltest` / `selftest` command tables are kept in static
@@ -397,9 +400,14 @@ Entry point convention:
 void _start(int argc, char** argv)
 ```
 
-That convention remains the kernel launch ABI. Hosted-style user programs can
+That convention remains the low-level kernel launch ABI. Hosted-style user programs can
 instead link `src/user/user_crt0.c`, define `main(int argc, char** argv)`, and
 let the CRT adapter call `sys_exit(main(argc, argv))`.
+
+Direct `_start(argc, argv)` programs remain supported for low-level probes and
+freestanding tests. There is no `envp` argument today; a future runtime can add
+`main(argc, argv, envp)` above the same kernel entry ABI when the environment
+model exists.
 
 Programs are linked at fixed virtual address `0x400000`, loaded into private user mappings, and entered through `iret` into CPL=3. They use the `int 0x80` syscall ABI for kernel services.
 

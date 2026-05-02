@@ -239,6 +239,18 @@ tinycc_compile
 Any runtime or filesystem change should keep those tests passing unless the
 change explicitly updates the TinyCC contract and tests in the same patch.
 
+The generic CRT adapter is also the preferred startup path for new hosted-ish
+SmallOS user programs:
+
+```c
+int main(int argc, char** argv);
+```
+
+The kernel still launches `void _start(int argc, char** argv)`. `user_crt0`
+provides that symbol, calls `main(argc, argv)`, and passes the return value to
+`sys_exit`. Direct `_start(argc, argv)` remains available for low-level probes.
+`argv[argc]` is guaranteed to be `NULL`; there is no `envp` yet.
+
 ---
 
 # Tests
@@ -252,6 +264,7 @@ Runtime coverage currently lives in guest ELF probes:
 - `stdioprobe` - EOF/error state, `clearerr`, `fflush`, invalid stdio ops
 - `dirprobe` - root and nested directory iteration, EOF, invalid/missing dirs
 - `errnoprobe` - wrapper `errno` behavior
+- `crtprobe` - `main(argc, argv)` via `user_crt0`, argv terminator, and return status
 
 Run the full acceptance suite with:
 

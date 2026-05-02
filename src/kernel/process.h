@@ -92,7 +92,7 @@ typedef struct {
     void          (*kernel_entry)(void);
     unsigned int    user_entry;
     int             user_argc;
-    char*           user_argv[PROCESS_MAX_ARGS];
+    char*           user_argv[PROCESS_MAX_ARGS + 1];
     char            user_arg_data[PROCESS_ARG_BYTES];
     unsigned int    heap_base;
     unsigned int    heap_brk;
@@ -126,6 +126,7 @@ short      process_fd_poll(fd_entry_t* ent, short events);
 int        process_fd_flush(fd_entry_t* ent);
 int        process_fd_seek(fd_entry_t* ent, int offset, int whence);
 void       process_claim_for_wait(process_t* proc);
+int        process_set_args(process_t* proc, int argc, char** argv);
 
 process_t* process_get_current(void);
 

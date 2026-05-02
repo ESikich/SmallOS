@@ -100,31 +100,15 @@ static int elf_seed_sched_context(process_t* proc,
                                   int argc,
                                   char** argv)
 {
-    unsigned int used = 0;
-
     if (!proc) return 0;
-    if (argc < 0 || argc > PROCESS_MAX_ARGS) {
-        terminal_puts("elf: too many args for bootstrap\n");
+
+    int args_rc = process_set_args(proc, argc, argv);
+    if (args_rc < 0) {
+        terminal_puts("elf: invalid args for bootstrap\n");
         return 0;
     }
 
-    for (int i = 0; i < argc; i++) {
-        int len = k_strlen(argv[i]) + 1;
-        if (used + (unsigned int)len > PROCESS_ARG_BYTES) {
-            terminal_puts("elf: args too large for bootstrap\n");
-            return 0;
-        }
-
-        proc->user_argv[i] = &proc->user_arg_data[used];
-        k_memcpy(proc->user_argv[i], argv[i], (k_size_t)len);
-        used += (unsigned int)len;
-    }
-
-    proc->user_argc  = argc;
     proc->user_entry = entry;
-    if (argc < PROCESS_MAX_ARGS) {
-        proc->user_argv[argc] = 0;
-    }
 
     {
         unsigned int* stack_top =
