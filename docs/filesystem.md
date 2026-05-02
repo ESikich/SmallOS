@@ -284,12 +284,16 @@ This buffer:
 - must not be freed by the caller
 - must not be assumed stable across another filesystem load
 
+Code that needs to read a file without flattening it into this 1 MB buffer can
+use the sink-oriented read path. VFS uses that for fd-backed file loads, copying
+sectors into per-fd PMM cache pages as FAT16 walks the cluster chain.
+
 The driver also uses a separate static cluster scratch buffer so it does not
 need a large stack allocation while copying cluster data.
 
 ## Size limit
 
-The driver rejects files larger than:
+The whole-file load helper rejects files larger than:
 
 ```text
 1 MB
@@ -300,6 +304,17 @@ If a file is larger, `fat16_load()` fails with:
 ```text
 fat16: file too large
 ```
+
+Fd-backed reads and writes can currently cache and flush files up to:
+
+```text
+4 MB
+```
+
+That fd cache is page-backed, not one contiguous kernel buffer. Because user
+ELFs have a private mapping at `0x400000`, VFS copies cache pages through the
+kernel page directory when a PMM frame lands in that range, while user buffers
+are copied under the process page directory.
 
 ## Empty files
 
@@ -322,6 +337,7 @@ The FAT16 write path is intentionally narrow:
 
 - 8.3 filename matching
 - fd writes are buffered in VFS-owned PMM pages and flushed through a FAT16 source callback
+- FAT16 data reads can stream into a caller-provided sink callback
 - no long filenames
 - no concurrent writer support
 

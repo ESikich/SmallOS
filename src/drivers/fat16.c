@@ -35,7 +35,7 @@
 #define FIRST_CLUSTER     2u
 #define FAT16_EOC_MIN     0xFFF8u
 #define FAT_ENTRIES       (FAT_SECTORS * SECTOR_SIZE / 2u)
-#define FAT16_MAX_FILE_CLUSTERS (FAT16_MAX_FILE_BYTES / CLUSTER_BYTES)
+#define FAT16_MAX_WRITE_FILE_CLUSTERS (FAT16_MAX_WRITE_FILE_BYTES / CLUSTER_BYTES)
 
 /* ------------------------------------------------------------------ */
 /* Directory entry field offsets                                        */
@@ -65,8 +65,8 @@ static u8 s_fat_buf[FAT_SECTORS * SECTOR_SIZE] __attribute__((aligned(2)));
 static u8 s_root_buf[ROOT_DIR_SECTORS * SECTOR_SIZE] __attribute__((aligned(2)));
 static u8 s_dir_buf[CLUSTER_BYTES] __attribute__((aligned(2)));
 static u8 s_dir_buf2[CLUSTER_BYTES] __attribute__((aligned(2)));
-static u32 s_write_chain[FAT16_MAX_FILE_CLUSTERS];
-static u32 s_old_write_chain[FAT16_MAX_FILE_CLUSTERS];
+static u32 s_write_chain[FAT16_MAX_WRITE_FILE_CLUSTERS];
+static u32 s_old_write_chain[FAT16_MAX_WRITE_FILE_CLUSTERS];
 
 /*
  * ELF load buffer — reused across fat16_load() calls.
@@ -1299,7 +1299,7 @@ static int load_parent_dir_buf(const dir_ctx_t* parent, u8* buf, u32* out_size) 
         return 1;
     }
 
-    if (!dir_read_ctx(parent, buf, FAT16_MAX_FILE_BYTES, out_size)) {
+    if (!dir_read_ctx(parent, buf, FAT16_MAX_LOAD_FILE_BYTES, out_size)) {
         return 0;
     }
 
@@ -1395,7 +1395,7 @@ static int write_file_to_parent(const dir_ctx_t* parent,
         return 0;
     }
 
-    if (size > FAT16_MAX_FILE_BYTES) {
+    if (size > FAT16_MAX_WRITE_FILE_BYTES) {
         terminal_puts("fat16: file too large\n");
         return 0;
     }
@@ -1460,7 +1460,7 @@ static int write_file_to_parent(const dir_ctx_t* parent,
     u32 clusters_needed = 0;
     if (size > 0) {
         clusters_needed = (size + CLUSTER_BYTES - 1u) / CLUSTER_BYTES;
-        if (clusters_needed > FAT16_MAX_FILE_CLUSTERS) {
+        if (clusters_needed > FAT16_MAX_WRITE_FILE_CLUSTERS) {
             terminal_puts("fat16: file too large\n");
             return 0;
         }
@@ -1471,7 +1471,7 @@ static int write_file_to_parent(const dir_ctx_t* parent,
         u32 cluster = (u32)old_start_cluster;
         while (cluster >= FIRST_CLUSTER &&
                cluster < FAT16_EOC_MIN &&
-               old_clusters < FAT16_MAX_FILE_CLUSTERS) {
+               old_clusters < FAT16_MAX_WRITE_FILE_CLUSTERS) {
             s_old_write_chain[old_clusters++] = cluster;
             u16 next = fat[cluster];
             fat[cluster] = 0;
@@ -1572,7 +1572,7 @@ static int match_83(const u8 dir_name[11], const char* name) {
 
 int fat16_init(void) {
     if (!s_load_buf) {
-        s_load_buf = (u8*)kmalloc(FAT16_MAX_FILE_BYTES);
+        s_load_buf = (u8*)kmalloc(FAT16_MAX_LOAD_FILE_BYTES);
         if (!s_load_buf) {
             terminal_puts("fat16: cannot allocate load buffer\n");
             return 0;
@@ -1717,7 +1717,7 @@ const u8* fat16_load(const char* name, u32* out_size) {
     u16 start_cluster = read_u16_le(resolved.entry, DIR_FIRST_CLUSTER);
     u32 file_size = read_u32_le(resolved.entry, DIR_FILE_SIZE);
 
-    if (file_size > FAT16_MAX_FILE_BYTES) {
+    if (file_size > FAT16_MAX_LOAD_FILE_BYTES) {
         terminal_puts("fat16: file too large\n");
         return 0;
     }
@@ -1765,6 +1765,74 @@ const u8* fat16_load(const char* name, u32* out_size) {
 
     *out_size = file_size;
     return buf;
+}
+
+int fat16_read_path_to_sink(const char* name,
+                            const fat16_data_sink_t* sink,
+                            u32* out_size) {
+    if (!s_initialised) { terminal_puts("fat16: not initialised\n"); return 0; }
+    if (!sink || !sink->write || !out_size) return 0;
+
+    resolved_path_t resolved;
+    if (!resolve_path(name, &resolved) || !resolved.has_entry) {
+        terminal_puts("fat16: not found: ");
+        terminal_puts(name ? name : "");
+        terminal_putc('\n');
+        return 0;
+    }
+
+    if (entry_is_dir(resolved.entry)) {
+        terminal_puts("fat16: not a file: ");
+        terminal_puts(name ? name : "");
+        terminal_putc('\n');
+        return 0;
+    }
+
+    u16 start_cluster = read_u16_le(resolved.entry, DIR_FIRST_CLUSTER);
+    u32 file_size = read_u32_le(resolved.entry, DIR_FILE_SIZE);
+    *out_size = file_size;
+
+    if (file_size == 0) {
+        return 1;
+    }
+
+    u8 sector_buf[SECTOR_SIZE];
+    u32 bytes_remaining = file_size;
+    u32 file_offset = 0;
+    u32 cluster = (u32)start_cluster;
+
+    while (cluster >= FIRST_CLUSTER && cluster < FAT16_EOC_MIN) {
+        u32 rel_sector = cluster_to_rel_sector(cluster);
+        for (u32 s = 0; s < SECTORS_PER_CLUSTER; s++) {
+            if (!ata_read_sectors(abs_lba(rel_sector + s), 1, sector_buf)) {
+                terminal_puts("fat16: cluster read error\n");
+                return 0;
+            }
+
+            u32 to_copy = bytes_remaining < SECTOR_SIZE
+                        ? bytes_remaining : SECTOR_SIZE;
+            if (to_copy > 0 && !sink->write(sink->ctx, file_offset, sector_buf, to_copy)) {
+                terminal_puts("fat16: data sink write error\n");
+                return 0;
+            }
+
+            file_offset += to_copy;
+            bytes_remaining -= to_copy;
+            if (bytes_remaining == 0) {
+                break;
+            }
+        }
+
+        if (bytes_remaining == 0) break;
+        cluster = (u32)fat_entry(cluster);
+    }
+
+    if (bytes_remaining != 0) {
+        terminal_puts("fat16: chain ended early\n");
+        return 0;
+    }
+
+    return 1;
 }
 
 int fat16_write(const char* name, const u8* data, u32 size) {

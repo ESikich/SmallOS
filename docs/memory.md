@@ -99,6 +99,11 @@ consuming heap.
 
 The loader copies ELF segment data out of this buffer into PMM-backed frames before returning, so the buffer can be reused immediately after `elf_run_named()`.
 
+Fd-backed file reads and writes do not need to fit inside this static buffer.
+They use reclaimable PMM cache pages owned by the open descriptor and stream
+FAT16 sectors into or out of those pages. VFS accesses those PMM frames through
+the kernel page directory when a frame address overlaps a user process mapping.
+
 ---
 
 # Memory Safety Rules

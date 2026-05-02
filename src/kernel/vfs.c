@@ -1,19 +1,139 @@
 #include "vfs.h"
 #include "fat16.h"
 #include "klib.h"
+#include "paging.h"
 #include "pmm.h"
+#include "scheduler.h"
 #include "uapi_poll.h"
 #include "uapi_errno.h"
 
 #define VFS_FILE_CACHE_MAX_BYTES (PROCESS_FD_CACHE_PAGES * 4096u)
+#define VFS_COPY_CHUNK_BYTES 512u
 
 typedef struct {
     fd_entry_t* ent;
 } vfs_page_source_t;
 
-static u32* vfs_file_cache_pages(fd_entry_t* ent) {
-    if (!ent || !ent->cache_pages_frame) return 0;
-    return (u32*)ent->cache_pages_frame;
+typedef struct {
+    fd_entry_t* ent;
+} vfs_page_sink_t;
+
+static int vfs_page_sink_write(void* ctx, u32 offset, const u8* data, u32 len);
+
+/*
+ * PMM file-cache frames may live in the physical range that user process page
+ * directories remap for ELF code. Touch them through the kernel PD; keep user
+ * buffers copied before or after these windows while the process PD is active.
+ */
+static u32* vfs_current_user_pd(void) {
+    process_t* proc = sched_current();
+    if (!proc || !proc->pd) return 0;
+    return proc->pd;
+}
+
+static u32* vfs_enter_kernel_pd(void) {
+    u32* old_pd = vfs_current_user_pd();
+    if (old_pd) {
+        paging_switch(paging_get_kernel_pd());
+    }
+    return old_pd;
+}
+
+static void vfs_leave_kernel_pd(u32* old_pd) {
+    if (old_pd) {
+        paging_switch(old_pd);
+    }
+}
+
+static void vfs_zero_frame(u32 frame) {
+    u32* old_pd = vfs_enter_kernel_pd();
+    k_memset((void*)frame, 0, 4096u);
+    vfs_leave_kernel_pd(old_pd);
+}
+
+static int vfs_cache_page_frame(fd_entry_t* ent, u32 page_idx, u32* out_frame) {
+    if (!ent || !out_frame || !ent->cache_pages_frame ||
+        page_idx >= ent->cache_page_count) {
+        return 0;
+    }
+
+    u32* old_pd = vfs_enter_kernel_pd();
+    u32* cache_pages = (u32*)ent->cache_pages_frame;
+    *out_frame = cache_pages[page_idx];
+    vfs_leave_kernel_pd(old_pd);
+
+    return *out_frame ? 1 : 0;
+}
+
+static int vfs_set_cache_page_frame(fd_entry_t* ent, u32 page_idx, u32 frame) {
+    if (!ent || !ent->cache_pages_frame || page_idx >= PROCESS_FD_CACHE_PAGES) {
+        return 0;
+    }
+
+    u32* old_pd = vfs_enter_kernel_pd();
+    u32* cache_pages = (u32*)ent->cache_pages_frame;
+    cache_pages[page_idx] = frame;
+    vfs_leave_kernel_pd(old_pd);
+
+    return 1;
+}
+
+static int vfs_copy_from_cache(fd_entry_t* ent, u32 offset, u8* out, u32 len) {
+    u32 copied = 0;
+
+    if (!ent || !out) return 0;
+    if (offset > ent->size || len > ent->size - offset) return 0;
+
+    while (copied < len) {
+        u32 pos = offset + copied;
+        u32 page_idx = pos / 4096u;
+        u32 page_off = pos % 4096u;
+        u32 chunk = 4096u - page_off;
+        u32 frame = 0;
+
+        if (chunk > len - copied) chunk = len - copied;
+        if (!vfs_cache_page_frame(ent, page_idx, &frame)) {
+            return 0;
+        }
+
+        u32* old_pd = vfs_enter_kernel_pd();
+        k_memcpy(out + copied, (const void*)(frame + page_off), chunk);
+        vfs_leave_kernel_pd(old_pd);
+
+        copied += chunk;
+    }
+
+    return 1;
+}
+
+static int vfs_copy_to_cache(fd_entry_t* ent, u32 offset, const u8* data, u32 len) {
+    u32 copied = 0;
+    u32 capacity;
+
+    if (!ent || !data) return 0;
+    capacity = ent->cache_page_count * 4096u;
+    if (offset > capacity || len > capacity - offset) return 0;
+
+    while (copied < len) {
+        u32 pos = offset + copied;
+        u32 page_idx = pos / 4096u;
+        u32 page_off = pos % 4096u;
+        u32 chunk = 4096u - page_off;
+        u32 frame = 0;
+
+        if (chunk > len - copied) chunk = len - copied;
+        if (!vfs_cache_page_frame(ent, page_idx, &frame)) {
+            return 0;
+        }
+
+        u32* old_pd = vfs_enter_kernel_pd();
+        k_memcpy((void*)(frame + page_off), data + copied, chunk);
+        vfs_leave_kernel_pd(old_pd);
+
+        copied += chunk;
+    }
+
+    return 1;
 }
 
 static int vfs_file_ensure_page_table(fd_entry_t* ent) {
@@ -24,7 +144,7 @@ static int vfs_file_ensure_page_table(fd_entry_t* ent) {
     if (!frame) {
         return 0;
     }
-    k_memset((void*)frame, 0, 4096u);
+    vfs_zero_frame(frame);
     ent->cache_pages_frame = frame;
     return 1;
 }
@@ -32,11 +152,11 @@ static int vfs_file_ensure_page_table(fd_entry_t* ent) {
 static void vfs_file_cache_free(fd_entry_t* ent) {
     if (!ent) return;
 
-    u32* cache_pages = vfs_file_cache_pages(ent);
     for (unsigned int i = 0; i < ent->cache_page_count; i++) {
-        if (cache_pages && cache_pages[i]) {
-            pmm_free_frame(cache_pages[i]);
-            cache_pages[i] = 0;
+        u32 frame = 0;
+        if (vfs_cache_page_frame(ent, i, &frame)) {
+            pmm_free_frame(frame);
+            vfs_set_cache_page_frame(ent, i, 0);
         }
     }
     ent->cache_page_count = 0;
@@ -54,14 +174,17 @@ static int vfs_file_ensure_capacity(fd_entry_t* ent, unsigned int bytes) {
     if (needed_pages > 0 && !vfs_file_ensure_page_table(ent)) {
         return 0;
     }
-    u32* cache_pages = vfs_file_cache_pages(ent);
     while (ent->cache_page_count < needed_pages) {
         u32 frame = pmm_alloc_frame();
         if (!frame) {
             return 0;
         }
-        k_memset((void*)frame, 0, 4096u);
-        cache_pages[ent->cache_page_count++] = frame;
+        vfs_zero_frame(frame);
+        if (!vfs_set_cache_page_frame(ent, ent->cache_page_count, frame)) {
+            pmm_free_frame(frame);
+            return 0;
+        }
+        ent->cache_page_count++;
     }
     return 1;
 }
@@ -72,38 +195,32 @@ static int vfs_file_load_cache(fd_entry_t* ent) {
     if (ent->size == 0) return 1;
     if (ent->size > VFS_FILE_CACHE_MAX_BYTES) return 0;
 
-    u32 loaded_size = 0;
-    const u8* data = fat16_load(ent->name, &loaded_size);
-    if (!data) return 0;
-    if (loaded_size != ent->size) return 0;
-
-    u32 pages = (ent->size + 4095u) / 4096u;
-    if (!vfs_file_ensure_page_table(ent)) {
+    if (!vfs_file_ensure_capacity(ent, ent->size)) {
         return 0;
     }
-    u32* cache_pages = vfs_file_cache_pages(ent);
-    ent->cache_page_count = 0;
-    for (u32 i = 0; i < pages; i++) {
-        u32 frame = pmm_alloc_frame();
-        if (!frame) {
-            vfs_file_cache_free(ent);
-            return 0;
-        }
-        cache_pages[i] = frame;
-        ent->cache_page_count++;
-    }
 
-    for (u32 i = 0; i < pages; i++) {
-        u32 remaining = ent->size - (i * 4096u);
-        u32 chunk = remaining < 4096u ? remaining : 4096u;
-        u8* dst = (u8*)cache_pages[i];
-        const u8* src = data + (i * 4096u);
-        for (u32 j = 0; j < chunk; j++) {
-            dst[j] = src[j];
-        }
+    u32 loaded_size = 0;
+    vfs_page_sink_t page_sink = { ent };
+    fat16_data_sink_t sink = { &page_sink, vfs_page_sink_write };
+
+    if (!fat16_read_path_to_sink(ent->name, &sink, &loaded_size)) {
+        vfs_file_cache_free(ent);
+        return 0;
+    }
+    if (loaded_size != ent->size) {
+        vfs_file_cache_free(ent);
+        return 0;
     }
 
     return 1;
+}
+
+static int vfs_page_sink_write(void* ctx, u32 offset, const u8* data, u32 len) {
+    vfs_page_sink_t* sink = (vfs_page_sink_t*)ctx;
+    fd_entry_t* ent = sink ? sink->ent : 0;
+
+    if (!ent || !data) return 0;
+    return vfs_copy_to_cache(ent, offset, data, len);
 }
 
 static int vfs_file_read(fd_entry_t* ent, char* buf, unsigned int len) {
@@ -121,15 +238,16 @@ static int vfs_file_read(fd_entry_t* ent, char* buf, unsigned int len) {
     to_copy = (len < remaining) ? len : remaining;
     src_off = ent->offset;
 
-    for (u32 i = 0; i < to_copy; i++) {
-        u32 page_idx = (src_off + i) / 4096u;
-        u32 page_off = (src_off + i) % 4096u;
-        u32* cache_pages = vfs_file_cache_pages(ent);
-        if (!cache_pages || page_idx >= ent->cache_page_count || !cache_pages[page_idx]) {
+    for (u32 copied = 0; copied < to_copy;) {
+        u8 chunk[VFS_COPY_CHUNK_BYTES];
+        u32 n = to_copy - copied;
+
+        if (n > sizeof(chunk)) n = sizeof(chunk);
+        if (!vfs_copy_from_cache(ent, src_off + copied, chunk, n)) {
             return -EIO;
         }
-        const u8* src = (const u8*)cache_pages[page_idx];
-        buf[i] = (char)src[page_off];
+        k_memcpy(buf + copied, chunk, n);
+        copied += n;
     }
 
     ent->offset += to_copy;
@@ -146,15 +264,16 @@ static int vfs_file_write(fd_entry_t* ent, const char* buf, unsigned int len) {
     unsigned int end = ent->offset + len;
     if (end < ent->offset) return -EFBIG;
     if (!vfs_file_ensure_capacity(ent, end)) return -EFBIG;
-    u32* cache_pages = vfs_file_cache_pages(ent);
-    if (!cache_pages) return -EFBIG;
+    for (unsigned int copied = 0; copied < len;) {
+        u8 chunk[VFS_COPY_CHUNK_BYTES];
+        unsigned int n = len - copied;
 
-    for (unsigned int i = 0; i < len; i++) {
-        unsigned int pos = ent->offset + i;
-        unsigned int page_idx = pos / 4096u;
-        unsigned int page_off = pos % 4096u;
-        u8* dst = (u8*)cache_pages[page_idx];
-        dst[page_off] = (u8)buf[i];
+        if (n > sizeof(chunk)) n = sizeof(chunk);
+        k_memcpy(chunk, buf + copied, n);
+        if (!vfs_copy_to_cache(ent, ent->offset + copied, chunk, n)) {
+            return -EIO;
+        }
+        copied += n;
     }
 
     ent->offset = end;
@@ -172,17 +291,7 @@ static int vfs_page_source_read(void* ctx, u32 offset, u8* out, u32 len) {
     if (!ent || !out) return 0;
     if (offset > ent->size || len > ent->size - offset) return 0;
 
-    for (u32 i = 0; i < len; i++) {
-        u32 pos = offset + i;
-        u32 page_idx = pos / 4096u;
-        u32 page_off = pos % 4096u;
-        u32* cache_pages = vfs_file_cache_pages(ent);
-        if (!cache_pages || page_idx >= ent->cache_page_count || !cache_pages[page_idx]) {
-            return 0;
-        }
-        out[i] = ((u8*)cache_pages[page_idx])[page_off];
-    }
-    return 1;
+    return vfs_copy_from_cache(ent, offset, out, len);
 }
 
 static int vfs_file_seek(fd_entry_t* ent, int offset, int whence) {

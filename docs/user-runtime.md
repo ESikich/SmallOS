@@ -118,6 +118,10 @@ The user-visible fd API is preserved while FAT writes are still cache-backed
 internally. Flushes stream sectors from those cache pages into FAT16 rather
 than requiring one contiguous kernel writeback buffer.
 
+Current fd-backed regular files can grow to 4 MB. The older whole-file
+`fat16_load()` helper still has a 1 MB static-buffer limit, so new runtime file
+IO should prefer descriptors when it needs seek, append, or larger readback.
+
 ---
 
 # POSIX-Like Wrappers

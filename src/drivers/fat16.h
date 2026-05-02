@@ -21,17 +21,24 @@ typedef unsigned char  u8;
  *   Sectors 68–99     Root directory (512 entries × 32 bytes)
  *   Sectors 100+      Data region  (cluster 2 = sectors 100–103, etc.)
  *
- * Maximum file size accepted by the whole-file read and write helpers.
+ * Maximum file sizes accepted by the FAT helpers.
  */
 
-#define FAT16_MAX_FILE_BYTES  (1024u * 1024u)
+#define FAT16_MAX_LOAD_FILE_BYTES   (1024u * 1024u)
+#define FAT16_MAX_WRITE_FILE_BYTES  (4u * 1024u * 1024u)
 
 typedef int (*fat16_read_source_fn)(void* ctx, u32 offset, u8* out, u32 len);
+typedef int (*fat16_write_sink_fn)(void* ctx, u32 offset, const u8* data, u32 len);
 
 typedef struct {
     void* ctx;
     fat16_read_source_fn read;
 } fat16_data_source_t;
+
+typedef struct {
+    void* ctx;
+    fat16_write_sink_fn write;
+} fat16_data_sink_t;
 
 /*
  * fat16_init()
@@ -92,6 +99,19 @@ int fat16_stat(const char* name, u32* out_size);
  * fat16_load() calls.
  */
 const u8* fat16_load(const char* name, u32* out_size);
+
+/*
+ * fat16_read_path_to_sink(name, sink, out_size)
+ *
+ * Find a file by path and stream its contents into the supplied sink
+ * callback.  This avoids the 1 MB whole-file load buffer used by
+ * fat16_load().
+ *
+ * Returns 1 on success, 0 on failure.
+ */
+int fat16_read_path_to_sink(const char* name,
+                            const fat16_data_sink_t* sink,
+                            u32* out_size);
 
 /*
  * fat16_write(name, data, size)

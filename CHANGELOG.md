@@ -4,6 +4,12 @@
 
 ### Changed
 
+* **Filesystem write/readback scaling** (`src/drivers/fat16.*`, `src/kernel/vfs.c`, `src/kernel/process.h`, `src/user/fileprobe.c`, `docs/`)
+  * Split FAT16's whole-file load limit from fd-backed write/read limits: `fat16_load()` keeps its 1 MB static buffer, while fd-backed FAT16 handles can now cache and flush files up to 4 MB.
+  * Added a FAT16 sink read path so VFS can stream cluster data into PMM-backed cache pages instead of requiring one contiguous load buffer.
+  * VFS now copies PMM cache frames through the kernel page directory when running under a user process page directory, avoiding corruption when cache frames overlap the user ELF virtual window.
+  * `fileprobe` now writes and reads back a 2 MB file through normal descriptor IO.
+
 * **Errno-aware syscall/runtime errors** (`src/kernel/uapi_errno.h`, `src/kernel/syscall.c`, `src/kernel/process.c`, `src/kernel/vfs.c`, `src/user/user_posix.c`, `src/user/user_stdio.c`, `src/user/errnoprobe.c`, `docs/`)
   * Added shared UAPI errno constants and moved kernel failures toward raw negative errno returns without changing the syscall calling convention.
   * POSIX-style user wrappers now translate negative syscall returns to `-1` plus `errno`, while low-level `sys_*` helpers still expose raw kernel values.

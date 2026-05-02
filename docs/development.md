@@ -198,6 +198,11 @@ pmm_alloc_frame          0x200000 – 0x7FFFFF   reclaimable on process exit
 `fat16_init()` (`s_load_buf[1 MB]`). Do not allocate a fresh load buffer per
 call; each `runelf` call would permanently consume heap.
 
+Fd-backed file IO uses PMM cache pages instead. Those pages can sit in the same
+physical range that a user process maps privately for its ELF image, so VFS
+must copy cache data through the kernel page directory rather than directly
+dereferencing PMM frame addresses while a user page directory is active.
+
 **Verify after changes with `meminfo`:**
 
 ```text

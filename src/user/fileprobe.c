@@ -193,7 +193,7 @@ void _start(int argc, char** argv) {
 
     {
         enum {
-            LARGE_SIZE = 384u * 1024u,
+            LARGE_SIZE = 2u * 1024u * 1024u,
             LARGE_CHUNK = 4096u
         };
         unsigned char* chunk = (unsigned char*)malloc(LARGE_CHUNK);
