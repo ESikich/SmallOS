@@ -23,3 +23,6 @@ Thumbs.db
 *.zip
 *.txt
 *.patch
+
+# Local/vendor experiments
+third_party/ftp_server/
