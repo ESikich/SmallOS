@@ -27,6 +27,12 @@
 
 #define SYSCALL_ABI_VERSION 1
 
+#define SYS_OPEN_MODE_READ   0x01u
+#define SYS_OPEN_MODE_WRITE  0x02u
+#define SYS_OPEN_MODE_CREATE 0x04u
+#define SYS_OPEN_MODE_TRUNC  0x08u
+#define SYS_OPEN_MODE_APPEND 0x10u
+
 enum {
     SYS_WRITE     = 1,
     SYS_EXIT      = 2,
@@ -70,7 +76,8 @@ enum {
     SYS_RMDIR      = 32,
     SYS_DIRLIST    = 33,
     SYS_SETSOCKOPT = 34,
-    SYS_GETSOCKNAME = 35
+    SYS_GETSOCKNAME = 35,
+    SYS_OPEN_MODE   = 36   /* mode-aware open; ebx=path ecx=SYS_OPEN_MODE_* */
 };
 
 #endif

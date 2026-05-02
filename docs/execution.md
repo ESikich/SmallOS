@@ -254,7 +254,8 @@ The old explicit parent-tracking statics are gone. The current design relies on 
 
 The file, console, and socket syscalls used by shell tools, TinyCC, and the
 FTP/TCP smoke apps now share the process-owned handle table in `process.c`.
-Each handle has ops for `read`, `write`, `seek`, `poll`, `flush`, and `close`.
+Each handle has readable/writable/dirty state plus ops for `read`, `write`,
+`seek`, `poll`, `flush`, and `close`.
 FAT16-backed file behavior and path operations sit behind `vfs.c`, so
 `syscall.c` stays focused on validation and dispatch instead of handle
 lifetime or resource-specific behavior.

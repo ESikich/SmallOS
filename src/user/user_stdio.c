@@ -17,11 +17,35 @@ static int mode_allows_write(const char* mode) {
     return mode && (strchr(mode, 'w') || strchr(mode, 'a') || strchr(mode, '+'));
 }
 
-static int fd_from_mode(const char* mode, const char* path) {
-    if (mode_allows_write(mode)) {
-        return sys_open_write(path);
+static int mode_to_open_mode(const char* mode, uint32_t* out) {
+    uint32_t flags;
+
+    if (!mode || !out) return 0;
+
+    if (mode[0] == 'r') {
+        flags = SYS_OPEN_MODE_READ;
+    } else if (mode[0] == 'w') {
+        flags = SYS_OPEN_MODE_WRITE | SYS_OPEN_MODE_CREATE | SYS_OPEN_MODE_TRUNC;
+    } else if (mode[0] == 'a') {
+        flags = SYS_OPEN_MODE_WRITE | SYS_OPEN_MODE_CREATE | SYS_OPEN_MODE_APPEND;
+    } else {
+        return 0;
     }
-    return sys_open(path);
+
+    if (strchr(mode, '+')) {
+        flags |= SYS_OPEN_MODE_READ | SYS_OPEN_MODE_WRITE;
+    }
+
+    *out = flags;
+    return 1;
+}
+
+static int fd_from_mode(const char* mode, const char* path) {
+    uint32_t flags = 0;
+    if (!mode_to_open_mode(mode, &flags)) {
+        return -1;
+    }
+    return sys_open_mode(path, flags);
 }
 
 static FILE* file_from_fd(int fd, const char* mode) {

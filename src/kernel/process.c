@@ -91,12 +91,14 @@ static void process_init_standard_fds(process_t* proc) {
     proc->fds[0].valid = 1;
     proc->fds[0].kind = PROCESS_HANDLE_KIND_CONSOLE;
     proc->fds[0].ops = &s_console_handle_ops;
+    proc->fds[0].readable = 1;
     proc->fds[0].writable = 0;
 
     for (int fd = 1; fd <= 2; fd++) {
         proc->fds[fd].valid = 1;
         proc->fds[fd].kind = PROCESS_HANDLE_KIND_CONSOLE;
         proc->fds[fd].ops = &s_console_handle_ops;
+        proc->fds[fd].readable = 0;
         proc->fds[fd].writable = 1;
     }
 }
@@ -108,7 +110,11 @@ fd_entry_t* process_fd_get(process_t* proc, int fd) {
     return &proc->fds[fd];
 }
 
-int process_fd_open_file(process_t* proc, const char* name, u32 size, int writable) {
+int process_fd_open_file_mode(process_t* proc,
+                              const char* name,
+                              u32 size,
+                              int readable,
+                              int writable) {
     if (!proc || !name) return -1;
 
     for (int fd = PROCESS_FD_FIRST; fd < PROCESS_FD_MAX; fd++) {
@@ -116,12 +122,16 @@ int process_fd_open_file(process_t* proc, const char* name, u32 size, int writab
             fd_entry_t* ent = &proc->fds[fd];
             k_memset(ent, 0, sizeof(*ent));
             ent->valid = 1;
-            vfs_file_init(ent, name, size, writable);
+            vfs_file_init(ent, name, size, readable, writable);
             return fd;
         }
     }
 
     return -1;
+}
+
+int process_fd_open_file(process_t* proc, const char* name, u32 size, int writable) {
+    return process_fd_open_file_mode(proc, name, size, writable ? 0 : 1, writable);
 }
 
 int process_fd_open_socket(process_t* proc, const char* name) {
@@ -136,6 +146,7 @@ int process_fd_open_socket(process_t* proc, const char* name) {
             ent->ops = &s_socket_handle_ops;
             ent->socket_state = PROCESS_SOCKET_STATE_OPEN;
             ent->socket_port = 0;
+            ent->readable = 1;
             ent->writable = 0;
             if (name) {
                 k_memcpy(ent->name, name, (k_size_t)k_strlen(name) + 1u);

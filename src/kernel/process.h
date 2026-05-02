@@ -60,7 +60,9 @@ struct fd_entry {
     int  valid;                            /* 1 if this slot is open */
     int  kind;                             /* PROCESS_HANDLE_KIND_* */
     const process_handle_ops_t* ops;       /* resource-specific lifetime hooks */
+    int  readable;                         /* 1 if reads are permitted */
     int  writable;                         /* 1 if writes should buffer */
+    int  dirty;                            /* 1 if buffered file writes need flush */
     u32  socket_state;                     /* PROCESS_SOCKET_STATE_* */
     u32  socket_port;                      /* listener or peer port */
     char name[PROCESS_FD_NAME_MAX];        /* filename as passed to SYS_OPEN */
@@ -109,6 +111,11 @@ int        process_fd_open_file(process_t* proc,
                                 const char* name,
                                 u32 size,
                                 int writable);
+int        process_fd_open_file_mode(process_t* proc,
+                                     const char* name,
+                                     u32 size,
+                                     int readable,
+                                     int writable);
 int        process_fd_open_socket(process_t* proc, const char* name);
 void       process_fd_close(fd_entry_t* ent);
 int        process_fd_read(fd_entry_t* ent, char* buf, unsigned int len);

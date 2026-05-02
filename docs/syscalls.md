@@ -132,7 +132,35 @@ The user-space allocator in `src/user/user_alloc.c` is layered on top of this sy
 int sys_open_write(const char* name);
 ```
 
-Opens a FAT16 file for buffered write/truncate and returns a writable file-backed handle. This is the handle-oriented companion to `SYS_WRITEFILE_PATH`.
+Legacy shorthand for `SYS_OPEN_MODE_WRITE | SYS_OPEN_MODE_CREATE |
+SYS_OPEN_MODE_TRUNC`. Opens a FAT16 file for buffered write/truncate and
+returns a writable file-backed handle. New runtime code should prefer
+`SYS_OPEN_MODE` so read/write/append/truncate intent is explicit.
+
+---
+
+### SYS_OPEN_MODE (36)
+
+```c
+int sys_open_mode(const char* name, uint32_t mode);
+```
+
+Mode-aware FAT16 open. `mode` is a bitmask of:
+
+```c
+SYS_OPEN_MODE_READ
+SYS_OPEN_MODE_WRITE
+SYS_OPEN_MODE_CREATE
+SYS_OPEN_MODE_TRUNC
+SYS_OPEN_MODE_APPEND
+```
+
+This is the preferred descriptor-open primitive for POSIX `open()` and stdio
+`fopen()` because it can represent read-only, write-truncate, read/write,
+create, and append opens without forcing every write-capable path to truncate.
+Writable file handles use PMM-backed cache pages and flush dirty data on
+`close()`. Existing content is loaded into that cache before partial writes or
+append writes so unwritten bytes are preserved.
 
 ---
 
@@ -319,7 +347,11 @@ Loads and asynchronously spawns a named ELF program through the kernel VFS layer
 int sys_open(const char* name);
 ```
 
-Opens a file from the FAT16 root directory by name (case-insensitive 8.3 matching). Allocates the lowest free slot in the calling process's handle table (fd ≥ 3) and records the filename, file size, and an initial read offset of 0. fds 0/1/2 are pre-opened console handles.
+Legacy shorthand for `SYS_OPEN_MODE_READ`. Opens a file from the FAT16 root
+directory by name (case-insensitive 8.3 matching). Allocates the lowest free
+slot in the calling process's handle table (fd ≥ 3) and records the filename,
+file size, and an initial read offset of 0. fds 0/1/2 are pre-opened console
+handles.
 
 Returns the fd (≥ 3) on success, or `-1` if the file is not found, the handle table is full (`PROCESS_FD_MAX = 8`), or the name pointer fails user-space validation.
 
@@ -451,7 +483,7 @@ u_stat(...)        query path metadata
 * `SYS_YIELD` and the timer path use the same stub layout, but the real scheduler resume ESP is `esp - 8`, not raw `esp`
 * EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`
 * The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.
-* fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`); user-opened files and sockets start at fd 3. The handle table (`fd_entry_t fds[PROCESS_FD_MAX]`) lives inside `process_t`. Every handle carries an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`. `process.c` owns fd lifetime and dispatch, while `vfs.c` owns FAT16-backed file behavior; the syscall dispatcher should not grow resource-specific state machines.
+* fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`); user-opened files and sockets start at fd 3. The handle table (`fd_entry_t fds[PROCESS_FD_MAX]`) lives inside `process_t`. Every handle carries readable/writable/dirty state plus an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`. `process.c` owns fd lifetime and dispatch, while `vfs.c` owns FAT16-backed file behavior; the syscall dispatcher should not grow resource-specific state machines.
 * `SYS_WRITEFILE` is the simplest root-only persistence path for user tools that want to emit a generated artifact without managing an fd-based write stream.
 * `SYS_WRITEFILE_PATH` is the preferred path-aware persistence primitive for compilers and build tools, especially when writing into nested directories.
 

@@ -14,6 +14,8 @@ CASES = [
             "delete: PASS",
             "seek overwrite: PASS",
             "truncate reopen: PASS",
+            "open append: PASS",
+            "open rdwr: PASS",
             "fileprobe PASS",
         ],
     )

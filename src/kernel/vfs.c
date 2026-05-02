@@ -77,7 +77,7 @@ static int vfs_file_read(fd_entry_t* ent, char* buf, unsigned int len) {
     unsigned int to_copy;
     unsigned int src_off;
 
-    if (!ent || !ent->valid || ent->writable) return -1;
+    if (!ent || !ent->valid || !ent->readable) return -1;
     if (len == 0) return 0;
     if (ent->offset >= ent->size) return 0;
 
@@ -101,6 +101,9 @@ static int vfs_file_read(fd_entry_t* ent, char* buf, unsigned int len) {
 static int vfs_file_write(fd_entry_t* ent, const char* buf, unsigned int len) {
     if (!ent || !ent->valid || !ent->writable) return -1;
     if (len == 0) return 0;
+    if (ent->size > 0 && ent->cache_page_count == 0) {
+        if (!vfs_file_load_cache(ent)) return -1;
+    }
 
     unsigned int end = ent->offset + len;
     if (end < ent->offset) return -1;
@@ -118,6 +121,7 @@ static int vfs_file_write(fd_entry_t* ent, const char* buf, unsigned int len) {
     if (ent->offset > ent->size) {
         ent->size = ent->offset;
     }
+    ent->dirty = 1;
     return (int)len;
 }
 
@@ -147,7 +151,7 @@ static short vfs_file_poll(fd_entry_t* ent, short events) {
     short revents = 0;
 
     if (!ent || !ent->valid) return POLLERR;
-    if ((events & POLLIN) && !ent->writable) {
+    if ((events & POLLIN) && ent->readable) {
         revents |= POLLIN;
     }
     if ((events & POLLOUT) && ent->writable) {
@@ -160,6 +164,9 @@ static int vfs_file_flush(fd_entry_t* ent) {
     if (!ent || !ent->valid || !ent->writable) {
         return 0;
     }
+    if (!ent->dirty) {
+        return 1;
+    }
     if (ent->size > VFS_FILE_CACHE_MAX_BYTES) {
         return 0;
     }
@@ -170,7 +177,11 @@ static int vfs_file_flush(fd_entry_t* ent) {
         s_write_flush_buf[i] = ((u8*)ent->cache_pages[page_idx])[page_off];
     }
 
-    return fat16_write_path(ent->name, s_write_flush_buf, ent->size);
+    if (!fat16_write_path(ent->name, s_write_flush_buf, ent->size)) {
+        return 0;
+    }
+    ent->dirty = 0;
+    return 1;
 }
 
 static void vfs_file_close(fd_entry_t* ent) {
@@ -192,12 +203,14 @@ const process_handle_ops_t* vfs_file_ops(void) {
     return &s_file_ops;
 }
 
-void vfs_file_init(fd_entry_t* ent, const char* path, u32 size, int writable) {
+void vfs_file_init(fd_entry_t* ent, const char* path, u32 size, int readable, int writable) {
     if (!ent || !path) return;
 
     ent->kind = PROCESS_HANDLE_KIND_FILE;
     ent->ops = &s_file_ops;
+    ent->readable = readable ? 1 : 0;
     ent->writable = writable ? 1 : 0;
+    ent->dirty = 0;
     ent->size = size;
     ent->offset = 0;
     ent->cache_page_count = 0;

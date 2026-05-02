@@ -4,6 +4,11 @@
 
 ### Changed
 
+* **Mode-aware file opens** (`src/kernel/syscall.c`, `src/kernel/process.*`, `src/kernel/vfs.*`, `src/user/user_stdio.c`, `src/user/user_posix.c`, `tests/elfs/fileprobe.py`, `docs/`)
+  * Added `SYS_OPEN_MODE` so POSIX `open()` and stdio `fopen()` can express read, write, create, truncate, append, and read/write intent directly.
+  * File descriptors now track readable, writable, and dirty state separately; append and read/write opens preserve existing bytes instead of forcing every writable open through truncate semantics.
+  * `fileprobe` now covers append and read/write descriptor behavior.
+
 * **Interactive QEMU and scheduler responsiveness** (`Makefile`, `src/kernel/scheduler.h`, `README.md`, `docs/build.md`)
   * The scheduler quantum is now 20 ms, reducing worst-case input echo delay when another runnable task is sharing the CPU.
   * `make run` now accepts `QEMU_DISPLAY=...`, with `make run-gtk` and `make run-sdl` shortcuts for avoiding curses latency on terminal bridges such as WSL/Windows Terminal.

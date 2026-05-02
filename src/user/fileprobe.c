@@ -1,4 +1,6 @@
 #include "user_lib.h"
+#include "fcntl.h"
+#include "unistd.h"
 
 static int starts_with(const unsigned char* buf, const unsigned char* ref, unsigned int len) {
     for (unsigned int i = 0; i < len; i++) {
@@ -12,6 +14,14 @@ static int bytes_equal(const unsigned char* a, const unsigned char* b, unsigned 
         if (a[i] != b[i]) return 0;
     }
     return 1;
+}
+
+static int read_exact_file(const char* path, unsigned char* buf, unsigned int len) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return -1;
+    int r = read(fd, buf, len);
+    close(fd);
+    return r;
 }
 
 void _start(int argc, char** argv) {
@@ -122,6 +132,47 @@ void _start(int argc, char** argv) {
     }
 
     (void)u_file_delete("seektest.tmp");
+
+    {
+        static const unsigned char ab[] = "AB";
+        static const unsigned char cd[] = "CD";
+        static const unsigned char z[] = "z";
+        static const unsigned char appended[] = "ABCD";
+        static const unsigned char patched[] = "AzCD";
+        unsigned char readback[4];
+        int fd = open("openmode.tmp", O_WRONLY | O_CREAT | O_TRUNC);
+
+        if (fd < 0
+            || write(fd, ab, sizeof(ab) - 1) != (int)(sizeof(ab) - 1)
+            || close(fd) < 0
+            || (fd = open("openmode.tmp", O_WRONLY | O_APPEND)) < 0
+            || write(fd, cd, sizeof(cd) - 1) != (int)(sizeof(cd) - 1)
+            || close(fd) < 0
+            || read_exact_file("openmode.tmp", readback, sizeof(readback)) != (int)sizeof(readback)
+            || !bytes_equal(readback, appended, sizeof(readback))) {
+            u_puts("open append: FAIL\n");
+            ok = 0;
+        } else {
+            u_puts("open append: PASS\n");
+        }
+
+        fd = open("openmode.tmp", O_RDWR);
+        if (fd < 0
+            || read(fd, readback, 2) != 2
+            || !bytes_equal(readback, ab, sizeof(ab) - 1)
+            || lseek(fd, 1, SEEK_SET) != 1
+            || write(fd, z, sizeof(z) - 1) != (int)(sizeof(z) - 1)
+            || close(fd) < 0
+            || read_exact_file("openmode.tmp", readback, sizeof(readback)) != (int)sizeof(readback)
+            || !bytes_equal(readback, patched, sizeof(readback))) {
+            u_puts("open rdwr: FAIL\n");
+            ok = 0;
+        } else {
+            u_puts("open rdwr: PASS\n");
+        }
+
+        (void)u_file_delete("openmode.tmp");
+    }
 
     if (ok) {
         u_puts("fileprobe PASS\n");

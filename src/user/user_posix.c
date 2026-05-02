@@ -5,21 +5,37 @@
 #include "poll.h"
 #include "time.h"
 #include "sys/time.h"
+#include "fcntl.h"
 
 int errno = 0;
 
-static int open_flags_to_mode(int flags) {
-    if ((flags & 0x3) == 0x1 || (flags & 0x3) == 0x2) {
-        return 1;
+static uint32_t open_flags_to_mode(int flags) {
+    uint32_t mode = 0;
+    int accmode = flags & 0x3;
+
+    if (accmode == O_WRONLY) {
+        mode |= SYS_OPEN_MODE_WRITE;
+    } else if (accmode == O_RDWR) {
+        mode |= SYS_OPEN_MODE_READ | SYS_OPEN_MODE_WRITE;
+    } else {
+        mode |= SYS_OPEN_MODE_READ;
     }
-    return 0;
+
+    if (flags & O_CREAT) {
+        mode |= SYS_OPEN_MODE_CREATE;
+    }
+    if (flags & O_TRUNC) {
+        mode |= SYS_OPEN_MODE_TRUNC;
+    }
+    if (flags & O_APPEND) {
+        mode |= SYS_OPEN_MODE_APPEND;
+    }
+
+    return mode;
 }
 
 int open(const char* path, int flags, ...) {
-    if (open_flags_to_mode(flags)) {
-        return sys_open_write(path);
-    }
-    return sys_open(path);
+    return sys_open_mode(path, open_flags_to_mode(flags));
 }
 
 int close(int fd) {

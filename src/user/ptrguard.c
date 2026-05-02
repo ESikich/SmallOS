@@ -76,6 +76,10 @@ void _start(int argc, char** argv) {
               -1,
               sys_open((const char*)0x1234));
 
+    check_int("sys_open_mode invalid name",
+              -1,
+              sys_open_mode((const char*)0x1234, SYS_OPEN_MODE_READ));
+
     check_int("sys_writefile invalid name",
               -1,
               sys_writefile((const char*)0x1234, "x", 1));

@@ -461,7 +461,63 @@ static int sys_open_write_impl(const char* name) {
     process_t* proc = (process_t*)sched_current();
     if (!proc) return -1;
 
-    return process_fd_open_file(proc, kname, 0, 1);
+    int fd = process_fd_open_file(proc, kname, 0, 1);
+    fd_entry_t* ent = process_fd_get(proc, fd);
+    if (ent) {
+        ent->dirty = 1;
+    }
+    return fd;
+}
+
+static int sys_open_mode_impl(const char* name, unsigned int mode) {
+    char kname[PROCESS_FD_NAME_MAX];
+    unsigned int supported = SYS_OPEN_MODE_READ | SYS_OPEN_MODE_WRITE |
+                             SYS_OPEN_MODE_CREATE | SYS_OPEN_MODE_TRUNC |
+                             SYS_OPEN_MODE_APPEND;
+    int readable = (mode & SYS_OPEN_MODE_READ) != 0;
+    int writable = (mode & SYS_OPEN_MODE_WRITE) != 0;
+    int create = (mode & SYS_OPEN_MODE_CREATE) != 0;
+    int trunc = (mode & SYS_OPEN_MODE_TRUNC) != 0;
+    int append = (mode & SYS_OPEN_MODE_APPEND) != 0;
+    u32 file_size = 0;
+    int is_dir = 0;
+    int exists;
+    int fd;
+
+    if ((mode & ~supported) != 0) return -1;
+    if (!readable && !writable) return -1;
+    if ((trunc || append || create) && !writable) return -1;
+    if (copy_user_cstr(kname, sizeof(kname), name) <= 1) return -1;
+
+    exists = vfs_stat(kname, &file_size, &is_dir);
+    if (exists && is_dir) return -1;
+    if (!exists && !create) return -1;
+    if (!exists) file_size = 0;
+    if (trunc) file_size = 0;
+
+    process_t* proc = (process_t*)sched_current();
+    if (!proc) return -1;
+
+    fd = process_fd_open_file_mode(proc, kname, file_size, readable, writable);
+    if (fd < 0) return -1;
+
+    fd_entry_t* ent = process_fd_get(proc, fd);
+    if (!ent) {
+        sys_close_impl(fd);
+        return -1;
+    }
+    if (writable && (trunc || !exists)) {
+        ent->dirty = 1;
+    }
+
+    if (append) {
+        if (process_fd_seek(ent, 0, 2) < 0) {
+            sys_close_impl(fd);
+            return -1;
+        }
+    }
+
+    return fd;
 }
 
 static int copy_user_sockaddr_in(struct sockaddr_in* dst,
@@ -940,6 +996,12 @@ void syscall_handler_main(syscall_regs_t* regs) {
         case SYS_OPEN_WRITE:
             regs->eax = (unsigned int)sys_open_write_impl(
                             (const char*)regs->ebx);
+            break;
+
+        case SYS_OPEN_MODE:
+            regs->eax = (unsigned int)sys_open_mode_impl(
+                            (const char*)regs->ebx,
+                            (unsigned int)regs->ecx);
             break;
 
         case SYS_CLOSE:

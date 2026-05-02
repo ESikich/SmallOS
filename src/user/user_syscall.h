@@ -144,6 +144,15 @@ static inline int sys_open_write(const char* name) {
 }
 
 /*
+ * sys_open_mode(name, mode)
+ *
+ * Mode-aware descriptor open.  mode is a SYS_OPEN_MODE_* bitmask.
+ */
+static inline int sys_open_mode(const char* name, uint32_t mode) {
+    return syscall2(SYS_OPEN_MODE, (uint32_t)name, mode);
+}
+
+/*
  * sys_close(fd)
  *
  * Close an open file descriptor.  Returns 0 on success, -1 on error.
