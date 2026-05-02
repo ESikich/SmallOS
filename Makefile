@@ -146,7 +146,7 @@ $(OBJ_DIR)/user/%.o: $(USER_DIR)/%.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
 $(OBJ_DIR)/ftp_server/%.o: $(FTP_SERVER_DIR)/%.c | dirs
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -Dexit=ftpd_session_exit -MF $(@:.o=.d) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
 $(TINYCC_SMALOS_OBJ): $(CURDIR)/third_party/tinycc/tcc.c $(TINYCC_CONFIG_STAMP) | dirs
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Os -ffunction-sections -fdata-sections -I$(TINYCC_DIR) -I$(CURDIR)/third_party/tinycc -DTCC_TARGET_I386 -DTCC_TARGET_SMALLOS -c $< -o $@

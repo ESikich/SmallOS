@@ -1,7 +1,6 @@
 #include "user_lib.h"
 #include "dirent.h"
 #include "poll.h"
-#include "setjmp.h"
 #include "unistd.h"
 #include "sys/socket.h"
 #include "arpa/inet.h"
@@ -10,14 +9,6 @@
 
 #define FTPD_PORT 2121u
 #define FTPD_PASV_PORT 30000u
-
-static jmp_buf s_session_exit_env;
-static int s_session_exit_code;
-
-void ftpd_session_exit(int code) {
-    s_session_exit_code = code;
-    longjmp(s_session_exit_env, 1);
-}
 
 static int start_listener(void) {
     int fd;
@@ -92,12 +83,7 @@ void _start(int argc, char** argv) {
             break;
         }
 
-        s_session_exit_code = 0;
-        if (setjmp(s_session_exit_env) == 0) {
-            ftp_session_run(client_fd, &config);
-        }
-
-        (void)s_session_exit_code;
+        (void)ftp_session_serve(client_fd, &config);
     }
 
     close(listen_fd);
