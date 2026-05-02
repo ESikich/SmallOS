@@ -107,6 +107,21 @@ user-network NAT so CI stays simple. `make run-tap` and
 instead. That is the right path when you want the guest on a bridged LAN
 or otherwise reachable beyond QEMU's built-in NAT layer.
 
+For interactive display/input, `make run` defaults to QEMU's curses backend:
+
+```bash
+make run
+```
+
+If curses feels laggy through WSL, Windows Terminal, or another terminal
+bridge, use a graphical QEMU backend instead:
+
+```bash
+make run-gtk
+make run-sdl
+make run QEMU_DISPLAY=gtk
+```
+
 On Windows, TAP networking requires an additional TAP driver. The QEMU
 documentation notes that the TAP-Win32 driver is not bundled with standard
 QEMU for Windows and must be installed separately. If you are not setting

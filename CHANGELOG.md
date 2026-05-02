@@ -4,6 +4,10 @@
 
 ### Changed
 
+* **Interactive QEMU and scheduler responsiveness** (`Makefile`, `src/kernel/scheduler.h`, `README.md`, `docs/build.md`)
+  * The scheduler quantum is now 20 ms, reducing worst-case input echo delay when another runnable task is sharing the CPU.
+  * `make run` now accepts `QEMU_DISPLAY=...`, with `make run-gtk` and `make run-sdl` shortcuts for avoiding curses latency on terminal bridges such as WSL/Windows Terminal.
+
 * **Shell input echo path** (`src/shell/shell.c`)
   * Ordinary character appends now echo directly instead of redrawing the full prompt line on every keypress.
   * The shell task now uses an explicit `sti; hlt` idle wait so keyboard interrupts can wake the prompt predictably.

@@ -40,7 +40,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Socket ABI via `int 0x80`: `SYS_SOCKET`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_CONNECT`, `SYS_SEND`, `SYS_RECV`, and `SYS_POLL`
 * `sys_exit()` is scheduler-owned: it switches to the kernel page directory, marks the current task `PROCESS_STATE_ZOMBIE`, and switches to the next runnable task
 * Shell now runs as an explicit kernel task scheduled by `scheduler.c`
-* **Preemptive round-robin scheduler** — PIT timer IRQ at `SMALLOS_TIMER_HZ`, with a named 100 ms scheduler quantum
+* **Preemptive round-robin scheduler** — PIT timer IRQ at `SMALLOS_TIMER_HZ`, with a named 20 ms scheduler quantum
 * **`SYS_YIELD`** — voluntary preemption; process surrenders its remaining quantum immediately
 **`SYS_EXEC`** — user process asynchronously spawns a named child ELF and returns `0` on success / `-1` on failure
 * **`SYS_WRITEFILE`** — user process creates or overwrites a root-directory FAT16 file in one shot
@@ -91,7 +91,13 @@ make clean && make
 **Interactive (VGA in terminal):**
 ```bash
 make run          # requires a terminal that supports curses
+make run-gtk      # use QEMU's GTK display backend
+make run-sdl      # use QEMU's SDL display backend
 ```
+
+`make run` defaults to `QEMU_DISPLAY=curses`. If typing feels sluggish through
+WSL, Windows Terminal, or another terminal bridge, try `make run-gtk` or
+`make run QEMU_DISPLAY=gtk` to bypass the curses display path.
 
 **Headless (background, serial log):**
 ```bash
@@ -337,7 +343,7 @@ mkimage   assembles the final bootable disk image
 
 ## Scheduler
 
-Round-robin, preemptive, timer-driven at `SMALLOS_TIMER_HZ` with a named 100 ms quantum.
+Round-robin, preemptive, timer-driven at `SMALLOS_TIMER_HZ` with a named 20 ms quantum.
 
 The scheduler uses a fixed-capacity table:
 

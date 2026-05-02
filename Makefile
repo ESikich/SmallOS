@@ -257,6 +257,7 @@ PYTHON3=python3
 QEMU_NET_MODE?=user
 QEMU_NET_IFACE?=tap0
 QEMU_NET_MAC?=52:54:00:12:34:56
+QEMU_DISPLAY?=curses
 QEMU_NETFLAGS_USER=-nic user,model=e1000,mac=$(QEMU_NET_MAC)
 QEMU_NETFLAGS_TAP=-netdev tap,id=net0,ifname=$(QEMU_NET_IFACE),script=no,downscript=no -device e1000,netdev=net0,mac=$(QEMU_NET_MAC)
 QEMU_NETFLAGS=$(if $(filter tap,$(QEMU_NET_MODE)),$(QEMU_NETFLAGS_TAP),$(QEMU_NETFLAGS_USER))
@@ -264,10 +265,16 @@ QEMUFLAGS=-drive format=raw,file=$(IMG_DIR)/os-image.bin -boot c -m 32 \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all dirs run run-tap run-headless run-headless-tap test smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify reset-disk tinycc-host tinycc-host-clean
+.PHONY: all dirs run run-gtk run-sdl run-tap run-headless run-headless-tap test smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify reset-disk tinycc-host tinycc-host-clean
 
 run: image-layout-check
-	$(QEMU) $(QEMUFLAGS) -display curses
+	$(QEMU) $(QEMUFLAGS) -display $(QEMU_DISPLAY)
+
+run-gtk:
+	$(MAKE) run QEMU_DISPLAY=gtk
+
+run-sdl:
+	$(MAKE) run QEMU_DISPLAY=sdl
 
 run-tap: image-layout-check
 	$(MAKE) run QEMU_NET_MODE=tap
