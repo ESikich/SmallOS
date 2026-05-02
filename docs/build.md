@@ -92,9 +92,10 @@ harness is exercising the full matrix.
 
 The guest suite also exercises the SmallOS-hosted TinyCC compiler
 (`tools/tcc.elf`) by compiling several sample C files inside the guest
-and immediately running the generated ELFs. Those generated binaries are
-stored under `apps/tests/`, while the shipped hello demo lives under
-`apps/demo/`.
+and immediately running the generated ELFs. `tools/tcc.elf` is driven by a
+SmallOS-side wrapper around libtcc so it can run cleanly in the freestanding
+guest runtime. Those generated binaries are stored under `apps/tests/`, while
+the shipped hello demo lives under `apps/demo/`.
 
 `make smoke` runs the dedicated reboot and halt smoke checks.  Use
 `make smoke-reboot` or `make smoke-halt` to exercise those shell
@@ -231,7 +232,13 @@ src/user/user_posix.c
 
 All use `user_lib.h` and `user_syscall.h`. No libc, no hosted runtime, and no dynamic linking.
 
-The guest compiler toolchain ships as `tools/tcc.elf`, built from the vendored TinyCC sources with a SmallOS-target wrapper. The shell selftests compile `samples/tccmath.c`, `samples/tccagg.c`, `samples/tcctree.c`, and `samples/tccmini.c` inside the guest with that compiler.
+The guest compiler toolchain ships as `tools/tcc.elf`, built from the vendored
+TinyCC sources with a SmallOS-target wrapper. The guest entry point is a
+SmallOS-side driver that calls libtcc directly instead of relying on TinyCC's
+hosted CLI `main()`, which keeps the compiler path stable in the freestanding
+guest runtime. The shell selftests compile `samples/tccmath.c`,
+`samples/tccagg.c`, `samples/tcctree.c`, and `samples/tccmini.c` inside the
+guest with that compiler.
 
 ## Compile
 
@@ -320,7 +327,8 @@ Shipped FAT16 programs:
 - `apps/tests/ptrguard` - exercise syscall pointer validation
 - `apps/tests/preempt_test` - prove timer-driven preemption
 - `apps/tests/fault` - fault probe (ud/gp/de/br/pf)
-- `tools/tcc.elf` - SmallOS-hosted TinyCC compiler binary
+- `tools/tcc.elf` - SmallOS-hosted TinyCC compiler binary driven by a
+  SmallOS-side libtcc wrapper
 - `samples/tccmath.c`, `samples/tccagg.c`, `samples/tcctree.c`, `samples/tccmini.c` - guest compiler test inputs used by the shell selftests
 
 ## Properties

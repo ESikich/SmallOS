@@ -74,8 +74,10 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 ```
 
 The seeded FAT16 image keeps shipped programs under `apps/demo/` and
-`apps/tests/`, with TinyCC under `tools/` and its sample sources at the
-image root for the shell demo that moves them into `samples/`.
+`apps/tests/`, with TinyCC under `tools/`. `tools/tcc.elf` is built from the
+vendored TinyCC sources but launched through a SmallOS-side wrapper so it can
+run cleanly inside the freestanding guest runtime. Its sample sources live at
+the image root for the shell demo that moves them into `samples/`.
 
 ---
 
@@ -225,7 +227,8 @@ Seeded FAT16 layout:
 - `apps/tests/ptrguard` - exercise syscall pointer validation
 - `apps/tests/preempt_test` - prove timer-driven preemption between runnable tasks
 - `apps/tests/fault` - fault probe (ud/gp/de/br/pf)
-- `tools/tcc.elf` in `tools/`
+- `tools/tcc.elf` in `tools/` - SmallOS-hosted TinyCC compiler binary driven
+  by a SmallOS-side wrapper
 - `samples/tccmath.c`, `samples/tccagg.c`, `samples/tcctree.c`, `samples/tccmini.c` at the image root for the guest compiler demo
 
 `help` renders the built-in shell command list from the command table and the shipped-program list from the program table, with the same short descriptions.

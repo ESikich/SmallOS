@@ -39,6 +39,8 @@ int sys_write(const char* buf, uint32_t len);
 ```
 
 Writes `len` bytes from `buf` to terminal. Returns bytes written or `-1`.
+The user-space stdio layer uses this path for `stdout` and `stderr`; open file
+descriptors use `SYS_WRITEFD` instead.
 
 ---
 
@@ -139,6 +141,8 @@ int sys_writefd(int fd, const char* buf, uint32_t len);
 ```
 
 Writes bytes to an open writable handle. Returns bytes written or `-1` on error.
+File descriptors `0`, `1`, and `2` are reserved by the process model, so this
+syscall is for user-opened handles starting at fd `3`.
 
 ---
 

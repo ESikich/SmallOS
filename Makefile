@@ -18,6 +18,7 @@ GEN_DIR=$(BUILD_DIR)/gen
 IMG_DIR=$(BUILD_DIR)/img
 TOOLS_DIR=$(BUILD_DIR)/tools
 TINYCC_DIR=$(BUILD_DIR)/tinycc-host
+TINYCC_CONFIG_STAMP=$(TINYCC_DIR)/.configured
 TINYCC_SMALOS_OBJ_DIR=$(OBJ_DIR)/tinycc-smalos
 TINYCC_SMALOS_OBJ=$(TINYCC_SMALOS_OBJ_DIR)/tcc.o
 TINYCC_SMALOS_BIN=$(BIN_DIR)/tcc-smalos.elf
@@ -138,7 +139,7 @@ $(OBJ_DIR)/user/%.o: $(USER_DIR)/%.c | dirs
 $(OBJ_DIR)/user/%.o: $(USER_DIR)/%.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
-$(TINYCC_SMALOS_OBJ): $(CURDIR)/third_party/tinycc/tcc.c $(TINYCC_DIR)/config.h | dirs tinycc-host
+$(TINYCC_SMALOS_OBJ): $(CURDIR)/third_party/tinycc/tcc.c $(TINYCC_CONFIG_STAMP) | dirs
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Os -ffunction-sections -fdata-sections -I$(TINYCC_DIR) -I$(CURDIR)/third_party/tinycc -DTCC_TARGET_I386 -DTCC_TARGET_SMALLOS -c $< -o $@
 
 $(TINYCC_SMALOS_BIN): $(TINYCC_SMALOS_OBJ) $(OBJ_DIR)/user/tcc_entry.o $(USER_RUNTIME_OBJS) | dirs
@@ -165,13 +166,16 @@ $(BIN_DIR)/fat16.seed.img: $(USER_ELFS) $(TOOLS_DIR)/mkfat16 $(FAT16_EXTRA_FILES
 	$(TOOLS_DIR)/mkfat16 $@ $(FAT16_ROOT_ENTRIES) $(FAT16_APP_ENTRIES) $(FAT16_EXTRA_ENTRIES)
 
 $(STATE_DIR)/fat16.img: $(BIN_DIR)/fat16.seed.img | dirs
-	@if [ ! -f $@ ]; then cp $< $@; fi
+	cp $< $@
+
+$(TINYCC_CONFIG_STAMP): tools/build_tinycc.sh | dirs
+	./tools/build_tinycc.sh $(CURDIR) $(TINYCC_DIR) $(CURDIR)/third_party/tinycc
+	touch $@
 
 reset-disk: $(BIN_DIR)/fat16.seed.img | dirs
 	cp $< $(STATE_DIR)/fat16.img
 
-tinycc-host: tools/build_tinycc.sh
-	./tools/build_tinycc.sh $(CURDIR) $(TINYCC_DIR) $(CURDIR)/third_party/tinycc
+tinycc-host: $(TINYCC_CONFIG_STAMP)
 
 tinycc-host-clean:
 	rm -rf $(TINYCC_DIR)

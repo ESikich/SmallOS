@@ -166,16 +166,28 @@ process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
 
         for (u32 p = 0; p < pages; p++) {
             u32 page_virt  = map_start + p * PAGE_SIZE;
-            u32 frame_phys = pmm_alloc_frame();
-            if (!frame_phys) {
-                terminal_puts("elf: out of frames\n");
-                process_destroy(proc);
-                return 0;
+            u32 pd_idx = page_virt >> 22;
+            u32 pt_idx = (page_virt >> 12) & 0x3FF;
+            u32* pt = 0;
+
+            if (proc->pd[pd_idx] & PAGE_PRESENT) {
+                pt = (u32*)(proc->pd[pd_idx] & ~0xFFFu);
             }
 
-            k_memset((void*)frame_phys, 0, PAGE_SIZE);
-            paging_map_page(proc->pd, page_virt, frame_phys,
-                            PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+            if (!pt || !(pt[pt_idx] & PAGE_PRESENT)) {
+                u32 frame_phys = pmm_alloc_frame();
+                if (!frame_phys) {
+                    terminal_puts("elf: out of frames\n");
+                    process_destroy(proc);
+                    return 0;
+                }
+
+                k_memset((void*)frame_phys, 0, PAGE_SIZE);
+                paging_map_page(proc->pd, page_virt, frame_phys,
+                                PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+            } else {
+                pt[pt_idx] |= PAGE_PRESENT | PAGE_WRITE | PAGE_USER;
+            }
         }
 
         {

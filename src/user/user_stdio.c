@@ -561,11 +561,19 @@ static int vprint_to_fd(int fd, const char* format, va_list ap) {
         va_copy(ap2, ap);
         vsnprintf(dyn, (size_t)n + 1u, format, ap2);
         va_end(ap2);
-        sys_writefd(fd, dyn, (uint32_t)n);
+        if (fd == 1 || fd == 2) {
+            sys_write(dyn, (uint32_t)n);
+        } else {
+            sys_writefd(fd, dyn, (uint32_t)n);
+        }
         free(dyn);
         return n;
     }
-    sys_writefd(fd, buf, (uint32_t)n);
+    if (fd == 1 || fd == 2) {
+        sys_write(buf, (uint32_t)n);
+    } else {
+        sys_writefd(fd, buf, (uint32_t)n);
+    }
     return n;
 }
 

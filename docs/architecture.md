@@ -615,7 +615,7 @@ ATA PIO driver — 28-bit LBA polling reads from primary IDE channel (0x1F0)
 FAT16 filesystem — ELF programs loaded from 16 MB FAT16 partition on disk
 run/runimg infrastructure removed — `runelf` is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
 interactive shell with meminfo / ataread / fsls / fsread / mkdir / rmdir / runelf commands
-guest TinyCC compiler path — `tools/tcc.elf` runs inside SmallOS and compiles guest C samples during `make test`
+guest TinyCC compiler path — `tools/tcc.elf` runs inside SmallOS through a SmallOS-side libtcc wrapper and compiles guest C samples during `make test`
 ```
 
 Foundation for:
