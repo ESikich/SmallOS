@@ -15,7 +15,6 @@ CASES = [
             "cd              change the shell working directory",
             "pwd             print the shell working directory",
             "ls              list a FAT16 directory",
-            "Programs:",
             "shelltest: help end",
         ],
     )

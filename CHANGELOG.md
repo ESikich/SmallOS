@@ -156,7 +156,7 @@
 * **Docs refresh** (`README.md`, `docs/syscalls.md`, `docs/build.md`, `docs/filesystem.md`, `src/shell/commands.c`)
   * User-facing docs now describe `SYS_WRITEFILE_PATH` alongside the legacy `SYS_WRITEFILE`
   * Filesystem docs now state that regular file writes can target nested paths
-  * Shell help text and program descriptions now mention the path-aware compiler write flow
+  * Shell command docs now mention the path-aware compiler write flow
 
 ## [Current] — Make-time selftest + loader fallback + dynamic help
 
@@ -190,8 +190,8 @@
 
 * **Dynamic `help` output** (`src/shell/commands.c`)
   * Built-in shell commands now render from the actual command table with short descriptions
-  * Shipped ELF programs now render from a program table with the same short descriptions
-  * The `help` text stays in sync when commands or programs change, instead of being hand-written prose
+  * `help` now stays focused on kernel shell commands instead of listing every shipped ELF program
+  * The `help` text stays in sync when commands change, instead of being hand-written prose
 
 * **ELF name fallback** (`src/exec/elf_loader.c`)
   * `runelf` / `SYS_EXEC` now accept bare program names and fall back to `name.elf` when needed
@@ -208,7 +208,7 @@
   * `#DF` has a visible `DF!` emergency marker before halting
 
 * **Help and docs refresh**
-  * README and build/development docs now describe the built-in command table and shipped program table
+  * README and build/development docs now describe the built-in command table
   * README and build docs now mention `make test` and the shell `selftest` command
   * Windows / PowerShell debug launch documented with GTK and QEMU logging flags
   * Boot/layout docs updated for the generated stage-2 stack guard and the `0x10000` loader2 placement
@@ -238,7 +238,7 @@
 ### Fixed
 
 * **Stale program lists in docs** — the README and build docs now include `fault.elf` and the rest of the shipped ELF catalog
-* **Shell help drift** — the help text now reflects the actual built-in command and ELF program tables instead of a hard-coded list
+* **Shell help drift** — the help text now reflects the actual built-in command table instead of a hard-coded list
 
 ---
 

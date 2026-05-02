@@ -251,7 +251,7 @@ Seeded FAT16 layout:
 - `tools/tcc.elf` in `tools/` - SmallOS-hosted TinyCC compiler binary
 - `samples/tccmath.c`, `samples/tccagg.c`, `samples/tcctree.c`, `samples/tccmini.c` at the image root for the guest compiler demo
 
-`help` renders the built-in shell command list from the command table and the shipped-program list from the program table, with the same short descriptions.
+`help` renders the shell command list from the command table with the same short descriptions.
 
 `pinggw` only proves the QEMU NAT gateway works. `pingpublic` routes the echo
 request through that gateway to a public IP, and `netcheck` prints each step so

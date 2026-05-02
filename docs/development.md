@@ -47,9 +47,8 @@ so resource behavior stays local to the owning module.
 Do not use `-fda` (floppy). LBA extended reads require hard disk mode.
 
 `help` is table-driven:
-- built-in shell commands are listed from the shell command table
-- shipped ELF programs are listed from the program table
-- both sections carry short descriptions, so keep the tables and the help output in sync when adding or removing entries
+- shell commands are listed from the shell command table
+- each command carries a short description, so keep the table and help output in sync when adding or removing entries
 
 ---
 

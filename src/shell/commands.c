@@ -14,7 +14,6 @@
 #include "klib.h"
 
 static void print_command_list(void);
-static void print_program_list(void);
 static void run_elf_command(command_t* cmd, const char* program);
 static int resolve_shell_path_arg(const char* input, char* out, unsigned int out_size);
 static int path_has_wildcards(const char* path);
@@ -26,9 +25,6 @@ static void cmd_help(command_t* cmd) {
     (void)cmd;
     terminal_puts("Commands:\n");
     print_command_list();
-
-    terminal_puts("\nPrograms:\n");
-    print_program_list();
 }
 
 static void cmd_clear(command_t* cmd) {
@@ -1012,7 +1008,7 @@ static void cmd_selftest(command_t* cmd) {
 }
 
 static command_entry_t commands[] = {
-    { "help",          "show commands and program list", cmd_help },
+    { "help",          "show shell commands",           cmd_help },
     { "clear",         "clear the screen",              cmd_clear },
     { "echo",          "print arguments via ELF",       cmd_echo },
     { "about",         "show the OS version via ELF",   cmd_about },
@@ -1061,49 +1057,6 @@ const char* commands_name_at(unsigned int index) {
     return commands[index].name;
 }
 
-typedef struct {
-    const char* name;
-    const char* help;
-} program_entry_t;
-
-static program_entry_t programs[] = {
-    { "echo",         "print arguments" },
-    { "about",        "show the OS version" },
-    { "uptime",       "show tick and second counts" },
-    { "halt",         "halt the machine" },
-    { "reboot",       "reboot the machine" },
-    { "netinfo",      "show PCI NIC status" },
-    { "netsend",      "queue a test Ethernet frame" },
-    { "netrecv",      "poll and dump one Ethernet frame" },
-    { "arpgw",        "resolve the QEMU gateway via ARP" },
-    { "ping",         "ping an IPv4 address" },
-    { "pinggw",       "ping the QEMU gateway" },
-    { "pingpublic",   "ping 1.1.1.1 to probe internet reachability" },
-    { "netcheck",     "check gateway and public connectivity" },
-    { "apps/demo/hello",       "print argc/argv and tick count" },
-    { "apps/tests/ticks",      "print the current tick count" },
-    { "apps/tests/args",       "print argc and argv" },
-    { "apps/tests/runelf_test","verify ELF loading, syscalls, and stack setup" },
-    { "apps/tests/readline",   "interactive SYS_READ demo" },
-    { "apps/tests/exec_test",  "exercise SYS_EXEC semantics" },
-    { "apps/tests/fileread",   "exercise SYS_OPEN / SYS_FREAD / SYS_CLOSE" },
-    { "apps/tests/compiler_demo", "exercise SYS_WRITEFILE / SYS_WRITEFILE_PATH and readback" },
-    { "apps/tests/heapprobe",  "exercise malloc/free/realloc/calloc" },
-    { "apps/tests/statprobe",  "exercise SYS_STAT and path probing" },
-    { "apps/tests/fileprobe",  "exercise small file wrapper helpers" },
-    { "apps/tests/cwdprobe",   "exercise process cwd and relative paths" },
-    { "apps/tests/stdioprobe", "exercise stdio stream state" },
-    { "apps/tests/dirprobe",   "exercise directory traversal runtime" },
-    { "apps/tests/errnoprobe", "exercise errno-aware runtime errors" },
-    { "apps/tests/sleep_test", "exercise SYS_SLEEP semantics" },
-    { "apps/tests/ptrguard",   "exercise syscall pointer validation" },
-    { "apps/tests/preempt_test","prove timer-driven preemption" },
-    { "apps/tests/crtprobe",   "verify user_crt0 main startup" },
-    { "apps/tests/fault",      "fault probe (ud/gp/de/br/pf)" },
-};
-
-#define PROGRAM_COUNT (sizeof(programs) / sizeof(programs[0]))
-
 static void print_command_list(void) {
     for (unsigned int i = 0; i < COMMAND_COUNT; i++) {
         terminal_puts("  ");
@@ -1120,26 +1073,6 @@ static void print_command_list(void) {
         }
 
         terminal_puts(commands[i].help);
-        terminal_putc('\n');
-    }
-}
-
-static void print_program_list(void) {
-    for (unsigned int i = 0; i < PROGRAM_COUNT; i++) {
-        terminal_puts("  ");
-        terminal_puts(programs[i].name);
-
-        unsigned int name_len = 0;
-        while (programs[i].name[name_len]) name_len++;
-        if (name_len < 16) {
-            for (unsigned int pad = name_len; pad < 16; pad++) {
-                terminal_putc(' ');
-            }
-        } else {
-            terminal_putc(' ');
-        }
-
-        terminal_puts(programs[i].help);
         terminal_putc('\n');
     }
 }
