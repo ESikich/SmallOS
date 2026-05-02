@@ -67,6 +67,9 @@ int sys_write(const char* buf, uint32_t len);
 
 Writes `len` bytes from `buf` to terminal. Returns bytes written or a negative
 errno value.
+Terminal control characters are interpreted by the shared terminal path:
+`\n` advances to the next line, `\r` returns to column 0, and `\b` erases the
+previous VGA cell when possible.
 This remains available as the low-level terminal write primitive used by
 `u_puts()` and early/simple user helpers. The normal POSIX/stdio path now
 writes `stdout` and `stderr` through fd-backed console handles via

@@ -357,7 +357,7 @@ Normal syscalls return through this saved interrupt frame. `SYS_EXIT` is the exc
 
 ## Terminal
 
-VGA text mode (`0xB8000`). Provides `terminal_putc`, `terminal_puts`, `terminal_put_uint`, `terminal_put_hex`, cursor control, scrolling.
+VGA text mode (`0xB8000`). Provides `terminal_putc`, `terminal_puts`, `terminal_put_uint`, `terminal_put_hex`, cursor control, scrolling. The VGA renderer treats `\n` as newline, `\r` as carriage return, and `\b` as destructive backspace; printable bytes are written directly into text memory.
 
 ## Shell
 

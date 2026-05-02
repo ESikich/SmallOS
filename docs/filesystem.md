@@ -185,7 +185,7 @@ The current FAT16 driver is intentionally narrow.
 ## Supported
 
 - read access to root-directory and nested-directory files
-- raw file display via `cat`
+- raw file display via `cat`; CRLF text relies on terminal `\r` handling instead of file-content normalization
 - shell working-directory navigation via `cd` / `pwd`
 - directory listing by path with `fat16_ls_path(path)` and `fsls [path]`
 - wildcard shell listing with `ls [pattern]`

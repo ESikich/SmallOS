@@ -47,6 +47,9 @@ void screen_putc(char c) {
     if (c == '\n') {
         col = 0;
         row++;
+    } else if (c == '\r') {
+        /* Keep CRLF text files from rendering the VGA control glyph for CR. */
+        col = 0;
     } else if (c == '\b') {
         if (col > 0) {
             col--;

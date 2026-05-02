@@ -69,6 +69,8 @@ If you see `implicit declaration of function` — you forgot a header.
 
 `terminal_put_uint` and `terminal_put_hex` are declared in `terminal.h` and defined in `terminal.c`. Do not add private copies in any other file.
 
+Terminal output is mirrored to both VGA and COM1 serial. Keep control-character handling in `screen_putc()` so shell commands, `cat`, and user syscalls share the same behavior; in particular, CRLF text files rely on `\r` resetting the VGA column instead of being drawn as a glyph.
+
 `src/kernel/klib.h` / `src/kernel/klib.c` are now the canonical home for shared freestanding string and memory helpers such as `k_memcpy`, `k_memset`, `k_strlen`, `k_strcmp`, `k_strncpy`, and `k_starts_with`. If a helper is generally useful across more than one file, it belongs in `klib` rather than as a file-local static copy.
 
 ---
