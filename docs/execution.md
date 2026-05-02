@@ -104,11 +104,9 @@ The shell task itself is created in `kernel_main()` with `process_create_kernel_
 
 # Supported Program Paths
 
-## 1. Built-in shell commands
+## 1. Shell commands and app commands
 
-Commands like `help`, `clear`, `meminfo`, `fsls [path]`, `ls [pattern]`, `fsread`, `cat`, `cd`, `pwd`, `mkdir`, `rmdir`, `rm`, `touch`, `cp`, and `mv` are normal kernel C functions dispatched by `commands_execute()`.
-
-Commands like `echo`, `about`, `uptime`, `halt`, and `reboot` are thin kernel wrappers that launch same-named ELFs and wait for them to finish. The command names stay in the shell, but the behavior now lives in user space.
+Commands like `help`, `clear`, `meminfo`, `cd`, `ataread`, `runelf`, `runelf_nowait`, and the low-level network diagnostics are normal kernel C functions dispatched by `commands_execute()`.
 
 They:
 
@@ -116,6 +114,10 @@ They:
 - run in the kernel address space
 - do not switch page directories
 - do not create a new `process_t`
+
+If a command name is not in the kernel command table, the shell looks for a matching app ELF. Bare names are resolved through `apps/bin/<name>.elf` first, then `<name>.elf` in the current filesystem namespace. Path-like command names are resolved relative to the shell cwd and may omit the `.elf` suffix. Commands like `echo`, `about`, `uptime`, `halt`, `reboot`, `pwd`, `cat`, `fsread`, `ls`, `fsls`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, and `mv` are shipped this way under `apps/bin/`.
+
+When the shell launches an app command, it copies the current shell cwd into the child process before waiting. That preserves shell-style relative path behavior even though the command itself is a normal ring-3 ELF.
 
 ## 2. ELF programs (`runelf`)
 

@@ -14,8 +14,12 @@
 #include "klib.h"
 
 static void print_command_list(void);
-static void run_elf_command(command_t* cmd, const char* program);
+static int run_app_command(command_t* cmd, const char* program);
+static int resolve_app_command_path(const char* name, char* out, unsigned int out_size);
 static int resolve_shell_path_arg(const char* input, char* out, unsigned int out_size);
+static int command_name_has_path_sep(const char* name);
+static int path_has_dot(const char* path);
+static int path_copy3(char* out, unsigned int out_size, const char* a, const char* b, const char* c);
 static int path_has_wildcards(const char* path);
 static int split_wildcard_path(const char* path, char* dir_out, unsigned int dir_out_size, const char** pattern_out);
 static void cmd_ls_path(const char* input);
@@ -32,10 +36,11 @@ static void cmd_clear(command_t* cmd) {
     terminal_clear();
 }
 
-static void run_elf_command(command_t* cmd, const char* program) {
+static int run_app_command(command_t* cmd, const char* program) {
     __asm__ __volatile__("cli");
     process_t* proc = elf_run_named(program, cmd->argc, cmd->argv);
     if (proc) {
+        k_strncpy(proc->cwd, shell_get_cwd(), sizeof(proc->cwd));
         process_claim_for_wait(proc);
     }
     __asm__ __volatile__("sti");
@@ -43,10 +48,118 @@ static void run_elf_command(command_t* cmd, const char* program) {
     if (!proc) {
         terminal_puts(program);
         terminal_puts(": failed\n");
-        return;
+        return 0;
     }
 
     process_wait(proc);
+    return 1;
+}
+
+static int command_name_has_path_sep(const char* name) {
+    if (!name) {
+        return 0;
+    }
+
+    for (const char* p = name; *p; p++) {
+        if (*p == '/' || *p == '\\') {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int path_has_dot(const char* path) {
+    if (!path) {
+        return 0;
+    }
+
+    for (const char* p = path; *p; p++) {
+        if (*p == '.') {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int path_copy3(char* out, unsigned int out_size, const char* a, const char* b, const char* c) {
+    unsigned int pos = 0;
+    const char* parts[3] = { a, b, c };
+
+    if (!out || out_size == 0u) {
+        return 0;
+    }
+
+    for (unsigned int part = 0; part < 3u; part++) {
+        const char* s = parts[part];
+        if (!s) {
+            continue;
+        }
+
+        while (*s) {
+            if (pos + 1u >= out_size) {
+                out[0] = '\0';
+                return 0;
+            }
+            out[pos++] = *s++;
+        }
+    }
+
+    out[pos] = '\0';
+    return 1;
+}
+
+static int executable_path_exists(const char* path) {
+    u32 size = 0;
+    int is_dir = 0;
+
+    return vfs_stat(path, &size, &is_dir) && !is_dir;
+}
+
+static int resolve_app_command_path(const char* name, char* out, unsigned int out_size) {
+    char candidate[SHELL_PATH_MAX];
+
+    if (!name || name[0] == '\0') {
+        return 0;
+    }
+
+    if (command_name_has_path_sep(name)) {
+        if (!shell_resolve_path(name, candidate, sizeof(candidate))) {
+            return 0;
+        }
+        if (executable_path_exists(candidate)) {
+            k_strncpy(out, candidate, out_size);
+            return 1;
+        }
+        if (!path_has_dot(candidate) &&
+            path_copy3(candidate, sizeof(candidate), candidate, ".elf", 0) &&
+            executable_path_exists(candidate)) {
+            k_strncpy(out, candidate, out_size);
+            return 1;
+        }
+        return 0;
+    }
+
+    if (path_copy3(candidate, sizeof(candidate), "apps/bin/", name, ".elf") &&
+        executable_path_exists(candidate)) {
+        k_strncpy(out, candidate, out_size);
+        return 1;
+    }
+
+    if (path_has_dot(name) && executable_path_exists(name)) {
+        k_strncpy(out, name, out_size);
+        return 1;
+    }
+
+    if (!path_has_dot(name) &&
+        path_copy3(candidate, sizeof(candidate), name, ".elf", 0) &&
+        executable_path_exists(candidate)) {
+        k_strncpy(out, candidate, out_size);
+        return 1;
+    }
+
+    return 0;
 }
 
 static int resolve_shell_path_arg(const char* input, char* out, unsigned int out_size) {
@@ -69,26 +182,6 @@ static void terminal_put_cwd(void) {
 
     terminal_putc('/');
     terminal_puts(cwd);
-}
-
-static void cmd_about(command_t* cmd) {
-    run_elf_command(cmd, "about");
-}
-
-static void cmd_halt(command_t* cmd) {
-    run_elf_command(cmd, "halt");
-}
-
-static void cmd_reboot(command_t* cmd) {
-    run_elf_command(cmd, "reboot");
-}
-
-static void cmd_uptime(command_t* cmd) {
-    run_elf_command(cmd, "uptime");
-}
-
-static void cmd_echo(command_t* cmd) {
-    run_elf_command(cmd, "echo");
 }
 
 static void cmd_pwd(command_t* cmd) {
@@ -670,6 +763,7 @@ static void cmd_runelf(command_t* cmd) {
     __asm__ __volatile__("cli");
     process_t* proc = elf_run_named(path, cmd->argc - 1, &cmd->argv[1]);
     if (proc) {
+        k_strncpy(proc->cwd, shell_get_cwd(), sizeof(proc->cwd));
         process_claim_for_wait(proc);
     }
 
@@ -694,7 +788,11 @@ static void cmd_runelf_nowait(command_t* cmd) {
         return;
     }
 
-    if (!elf_run_named(path, cmd->argc - 1, &cmd->argv[1])) {
+    process_t* proc = elf_run_named(path, cmd->argc - 1, &cmd->argv[1]);
+    if (proc) {
+        k_strncpy(proc->cwd, shell_get_cwd(), sizeof(proc->cwd));
+    }
+    if (!proc) {
         terminal_puts("runelf_nowait: failed\n");
     }
 }
@@ -714,6 +812,12 @@ static void shelltest_end(const char* name) {
 static void shelltest_call(const char* name, command_fn_t fn, command_t* cmd) {
     shelltest_begin(name);
     fn(cmd);
+    shelltest_end(name);
+}
+
+static void shelltest_exec(const char* name, command_t* cmd) {
+    shelltest_begin(name);
+    commands_execute(cmd);
     shelltest_end(name);
 }
 
@@ -801,9 +905,9 @@ static void cmd_shelltest(command_t* cmd) {
 
     shelltest_call("help", cmd_help, &help_cmd);
     shelltest_call("clear", cmd_clear, &clear_cmd);
-    shelltest_call("echo", cmd_echo, &echo_cmd);
-    shelltest_call("about", cmd_about, &about_cmd);
-    shelltest_call("uptime", cmd_uptime, &uptime_cmd);
+    shelltest_exec("echo", &echo_cmd);
+    shelltest_exec("about", &about_cmd);
+    shelltest_exec("uptime", &uptime_cmd);
     shelltest_call("meminfo", cmd_meminfo, &meminfo_cmd);
     shelltest_call("netinfo", cmd_netinfo, &netinfo_cmd);
     shelltest_call("netsend", cmd_netsend, &netsend_cmd);
@@ -814,31 +918,31 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("pingpublic", cmd_pingpublic, &pingpublic_cmd);
     shelltest_call("netcheck", cmd_netcheck, &netcheck_cmd);
     shelltest_call("ataread", cmd_ataread, &ataread_cmd);
-    shelltest_call("fsls", cmd_fsls, &fsls_root_cmd);
-    shelltest_call("fsls_path", cmd_fsls, &fsls_path_cmd);
-    shelltest_call("fsread", cmd_fsread, &fsread_cmd);
-    shelltest_call("fsread_path", cmd_fsread, &fsread_path_cmd);
-    shelltest_call("cat", cmd_cat, &cat_cmd);
-    shelltest_call("touch", cmd_touch, &touch_cmd);
-    shelltest_call("fsread_touch", cmd_fsread, &fsread_touch_cmd);
-    shelltest_call("mkdir", cmd_mkdir, &mkdir_cmd);
-    shelltest_call("fsls_newdir", cmd_fsls, &fsls_newdir_cmd);
-    shelltest_call("rmdir", cmd_rmdir, &rmdir_cmd);
-    shelltest_call("fsls_removed", cmd_fsls, &fsls_removed_cmd);
-    shelltest_call("mkdir_nested_parent", cmd_mkdir, &mkdir_nested_parent_cmd);
-    shelltest_call("mkdir_nested_child", cmd_mkdir, &mkdir_nested_child_cmd);
-    shelltest_call("fsls_nested", cmd_fsls, &fsls_nested_cmd);
-    shelltest_call("rmdir_nested_child", cmd_rmdir, &rmdir_nested_child_cmd);
-    shelltest_call("rmdir_nested_parent", cmd_rmdir, &rmdir_nested_parent_cmd);
-    shelltest_call("fsls_nested_removed", cmd_fsls, &fsls_nested_removed_cmd);
+    shelltest_exec("fsls", &fsls_root_cmd);
+    shelltest_exec("fsls_path", &fsls_path_cmd);
+    shelltest_exec("fsread", &fsread_cmd);
+    shelltest_exec("fsread_path", &fsread_path_cmd);
+    shelltest_exec("cat", &cat_cmd);
+    shelltest_exec("touch", &touch_cmd);
+    shelltest_exec("fsread_touch", &fsread_touch_cmd);
+    shelltest_exec("mkdir", &mkdir_cmd);
+    shelltest_exec("fsls_newdir", &fsls_newdir_cmd);
+    shelltest_exec("rmdir", &rmdir_cmd);
+    shelltest_exec("fsls_removed", &fsls_removed_cmd);
+    shelltest_exec("mkdir_nested_parent", &mkdir_nested_parent_cmd);
+    shelltest_exec("mkdir_nested_child", &mkdir_nested_child_cmd);
+    shelltest_exec("fsls_nested", &fsls_nested_cmd);
+    shelltest_exec("rmdir_nested_child", &rmdir_nested_child_cmd);
+    shelltest_exec("rmdir_nested_parent", &rmdir_nested_parent_cmd);
+    shelltest_exec("fsls_nested_removed", &fsls_nested_removed_cmd);
     shelltest_call("compiler_demo", cmd_runelf, &compiler_demo_cmd);
     shelltest_call("tinycc", cmd_runelf, &tinycc_cmd);
-    shelltest_call("mkdir_samples", cmd_mkdir, &mkdir_samples_cmd);
-    shelltest_call("mv_tccmath", cmd_mv, &mv_tccmath_cmd);
-    shelltest_call("mv_tccagg", cmd_mv, &mv_tccagg_cmd);
-    shelltest_call("mv_tcctree", cmd_mv, &mv_tcctree_cmd);
-    shelltest_call("mv_tccmini", cmd_mv, &mv_tccmini_cmd);
-    shelltest_call("fsls_samples", cmd_fsls, &fsls_samples_cmd);
+    shelltest_exec("mkdir_samples", &mkdir_samples_cmd);
+    shelltest_exec("mv_tccmath", &mv_tccmath_cmd);
+    shelltest_exec("mv_tccagg", &mv_tccagg_cmd);
+    shelltest_exec("mv_tcctree", &mv_tcctree_cmd);
+    shelltest_exec("mv_tccmini", &mv_tccmini_cmd);
+    shelltest_exec("fsls_samples", &fsls_samples_cmd);
     shelltest_call("tccmath_build", cmd_runelf, &tccmath_build_cmd);
     shelltest_call("tccmath_run", cmd_runelf, &tccmath_run_cmd);
     shelltest_call("tccagg_build", cmd_runelf, &tccagg_build_cmd);
@@ -847,32 +951,32 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("tcctree_run", cmd_runelf, &tcctree_run_cmd);
     shelltest_call("tccmini_build", cmd_runelf, &tccmini_build_cmd);
     shelltest_call("tccmini_run", cmd_runelf, &tccmini_run_cmd);
-    shelltest_call("cat", cmd_cat, &cat_cmd);
-    shelltest_call("touch", cmd_touch, &touch_cmd);
-    shelltest_call("fsread_touch", cmd_fsread, &fsread_touch_cmd);
+    shelltest_exec("cat", &cat_cmd);
+    shelltest_exec("touch", &touch_cmd);
+    shelltest_exec("fsread_touch", &fsread_touch_cmd);
     shelltest_call("cd", cmd_cd, &cd_demo_cmd);
-    shelltest_call("pwd", cmd_pwd, &pwd_demo_cmd);
-    shelltest_call("ls", cmd_ls, &ls_demo_cmd);
-    shelltest_call("fsread_rel", cmd_fsread, &fsread_rel_cmd);
-    shelltest_call("cat_rel", cmd_cat, &cat_rel_cmd);
-    shelltest_call("touch_rel", cmd_touch, &touch_rel_cmd);
-    shelltest_call("fsread_touch_rel", cmd_fsread, &fsread_touch_rel_cmd);
+    shelltest_exec("pwd", &pwd_demo_cmd);
+    shelltest_exec("ls", &ls_demo_cmd);
+    shelltest_exec("fsread_rel", &fsread_rel_cmd);
+    shelltest_exec("cat_rel", &cat_rel_cmd);
+    shelltest_exec("touch_rel", &touch_rel_cmd);
+    shelltest_exec("fsread_touch_rel", &fsread_touch_rel_cmd);
     shelltest_call("runelf_rel", cmd_runelf, &runelf_rel_cmd);
     shelltest_call("runelf", cmd_runelf, &runelf_cmd);
     shelltest_call("cd_root", cmd_cd, &cd_root_cmd);
-    shelltest_call("pwd_root", cmd_pwd, &pwd_root_cmd);
+    shelltest_exec("pwd_root", &pwd_root_cmd);
     shelltest_call("runelf_path", cmd_runelf, &runelf_path_cmd);
-    shelltest_call("ls_root", cmd_ls, &ls_root_cmd);
-    shelltest_call("ls_glob", cmd_ls, &ls_glob_cmd);
-    shelltest_call("cp", cmd_cp, &cp_cmd);
-    shelltest_call("fsread_copy", cmd_fsread, &fsread_copy_cmd);
-    shelltest_call("mv", cmd_mv, &mv_cmd);
-    shelltest_call("fsread_moved", cmd_fsread, &fsread_moved_cmd);
-    shelltest_call("cp_dir", cmd_cp, &cp_dir_cmd);
-    shelltest_call("fsread_dir_copy", cmd_fsread, &fsread_dir_copy_cmd);
-    shelltest_call("rm_dir", cmd_rm, &rm_dir_cmd);
-    shelltest_call("fsread_dir_removed", cmd_fsread, &fsread_dir_removed_cmd);
-    shelltest_call("mv_dir", cmd_mv, &mv_dir_cmd);
+    shelltest_exec("ls_root", &ls_root_cmd);
+    shelltest_exec("ls_glob", &ls_glob_cmd);
+    shelltest_exec("cp", &cp_cmd);
+    shelltest_exec("fsread_copy", &fsread_copy_cmd);
+    shelltest_exec("mv", &mv_cmd);
+    shelltest_exec("fsread_moved", &fsread_moved_cmd);
+    shelltest_exec("cp_dir", &cp_dir_cmd);
+    shelltest_exec("fsread_dir_copy", &fsread_dir_copy_cmd);
+    shelltest_exec("rm_dir", &rm_dir_cmd);
+    shelltest_exec("fsread_dir_removed", &fsread_dir_removed_cmd);
+    shelltest_exec("mv_dir", &mv_dir_cmd);
     shelltest_call("runelf_nowait", cmd_runelf_nowait, &runelf_nowait_cmd);
 
     terminal_puts("shelltest: PASS\n");
@@ -1010,11 +1114,6 @@ static void cmd_selftest(command_t* cmd) {
 static command_entry_t commands[] = {
     { "help",          "show shell commands",           cmd_help },
     { "clear",         "clear the screen",              cmd_clear },
-    { "echo",          "print arguments via ELF",       cmd_echo },
-    { "about",         "show the OS version via ELF",   cmd_about },
-    { "halt",          "halt the machine via ELF",      cmd_halt },
-    { "reboot",        "reboot the machine via ELF",    cmd_reboot },
-    { "uptime",        "show tick and second counts via ELF", cmd_uptime },
     { "meminfo",       "show heap and frame usage",     cmd_meminfo },
     { "netinfo",       "show PCI NIC status",          cmd_netinfo },
     { "netsend",       "queue a test Ethernet frame",  cmd_netsend },
@@ -1025,18 +1124,7 @@ static command_entry_t commands[] = {
     { "pingpublic",    "ping 1.1.1.1 to probe internet reachability", cmd_pingpublic },
     { "netcheck",      "check gateway and public connectivity", cmd_netcheck },
     { "cd",            "change the shell working directory", cmd_cd },
-    { "pwd",           "print the shell working directory", cmd_pwd },
-    { "ls",            "list a FAT16 directory",       cmd_ls },
     { "ataread",       "dump raw sector bytes",         cmd_ataread },
-    { "fsls",          "list FAT16 root directory",     cmd_fsls },
-    { "fsread",        "dump FAT16 file bytes",         cmd_fsread },
-    { "cat",           "print a FAT16 file",            cmd_cat },
-    { "mkdir",         "create a FAT16 directory",     cmd_mkdir },
-    { "rmdir",         "remove a FAT16 directory",     cmd_rmdir },
-    { "rm",            "remove a FAT16 file",          cmd_rm },
-    { "touch",         "create or truncate a FAT16 file", cmd_touch },
-    { "cp",            "copy a FAT16 file",            cmd_cp },
-    { "mv",            "move or rename a FAT16 entry", cmd_mv },
     { "runelf",        "run a FAT16 ELF and wait",      cmd_runelf },
     { "runelf_nowait", "run a FAT16 ELF and return",    cmd_runelf_nowait },
     { "selftest",      "run shipped ELF self-tests",    cmd_selftest },
@@ -1045,25 +1133,54 @@ static command_entry_t commands[] = {
 
 #define COMMAND_COUNT (sizeof(commands) / sizeof(commands[0]))
 
+static command_entry_t app_commands[] = {
+    { "echo",          "print arguments via ELF",       0 },
+    { "about",         "show the OS version via ELF",   0 },
+    { "halt",          "halt the machine via ELF",      0 },
+    { "reboot",        "reboot the machine via ELF",    0 },
+    { "uptime",        "show tick and second counts via ELF", 0 },
+    { "pwd",           "print the shell working directory", 0 },
+    { "ls",            "list a FAT16 directory",       0 },
+    { "fsls",          "list FAT16 root directory",     0 },
+    { "fsread",        "dump FAT16 file bytes",         0 },
+    { "cat",           "print a FAT16 file",            0 },
+    { "mkdir",         "create a FAT16 directory",     0 },
+    { "rmdir",         "remove a FAT16 directory",     0 },
+    { "rm",            "remove a FAT16 file",          0 },
+    { "touch",         "create or truncate a FAT16 file", 0 },
+    { "cp",            "copy a FAT16 file",            0 },
+    { "mv",            "move or rename a FAT16 entry", 0 },
+};
+
+#define APP_COMMAND_COUNT (sizeof(app_commands) / sizeof(app_commands[0]))
+
 unsigned int commands_count(void) {
-    return COMMAND_COUNT;
+    return COMMAND_COUNT + APP_COMMAND_COUNT;
 }
 
 const char* commands_name_at(unsigned int index) {
-    if (index >= COMMAND_COUNT) {
-        return 0;
+    if (index < COMMAND_COUNT) {
+        return commands[index].name;
     }
 
-    return commands[index].name;
+    index -= COMMAND_COUNT;
+    if (index < APP_COMMAND_COUNT) {
+        return app_commands[index].name;
+    }
+
+    return 0;
 }
 
 static void print_command_list(void) {
-    for (unsigned int i = 0; i < COMMAND_COUNT; i++) {
+    for (unsigned int i = 0; i < commands_count(); i++) {
+        const command_entry_t* entry = i < COMMAND_COUNT
+                                     ? &commands[i]
+                                     : &app_commands[i - COMMAND_COUNT];
         terminal_puts("  ");
-        terminal_puts(commands[i].name);
+        terminal_puts(entry->name);
 
         unsigned int name_len = 0;
-        while (commands[i].name[name_len]) name_len++;
+        while (entry->name[name_len]) name_len++;
         if (name_len < 16) {
             for (unsigned int pad = name_len; pad < 16; pad++) {
                 terminal_putc(' ');
@@ -1072,7 +1189,7 @@ static void print_command_list(void) {
             terminal_putc(' ');
         }
 
-        terminal_puts(commands[i].help);
+        terminal_puts(entry->help);
         terminal_putc('\n');
     }
 }
@@ -1085,6 +1202,12 @@ void commands_execute(command_t* cmd) {
             commands[i].fn(cmd);
             return;
         }
+    }
+
+    char app_path[SHELL_PATH_MAX];
+    if (resolve_app_command_path(cmd->argv[0], app_path, sizeof(app_path))) {
+        run_app_command(cmd, app_path);
+        return;
     }
 
     terminal_puts("Unknown command: ");

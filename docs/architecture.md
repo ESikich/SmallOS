@@ -380,7 +380,7 @@ keyboard IRQ → keyboard_handle_irq()
   ↓
   [Enter] → parse_command() → commands_execute()
   ↓
-  runelf / fsls / ls / fsread / cat / cd / pwd / mkdir / rmdir / rm / touch / cp / mv / ataread / meminfo / ... dispatch
+  kernel command dispatch or apps/bin/<name>.elf fallback
 ```
 
 The active consumer is managed by `keyboard_set_consumer()`:

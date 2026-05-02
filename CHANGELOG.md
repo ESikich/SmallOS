@@ -4,6 +4,13 @@
 
 ### Changed
 
+* **App-backed shell commands** (`Makefile`, `src/shell/commands.c`, `docs/`)
+  * Moved command-style user ELFs into `apps/bin/` in the FAT16 image.
+  * Added ELF implementations for `pwd`, `cat`, `fsread`, `ls`, `fsls`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, and `mv`, and removed those commands from the kernel dispatch table.
+  * Unknown bare commands now resolve through `apps/bin/<name>.elf` before falling back to root-level `<name>.elf`.
+  * `commands_execute()` copies the shell cwd into app processes so app-backed commands preserve relative path behavior after `cd`.
+  * `shelltest` now exercises app-backed commands through the normal command resolver so they stay honest userland apps.
+
 * **Foreground Ctrl+C termination** (`src/kernel/process.c`, `src/kernel/scheduler.c`, `src/kernel/idt.c`, `src/kernel/interrupts.asm`, `src/drivers/tcp.c`, `docs/`)
   * Ctrl+C is now treated as a terminal interrupt for the foreground process instead of ordinary input.
   * The foreground process exits with status `130`; `runelf` waits observe the zombie and restore the shell prompt, while a currently running foreground process is switched away directly from the IRQ1 frame.

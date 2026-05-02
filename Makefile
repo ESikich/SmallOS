@@ -84,13 +84,13 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/fat16.c \
 	$(DRIVERS_DIR)/serial.c
 
-USER_PROGS=echo about uptime halt reboot hello ticks args runelf_test readline exec_test fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe fault sleep_test ptrguard spinwkr preempt_test crtprobe tcpecho sockeof ftpd
+USER_PROGS=echo about uptime halt reboot pwd cat fsread ls fsls touch rm mkdir rmdir cp mv hello ticks args runelf_test readline exec_test fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe fault sleep_test ptrguard spinwkr preempt_test crtprobe tcpecho sockeof ftpd
 USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
 USER_RUNTIME_SRCS=$(USER_DIR)/user_alloc.c $(USER_DIR)/user_stdio.c $(USER_DIR)/user_posix.c $(USER_DIR)/user_time.c $(USER_DIR)/user_dirent.c $(USER_DIR)/user_crypt.c $(USER_DIR)/setjmp.asm
-FAT16_ROOT_ENTRIES=echo.elf=$(BIN_DIR)/echo.elf about.elf=$(BIN_DIR)/about.elf uptime.elf=$(BIN_DIR)/uptime.elf halt.elf=$(BIN_DIR)/halt.elf reboot.elf=$(BIN_DIR)/reboot.elf
+FAT16_BIN_ENTRIES=apps/bin/echo.elf=$(BIN_DIR)/echo.elf apps/bin/about.elf=$(BIN_DIR)/about.elf apps/bin/uptime.elf=$(BIN_DIR)/uptime.elf apps/bin/halt.elf=$(BIN_DIR)/halt.elf apps/bin/reboot.elf=$(BIN_DIR)/reboot.elf apps/bin/pwd.elf=$(BIN_DIR)/pwd.elf apps/bin/cat.elf=$(BIN_DIR)/cat.elf apps/bin/fsread.elf=$(BIN_DIR)/fsread.elf apps/bin/ls.elf=$(BIN_DIR)/ls.elf apps/bin/fsls.elf=$(BIN_DIR)/fsls.elf apps/bin/touch.elf=$(BIN_DIR)/touch.elf apps/bin/rm.elf=$(BIN_DIR)/rm.elf apps/bin/mkdir.elf=$(BIN_DIR)/mkdir.elf apps/bin/rmdir.elf=$(BIN_DIR)/rmdir.elf apps/bin/cp.elf=$(BIN_DIR)/cp.elf apps/bin/mv.elf=$(BIN_DIR)/mv.elf
 FAT16_DEMO_ENTRIES=apps/demo/hello.elf=$(BIN_DIR)/hello.elf
 FAT16_TEST_ENTRIES=apps/tests/ticks.elf=$(BIN_DIR)/ticks.elf apps/tests/args.elf=$(BIN_DIR)/args.elf apps/tests/runelf_test.elf=$(BIN_DIR)/runelf_test.elf apps/tests/readline.elf=$(BIN_DIR)/readline.elf apps/tests/exec_test.elf=$(BIN_DIR)/exec_test.elf apps/tests/fileread.elf=$(BIN_DIR)/fileread.elf apps/tests/compiler_demo.elf=$(BIN_DIR)/compiler_demo.elf apps/tests/heapprobe.elf=$(BIN_DIR)/heapprobe.elf apps/tests/statprobe.elf=$(BIN_DIR)/statprobe.elf apps/tests/fileprobe.elf=$(BIN_DIR)/fileprobe.elf apps/tests/cwdprobe.elf=$(BIN_DIR)/cwdprobe.elf apps/tests/stdioprobe.elf=$(BIN_DIR)/stdioprobe.elf apps/tests/dirprobe.elf=$(BIN_DIR)/dirprobe.elf apps/tests/errnoprobe.elf=$(BIN_DIR)/errnoprobe.elf apps/tests/fault.elf=$(BIN_DIR)/fault.elf apps/tests/sleep_test.elf=$(BIN_DIR)/sleep_test.elf apps/tests/ptrguard.elf=$(BIN_DIR)/ptrguard.elf apps/tests/spinwkr.elf=$(BIN_DIR)/spinwkr.elf apps/tests/preempt_test.elf=$(BIN_DIR)/preempt_test.elf apps/tests/crtprobe.elf=$(BIN_DIR)/crtprobe.elf
-FAT16_APP_ENTRIES=$(FAT16_DEMO_ENTRIES) $(FAT16_TEST_ENTRIES)
+FAT16_APP_ENTRIES=$(FAT16_BIN_ENTRIES) $(FAT16_DEMO_ENTRIES) $(FAT16_TEST_ENTRIES)
 FAT16_APP_ENTRIES+= apps/services/tcpecho.elf=$(BIN_DIR)/tcpecho.elf apps/services/sockeof.elf=$(BIN_DIR)/sockeof.elf apps/services/ftpd.elf=$(BIN_DIR)/ftpd.elf
 FAT16_EXTRA_ENTRIES=tools/tcc.elf=$(TINYCC_SMALOS_BIN) tccmath.c=$(CURDIR)/samples/tccmath.c tccagg.c=$(CURDIR)/samples/tccagg.c tcctree.c=$(CURDIR)/samples/tcctree.c tccmini.c=$(CURDIR)/samples/tccmini.c
 FAT16_EXTRA_FILES=$(foreach entry,$(FAT16_EXTRA_ENTRIES),$(word 2,$(subst =, ,$(entry))))
@@ -167,8 +167,8 @@ $(TOOLS_DIR)/mkimage: tools/mkimage.c | dirs
 
 # FAT16 seed image (generated from the current tree)
 #
-$(BIN_DIR)/fat16.seed.img: $(USER_ELFS) $(TOOLS_DIR)/mkfat16 $(FAT16_EXTRA_FILES) | dirs
-	$(TOOLS_DIR)/mkfat16 $@ $(FAT16_ROOT_ENTRIES) $(FAT16_APP_ENTRIES) $(FAT16_EXTRA_ENTRIES)
+$(BIN_DIR)/fat16.seed.img: $(USER_ELFS) $(TOOLS_DIR)/mkfat16 $(FAT16_EXTRA_FILES) Makefile | dirs
+	$(TOOLS_DIR)/mkfat16 $@ $(FAT16_APP_ENTRIES) $(FAT16_EXTRA_ENTRIES)
 
 $(STATE_DIR)/fat16.img: $(BIN_DIR)/fat16.seed.img | dirs
 	cp $< $@

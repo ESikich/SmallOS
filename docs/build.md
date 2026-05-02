@@ -344,10 +344,23 @@ build/tools/mkfat16 build/bin/fat16.img \
     build/bin/fault.elf
 ```
 
-`mkfat16` produces a raw FAT16 volume containing the shipped utilities in the
-root directory plus the `apps/demo/`, `apps/tests/`, and `tools/` subtrees.
+`mkfat16` produces a raw FAT16 volume containing the shipped apps under
+`apps/bin/`, `apps/demo/`, `apps/tests/`, `apps/services/`, and `tools/`.
 
 Shipped FAT16 programs:
+- `apps/bin/echo` - print command arguments
+- `apps/bin/about` - print the OS version
+- `apps/bin/uptime` - print tick and second counts
+- `apps/bin/halt` - halt the machine
+- `apps/bin/reboot` - reboot the machine
+- `apps/bin/pwd` - print the process cwd inherited from the shell
+- `apps/bin/cat` - print a FAT16 file
+- `apps/bin/fsread` - dump FAT16 file metadata and first bytes
+- `apps/bin/ls` / `apps/bin/fsls` - list FAT16 directories
+- `apps/bin/touch` - create or truncate a FAT16 file
+- `apps/bin/rm` - remove a FAT16 file
+- `apps/bin/mkdir` / `apps/bin/rmdir` - create or remove FAT16 directories
+- `apps/bin/cp` / `apps/bin/mv` - copy or move FAT16 entries
 - `apps/demo/hello` - print argc/argv and tick count
 - `apps/tests/ticks` - print the current tick count
 - `apps/tests/args` - print argc and argv
@@ -372,9 +385,11 @@ Shipped FAT16 programs:
 ## Properties
 
 * fixed-size volume defined by `tools/mkfat16.c`
-* root directory contains the small launcher utilities and shared compiler demo artifacts
+* root directory contains shared compiler demo artifacts
+* `apps/bin/` contains command-style app ELFs found by bare shell command lookup
 * `apps/demo/` contains the hello demo ELF
 * `apps/tests/` contains the remaining shipped test ELFs
+* `apps/services/` contains guest service ELFs
 * `tools/` contains the guest TinyCC binary
 * sample C sources live at the image root until the shell demo moves them into `samples/`
 * filenames are converted to uppercase 8.3 names

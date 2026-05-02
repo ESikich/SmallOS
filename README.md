@@ -231,7 +231,7 @@ shelltest           run built-in shell command tests
 ```
 
 Seeded FAT16 layout:
-- `echo`, `about`, `uptime`, `halt`, `reboot` in the image root
+- command-style apps live under `apps/bin/` (`echo`, `about`, `uptime`, `halt`, `reboot`, `pwd`, `cat`, `fsread`, `ls`, `fsls`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`)
 - `apps/demo/hello` - print argc/argv and tick count
 - `apps/tests/ticks` - print the current tick count
 - `apps/tests/args` - print argc and argv
