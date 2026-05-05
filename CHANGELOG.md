@@ -28,6 +28,7 @@
   * The foreground process exits with status `130`; `runelf` waits observe the zombie and restore the shell prompt, while a currently running foreground process is switched away directly from the IRQ1 frame.
   * Keyboard and socket waiter pointers are cleared on interrupt/destruction so blocked reads, accepts, polls, and receives cannot wake a freed process.
   * `irq1_stub` now passes its saved ESP to C so pending terminal interrupts can use the same safe scheduler exit path as `SYS_EXIT` and user faults.
+  * The QEMU selftest now injects `ctrl-c` into a CPU-bound foreground ELF and verifies the shell can accept input afterward.
 
 * **Streaming FAT16 fd writes** (`src/drivers/fat16.*`, `src/kernel/vfs.c`, `src/kernel/syscall.c`, `src/user/fileprobe.c`, `docs/`)
   * Added FAT16 read-at/write-at primitives for fd-backed file IO.

@@ -59,6 +59,8 @@ def send_text(sock, text):
             send_key(sock, "shift-minus")
         elif ch == ".":
             send_key(sock, "dot")
+        elif ch == "/":
+            send_key(sock, "slash")
         elif ch == "-":
             send_key(sock, "minus")
         elif "a" <= ch <= "z" or "0" <= ch <= "9":
@@ -190,6 +192,49 @@ def run_interactive_regressions(sock, log, start_offset, deadline):
     return False, log_offset
 
 
+def run_ctrl_c_regression(sock, log, start_offset, deadline):
+    buf = ""
+    log_offset = start_offset
+
+    tee_stdout("\n[ctrl-c-regression] ")
+    send_text(sock, "runelf apps/tests/spinwkr late ctrlc.txt 500")
+    send_key(sock, "ret")
+    time.sleep(0.5)
+    send_key(sock, "ctrl-c")
+
+    saw_interrupt = False
+    sent_probe = False
+    while time.time() < deadline:
+        chunk, log_offset = read_new(log, log_offset)
+        if chunk:
+            tee_stdout(chunk)
+            buf += chunk
+
+            if "^C" in buf and not saw_interrupt:
+                saw_interrupt = True
+
+            if saw_interrupt and not sent_probe:
+                send_text(sock, "pwd")
+                send_key(sock, "ret")
+                sent_probe = True
+
+            if saw_interrupt and "pwd: /" in buf:
+                print("[foreground_ctrl_c] PASS")
+                return True, log_offset
+
+            if "spinwkr late PASS" in buf:
+                print("[foreground_ctrl_c] FAIL")
+                return False, log_offset
+
+            if len(buf) > TRANSCRIPT_LIMIT:
+                buf = buf[-TRANSCRIPT_TRIM:]
+        else:
+            time.sleep(0.05)
+
+    print("[foreground_ctrl_c] FAIL")
+    return False, log_offset
+
+
 def shutdown_qemu(sock, pidfile, result_pass):
     try:
         monitor_send(sock, "quit")
@@ -259,6 +304,8 @@ def main():
         overall_pass = verify_cases(cases, transcript)
         interactive_pass, log_offset = run_interactive_regressions(sock, log, log_offset, deadline)
         overall_pass = overall_pass and interactive_pass
+        ctrl_c_pass, log_offset = run_ctrl_c_regression(sock, log, log_offset, deadline)
+        overall_pass = overall_pass and ctrl_c_pass
 
     return shutdown_qemu(sock, args.pidfile, overall_pass)
 
