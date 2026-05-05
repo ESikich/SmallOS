@@ -19,6 +19,7 @@ typedef char process_t_must_fit_in_one_frame[(sizeof(process_t) <= 4096u) ? 1 : 
 
 static process_t* s_foreground = 0;
 static volatile int s_terminal_interrupt_pending = 0;
+static volatile process_t* s_detach_requested = 0;
 
 #define PROCESS_TERMINATED_BY_CTRL_C 130
 
@@ -56,6 +57,18 @@ static void process_key_consumer(key_event_t ev) {
         } else {
             sched_kill(proc, 0);
         }
+        return;
+    }
+
+    if (ev.ctrl && ev.key == KEY_Z) {
+        process_t* proc = s_foreground;
+        if (!proc) return;
+
+        terminal_puts("^Z\n");
+        keyboard_buf_clear();
+        s_detach_requested = proc;
+        s_foreground = 0;
+        shell_register_consumer();
         return;
     }
 
@@ -512,6 +525,7 @@ process_t* process_get_current(void) {
 
 void process_set_foreground(process_t* proc) {
     s_foreground = proc;
+    s_detach_requested = 0;
     if (proc) {
         keyboard_buf_clear();           /* discard any input that arrived before
                                            the process was ready to read it,
@@ -547,13 +561,24 @@ void process_deliver_pending_terminal_interrupt(unsigned int esp) {
     sched_kill(proc, esp);
 }
 
-int process_wait(process_t* proc) {
+static int process_wait_impl(process_t* proc, int allow_detach, int* detached) {
     if (!proc) return -1;
 
+    if (detached) {
+        *detached = 0;
+    }
     process_set_foreground(proc);
     process_claim_for_wait(proc);
 
     while (proc->state != PROCESS_STATE_ZOMBIE) {
+        if (allow_detach && s_detach_requested == proc) {
+            s_detach_requested = 0;
+            process_set_foreground(0);
+            if (detached) {
+                *detached = 1;
+            }
+            return 0;
+        }
         __asm__ __volatile__("sti; hlt");
     }
 
@@ -561,6 +586,14 @@ int process_wait(process_t* proc) {
     int status = proc->exit_status;
     process_destroy(proc);
     return status;
+}
+
+int process_wait(process_t* proc) {
+    return process_wait_impl(proc, 0, 0);
+}
+
+int process_wait_detachable(process_t* proc, int* detached) {
+    return process_wait_impl(proc, 1, detached);
 }
 
 /* ------------------------------------------------------------------ */

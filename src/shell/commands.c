@@ -12,7 +12,10 @@
 #include "fat16.h"
 #include "vfs.h"
 #include "process.h"
+#include "scheduler.h"
 #include "klib.h"
+
+#define SHELL_JOB_MAX 8
 
 static void print_command_list(void);
 static int run_app_command(command_t* cmd, const char* program);
@@ -25,6 +28,129 @@ static int path_has_wildcards(const char* path);
 static int split_wildcard_path(const char* path, char* dir_out, unsigned int dir_out_size, const char** pattern_out);
 static void cmd_ls_path(const char* input);
 static void terminal_put_cwd(void);
+
+typedef struct {
+    int used;
+    unsigned int id;
+    process_t* proc;
+    char command[SHELL_PATH_MAX];
+} shell_job_t;
+
+static shell_job_t s_jobs[SHELL_JOB_MAX];
+static unsigned int s_next_job_id = 1;
+
+static const char* job_state_name(process_t* proc) {
+    if (!proc) return "missing";
+
+    switch (proc->state) {
+    case PROCESS_STATE_RUNNING:
+        return "running";
+    case PROCESS_STATE_WAITING:
+        return "waiting";
+    case PROCESS_STATE_SLEEPING:
+        return "sleeping";
+    case PROCESS_STATE_ZOMBIE:
+        return "done";
+    case PROCESS_STATE_EXITED:
+        return "exited";
+    case PROCESS_STATE_UNUSED:
+    default:
+        return "unknown";
+    }
+}
+
+static int parse_uint_arg(const char* s, unsigned int* out) {
+    unsigned int value = 0;
+
+    if (!s || !*s || !out) {
+        return 0;
+    }
+
+    while (*s) {
+        if (*s < '0' || *s > '9') {
+            return 0;
+        }
+        value = value * 10u + (unsigned int)(*s - '0');
+        s++;
+    }
+
+    *out = value;
+    return 1;
+}
+
+static shell_job_t* job_find(unsigned int id) {
+    for (unsigned int i = 0; i < SHELL_JOB_MAX; i++) {
+        if (s_jobs[i].used && s_jobs[i].id == id) {
+            return &s_jobs[i];
+        }
+    }
+    return 0;
+}
+
+static void job_clear(shell_job_t* job) {
+    if (!job) return;
+    job->used = 0;
+    job->id = 0;
+    job->proc = 0;
+    job->command[0] = '\0';
+}
+
+static shell_job_t* job_alloc(process_t* proc, const char* command) {
+    for (unsigned int i = 0; i < SHELL_JOB_MAX; i++) {
+        if (!s_jobs[i].used) {
+            s_jobs[i].used = 1;
+            s_jobs[i].id = s_next_job_id++;
+            s_jobs[i].proc = proc;
+            k_strncpy(s_jobs[i].command, command, sizeof(s_jobs[i].command));
+            return &s_jobs[i];
+        }
+    }
+    return 0;
+}
+
+static int launch_background_job(command_t* cmd, const char* usage_name) {
+    if (cmd->argc < 2) {
+        terminal_puts("Usage: ");
+        terminal_puts(usage_name);
+        terminal_puts(" <n>\n");
+        return 0;
+    }
+
+    char path[SHELL_PATH_MAX];
+    if (!resolve_shell_path_arg(cmd->argv[1], path, sizeof(path))) {
+        return 0;
+    }
+
+    __asm__ __volatile__("cli");
+    process_t* proc = elf_run_named(path, cmd->argc - 1, &cmd->argv[1]);
+    if (proc) {
+        k_strncpy(proc->cwd, shell_get_cwd(), sizeof(proc->cwd));
+        process_claim_for_wait(proc);
+    }
+    __asm__ __volatile__("sti");
+
+    if (!proc) {
+        terminal_puts(usage_name);
+        terminal_puts(": failed\n");
+        return 0;
+    }
+
+    shell_job_t* job = job_alloc(proc, path);
+    if (!job) {
+        terminal_puts(usage_name);
+        terminal_puts(": job table full\n");
+        sched_kill(proc, 0);
+        process_destroy(proc);
+        return 0;
+    }
+
+    terminal_puts("[");
+    terminal_put_uint(job->id);
+    terminal_puts("] ");
+    terminal_puts(path);
+    terminal_putc('\n');
+    return 1;
+}
 
 static void cmd_help(command_t* cmd) {
     (void)cmd;
@@ -784,6 +910,98 @@ static void cmd_runelf_nowait(command_t* cmd) {
     }
 }
 
+static void cmd_runelf_bg(command_t* cmd) {
+    (void)launch_background_job(cmd, cmd->argv[0]);
+}
+
+static void cmd_jobs(command_t* cmd) {
+    int any = 0;
+
+    (void)cmd;
+
+    for (unsigned int i = 0; i < SHELL_JOB_MAX; i++) {
+        if (!s_jobs[i].used) {
+            continue;
+        }
+
+        any = 1;
+        terminal_puts("[");
+        terminal_put_uint(s_jobs[i].id);
+        terminal_puts("] ");
+        terminal_puts(job_state_name(s_jobs[i].proc));
+        terminal_puts("  ");
+        terminal_puts(s_jobs[i].command);
+        terminal_putc('\n');
+    }
+
+    if (!any) {
+        terminal_puts("jobs: none\n");
+    }
+}
+
+static void cmd_fg(command_t* cmd) {
+    if (cmd->argc < 2) {
+        terminal_puts("usage: fg <jobid>\n");
+        return;
+    }
+
+    unsigned int id = 0;
+    if (!parse_uint_arg(cmd->argv[1], &id)) {
+        terminal_puts("fg: invalid job id\n");
+        return;
+    }
+
+    shell_job_t* job = job_find(id);
+    if (!job || !job->proc) {
+        terminal_puts("fg: no such job\n");
+        return;
+    }
+
+    terminal_puts("fg: ");
+    terminal_puts(job->command);
+    terminal_putc('\n');
+
+    int detached = 0;
+    int status = process_wait_detachable(job->proc, &detached);
+    if (detached) {
+        terminal_puts("fg: backgrounded ");
+        terminal_puts(job->command);
+        terminal_putc('\n');
+        return;
+    }
+
+    terminal_puts("fg: exited ");
+    terminal_put_uint((unsigned int)status);
+    terminal_putc('\n');
+    job_clear(job);
+}
+
+static void cmd_kill(command_t* cmd) {
+    if (cmd->argc < 2) {
+        terminal_puts("usage: kill <jobid>\n");
+        return;
+    }
+
+    unsigned int id = 0;
+    if (!parse_uint_arg(cmd->argv[1], &id)) {
+        terminal_puts("kill: invalid job id\n");
+        return;
+    }
+
+    shell_job_t* job = job_find(id);
+    if (!job || !job->proc) {
+        terminal_puts("kill: no such job\n");
+        return;
+    }
+
+    sched_kill(job->proc, 0);
+    process_destroy(job->proc);
+    terminal_puts("kill: ");
+    terminal_puts(job->command);
+    terminal_putc('\n');
+    job_clear(job);
+}
+
 static void shelltest_begin(const char* name) {
     terminal_puts("shelltest: ");
     terminal_puts(name);
@@ -1110,6 +1328,11 @@ static command_entry_t commands[] = {
     { "ataread",       "dump raw sector bytes",         cmd_ataread },
     { "runelf",        "run a FAT16 ELF and wait",      cmd_runelf },
     { "runelf_nowait", "run a FAT16 ELF and return",    cmd_runelf_nowait },
+    { "runelf_bg",     "run a reattachable background ELF", cmd_runelf_bg },
+    { "bg",            "run a reattachable background ELF", cmd_runelf_bg },
+    { "jobs",          "list reattachable background jobs", cmd_jobs },
+    { "fg",            "reattach and wait for a job",   cmd_fg },
+    { "kill",          "terminate a background job",    cmd_kill },
     { "selftest",      "run shipped ELF self-tests",    cmd_selftest },
     { "shelltest",     "run built-in shell command tests", cmd_shelltest },
 };

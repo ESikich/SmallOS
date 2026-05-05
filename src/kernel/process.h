@@ -156,6 +156,7 @@ void       process_deliver_pending_terminal_interrupt(unsigned int esp);
  * safe stack and return its exit status.
  */
 int        process_wait(process_t* proc);
+int        process_wait_detachable(process_t* proc, int* detached);
 
 /*
  * process_start_reaper()

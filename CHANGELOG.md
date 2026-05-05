@@ -4,6 +4,12 @@
 
 ### Changed
 
+* **Shell job control** (`src/shell/commands.c`, `README.md`, `docs/`)
+  * Added `bg` / `runelf_bg` for reattachable background ELF launches.
+  * Added `jobs`, `fg <jobid>`, and `kill <jobid>` so long-running services such as `apps/services/ftpd` can keep the shell usable and still be inspected, reattached, or stopped later.
+  * Added Ctrl+Z detach while a shell-owned job is foregrounded, returning it to the background without killing it.
+  * Left `runelf_nowait` as the existing fire-and-forget path whose unclaimed exits are handled by the reaper task.
+
 * **Project documentation** (`README.md`, `docs/`)
   * Refreshed the README, build, architecture, filesystem, execution, and syscall docs to match the current FAT16 seed/mutable image split, path-aware file layout, full syscall surface, and TCP service model.
   * Updated the shipped FAT16 program lists to include the current stdio, dirent, errno, preemption-helper, and CRT probes.

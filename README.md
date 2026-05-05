@@ -160,9 +160,11 @@ qemu-system-i386 \
   -daemonize -pidfile /tmp/smallos.pid
 ```
 
-Then run `runelf_nowait apps/services/tcpecho`,
-`runelf_nowait apps/services/sockeof`, or `runelf_nowait apps/services/ftpd`
-in the guest shell and connect from the host to the forwarded service port.
+Then run `bg apps/services/tcpecho`, `bg apps/services/sockeof`, or
+`bg apps/services/ftpd` in the guest shell and connect from the host to the
+forwarded service port. Use `jobs` to list reattachable background programs,
+`fg <jobid>` to wait on one in the foreground, Ctrl+Z to return a foregrounded
+job to the background, and `kill <jobid>` to stop a long-running service.
 FTP passive transfers also need the passive data port, currently guest
 `30000`, forwarded to the host.
 
@@ -226,6 +228,12 @@ cp <src> <dst>     copy a FAT16 file
 mv <src> <dst>     move or rename a FAT16 entry
 runelf <name> [args] load and run an ELF from the FAT16 partition
 runelf_nowait <name> [args] enqueue an ELF and return immediately
+bg <name> [args]       run a reattachable background ELF
+runelf_bg <name> [args] run a reattachable background ELF
+jobs                 list reattachable background jobs
+fg <jobid>           reattach and wait for a background job
+Ctrl+Z               return a foregrounded job to the background
+kill <jobid>         terminate a background job
 selftest            run all shipped ELF self-tests
 shelltest           run built-in shell command tests
 ```
@@ -383,7 +391,7 @@ The `pd == 0` rule still exists, but it is **not a table-layout concept**. It is
 - `pd == 0` → use kernel page directory
 - otherwise → use process page directory
 
-Today, the scheduler owns both kernel tasks such as the shell and ELF user programs. `runelf` waits for the child with `process_wait()`, while `runelf_nowait` returns immediately after enqueue.
+Today, the scheduler owns both kernel tasks such as the shell and ELF user programs. `runelf` waits for the child with `process_wait()`, `runelf_nowait` returns immediately after enqueue, and `bg` / `runelf_bg` keep a claimed process handle in the shell job table for later `jobs`, `fg`, or `kill`.
 
 ---
 
@@ -430,3 +438,4 @@ The scheduler-owned execution model is complete:
 * **ELF user programs** are scheduler-owned tasks entered through `elf_user_task_bootstrap()`
 * `runelf` blocks by waiting for `PROCESS_STATE_ZOMBIE` via `process_wait()`
 * `runelf_nowait` and `SYS_EXEC` children are automatically reaped by the **reaper kernel task** (`sched_reap_zombies()`) within one scheduler quantum of exit — no frame leaks
+* `bg` / `runelf_bg` children are claimed by the shell job table so they can be reattached with `fg <jobid>` or stopped with `kill <jobid>`

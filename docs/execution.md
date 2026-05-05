@@ -40,6 +40,15 @@ shell command
   → elf_run_image()
   → sched_enqueue(proc)
   → return immediately
+
+shell command
+  → bg <name> [args] / runelf_bg <name> [args]
+  → vfs_load_file()
+  → elf_run_image()
+  → sched_enqueue(proc)
+  → process_claim_for_wait(proc)
+  → store proc in the shell job table
+  → return immediately
 ```
 
 Important current-state facts:
@@ -51,7 +60,7 @@ Important current-state facts:
 - consumer ownership transfers via `process_set_foreground()` — shell consumer at boot, process consumer while a user process holds the foreground, shell consumer restored on exit
 - **ELF user programs** are loaded into their own page directory and do execute in ring 3
 - ELF launch and exit are now scheduler-owned: `elf_run_image()` seeds a bootstrap context, enqueues the task, and returns `process_t*`
-- the scheduler supports kernel tasks, ELF tasks, voluntary yielding, timer-driven sleeping, and timer-driven switching; `runelf` blocks with `process_wait()`, while `runelf_nowait` returns immediately
+- the scheduler supports kernel tasks, ELF tasks, voluntary yielding, timer-driven sleeping, and timer-driven switching; `runelf` blocks with `process_wait()`, `runelf_nowait` returns immediately, and `bg` / `runelf_bg` return while keeping a reattachable shell job
 - user ELFs now have a small freestanding runtime layer with a heap allocator,
   fd-backed console streams, streaming VFS-backed file handles,
   `stat`/`rename`/`unlink`, `lseek`, and socket wrappers, which is enough for
@@ -151,11 +160,13 @@ The test suite uses this flow to compile several focused C samples inside the gu
 TinyCC's runtime expectations are part of the user runtime contract in
 [`docs/user-runtime.md`](user-runtime.md).
 
-For the TCP service path, the shell can also launch a long-lived service
-with `runelf_nowait apps/services/tcpecho`, `runelf_nowait
-apps/services/sockeof`, or `runelf_nowait apps/services/ftpd`. Those programs
-bind and listen inside the guest, and you connect to them from the host
-through QEMU `hostfwd`.
+For the TCP service path, the shell can launch a long-lived reattachable service
+with `bg apps/services/tcpecho`, `bg apps/services/sockeof`, or
+`bg apps/services/ftpd`. Those programs bind and listen inside the guest, and
+you connect to them from the host through QEMU `hostfwd`. Use `jobs` to inspect
+them, `fg <jobid>` to wait on one in the foreground, Ctrl+Z to return a
+foregrounded job to the background, and `kill <jobid>` to stop one without
+rebooting the guest.
 
 The FTP service uses passive data connections, so a host-driven smoke needs
 both the control port and passive data port forwarded:
@@ -233,7 +244,7 @@ The code currently does all of the following:
 
 `tss_set_kernel_stack()` is **not** called during `elf_run_image()` setup. That update happens later inside `elf_user_task_bootstrap()`, at the moment the scheduler first enters the new process. This avoids clobbering the currently running task's ESP0 during async launch paths such as `runelf_nowait` and `SYS_EXEC`.
 
-For `runelf`, the shell then calls `process_wait(proc)` and blocks until the child reaches `PROCESS_STATE_ZOMBIE`. For `runelf_nowait`, the shell returns immediately after enqueue.
+For `runelf`, the shell then calls `process_wait(proc)` and blocks until the child reaches `PROCESS_STATE_ZOMBIE`. For `runelf_nowait`, the shell returns immediately after enqueue. For `bg` / `runelf_bg`, the shell calls `process_claim_for_wait(proc)` and stores the `process_t*` in a small shell job table so the reaper leaves the process around for `fg` or `kill`.
 
 The shell-side launch helpers keep their larger scripted command tables out of
 the shell task's 4 KB kernel stack. That matters for `shelltest`, `selftest`,
@@ -260,6 +271,8 @@ The old explicit parent-tracking statics are gone. The current design relies on 
 
 - `runelf` launches the child, then waits with `process_wait(proc)`
 - `runelf_nowait` launches the child and returns immediately; the reaper task frees it after exit
+- `bg` / `runelf_bg` launch the child and return immediately, but shell job control owns cleanup until `fg <jobid>` reaps it or `kill <jobid>` stops it
+- Ctrl+Z while a shell-owned job is foregrounded detaches it back to the shell job table without killing it
 - `SYS_EXEC` children are also unclaimed — freed by the reaper
 - interactive foreground input is tracked with `process_set_foreground(proc)` / `process_get_foreground()`
 - Ctrl+C is delivered to the current foreground process as a terminal interrupt. It exits that process with status `130` and restores the waiting shell path; it is not delivered as a byte from `SYS_READ`.
@@ -377,6 +390,7 @@ The active execution path is:
 - **ELF launch uses `sched_enqueue(proc)`**
 - **foreground `runelf` waits with `process_wait()`**
 - **`runelf_nowait` and `SYS_EXEC` children are reaped automatically by the reaper task**
+- **`bg` / `runelf_bg` children are claimed by shell job control so they can be listed, foregrounded, or killed**
 
 ---
 
@@ -510,5 +524,5 @@ The execution model is fully scheduler-owned.
 - timer-driven preemption
 - `SYS_YIELD`, `SYS_EXEC`, `SYS_EXIT` all scheduler-owned
 - ELF processes have real per-process page directories
-- foreground `runelf` waits with `process_wait()`; `runelf_nowait` and `SYS_EXEC` children are reaped automatically
+- foreground `runelf` waits with `process_wait()`; `runelf_nowait` and `SYS_EXEC` children are reaped automatically; `bg` / `runelf_bg` children are shell-owned jobs until `fg` or `kill`
 - no known zombie or frame leaks

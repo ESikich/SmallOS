@@ -275,6 +275,20 @@ runelf_nowait / SYS_EXEC (background):
   sched_enqueue(proc)
   return immediately           → no explicit waiter
 
+bg / runelf_bg (reattachable background):
+  process_create()
+  allocate proc->kernel_stack_frame
+  seed proc->sched_esp         → first entry via elf_user_task_bootstrap()
+  sched_enqueue(proc)
+  process_claim_for_wait(proc) → reaper skips it
+  shell job table stores proc  → jobs / fg / kill own cleanup
+
+Ctrl+Z during fg:
+  process_key_consumer()
+  record detach request
+  restore shell keyboard consumer
+  process_wait_detachable() returns without destroying the job
+
 sys_exit:
   paging_switch(kernel_pd)
   sched_exit_current((unsigned int)regs)
@@ -282,6 +296,7 @@ sys_exit:
   switch to next runnable task
   [foreground] process_destroy() called by process_wait() in shell
   [background] process_destroy() called by reaper within one quantum
+  [shell job] process_destroy() called by fg or kill
 
 reaper task (permanent kernel task):
   loop:
