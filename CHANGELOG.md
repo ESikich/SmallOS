@@ -1,5 +1,19 @@
 # Changelog
 
+## [Current] — Socket subsystem foundation
+
+### Changed
+
+* **Dynamic process fd tables** (`src/kernel/process.*`, `src/kernel/pmm.*`, `src/user/errnoprobe.c`, `docs/`)
+  * Moved fd tables out of `process_t` into PMM-backed allocations that start at 16 slots and grow to the default 64-fd process limit, with a 256-fd hard cap.
+  * Added contiguous PMM frame allocation/free helpers so fd tables remain reclaimable at process teardown.
+  * Updated `errnoprobe` to exhaust 61 user-open descriptors before `ENFILE`.
+
+* **Socket object layer** (`src/kernel/socket.*`, `src/kernel/syscall.c`, `src/drivers/tcp.*`)
+  * Socket fds now point at `socket_t` objects that own TCP listener/connection state instead of relying on fd-local `socket_port/socket_conn` fields for active behavior.
+  * Raised TCP per-listener stream slots, moved the enlarged TCP slot table into PMM-backed memory instead of low `.bss`, and wired `listen(backlog)` through a capped backlog value.
+  * Raised the sample cserve config to `max_conn = 16`.
+
 ## [Current] — Full-screen userland text editor
 
 ### Added
@@ -313,11 +327,14 @@
 
 ## [Previous] — SYS_OPEN / SYS_CLOSE / SYS_FREAD + copy-from-user validation
  
+Historical note: this section describes the original fixed fd-table milestone.
+Current SmallOS uses PMM-backed dynamic fd tables as described above.
+
 ### Added
  
 * **Per-process file handle table** (`src/kernel/process.h`)
   * `fd_entry_t` struct: `valid`, `name[16]`, `size`, `offset`
-  * `fds[PROCESS_FD_MAX]` (8 slots) embedded in `process_t` — zero-initialized by `proc_zero()` in `process_create()`; freed automatically with the process frame; no explicit close-on-exit needed
+  * Original `fds[PROCESS_FD_MAX]` (8 slots) embedded in `process_t` — zero-initialized by `proc_zero()` in `process_create()`; freed automatically with the process frame; no explicit close-on-exit needed
   * fds 0/1/2 reserved by convention; user-opened files start at fd 3 (`PROCESS_FD_FIRST`)
  
 * **`SYS_OPEN (8)`** — open a FAT16 file by name
@@ -348,7 +365,7 @@
  
 ### Key design notes
  
-* **The handle table lives inside `process_t`** — no separate allocation, no leak risk, destroyed automatically with the process.
+* **Original handle table ownership** — this milestone kept the handle table inside `process_t`; that has since been superseded by dynamic PMM-backed fd tables.
 * **`SYS_FREAD` cache pages** — per-fd reads now populate PMM-backed cache pages on first use and reuse them until `sys_close()` or process teardown.
 * **`fat16_stat` does not disturb `s_load_buf`** — `SYS_OPEN` validation and ELF loading can interleave safely.
 * **Copy-from-user is address-range only** — it does not walk page tables. A user pointer in the valid range but backed by a missing PTE would still fault in the kernel; full fault handling is future work.

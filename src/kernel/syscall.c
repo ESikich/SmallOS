@@ -16,6 +16,7 @@
 #include "uapi_epoll.h"
 #include "../exec/elf_loader.h"
 #include "vfs.h"
+#include "socket.h"
 
 #define SYSCALL_MAX_WRITE_LEN 4096u
 #define EXEC_NAME_MAX         PROCESS_FD_NAME_MAX
@@ -733,7 +734,7 @@ static int copy_user_sockaddr_in(struct sockaddr_in* dst,
 }
 
 static int socket_fd_is_socket(fd_entry_t* ent) {
-    return ent && ent->valid && ent->kind == PROCESS_HANDLE_KIND_SOCKET;
+    return ent && ent->valid && ent->kind == PROCESS_HANDLE_KIND_SOCKET && ent->socket;
 }
 
 static unsigned short swap_u16(unsigned short value) {
@@ -770,11 +771,13 @@ static int sys_bind_impl(int fd, const struct sockaddr* addr, unsigned int addrl
     if (!proc) return -EINVAL;
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
-    if (ent->socket_state != PROCESS_SOCKET_STATE_OPEN) return -EINVAL;
+    if (socket_state(ent->socket) != SOCKET_STATE_OPEN) return -EINVAL;
     int sa_rc = copy_user_sockaddr_in(&sa, addr, addrlen);
     if (sa_rc < 0) return sa_rc;
 
-    ent->socket_port = swap_u16(sa.sin_port);
+    sa_rc = socket_bind_tcp(ent->socket, swap_u16(sa.sin_port));
+    if (sa_rc < 0) return sa_rc;
+    ent->socket_port = socket_local_port(ent->socket);
     ent->socket_state = PROCESS_SOCKET_STATE_BOUND;
     return 0;
 }
@@ -788,12 +791,12 @@ static int sys_listen_impl(int fd, int backlog) {
 
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
-    if (ent->socket_state != PROCESS_SOCKET_STATE_BOUND) return -EINVAL;
-    if (ent->socket_port == 0u) return -EINVAL;
+    if (socket_state(ent->socket) != SOCKET_STATE_BOUND) return -EINVAL;
+    if (socket_local_port(ent->socket) == 0u) return -EINVAL;
 
-    tcp_socket_use_port(ent->socket_port);
-    if (tcp_socket_bind(ent->socket_port) < 0) return -EACCES;
-    if (tcp_socket_listen() < 0) return -EIO;
+    int listen_rc = socket_listen_tcp(ent->socket, backlog);
+    if (listen_rc < 0) return listen_rc;
+    ent->socket_port = socket_local_port(ent->socket);
     ent->socket_state = PROCESS_SOCKET_STATE_LISTENER;
     return 0;
 }
@@ -805,60 +808,54 @@ static int sys_accept_impl(syscall_regs_t* regs,
                            unsigned int flags) {
     process_t* proc = (process_t*)sched_current();
     fd_entry_t* ent;
+    fd_entry_t* new_ent;
     unsigned int peer_ip;
     unsigned int peer_port;
-    unsigned int conn_id;
     int new_fd;
 
     if (!proc) return -EINVAL;
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
-    if (ent->socket_state != PROCESS_SOCKET_STATE_LISTENER) return -EINVAL;
+    if (socket_state(ent->socket) != SOCKET_STATE_LISTENING) return -EINVAL;
     if ((flags & ~(SOCK_NONBLOCK | SOCK_CLOEXEC)) != 0u) return -EINVAL;
-    tcp_socket_use_port(ent->socket_port);
 
-    if (!tcp_socket_accept_ready() &&
+    if (!socket_accept_ready(ent->socket) &&
         ((ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u ||
          (flags & SOCK_NONBLOCK) != 0u)) {
         return -EAGAIN;
     }
 
-    while (!tcp_socket_accept_ready()) {
+    while (!socket_accept_ready(ent->socket)) {
         proc->state = PROCESS_STATE_WAITING;
         tcp_socket_set_waiter(proc);
-        tcp_socket_use_port(ent->socket_port);
-        if (tcp_socket_accept_ready()) {
+        if (socket_accept_ready(ent->socket)) {
             proc->state = PROCESS_STATE_RUNNING;
             break;
         }
         sys_wait_until_current_running(proc);
-        tcp_socket_use_port(ent->socket_port);
     }
     tcp_socket_set_waiter(0);
 
     new_fd = process_fd_open_socket(proc, "socket");
     if (new_fd < 0) return new_fd;
-    {
-        fd_entry_t* new_ent = process_fd_get(proc, new_fd);
-        if (!socket_fd_is_socket(new_ent)) {
-            process_fd_close(new_ent);
-            return -EBADF;
-        }
-        new_ent->socket_state = PROCESS_SOCKET_STATE_CONNECTED;
-        new_ent->socket_port = ent->socket_port;
-        conn_id = tcp_socket_mark_accepted();
-        if (conn_id == TCP_SOCKET_CONN_NONE) {
-            process_fd_close(new_ent);
-            return -EAGAIN;
-        }
-        new_ent->socket_conn = conn_id;
-        if ((flags & SOCK_NONBLOCK) != 0u) {
-            new_ent->flags |= SYS_FD_FLAG_NONBLOCK;
-        }
+    new_ent = process_fd_get(proc, new_fd);
+    if (!socket_fd_is_socket(new_ent)) {
+        process_fd_close(new_ent);
+        return -EBADF;
+    }
+    if (socket_accept_tcp(ent->socket, new_ent->socket) < 0) {
+        process_fd_close(new_ent);
+        return -EAGAIN;
+    }
+    new_ent->socket_state = PROCESS_SOCKET_STATE_CONNECTED;
+    new_ent->socket_port = socket_local_port(new_ent->socket);
+    new_ent->socket_conn = socket_conn_id(new_ent->socket);
+    if ((flags & SOCK_NONBLOCK) != 0u) {
+        new_ent->flags |= SYS_FD_FLAG_NONBLOCK;
     }
 
-    peer_ip = tcp_socket_peer_ip();
-    peer_port = tcp_socket_peer_port();
+    peer_ip = socket_peer_ip(new_ent->socket);
+    peer_port = socket_peer_port(new_ent->socket);
     if (addr && addrlen) {
         struct sockaddr_in sa;
         if (!user_buf_ok((unsigned int)addrlen, sizeof(unsigned int))) {
@@ -921,31 +918,29 @@ static int sys_recv_impl(syscall_regs_t* regs, int fd, void* buf, unsigned int l
 
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
-    if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -EINVAL;
-    tcp_socket_use_connection(ent->socket_port, ent->socket_conn);
+    if (socket_state(ent->socket) != SOCKET_STATE_CONNECTED) return -EINVAL;
 
-    if (!tcp_socket_recv_ready() && (ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u) {
+    if (!socket_tcp_recv_ready(ent->socket) &&
+        (ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u) {
         return -EAGAIN;
     }
 
-    while (!tcp_socket_recv_ready()) {
-        if (!tcp_socket_connection_established()) {
+    while (!socket_tcp_recv_ready(ent->socket)) {
+        if (!socket_tcp_connection_established(ent->socket)) {
             return 0;
         }
         proc->state = PROCESS_STATE_WAITING;
         tcp_socket_set_waiter(proc);
-        tcp_socket_use_connection(ent->socket_port, ent->socket_conn);
-        if (tcp_socket_recv_ready()) {
+        if (socket_tcp_recv_ready(ent->socket)) {
             proc->state = PROCESS_STATE_RUNNING;
             break;
         }
         (void)regs;
         sys_wait_until_current_running(proc);
-        tcp_socket_use_connection(ent->socket_port, ent->socket_conn);
     }
     tcp_socket_set_waiter(0);
 
-    rc = tcp_socket_recv(buf, len);
+    rc = socket_tcp_recv(ent->socket, buf, len);
     return rc < 0 ? -ECONNRESET : rc;
 }
 
@@ -1392,17 +1387,16 @@ static int sys_getpeername_impl(int fd, struct sockaddr* addr, unsigned int* add
     if (!proc) return -EINVAL;
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
-    if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -EINVAL;
+    if (socket_state(ent->socket) != SOCKET_STATE_CONNECTED) return -EINVAL;
     if (!addr || !addrlen) return -EFAULT;
     if (!user_buf_ok((unsigned int)addrlen, sizeof(unsigned int))) return -EFAULT;
     if (*addrlen < sizeof(struct sockaddr_in)) return -EINVAL;
     if (!user_buf_ok((unsigned int)addr, sizeof(struct sockaddr_in))) return -EFAULT;
 
-    tcp_socket_use_connection(ent->socket_port, ent->socket_conn);
     k_memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET;
-    sa.sin_port = swap_u16((unsigned short)tcp_socket_peer_port());
-    sa.sin_addr.s_addr = tcp_socket_peer_ip();
+    sa.sin_port = swap_u16((unsigned short)socket_peer_port(ent->socket));
+    sa.sin_addr.s_addr = socket_peer_ip(ent->socket);
     k_memcpy(addr, &sa, sizeof(sa));
     *addrlen = sizeof(sa);
     return 0;
@@ -1469,7 +1463,7 @@ static int sys_getsockname_impl(int fd, struct sockaddr* addr, unsigned int* add
 
     k_memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET;
-    sa.sin_port = swap_u16(ent->socket_port);
+    sa.sin_port = swap_u16((unsigned short)socket_local_port(ent->socket));
     sa.sin_addr.s_addr = 0x0100007Fu;
     k_memcpy(addr, &sa, sizeof(sa));
     *addrlen = sizeof(sa);
@@ -1477,7 +1471,6 @@ static int sys_getsockname_impl(int fd, struct sockaddr* addr, unsigned int* add
 }
 
 static int sys_writefd_impl(int fd, const char* buf, unsigned int len) {
-    if (fd < 0 || fd >= PROCESS_FD_MAX) return -EBADF;
     if (len == 0) return 0;
     if (!user_buf_ok((unsigned int)buf, len)) return -EFAULT;
 
@@ -1490,8 +1483,6 @@ static int sys_writefd_impl(int fd, const char* buf, unsigned int len) {
 }
 
 static int sys_lseek_impl(int fd, int offset, int whence) {
-    if (fd < 0 || fd >= PROCESS_FD_MAX) return -EBADF;
-
     process_t* proc = (process_t*)sched_current();
     if (!proc) return -EINVAL;
 
@@ -1501,8 +1492,6 @@ static int sys_lseek_impl(int fd, int offset, int whence) {
 }
 
 static int sys_fsync_impl(int fd) {
-    if (fd < 0 || fd >= PROCESS_FD_MAX) return -EBADF;
-
     process_t* proc = (process_t*)sched_current();
     if (!proc) return -EINVAL;
 
@@ -1605,7 +1594,6 @@ static int sys_chdir_impl(const char* path) {
 }
 
 static int sys_fread_impl(int fd, char* buf, unsigned int len) {
-    if (fd < 0 || fd >= PROCESS_FD_MAX) return -EBADF;
     if (len == 0) return 0;
     if (!user_buf_ok((unsigned int)buf, len)) return -EFAULT;
 

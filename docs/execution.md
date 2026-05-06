@@ -298,9 +298,10 @@ The old explicit parent-tracking statics are gone. The current design relies on 
 `elf_run_named()` follows the same scheduler-owned ELF launch path as shell commands: create the process, seed its bootstrap context, enqueue it, and return immediately.
 
 The file, console, and socket syscalls used by shell tools, TinyCC, and the
-FTP/TCP smoke apps now share the process-owned handle table in `process.c`.
-Each handle has readable/writable/dirty state plus ops for `read`, `write`,
-`seek`, `poll`, `flush`, and `close`.
+FTP/TCP smoke apps now share the dynamic PMM-backed process handle table owned
+by `process.c`. Each handle has readable/writable/dirty state plus ops for
+`read`, `write`, `seek`, `poll`, `flush`, and `close`; socket handles point at
+kernel `socket_t` objects.
 Each process also carries cwd state, so user path syscalls resolve relative
 paths before entering VFS or ELF loading.
 FAT16-backed file behavior and path operations sit behind `vfs.c`, so

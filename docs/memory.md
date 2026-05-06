@@ -54,7 +54,7 @@ Use PMM frames for:
 - kernel stack frames for processes
 - ELF segment frames
 - other memory that should be freed on process exit
-- embedded per-process handle tables that live inside `process_t`
+- dynamic per-process handle tables referenced by `process_t`
 
 Do not allocate process-owned paging structures with `kmalloc_page()`. They must come from PMM so the process can be torn down cleanly.
 

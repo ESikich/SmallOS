@@ -191,7 +191,7 @@ pmm_alloc_frame          0x200000 – 0x7FFFFF   reclaimable on process exit
 
 `kmalloc` / `kmalloc_page` are for permanent kernel structures only. Do not use them for transient buffers — the bump allocator has no free path and heap used will grow permanently with each call.
 
-`pmm_alloc_frame` is for everything reclaimed on exit: `process_t` structs, process page directories, ELF frames, stack frames, all process-private page tables, kernel stack frames, and embedded per-process handle tables.
+`pmm_alloc_frame` is for everything reclaimed on exit: `process_t` structs, process page directories, ELF frames, stack frames, all process-private page tables, kernel stack frames, and dynamic per-process handle tables.
 
 PMM frame values are physical addresses, not normal C pointers. Page tables,
 CR3 values, fd cache entries, `process_t::pd`, and `process_t::kernel_stack_frame`

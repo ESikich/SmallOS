@@ -14,11 +14,12 @@
 
 int  tcp_init(void);
 int  tcp_handle_ipv4_frame(const unsigned char* frame, unsigned int len);
-void tcp_socket_handle_close(fd_entry_t* ent);
+void tcp_socket_close_listener(unsigned int port);
+void tcp_socket_close_connection(unsigned int port, unsigned int conn_id);
 void tcp_socket_use_port(unsigned int port);
 void tcp_socket_use_connection(unsigned int port, unsigned int conn_id);
 int  tcp_socket_bind(unsigned int port);
-int  tcp_socket_listen(void);
+int  tcp_socket_listen(unsigned int backlog);
 int  tcp_socket_accept_ready(void);
 unsigned int tcp_socket_mark_accepted(void);
 int  tcp_socket_connection_established(void);

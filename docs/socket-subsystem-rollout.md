@@ -9,6 +9,18 @@ That commit vendors `third_party/cserver`, builds `apps/services/cserve.elf`,
 adds epoll/timerfd/signalfd/user-runtime shims, raises the process fd table to
 16, and gives the TCP driver several accepted streams per listen port.
 
+Current implementation status:
+
+- Phase 1 is implemented: process fd tables are PMM-backed, start at 16 slots,
+  grow to the default 64-fd limit, and are freed on process teardown.
+- Phase 2 is implemented as a first socket-object layer: socket fds point at
+  `socket_t` objects that own TCP listener/connection ids.
+- Phase 3 has an initial TCP scaling step: per-listener stream slots are now
+  PMM-backed, capped `listen(backlog)` handling is in place, and the enlarged
+  TCP table stays out of the low-memory VGA/BIOS hole. A full 4-tuple TCP
+  table, per-socket wait queues, and per-connection buffer/backpressure work
+  remain.
+
 ## Goals
 
 - Support cserve, FTP, and future SSH concurrently without fd starvation.
@@ -30,13 +42,13 @@ adds epoll/timerfd/signalfd/user-runtime shims, raises the process fd table to
 Those can come later. The first milestone is a coherent server-side socket
 object model with sane resource limits.
 
-## Current Constraints
+## Baseline Constraints At Start Of Rollout
 
 ### File descriptors
 
-`process_t` currently owns a fixed `fd_entry_t fds[PROCESS_FD_MAX]` array.
-`PROCESS_FD_MAX` is 16 at the baseline. File descriptors `0`, `1`, and `2` are
-stdio, leaving 13 user-open slots.
+At the baseline, `process_t` owned a fixed `fd_entry_t fds[PROCESS_FD_MAX]`
+array. `PROCESS_FD_MAX` was 16. File descriptors `0`, `1`, and `2` were stdio,
+leaving 13 user-open slots.
 
 cserve consumes baseline fds for:
 
@@ -48,7 +60,8 @@ cserve consumes baseline fds for:
 - each accepted client socket
 - each static file being sent
 
-That is why the sample config currently uses `max_conn = 4`.
+That is why the baseline sample config used `max_conn = 4`; the current sample
+now uses `max_conn = 16` after the fd-table and socket-object foundation.
 
 ### TCP
 

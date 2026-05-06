@@ -80,6 +80,38 @@ u32 pmm_alloc_frame(void) {
     return 0;
 }
 
+u32 pmm_alloc_contiguous_frames(u32 count) {
+    if (count == 0 || count > s_free_count || count > PMM_NUM_FRAMES) {
+        return 0;
+    }
+
+    for (u32 start = 0; start + count <= PMM_NUM_FRAMES; start++) {
+        int free_run = 1;
+
+        for (u32 off = 0; off < count; off++) {
+            if (frame_is_used(start + off)) {
+                free_run = 0;
+                start += off;
+                break;
+            }
+        }
+
+        if (!free_run) {
+            continue;
+        }
+
+        for (u32 off = 0; off < count; off++) {
+            frame_mark_used(start + off);
+        }
+        s_free_count -= count;
+        s_next_free = (start + count) % PMM_NUM_FRAMES;
+        return idx_to_addr(start);
+    }
+
+    terminal_puts("pmm: no contiguous frame run\n");
+    return 0;
+}
+
 void pmm_free_frame(u32 addr) {
     if (addr < PMM_BASE || addr >= PMM_BASE + PMM_SIZE) {
         return;
@@ -99,6 +131,16 @@ void pmm_free_frame(u32 addr) {
 
     if (idx < s_next_free) {
         s_next_free = idx;
+    }
+}
+
+void pmm_free_contiguous_frames(u32 addr, u32 count) {
+    if (count == 0) {
+        return;
+    }
+
+    for (u32 off = 0; off < count; off++) {
+        pmm_free_frame(addr + off * PMM_FRAME_SIZE);
     }
 }
 

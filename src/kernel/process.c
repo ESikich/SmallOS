@@ -12,6 +12,7 @@
 #include "uapi_errno.h"
 #include "uapi_syscall.h"
 #include "vfs.h"
+#include "socket.h"
 
 typedef char process_t_must_fit_in_one_frame[(sizeof(process_t) <= 4096u) ? 1 : -1];
 
@@ -130,6 +131,130 @@ static void str_copy_n(char* dst, const char* src, unsigned int n) {
     dst[i] = '\0';
 }
 
+static unsigned int process_fd_frame_count(unsigned int capacity) {
+    unsigned int bytes = capacity * (unsigned int)sizeof(fd_entry_t);
+    return PAGE_ALIGN(bytes) / PAGE_SIZE;
+}
+
+static int process_fd_table_alloc(unsigned int capacity,
+                                  fd_entry_t** out_fds,
+                                  u32* out_frame,
+                                  u32* out_frames) {
+    u32 frames;
+    u32 frame;
+    fd_entry_t* fds;
+
+    if (!out_fds || !out_frame || !out_frames) return -EINVAL;
+    if (capacity == 0u || capacity > PROCESS_FD_LIMIT_HARD) return -EINVAL;
+
+    frames = process_fd_frame_count(capacity);
+    frame = pmm_alloc_contiguous_frames(frames);
+    if (!frame) return -ENOMEM;
+
+    fds = (fd_entry_t*)paging_phys_to_kernel_virt(frame);
+    k_memset(fds, 0, frames * PAGE_SIZE);
+
+    *out_fds = fds;
+    *out_frame = frame;
+    *out_frames = frames;
+    return 0;
+}
+
+static void process_fd_table_free(process_t* proc) {
+    if (!proc || !proc->fd_table_frame || !proc->fd_table_frames) return;
+
+    pmm_free_contiguous_frames(proc->fd_table_frame, proc->fd_table_frames);
+    proc->fds = 0;
+    proc->fd_capacity = 0;
+    proc->fd_table_frame = 0;
+    proc->fd_table_frames = 0;
+}
+
+static int process_fd_table_init(process_t* proc, unsigned int limit) {
+    fd_entry_t* fds = 0;
+    u32 frame = 0;
+    u32 frames = 0;
+    unsigned int capacity = PROCESS_FD_INITIAL_CAPACITY;
+    int rc;
+
+    if (!proc) return -EINVAL;
+    if (limit < PROCESS_FD_INITIAL_CAPACITY) {
+        limit = PROCESS_FD_INITIAL_CAPACITY;
+    }
+    if (limit > PROCESS_FD_LIMIT_HARD) {
+        limit = PROCESS_FD_LIMIT_HARD;
+    }
+    if (capacity > limit) {
+        capacity = limit;
+    }
+
+    rc = process_fd_table_alloc(capacity, &fds, &frame, &frames);
+    if (rc < 0) return rc;
+
+    proc->fds = fds;
+    proc->fd_capacity = capacity;
+    proc->fd_limit = limit;
+    proc->fd_table_frame = frame;
+    proc->fd_table_frames = frames;
+    return 0;
+}
+
+static int process_fd_table_grow(process_t* proc, unsigned int min_capacity) {
+    fd_entry_t* new_fds = 0;
+    u32 new_frame = 0;
+    u32 new_frames = 0;
+    unsigned int new_capacity;
+    int rc;
+
+    if (!proc || !proc->fds) return -EINVAL;
+    if (min_capacity <= proc->fd_capacity) return 0;
+    if (proc->fd_capacity >= proc->fd_limit) return -ENFILE;
+    if (min_capacity > proc->fd_limit) return -ENFILE;
+
+    new_capacity = proc->fd_capacity * 2u;
+    if (new_capacity < min_capacity) {
+        new_capacity = min_capacity;
+    }
+    if (new_capacity > proc->fd_limit) {
+        new_capacity = proc->fd_limit;
+    }
+
+    rc = process_fd_table_alloc(new_capacity, &new_fds, &new_frame, &new_frames);
+    if (rc < 0) return rc;
+
+    k_memcpy(new_fds, proc->fds, proc->fd_capacity * (unsigned int)sizeof(fd_entry_t));
+    pmm_free_contiguous_frames(proc->fd_table_frame, proc->fd_table_frames);
+
+    proc->fds = new_fds;
+    proc->fd_capacity = new_capacity;
+    proc->fd_table_frame = new_frame;
+    proc->fd_table_frames = new_frames;
+    return 0;
+}
+
+static int process_fd_alloc_entry(process_t* proc, fd_entry_t** out_ent) {
+    int rc;
+
+    if (!proc || !out_ent) return -EINVAL;
+    if (!proc->fds || proc->fd_capacity <= PROCESS_FD_FIRST) return -EINVAL;
+
+    for (;;) {
+        for (unsigned int fd = PROCESS_FD_FIRST; fd < proc->fd_capacity; fd++) {
+            if (!proc->fds[fd].valid) {
+                *out_ent = &proc->fds[fd];
+                return (int)fd;
+            }
+        }
+
+        if (proc->fd_capacity >= proc->fd_limit) {
+            return -ENFILE;
+        }
+
+        rc = process_fd_table_grow(proc, proc->fd_capacity + 1u);
+        if (rc < 0) return rc;
+    }
+}
+
 static int process_handle_console_read(fd_entry_t* ent, char* buf, unsigned int len);
 static int process_handle_console_write(fd_entry_t* ent, const char* buf, unsigned int len);
 static int process_handle_console_seek(fd_entry_t* ent, int offset, int whence);
@@ -177,6 +302,7 @@ static const process_handle_ops_t s_console_handle_ops = {
 
 static void process_init_standard_fds(process_t* proc) {
     if (!proc) return;
+    if (!proc->fds || proc->fd_capacity < PROCESS_FD_FIRST) return;
 
     proc->fds[0].valid = 1;
     proc->fds[0].kind = PROCESS_HANDLE_KIND_CONSOLE;
@@ -195,7 +321,8 @@ static void process_init_standard_fds(process_t* proc) {
 
 fd_entry_t* process_fd_get(process_t* proc, int fd) {
     if (!proc) return 0;
-    if (fd < 0 || fd >= PROCESS_FD_MAX) return 0;
+    if (!proc->fds) return 0;
+    if (fd < 0 || (unsigned int)fd >= proc->fd_capacity) return 0;
     if (!proc->fds[fd].valid) return 0;
     return &proc->fds[fd];
 }
@@ -205,19 +332,18 @@ int process_fd_open_file_mode(process_t* proc,
                               u32 size,
                               int readable,
                               int writable) {
+    fd_entry_t* ent;
+    int fd;
+
     if (!proc || !name) return -EINVAL;
 
-    for (int fd = PROCESS_FD_FIRST; fd < PROCESS_FD_MAX; fd++) {
-        if (!proc->fds[fd].valid) {
-            fd_entry_t* ent = &proc->fds[fd];
-            k_memset(ent, 0, sizeof(*ent));
-            ent->valid = 1;
-            vfs_file_init(ent, name, size, readable, writable);
-            return fd;
-        }
-    }
+    fd = process_fd_alloc_entry(proc, &ent);
+    if (fd < 0) return fd;
 
-    return -ENFILE;
+    k_memset(ent, 0, sizeof(*ent));
+    ent->valid = 1;
+    vfs_file_init(ent, name, size, readable, writable);
+    return fd;
 }
 
 int process_fd_open_file(process_t* proc, const char* name, u32 size, int writable) {
@@ -225,31 +351,38 @@ int process_fd_open_file(process_t* proc, const char* name, u32 size, int writab
 }
 
 int process_fd_open_socket(process_t* proc, const char* name) {
+    fd_entry_t* ent;
+    socket_t* sock;
+    int fd;
+
     if (!proc) return -EINVAL;
 
-    for (int fd = PROCESS_FD_FIRST; fd < PROCESS_FD_MAX; fd++) {
-        if (!proc->fds[fd].valid) {
-            fd_entry_t* ent = &proc->fds[fd];
-            k_memset(ent, 0, sizeof(*ent));
-            ent->valid = 1;
-            ent->kind = PROCESS_HANDLE_KIND_SOCKET;
-            ent->ops = &s_socket_handle_ops;
-            ent->socket_state = PROCESS_SOCKET_STATE_OPEN;
-            ent->socket_port = 0;
-            ent->socket_conn = TCP_SOCKET_CONN_NONE;
-            ent->readable = 1;
-            ent->writable = 0;
-            if (name) {
-                k_memcpy(ent->name, name, (k_size_t)k_strlen(name) + 1u);
-            }
-            return fd;
-        }
-    }
+    fd = process_fd_alloc_entry(proc, &ent);
+    if (fd < 0) return fd;
 
-    return -ENFILE;
+    sock = socket_create_tcp();
+    if (!sock) return -ENOMEM;
+
+    k_memset(ent, 0, sizeof(*ent));
+    ent->valid = 1;
+    ent->kind = PROCESS_HANDLE_KIND_SOCKET;
+    ent->ops = &s_socket_handle_ops;
+    ent->socket = sock;
+    ent->socket_state = PROCESS_SOCKET_STATE_OPEN;
+    ent->socket_port = 0;
+    ent->socket_conn = TCP_SOCKET_CONN_NONE;
+    ent->readable = 1;
+    ent->writable = 0;
+    if (name) {
+        k_memcpy(ent->name, name, (k_size_t)k_strlen(name) + 1u);
+    }
+    return fd;
 }
 
 int process_fd_open_special(process_t* proc, int kind, const char* name) {
+    fd_entry_t* ent;
+    int fd;
+
     if (!proc) return -EINVAL;
     if (kind != PROCESS_HANDLE_KIND_EPOLL &&
         kind != PROCESS_HANDLE_KIND_TIMERFD &&
@@ -257,23 +390,19 @@ int process_fd_open_special(process_t* proc, int kind, const char* name) {
         return -EINVAL;
     }
 
-    for (int fd = PROCESS_FD_FIRST; fd < PROCESS_FD_MAX; fd++) {
-        if (!proc->fds[fd].valid) {
-            fd_entry_t* ent = &proc->fds[fd];
-            k_memset(ent, 0, sizeof(*ent));
-            ent->valid = 1;
-            ent->kind = kind;
-            ent->ops = &s_special_handle_ops;
-            ent->readable = 1;
-            ent->writable = 0;
-            if (name) {
-                k_memcpy(ent->name, name, (k_size_t)k_strlen(name) + 1u);
-            }
-            return fd;
-        }
-    }
+    fd = process_fd_alloc_entry(proc, &ent);
+    if (fd < 0) return fd;
 
-    return -ENFILE;
+    k_memset(ent, 0, sizeof(*ent));
+    ent->valid = 1;
+    ent->kind = kind;
+    ent->ops = &s_special_handle_ops;
+    ent->readable = 1;
+    ent->writable = 0;
+    if (name) {
+        k_memcpy(ent->name, name, (k_size_t)k_strlen(name) + 1u);
+    }
+    return fd;
 }
 
 void process_fd_close(fd_entry_t* ent) {
@@ -293,39 +422,41 @@ void process_fd_close(fd_entry_t* ent) {
 
 static int process_handle_socket_read(fd_entry_t* ent, char* buf, unsigned int len) {
     int rc;
+    socket_t* sock;
 
     if (!ent || !ent->valid) return -EBADF;
-    if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -EINVAL;
+    sock = ent->socket;
+    if (socket_state(sock) != SOCKET_STATE_CONNECTED) return -EINVAL;
     if (len == 0) return 0;
 
-    tcp_socket_use_connection(ent->socket_port, ent->socket_conn);
-    if (!tcp_socket_recv_ready()) {
+    if (!socket_tcp_recv_ready(sock)) {
         if ((ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u) {
             return -EAGAIN;
         }
     }
     __asm__ __volatile__("sti");
-    while (!tcp_socket_recv_ready()) {
-        if (!tcp_socket_connection_established()) {
+    while (!socket_tcp_recv_ready(sock)) {
+        if (!socket_tcp_connection_established(sock)) {
             __asm__ __volatile__("cli");
             return 0;
         }
         __asm__ __volatile__("hlt");
     }
     __asm__ __volatile__("cli");
-    rc = tcp_socket_recv(buf, len);
+    rc = socket_tcp_recv(sock, buf, len);
     return rc < 0 ? -ECONNRESET : rc;
 }
 
 static int process_handle_socket_write(fd_entry_t* ent, const char* buf, unsigned int len) {
     int rc;
+    socket_t* sock;
 
     if (!ent || !ent->valid) return -EBADF;
-    if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -EINVAL;
+    sock = ent->socket;
+    if (socket_state(sock) != SOCKET_STATE_CONNECTED) return -EINVAL;
     if (len == 0) return 0;
 
-    tcp_socket_use_connection(ent->socket_port, ent->socket_conn);
-    rc = tcp_socket_send(buf, len);
+    rc = socket_tcp_send(sock, buf, len);
     return rc < 0 ? -ECONNRESET : rc;
 }
 
@@ -337,29 +468,8 @@ static int process_handle_socket_seek(fd_entry_t* ent, int offset, int whence) {
 }
 
 static short process_handle_socket_poll(fd_entry_t* ent, short events) {
-    short revents = 0;
-
     if (!ent || !ent->valid) return POLLERR;
-
-    if (ent->socket_state == PROCESS_SOCKET_STATE_LISTENER) {
-        tcp_socket_use_port(ent->socket_port);
-        if ((events & POLLIN) && tcp_socket_accept_ready()) {
-            revents |= POLLIN;
-        }
-    } else if (ent->socket_state == PROCESS_SOCKET_STATE_CONNECTED) {
-        tcp_socket_use_connection(ent->socket_port, ent->socket_conn);
-        if ((events & POLLIN) && tcp_socket_recv_ready()) {
-            revents |= POLLIN;
-        }
-        if (tcp_socket_peer_closed()) {
-            revents |= POLLHUP;
-        }
-        if ((events & POLLOUT) && tcp_socket_connection_established()) {
-            revents |= POLLOUT;
-        }
-    }
-
-    return revents;
+    return socket_poll(ent->socket, events);
 }
 
 static int process_handle_console_read_common(fd_entry_t* ent, char* buf, unsigned int len, int echo) {
@@ -434,7 +544,7 @@ static void process_handle_console_close(fd_entry_t* ent) {
 
 static void process_handle_socket_close(fd_entry_t* ent) {
     if (!ent) return;
-    tcp_socket_handle_close(ent);
+    socket_release(ent->socket);
     k_memset(ent, 0, sizeof(*ent));
 }
 
@@ -641,6 +751,8 @@ static void process_kernel_task_bootstrap(void) {
 
 process_t* process_create(const char* name) {
     u32 frame = pmm_alloc_frame();
+    int fd_rc;
+
     if (!frame) {
         terminal_puts("process: out of frames for process_t\n");
         return 0;
@@ -652,6 +764,12 @@ process_t* process_create(const char* name) {
     proc->state = PROCESS_STATE_UNUSED;
     proc->heap_base = USER_HEAP_BASE;
     proc->heap_brk = USER_HEAP_BASE;
+    fd_rc = process_fd_table_init(proc, PROCESS_FD_LIMIT_DEFAULT);
+    if (fd_rc < 0) {
+        terminal_puts("process: out of frames for fd table\n");
+        pmm_free_frame(frame);
+        return 0;
+    }
     process_init_standard_fds(proc);
     if (name) {
         str_copy_n(proc->name, name, PROCESS_NAME_MAX);
@@ -700,11 +818,12 @@ void process_destroy(process_t* proc) {
     }
     tcp_socket_clear_waiter(proc);
 
-    for (int i = 0; i < PROCESS_FD_MAX; i++) {
+    for (unsigned int i = 0; i < proc->fd_capacity; i++) {
         if (proc->fds[i].valid) {
             process_fd_close(&proc->fds[i]);
         }
     }
+    process_fd_table_free(proc);
 
     if (proc->pd) {
         process_pd_destroy(proc->pd);

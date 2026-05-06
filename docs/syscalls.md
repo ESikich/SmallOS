@@ -522,8 +522,9 @@ file size, and an initial read offset of 0. fds 0/1/2 are pre-opened console
 handles.
 
 Returns the fd (≥ 3) on success, or a negative errno if the file is not found,
-the path names a directory, the handle table is full (`PROCESS_FD_MAX = 8`), or
-the name pointer fails user-space validation.
+the path names a directory, the process handle table is full, or the name
+pointer fails user-space validation. The fd table starts with 16 slots, grows on
+demand, and defaults to a 64-fd per-process limit.
 
 `sys_open_impl` validates the name with page-aware user checks, copies it into a kernel buffer bounded by `PROCESS_FD_NAME_MAX` (128 bytes), then calls through the VFS stat wrapper to confirm the file exists without loading its data.
 
@@ -675,7 +676,7 @@ u_stat(...)        query path metadata
 * `SYS_YIELD` and the timer path use the same stub layout, but the real scheduler resume ESP is `esp - 8`, not raw `esp`
 * EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`
 * The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.
-* fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`); user-opened files and sockets start at fd 3. The handle table (`fd_entry_t fds[PROCESS_FD_MAX]`) lives inside `process_t`. Every handle carries readable/writable/dirty state plus an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`. `process.c` owns fd lifetime and dispatch, while `vfs.c` owns FAT16-backed file behavior; the syscall dispatcher should not grow resource-specific state machines.
+* fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`); user-opened files and sockets start at fd 3. The handle table is PMM-backed process state: it starts at 16 slots, grows up to the default 64-fd process limit, and has a kernel hard cap of 256. Every handle carries readable/writable/dirty state plus an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`. `process.c` owns fd lifetime and dispatch, `vfs.c` owns FAT16-backed file behavior, and `socket.c` owns kernel socket objects that wrap TCP listener/connection state.
 * `SYS_WRITEFILE` is the simplest root-only persistence path for user tools that want to emit a generated artifact without managing an fd-based write stream.
 * `SYS_WRITEFILE_PATH` is the preferred path-aware persistence primitive for compilers and build tools, especially when writing into nested directories.
 

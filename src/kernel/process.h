@@ -22,15 +22,19 @@ typedef enum {
 
 /*
  * File descriptors 0, 1, 2 are reserved for stdin/stdout/stderr.
- * User-opened files start at fd 3.  PROCESS_FD_MAX controls the total
- * table size (including the reserved slots).
+ * User-opened files start at fd 3. The fd table is PMM-backed process state:
+ * it starts small and grows up to the per-process limit.
  */
-#define PROCESS_FD_MAX      16
-#define PROCESS_FD_FIRST    3        /* first allocatable fd */
-#define PROCESS_FD_NAME_MAX 128      /* max path length stored in fd entry */
-#define PROCESS_FD_CACHE_PAGES 1024  /* 4 MB small-file read cache / 4 KB pages */
+#define PROCESS_FD_INITIAL_CAPACITY 16
+#define PROCESS_FD_LIMIT_DEFAULT    64
+#define PROCESS_FD_LIMIT_HARD       256
+#define PROCESS_FD_MAX              PROCESS_FD_LIMIT_DEFAULT
+#define PROCESS_FD_FIRST            3        /* first allocatable fd */
+#define PROCESS_FD_NAME_MAX         128      /* max path length stored in fd entry */
+#define PROCESS_FD_CACHE_PAGES      1024     /* 4 MB small-file read cache / 4 KB pages */
 
 typedef struct fd_entry fd_entry_t;
+typedef struct socket socket_t;
 
 typedef enum {
     PROCESS_HANDLE_KIND_NONE  = 0,
@@ -71,6 +75,7 @@ struct fd_entry {
     u32  socket_state;                     /* PROCESS_SOCKET_STATE_* */
     u32  socket_port;                      /* listener or peer port */
     u32  socket_conn;                      /* accepted TCP stream id for this port */
+    socket_t* socket;                      /* kernel socket object for socket fds */
     u32  aux_frame;                        /* kind-specific PMM frame */
     u32  timer_deadline;                   /* timerfd next expiry tick, 0 if disarmed */
     u32  timer_interval;                   /* timerfd periodic interval in ticks */
@@ -107,7 +112,11 @@ typedef struct {
     unsigned int    heap_brk;
     char            cwd[PROCESS_CWD_MAX];  /* canonical path without leading slash */
     char            name[PROCESS_NAME_MAX];
-    fd_entry_t      fds[PROCESS_FD_MAX];   /* per-process open handles */
+    fd_entry_t*     fds;                /* PMM-backed per-process open handles */
+    unsigned int    fd_capacity;        /* allocated slots in fds */
+    unsigned int    fd_limit;           /* maximum allowed slots for this proc */
+    u32             fd_table_frame;     /* first PMM frame backing fds */
+    u32             fd_table_frames;    /* contiguous frame count backing fds */
 } process_t;
 
 /* ------------------------------------------------------------------ */

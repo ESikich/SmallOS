@@ -6,6 +6,8 @@
 #include "net.h"
 #include "../kernel/uapi_poll.h"
 #include "../kernel/klib.h"
+#include "../kernel/paging.h"
+#include "../kernel/pmm.h"
 #include "../kernel/process.h"
 #include "../kernel/scheduler.h"
 #include "../kernel/timer.h"
@@ -35,7 +37,9 @@
 #define TCP_MAX_FRAME       1518u
 #define TCP_MAX_PAYLOAD    (TCP_MAX_FRAME - 14u - 20u - 20u)
 #define TCP_CONTROL_PORT     2121u
-#define TCP_MAX_CONNS_PER_SLOT 8u
+#define TCP_MAX_CONNS_PER_SLOT 32u
+#define TCP_DEFAULT_BACKLOG     1u
+#define TCP_MAX_BACKLOG        32u
 
 typedef unsigned short u16;
 
@@ -59,12 +63,15 @@ typedef struct {
 typedef struct {
     u16 local_port;
     int listener_active;
+    unsigned int listen_backlog;
     tcp_conn_t conns[TCP_MAX_CONNS_PER_SLOT];
 } tcp_slot_t;
 
-#define TCP_MAX_SLOTS 4
+#define TCP_MAX_SLOTS 8
 
-static tcp_slot_t s_slots[TCP_MAX_SLOTS];
+static tcp_slot_t* s_slots;
+static u32 s_slots_frame;
+static u32 s_slots_frames;
 static u16 s_active_port = TCP_LISTEN_PORT;
 static unsigned int s_active_conn = TCP_SOCKET_CONN_NONE;
 static process_t* s_socket_waiter;
@@ -73,6 +80,8 @@ static u8 s_tx_frame[TCP_MAX_FRAME];
 static u8 s_checksum_scratch[12u + TCP_MAX_FRAME];
 
 static tcp_slot_t* tcp_slot_for_port(u16 port) {
+    if (!s_slots) return 0;
+
     for (unsigned int i = 0; i < TCP_MAX_SLOTS; i++) {
         if (s_slots[i].local_port == port) {
             return &s_slots[i];
@@ -102,6 +111,9 @@ static tcp_slot_t* tcp_active_slot(void) {
     tcp_slot_t* slot = tcp_slot_for_port(s_active_port);
     if (slot) {
         return slot;
+    }
+    if (!s_slots) {
+        return 0;
     }
     return &s_slots[0];
 }
@@ -151,6 +163,19 @@ static tcp_conn_t* tcp_alloc_conn(tcp_slot_t* slot, unsigned int* out_id) {
     }
 
     return 0;
+}
+
+static unsigned int tcp_slot_pending_count(tcp_slot_t* slot) {
+    unsigned int count = 0u;
+
+    if (!slot) return 0u;
+    for (unsigned int i = 0; i < TCP_MAX_CONNS_PER_SLOT; i++) {
+        tcp_conn_t* conn = &slot->conns[i];
+        if (conn->state != TCP_STATE_CLOSED && !conn->accepted) {
+            count++;
+        }
+    }
+    return count;
 }
 
 static u16 tcp_read_u16_be(const u8* buf, u32 off) {
@@ -463,43 +488,48 @@ void tcp_socket_wake_waiter(void) {
     tcp_wake_waiter();
 }
 
-void tcp_socket_handle_close(fd_entry_t* ent) {
+void tcp_socket_close_listener(unsigned int port) {
     tcp_slot_t* slot;
-    tcp_conn_t* conn;
 
-    if (!ent) {
-        return;
-    }
-
-    slot = tcp_slot_for_port((u16)ent->socket_port);
+    slot = tcp_slot_for_port((u16)port);
     if (!slot) {
         return;
     }
 
-    if (ent->socket_state == PROCESS_SOCKET_STATE_LISTENER) {
-        tcp_socket_use_port(ent->socket_port);
-        slot->listener_active = 0;
-        for (unsigned int i = 0; i < TCP_MAX_CONNS_PER_SLOT; i++) {
-            tcp_conn_t* pending = &slot->conns[i];
-            if (!pending->accepted) {
-                tcp_reset_connection(pending);
-            }
+    tcp_socket_use_port(port);
+    slot->listener_active = 0;
+    slot->listen_backlog = 0u;
+    for (unsigned int i = 0; i < TCP_MAX_CONNS_PER_SLOT; i++) {
+        tcp_conn_t* pending = &slot->conns[i];
+        if (!pending->accepted) {
+            tcp_reset_connection(pending);
         }
-    } else if (ent->socket_state == PROCESS_SOCKET_STATE_CONNECTED) {
-        tcp_socket_use_connection(ent->socket_port, ent->socket_conn);
-        conn = tcp_active_conn();
-        if (!conn) {
-            return;
-        }
-        if (conn->state == TCP_STATE_ESTABLISHED) {
-            tcp_begin_close(conn);
-            if (conn->peer_closed) {
-                tcp_reset_connection(conn);
-            }
-            return;
-        }
-        tcp_reset_connection(conn);
     }
+}
+
+void tcp_socket_close_connection(unsigned int port, unsigned int conn_id) {
+    tcp_slot_t* slot;
+    tcp_conn_t* conn;
+
+    slot = tcp_slot_for_port((u16)port);
+    if (!slot) {
+        return;
+    }
+
+    tcp_socket_use_connection(port, conn_id);
+    conn = tcp_active_conn();
+    if (!conn) {
+        return;
+    }
+
+    if (conn->state == TCP_STATE_ESTABLISHED) {
+        tcp_begin_close(conn);
+        if (conn->peer_closed) {
+            tcp_reset_connection(conn);
+        }
+        return;
+    }
+    tcp_reset_connection(conn);
 }
 
 int tcp_socket_bind(unsigned int port) {
@@ -512,15 +542,25 @@ int tcp_socket_bind(unsigned int port) {
     }
     tcp_socket_use_port(port);
     s_socket_listener_active = 1;
+    tcp_active_slot()->listen_backlog = TCP_DEFAULT_BACKLOG;
     tcp_reset_slot(tcp_active_slot());
     return 0;
 }
 
-int tcp_socket_listen(void) {
-    if (!tcp_slot_for_port(s_active_port)) {
+int tcp_socket_listen(unsigned int backlog) {
+    tcp_slot_t* slot = tcp_slot_for_port(s_active_port);
+
+    if (!slot) {
         return -1;
     }
+    if (backlog == 0u) {
+        backlog = TCP_DEFAULT_BACKLOG;
+    }
+    if (backlog > TCP_MAX_BACKLOG) {
+        backlog = TCP_MAX_BACKLOG;
+    }
     s_socket_listener_active = 1;
+    slot->listen_backlog = backlog;
     return 0;
 }
 
@@ -724,6 +764,10 @@ static void tcp_accept_syn(const u8* frame,
 
     conn = tcp_find_conn(slot, src_ip, src_port, 0);
     if (conn) {
+        return;
+    }
+    if (slot->listen_backlog != 0u &&
+        tcp_slot_pending_count(slot) >= slot->listen_backlog) {
         return;
     }
     conn = tcp_alloc_conn(slot, &conn_id);
@@ -1002,12 +1046,27 @@ static void tcp_service_main(void) {
 
 int tcp_init(void) {
     process_t* proc = process_create_kernel_task("tcp", tcp_service_main);
+    unsigned int slot_bytes = sizeof(tcp_slot_t) * TCP_MAX_SLOTS;
+
     if (!proc) {
         return 0;
     }
 
-    k_memset(s_slots, 0, sizeof(s_slots));
+    if (!s_slots) {
+        s_slots_frames = PAGE_ALIGN(slot_bytes) / PAGE_SIZE;
+        s_slots_frame = pmm_alloc_contiguous_frames(s_slots_frames);
+        if (!s_slots_frame) {
+            process_destroy(proc);
+            return 0;
+        }
+        s_slots = (tcp_slot_t*)paging_phys_to_kernel_virt(s_slots_frame);
+    }
+    k_memset(s_slots, 0, s_slots_frames * PAGE_SIZE);
     if (!tcp_slot_for_port_create(TCP_LISTEN_PORT)) {
+        pmm_free_contiguous_frames(s_slots_frame, s_slots_frames);
+        s_slots = 0;
+        s_slots_frame = 0;
+        s_slots_frames = 0;
         process_destroy(proc);
         return 0;
     }

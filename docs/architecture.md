@@ -158,7 +158,9 @@ typedef struct {
     char*           user_argv[17];          /* saved argv pointers plus NULL       */
     char            user_arg_data[256];     /* argv string storage (kernel-side)   */
     char            name[32];               /* null-terminated process name        */
-    fd_entry_t      fds[8];                 /* per-process handle slots            */
+    fd_entry_t*     fds;                    /* PMM-backed handle table             */
+    unsigned int    fd_capacity;            /* allocated fd slots                  */
+    unsigned int    fd_limit;               /* per-process fd limit                */
 } process_t;
 ```
 
@@ -174,9 +176,11 @@ so the scripted `shelltest` / `selftest` command tables are kept in static
 storage rather than on the stack. That avoids trampling `process_t` state during
 the longest regression paths.
 
-The handle array is generic rather than file-specific now. `process_create()`
+The handle table is generic rather than file-specific now. `process_create()`
 pre-opens fd `0`, `1`, and `2` as console handles for stdin/stdout/stderr.
-User-opened files and sockets start at fd `3`.
+User-opened files and sockets start at fd `3`. The table starts with 16 slots,
+grows from PMM-backed contiguous frames on demand, and defaults to a 64-fd
+process limit with a 256-fd hard cap.
 
 Each handle slot carries its own kind and ops table:
 
@@ -187,10 +191,10 @@ read / write / seek / poll / flush / close
 `process.c` owns descriptor allocation, lifetime, and generic dispatch. The
 resource backends own the behavior behind each handle: FAT16-backed file
 handles are initialized by `vfs_file_init()` and implemented in `vfs.c`,
-socket handles own their TCP send/receive/poll/close behavior, and console
-handles own terminal writes and keyboard-buffer reads. `syscall.c` therefore
-stays focused on user-pointer validation and dispatch instead of knowing the
-internals of each resource type.
+socket handles point at `socket_t` objects implemented in `socket.c`, and
+console handles own terminal writes and keyboard-buffer reads. `syscall.c`
+therefore stays focused on user-pointer validation and dispatch instead of
+knowing the internals of each resource type.
 
 The user-space view of this fd table, including POSIX wrappers, stdio stream
 state, cwd-relative path handling, and directory traversal, is documented in
@@ -671,10 +675,10 @@ SYS_YIELD — voluntary preemption via sched_yield_now()
 SYS_SLEEP — timed sleep: parks process in PROCESS_STATE_SLEEPING and wakes via the timer IRQ once the deadline is reached
 SYS_EXEC — async ELF spawn from the current foreground context; the child runs independently and the parent returns immediately in `runelf_nowait` / `sys_exec`
 SYS_GETCWD / SYS_CHDIR — per-process cwd state; relative user paths are normalized before VFS or ELF loading
-SYS_OPEN / SYS_OPEN_MODE / SYS_CLOSE / SYS_FREAD — per-process handle table backed by readable/writable handle ops; fd 0/1/2 are console handles, user-opened files start at fd 3+, and VFS-backed file reads cache FAT16 data in PMM-backed pages until close
+SYS_OPEN / SYS_OPEN_MODE / SYS_CLOSE / SYS_FREAD — dynamic PMM-backed per-process handle table backed by readable/writable handle ops; fd 0/1/2 are console handles, user-opened files start at fd 3+, and VFS-backed file reads cache FAT16 data in PMM-backed pages until close
 SYS_BRK / user heap — per-process heap break managed in user space through `SYS_BRK` and a shared user allocator
 SYS_OPEN_WRITE / SYS_WRITEFD / SYS_LSEEK / SYS_FSYNC / SYS_UNLINK / SYS_RENAME / SYS_STAT — VFS-backed writable file handles plus path metadata and file management for compiler-style tools; dirty writable handles flush on close, append/read-write modes preserve existing bytes, and stdout/stderr writes also use fd-backed console handles
-SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_SEND / SYS_RECV / SYS_POLL / SYS_SETSOCKOPT / SYS_GETSOCKNAME — socket ABI for passive TCP servers and FTP userland; socket readiness plugs into the same handle poll seam
+SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_SEND / SYS_RECV / SYS_POLL / SYS_SETSOCKOPT / SYS_GETSOCKNAME — socket ABI for passive TCP servers and FTP userland; fd handles point at kernel socket objects and socket readiness plugs into the same handle poll path
 TCP service task — drains NIC RX, dispatches ARP/IPv4/TCP frames, services retransmit/idle timers, and wakes socket waiters
 page-aware copy-from-user validation — syscall pointer arguments are checked against user address space [USER_CODE_BASE, USER_STACK_TOP) and mapped user pages before dereference
 preemptive round-robin scheduler — timer IRQ context switch, `SCHED_QUANTUM_MS` quantum
