@@ -527,8 +527,9 @@ int sys_epoll_wait(int epfd, struct epoll_event* events,
 
 Scans watched descriptors through their handle `poll` operations and sleeps
 until readiness or timeout. Socket watches register with socket-owned
-accept/read/write wait queues while sleeping. Timerfd watches contribute their
-next expiry deadline to the sleep timeout.
+accept/read/write wait queues while sleeping, and timerfd/signalfd-style
+handles register with per-handle read wait queues. Expired timerfds are woken
+from the timer IRQ path instead of by epoll-specific deadline scanning.
 
 ---
 

@@ -322,8 +322,10 @@ FTP/TCP smoke apps now share the dynamic PMM-backed process handle table owned
 by `process.c`. Each handle has readable/writable/dirty state plus ops for
 `read`, `write`, `seek`, `poll`, `flush`, and `close`; socket handles point at
 kernel `socket_t` objects whose accept/read/write wait queues wake blocking
-socket syscalls and socket-backed poll/epoll waits. Accepted TCP streams now
-live in a global 4-tuple TCP table, allocate a lazy 4 KiB PMM-backed RX ring on
+socket syscalls and socket-backed poll/epoll waits. Timerfd/signalfd-style
+handles own read wait queues too, with expired timerfds woken from the timer IRQ
+path. Accepted TCP streams now live in a global 4-tuple TCP table, allocate a
+lazy 4 KiB PMM-backed RX ring on
 first payload, and advertise the remaining receive window; socket writes use a
 matching lazy 4 KiB TX ring, ACK-driven space reclamation, release-on-drain
 behavior, and write-waiter wakeups for basic send-side backpressure. Basic

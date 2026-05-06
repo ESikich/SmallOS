@@ -19,6 +19,7 @@
   * Replaced the per-listener stream arrays with PMM-backed TCP tables: passive listeners live separately from a global connection table keyed by local IP, local port, remote IP, and remote port.
   * Wired `listen(backlog)` through a capped backlog value while keeping connection ids stable as global TCP table indexes.
   * Added a fixed-pool wait queue primitive and socket-level accept/read/write queues; blocking `accept`, `recv`, socket `read`, `poll`, and `epoll_wait` now register on the relevant socket object instead of a single TCP waiter.
+  * Moved timerfd/signalfd-style waits onto per-handle read wait queues; expired timerfds are woken by the scheduler timer path, and `poll()`/`epoll_wait()` now register through generic fd wait hooks.
   * Added lazy PMM-backed 4 KiB TCP receive rings per active connection and advertised the remaining RX window instead of ACKing bytes that were not queued.
   * Added lazy PMM-backed 4 KiB TCP transmit rings per active writing connection; sent bytes are retained until ACKed, payloads are retried from the ring, `POLLOUT` reflects remaining TX capacity, and blocking socket writes wait for TX space while nonblocking writes can short-write or return `EAGAIN`.
   * Added basic TCP half-close behavior for `shutdown()`: `SHUT_RD` reports local EOF, `SHUT_WR` drains queued TX before sending FIN, passive FINs are retransmitted until ACKed or cleaned up, and later writes fail with `EPIPE`.

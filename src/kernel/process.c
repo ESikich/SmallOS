@@ -13,6 +13,7 @@
 #include "uapi_syscall.h"
 #include "vfs.h"
 #include "socket.h"
+#include "wait.h"
 
 typedef char process_t_must_fit_in_one_frame[(sizeof(process_t) <= 4096u) ? 1 : -1];
 
@@ -25,6 +26,10 @@ static volatile int s_terminal_interrupt_pending = 0;
 static volatile process_t* s_detach_requested = 0;
 
 #define PROCESS_TERMINATED_BY_CTRL_C 130
+
+typedef struct special_wait_object {
+    wait_queue_t read_waiters;
+} special_wait_object_t;
 
 /*
  * process_key_consumer — keyboard consumer active while a user process
@@ -631,10 +636,46 @@ static void process_handle_socket_close(fd_entry_t* ent) {
     k_memset(ent, 0, sizeof(*ent));
 }
 
-static int timerfd_ready(fd_entry_t* ent) {
+static int special_wait_object_kind(int kind) {
+    return kind == PROCESS_HANDLE_KIND_TIMERFD ||
+           kind == PROCESS_HANDLE_KIND_SIGNALFD;
+}
+
+static special_wait_object_t* special_wait_object(fd_entry_t* ent, int create) {
+    special_wait_object_t* obj;
+
+    if (!ent || !special_wait_object_kind(ent->kind)) return 0;
+
+    if (!ent->aux_frame && create) {
+        ent->aux_frame = pmm_alloc_frame();
+        if (!ent->aux_frame) return 0;
+        obj = (special_wait_object_t*)paging_phys_to_kernel_virt(ent->aux_frame);
+        k_memset(obj, 0, PAGE_SIZE);
+        wait_queue_init(&obj->read_waiters);
+        return obj;
+    }
+
+    if (!ent->aux_frame) return 0;
+    return (special_wait_object_t*)paging_phys_to_kernel_virt(ent->aux_frame);
+}
+
+static int special_wait_readable(fd_entry_t* ent, process_t* proc) {
+    special_wait_object_t* obj;
+
+    if (!ent || !proc) return -EINVAL;
+    obj = special_wait_object(ent, 1);
+    if (!obj) return -ENOMEM;
+    return wait_queue_add(&obj->read_waiters, proc);
+}
+
+static int timerfd_ready_at(fd_entry_t* ent, unsigned int now) {
     if (!ent || ent->kind != PROCESS_HANDLE_KIND_TIMERFD) return 0;
     return ent->timer_deadline != 0u &&
-           (int)(timer_get_ticks() - ent->timer_deadline) >= 0;
+           (int)(now - ent->timer_deadline) >= 0;
+}
+
+static int timerfd_ready(fd_entry_t* ent) {
+    return timerfd_ready_at(ent, timer_get_ticks());
 }
 
 static unsigned long long timerfd_consume(fd_entry_t* ent) {
@@ -659,13 +700,48 @@ static unsigned long long timerfd_consume(fd_entry_t* ent) {
 
 static int process_handle_special_read(fd_entry_t* ent, char* buf, unsigned int len) {
     unsigned long long expirations;
+    process_t* proc;
 
     if (!ent || !ent->valid) return -EBADF;
     if (!buf) return -EFAULT;
 
     if (ent->kind == PROCESS_HANDLE_KIND_TIMERFD) {
         if (len < sizeof(unsigned long long)) return -EINVAL;
-        if (!timerfd_ready(ent)) return -EAGAIN;
+
+        if (!timerfd_ready(ent) &&
+            (ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u) {
+            return -EAGAIN;
+        }
+
+        proc = sched_current();
+        while (!timerfd_ready(ent)) {
+            int wait_rc;
+
+            if (!proc) {
+                __asm__ __volatile__("sti; hlt; cli");
+                continue;
+            }
+
+            proc->state = PROCESS_STATE_WAITING;
+            wait_rc = special_wait_readable(ent, proc);
+            if (wait_rc < 0) {
+                proc->state = PROCESS_STATE_RUNNING;
+                wait_queue_remove_proc(proc);
+                return wait_rc;
+            }
+            if (timerfd_ready(ent)) {
+                proc->state = PROCESS_STATE_RUNNING;
+                break;
+            }
+
+            __asm__ __volatile__("sti");
+            while (proc->state != PROCESS_STATE_RUNNING) {
+                __asm__ __volatile__("hlt");
+            }
+            __asm__ __volatile__("cli");
+            wait_queue_remove_proc(proc);
+        }
+        wait_queue_remove_proc(proc);
 
         expirations = timerfd_consume(ent);
         k_memcpy(buf, &expirations, sizeof(expirations));
@@ -714,6 +790,12 @@ static short process_handle_special_poll(fd_entry_t* ent, short events) {
 
 static void process_handle_special_close(fd_entry_t* ent) {
     if (!ent) return;
+    if (special_wait_object_kind(ent->kind)) {
+        special_wait_object_t* obj = special_wait_object(ent, 0);
+        if (obj) {
+            wait_queue_wake_all(&obj->read_waiters);
+        }
+    }
     if (ent->aux_frame) {
         pmm_free_frame(ent->aux_frame);
     }
@@ -745,6 +827,28 @@ short process_fd_poll(fd_entry_t* ent, short events) {
     return ent->ops->poll(ent, events);
 }
 
+int process_fd_wait(fd_entry_t* ent, process_t* proc, short events) {
+    int rc;
+
+    if (!ent || !ent->valid) return -EBADF;
+    if (!proc) return -EINVAL;
+
+    if (ent->kind == PROCESS_HANDLE_KIND_SOCKET) {
+        return socket_wait(ent->socket, proc, events);
+    }
+
+    if (special_wait_object_kind(ent->kind)) {
+        if ((events & POLLIN) == 0) return 0;
+        rc = special_wait_readable(ent, proc);
+        if (rc < 0) {
+            wait_queue_remove_proc(proc);
+        }
+        return rc;
+    }
+
+    return 0;
+}
+
 int process_fd_seek(fd_entry_t* ent, int offset, int whence) {
     if (!ent || !ent->ops) return -EBADF;
     if (!ent->ops->seek) return -ENOSYS;
@@ -765,6 +869,24 @@ int process_fd_set_flags(fd_entry_t* ent, unsigned int flags) {
 unsigned int process_fd_get_flags(fd_entry_t* ent) {
     if (!ent || !ent->valid) return 0;
     return ent->flags;
+}
+
+void process_wake_timerfds(process_t* proc, unsigned int now) {
+    if (!proc || !proc->fds) return;
+
+    for (unsigned int i = 0; i < proc->fd_capacity; i++) {
+        fd_entry_t* ent = &proc->fds[i];
+        special_wait_object_t* obj;
+
+        if (!ent->valid || ent->kind != PROCESS_HANDLE_KIND_TIMERFD) {
+            continue;
+        }
+        if (!timerfd_ready_at(ent, now)) continue;
+
+        obj = special_wait_object(ent, 0);
+        if (!obj) continue;
+        wait_queue_wake_all(&obj->read_waiters);
+    }
 }
 
 void process_claim_for_wait(process_t* proc) {

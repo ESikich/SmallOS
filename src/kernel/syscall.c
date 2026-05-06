@@ -979,18 +979,18 @@ static unsigned int sys_poll_snapshot(process_t* proc, struct pollfd* fds,
     return ready;
 }
 
-static int sys_poll_register_socket_waits(process_t* proc,
-                                          struct pollfd* fds,
-                                          unsigned int nfds) {
+static int sys_poll_register_fd_waits(process_t* proc,
+                                      struct pollfd* fds,
+                                      unsigned int nfds) {
     if (!proc || !fds) return -EINVAL;
 
     for (unsigned int i = 0; i < nfds; i++) {
         fd_entry_t* ent = process_fd_get(proc, fds[i].fd);
         int rc;
 
-        if (!socket_fd_is_socket(ent)) continue;
+        if (!ent) continue;
 
-        rc = socket_wait(ent->socket, proc, fds[i].events);
+        rc = process_fd_wait(ent, proc, fds[i].events);
         if (rc < 0) {
             socket_wait_clear_process(proc);
             return rc;
@@ -1039,7 +1039,7 @@ static int sys_poll_impl(syscall_regs_t* regs, struct pollfd* fds,
         proc->state = infinite_wait ? PROCESS_STATE_WAITING
                                     : PROCESS_STATE_SLEEPING;
         {
-            int wait_rc = sys_poll_register_socket_waits(proc, fds, nfds);
+            int wait_rc = sys_poll_register_fd_waits(proc, fds, nfds);
             if (wait_rc < 0) {
                 proc->state = PROCESS_STATE_RUNNING;
                 socket_wait_clear_process(proc);
@@ -1174,32 +1174,6 @@ static int sys_epoll_ctl_impl(int epfd, int op, int fd,
     return -EINVAL;
 }
 
-static int epoll_timer_deadline_elapsed(unsigned int deadline) {
-    return deadline != 0u && (int)(timer_get_ticks() - deadline) >= 0;
-}
-
-static unsigned int epoll_next_timer_deadline(process_t* proc,
-                                              epoll_watch_t* watches) {
-    unsigned int best = 0u;
-
-    if (!proc || !watches) return 0u;
-
-    for (unsigned int i = 0; i < EPOLL_MAX_WATCHES; i++) {
-        if (!watches[i].used) continue;
-        fd_entry_t* ent = process_fd_get(proc, watches[i].fd);
-        if (!ent || ent->kind != PROCESS_HANDLE_KIND_TIMERFD) continue;
-        if (ent->timer_deadline == 0u) continue;
-        if (epoll_timer_deadline_elapsed(ent->timer_deadline)) {
-            return timer_get_ticks();
-        }
-        if (best == 0u || (int)(ent->timer_deadline - best) < 0) {
-            best = ent->timer_deadline;
-        }
-    }
-
-    return best;
-}
-
 static unsigned int epoll_snapshot(process_t* proc,
                                    epoll_watch_t* watches,
                                    struct epoll_event* events,
@@ -1231,7 +1205,7 @@ static unsigned int epoll_snapshot(process_t* proc,
     return ready;
 }
 
-static int epoll_register_socket_waits(process_t* proc, epoll_watch_t* watches) {
+static int epoll_register_fd_waits(process_t* proc, epoll_watch_t* watches) {
     if (!proc) return -EINVAL;
     if (!watches) return 0;
 
@@ -1242,11 +1216,11 @@ static int epoll_register_socket_waits(process_t* proc, epoll_watch_t* watches) 
         if (!watches[i].used) continue;
 
         ent = process_fd_get(proc, watches[i].fd);
-        if (!socket_fd_is_socket(ent)) continue;
+        if (!ent) continue;
 
-        rc = socket_wait(ent->socket,
-                         proc,
-                         (short)(watches[i].events & 0xFFFFu));
+        rc = process_fd_wait(ent,
+                             proc,
+                             (short)(watches[i].events & 0xFFFFu));
         if (rc < 0) {
             socket_wait_clear_process(proc);
             return rc;
@@ -1301,15 +1275,10 @@ static int sys_epoll_wait_impl(syscall_regs_t* regs,
             return 0;
         }
 
-        unsigned int timer_deadline = watches ? epoll_next_timer_deadline(proc, watches) : 0u;
         unsigned int sleep_deadline = 0u;
 
         if (!infinite_wait) {
             sleep_deadline = timeout_deadline;
-        }
-        if (timer_deadline != 0u &&
-            (sleep_deadline == 0u || (int)(timer_deadline - sleep_deadline) < 0)) {
-            sleep_deadline = timer_deadline;
         }
 
         if (sleep_deadline != 0u) {
@@ -1320,7 +1289,7 @@ static int sys_epoll_wait_impl(syscall_regs_t* regs,
             proc->state = PROCESS_STATE_WAITING;
         }
         {
-            int wait_rc = epoll_register_socket_waits(proc, watches);
+            int wait_rc = epoll_register_fd_waits(proc, watches);
             if (wait_rc < 0) {
                 proc->state = PROCESS_STATE_RUNNING;
                 socket_wait_clear_process(proc);

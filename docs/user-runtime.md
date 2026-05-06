@@ -112,7 +112,9 @@ read / write / seek / poll / flush / close
 
 Socket descriptors point at kernel `socket_t` objects; blocking socket reads,
 accepts, and socket-backed `poll`/`epoll_wait` waits use socket-owned
-accept/read/write wait queues. Accepted TCP streams are tracked in a global
+accept/read/write wait queues. Timerfd/signalfd-style handles have their own
+read wait queues, and expired timerfds wake waiters from the timer IRQ path.
+Accepted TCP streams are tracked in a global
 4-tuple TCP table, allocate a 4 KiB PMM-backed receive ring on first payload,
 and release it again after userland drains the buffer. Socket writes allocate a
 matching 4 KiB TX ring on first payload, keep queued bytes until ACKed, release

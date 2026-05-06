@@ -1322,6 +1322,7 @@ static void cmd_selftest(command_t* cmd) {
     static char* dirprobe_argv[] = { "apps/tests/dirprobe", "alpha", "beta", 0 };
     static char* errnoprobe_argv[] = { "apps/tests/errnoprobe", "alpha", "beta", 0 };
     static char* sleep_argv[] = { "apps/tests/sleep_test", "alpha", "beta", 0 };
+    static char* timerfdprobe_argv[] = { "apps/tests/timerfdprobe", "alpha", "beta", 0 };
     static char* ptrguard_argv[] = { "apps/tests/ptrguard", "alpha", "beta", 0 };
     static char* preempt_argv[] = { "apps/tests/preempt_test", "alpha", "beta", 0 };
     static char* crtprobe_argv[] = { "apps/tests/crtprobe.elf", "alpha", "nested/path", "longish-argument-0123456789abcdef", 0 };
@@ -1349,6 +1350,7 @@ static void cmd_selftest(command_t* cmd) {
         { "dirprobe",    "apps/tests/dirprobe",   1, dirprobe_argv,    0 },
         { "errnoprobe",  "apps/tests/errnoprobe", 1, errnoprobe_argv,  0 },
         { "sleep_test",  "apps/tests/sleep_test", 1, sleep_argv,       0 },
+        { "timerfdprobe","apps/tests/timerfdprobe",1, timerfdprobe_argv,0 }, /* timerfd wait regression */
         { "ptrguard",    "apps/tests/ptrguard",   1, ptrguard_argv,    0 }, /* syscall pointer regression */
         { "preempt_test","apps/tests/preempt_test",1, preempt_argv,     0 }, /* timer-preemption regression */
         { "crtprobe",    "apps/tests/crtprobe.elf",4, crtprobe_argv,    7 },

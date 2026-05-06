@@ -87,6 +87,9 @@ static void sched_wake_sleepers(unsigned int now) {
     for (int i = 0; i < s_count; i++) {
         process_t* proc = s_table[i];
         if (!proc) continue;
+
+        process_wake_timerfds(proc, now);
+
         if (proc->state != PROCESS_STATE_SLEEPING) continue;
 
         /*

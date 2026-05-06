@@ -20,10 +20,13 @@ Current implementation status:
   connection table keyed by local IP, local port, remote IP, and remote port,
   capped `listen(backlog)` handling is in place, and TCP tables stay out of the
   low-memory VGA/BIOS hole.
-- Phase 4 has an initial socket wait-queue step: `wait_queue_t` is backed by a
-  fixed node pool, sockets own accept/read/write queues, and blocking
-  `accept`, `recv`, socket `read`, `poll`, and `epoll_wait` register on socket
-  objects. Timerfd/signalfd wait queues and fully object-driven epoll remain.
+- Phase 4 is implemented for sockets plus timerfd/signalfd-style descriptors:
+  `wait_queue_t` is backed by a fixed node pool, sockets own accept/read/write
+  queues, timerfd/signalfd handles own read wait queues, and blocking
+  `accept`, `recv`, socket `read`, timerfd `read`, `poll`, and `epoll_wait`
+  register on the objects they are waiting for. Timer IRQs wake expired
+  timerfd waiters directly. Real signalfd signal delivery remains a future
+  source of readiness.
 - Phase 5 has an initial receive-buffer step: accepted TCP connections allocate
   a lazy PMM-backed 4 KiB RX ring on first payload, advertise the remaining RX
   window, and stop ACKing bytes that could not be queued. It also has an
@@ -53,8 +56,8 @@ less provisional before SSH or client-style programs depend on it:
 - Finish send-side/window behavior for slow readers, including larger or
   configurable TX limits and firmer enforcement of global socket/TCP memory
   caps.
-- Move timerfd and signalfd waits onto object-level wait queues and make epoll
-  fully object-driven instead of partly scan-driven.
+- Add real signalfd signal production; signalfd handles now have read wait
+  queues, but no kernel signal source feeds them yet.
 - Implement outbound TCP `connect()`; `SYS_CONNECT` still returns `-ENOSYS`.
 - Expand TCP half-close behavior beyond the current passive FIN
   retransmission/cleanup support, especially around less common close-state
@@ -378,7 +381,9 @@ Tests:
 Exit criteria:
 
 - No global TCP waiter remains. (Implemented for socket waits.)
-- `poll()`/`epoll_wait()` wake from the object that became ready.
+- `poll()`/`epoll_wait()` wake from the object that became ready. (Implemented
+  for sockets and timerfd; signalfd has object waits but still lacks a signal
+  producer.)
 
 ## Phase 5: Per-Connection Buffers And Backpressure
 
@@ -526,14 +531,15 @@ Before starting SSH:
 - socket wait queues exist
 - per-connection RX ring exists
 - per-connection TX/retransmit buffer exists
-- `poll()` is object-driven
+- `poll()`/`epoll_wait()` are object-driven for sockets and timerfd
 - `shutdown()` has basic half-close semantics plus passive FIN retransmission
   and late cleanup
 - idle long-lived TCP connections do not consume large kernel buffers
 
 SSH is interactive and long-lived. The old single socket waiter and tiny
-fixed-fd table are gone, and receive buffering has started, but SSH should
-still wait for outbound `connect()`, fuller slow-reader/window handling, and
+fixed-fd table are gone, receive buffering has started, and timerfd event-loop
+wakes are object-driven, but SSH should still wait for outbound `connect()`,
+fuller slow-reader/window handling, real signalfd signal production, and
 additional shutdown-state coverage.
 
 ## Implementation Rules For The Next LLM

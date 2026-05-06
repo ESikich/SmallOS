@@ -143,10 +143,12 @@ int        process_fd_read(fd_entry_t* ent, char* buf, unsigned int len);
 int        process_fd_read_raw(fd_entry_t* ent, char* buf, unsigned int len);
 int        process_fd_write(fd_entry_t* ent, const char* buf, unsigned int len);
 short      process_fd_poll(fd_entry_t* ent, short events);
+int        process_fd_wait(fd_entry_t* ent, process_t* proc, short events);
 int        process_fd_flush(fd_entry_t* ent);
 int        process_fd_seek(fd_entry_t* ent, int offset, int whence);
 int        process_fd_set_flags(fd_entry_t* ent, unsigned int flags);
 unsigned int process_fd_get_flags(fd_entry_t* ent);
+void       process_wake_timerfds(process_t* proc, unsigned int now);
 void       process_claim_for_wait(process_t* proc);
 int        process_set_args(process_t* proc, int argc, char** argv);
 
