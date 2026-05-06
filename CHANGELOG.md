@@ -20,8 +20,9 @@
   * Added a fixed-pool wait queue primitive and socket-level accept/read/write queues; blocking `accept`, `recv`, socket `read`, `poll`, and `epoll_wait` now register on the relevant socket object instead of a single TCP waiter.
   * Added lazy PMM-backed 4 KiB TCP receive rings per active connection and advertised the remaining RX window instead of ACKing bytes that were not queued.
   * Added lazy PMM-backed 4 KiB TCP transmit rings per active writing connection; sent bytes are retained until ACKed, payloads are retried from the ring, `POLLOUT` reflects remaining TX capacity, and blocking socket writes wait for TX space while nonblocking writes can short-write or return `EAGAIN`.
+  * Added basic TCP half-close behavior for `shutdown()`: `SHUT_RD` reports local EOF, `SHUT_WR` drains queued TX before sending FIN, and later writes fail with `EPIPE`.
   * Raised the sample cserve config to `max_conn = 32`.
-  * Expanded the socket EOF smoke to send a multi-segment payload before the host half-close.
+  * Expanded the socket EOF smoke to send a multi-segment payload before the host half-close and to verify guest-side write shutdown.
 
 ## [Current] — Full-screen userland text editor
 
@@ -148,7 +149,7 @@
 
 * **Socket EOF smoke** (`src/drivers/tcp.c`, `src/kernel/process.c`, `src/user/sockeof.c`, `tools/socket_eof_smoke.py`, `Makefile`)
   * TCP sockets now keep peer FIN visible long enough for userland `poll()` to report `POLLHUP` and for `read()` to return buffered data followed by EOF.
-  * Added `make socket-eof-smoke`, which sends payload plus a host half-close and verifies guest payload read, EOF read, and post-EOF response write.
+  * Added `make socket-eof-smoke`, which sends payload plus a host half-close and verifies guest payload read, EOF read, post-EOF response write, and guest write-side shutdown.
 
 * **User runtime split** (`src/user/user_stdio.c`, `src/user/user_time.c`, `src/user/user_dirent.c`, `src/user/user_crypt.c`, `Makefile`, `docs/`)
   * Moved `strtok_r`, `gmtime_r`, `strftime`, and `opendir` / `readdir` / `closedir` out of the FTP compatibility shim and into normal runtime modules.

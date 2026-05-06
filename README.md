@@ -37,7 +37,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Per-process kernel stacks — dedicated PMM frame per process; TSS ESP0 set from it; freed on exit
 * Syscall layer via `int 0x80` (DPL=3 gate): console, process, heap, cwd, file, directory, and socket calls shared by the kernel and user runtime headers
 * Small VFS boundary for FAT16-backed file handles and path operations; `process.c` owns fd lifetime while `vfs.c` owns file behavior
-* Socket/poll ABI via `int 0x80`: passive TCP sockets, `accept4`, basic `shutdown`, `getsockname`/`getpeername`, `poll`, `epoll`, `timerfd`, and `signalfd` shims for guest services
+* Socket/poll ABI via `int 0x80`: passive TCP sockets, `accept4`, basic TCP half-close via `shutdown`, `getsockname`/`getpeername`, `poll`, `epoll`, `timerfd`, and `signalfd` shims for guest services
 * `sys_exit()` is scheduler-owned: it switches to the kernel page directory, marks the current task `PROCESS_STATE_ZOMBIE`, and switches to the next runnable task
 * Shell now runs as an explicit kernel task scheduled by `scheduler.c`
 * **Preemptive round-robin scheduler** — PIT timer IRQ at `SMALLOS_TIMER_HZ`, with a named 20 ms scheduler quantum
@@ -171,7 +171,8 @@ FTP passive transfers also need the passive data port, currently guest
 `make socket-eof-smoke` boots QEMU with host forwarding for
 `apps/services/sockeof`, sends a 3072-byte multi-segment payload plus a TCP
 half-close from the host, and verifies that guest `poll()`/`read()` observe EOF
-after the payload before the guest writes back `PASS`.
+after the payload before the guest writes back `PASS`, shuts down its write
+side, and rejects later writes.
 
 `make socket-parallel-smoke` boots QEMU with host forwarding for
 `apps/services/tcpecho`, opens 8 parallel host clients by default, verifies

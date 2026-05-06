@@ -99,6 +99,14 @@ void _start(int argc, char** argv) {
         close(client_fd);
         fail(server_fd, "response write failed");
     }
+    if (shutdown(client_fd, SHUT_WR) < 0) {
+        close(client_fd);
+        fail(server_fd, "shutdown write failed");
+    }
+    if (write(client_fd, "NOPE", 4) >= 0) {
+        close(client_fd);
+        fail(server_fd, "post-shutdown write succeeded");
+    }
 
     close(client_fd);
     close(server_fd);

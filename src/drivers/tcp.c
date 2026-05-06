@@ -13,6 +13,7 @@
 #include "../kernel/socket.h"
 #include "../kernel/timer.h"
 #include "../kernel/uapi_errno.h"
+#include "../kernel/uapi_socket.h"
 #include "terminal.h"
 
 #define TCP_ETHERTYPE        0x0800u
@@ -76,6 +77,8 @@ typedef struct {
     u16 remote_window;
     int close_requested;
     int peer_closed;
+    int local_read_closed;
+    int local_write_closed;
 } tcp_conn_t;
 
 typedef struct {
@@ -188,6 +191,9 @@ static u16 tcp_conn_rx_window(tcp_conn_t* conn) {
 
     if (!conn || conn->rx_window_closed) {
         return 0u;
+    }
+    if (conn->local_read_closed) {
+        return TCP_RX_BUFFER_SIZE > 0xFFFFu ? 0xFFFFu : TCP_RX_BUFFER_SIZE;
     }
     if (conn->rx_len >= TCP_RX_BUFFER_SIZE) {
         return 0u;
@@ -820,6 +826,7 @@ static void tcp_begin_close(tcp_conn_t* conn) {
         return;
     }
 
+    conn->local_write_closed = 1;
     if (conn->tx_len > 0u) {
         conn->close_requested = 1;
         tcp_conn_tx_flush(conn);
@@ -1008,12 +1015,17 @@ unsigned int tcp_socket_mark_accepted(void) {
 
 int tcp_socket_connection_established(void) {
     tcp_conn_t* conn = tcp_active_conn();
-    return conn && conn->state == TCP_STATE_ESTABLISHED;
+    return conn &&
+           (conn->state == TCP_STATE_ESTABLISHED ||
+            conn->state == TCP_STATE_FIN_WAIT);
 }
 
 int tcp_socket_recv_ready(void) {
     tcp_conn_t* conn = tcp_active_conn();
-    return conn && (conn->rx_len > 0u || conn->peer_closed);
+    return conn &&
+           (conn->rx_len > 0u ||
+            conn->peer_closed ||
+            conn->local_read_closed);
 }
 
 int tcp_socket_peer_closed(void) {
@@ -1028,7 +1040,12 @@ int tcp_socket_recv(void* buf, unsigned int len) {
     if (!conn || !buf) {
         return -1;
     }
-    if (conn->state != TCP_STATE_ESTABLISHED && !conn->peer_closed) {
+    if (conn->local_read_closed) {
+        return 0;
+    }
+    if (conn->state != TCP_STATE_ESTABLISHED &&
+        conn->state != TCP_STATE_FIN_WAIT &&
+        !conn->peer_closed) {
         return -1;
     }
 
@@ -1037,7 +1054,9 @@ int tcp_socket_recv(void* buf, unsigned int len) {
     }
 
     to_copy = tcp_conn_rx_pop(conn, (u8*)buf, len);
-    if (to_copy > 0u && conn->state == TCP_STATE_ESTABLISHED) {
+    if (to_copy > 0u &&
+        (conn->state == TCP_STATE_ESTABLISHED ||
+         conn->state == TCP_STATE_FIN_WAIT)) {
         tcp_send_segment(TCP_LOCAL_IP,
                          conn->remote_ip,
                          conn->remote_mac,
@@ -1056,6 +1075,7 @@ int tcp_socket_recv(void* buf, unsigned int len) {
 int tcp_socket_send_ready(void) {
     tcp_conn_t* conn = tcp_active_conn();
     return conn && conn->state == TCP_STATE_ESTABLISHED &&
+           !conn->local_write_closed &&
            tcp_conn_tx_space(conn) > 0u;
 }
 
@@ -1069,6 +1089,9 @@ int tcp_socket_send(const void* buf, unsigned int len) {
     }
     if (!conn || conn->state != TCP_STATE_ESTABLISHED) {
         return -ECONNRESET;
+    }
+    if (conn->local_write_closed) {
+        return -EPIPE;
     }
     if (!tcp_conn_tx_ensure(conn)) {
         return -ENOMEM;
@@ -1098,6 +1121,34 @@ int tcp_socket_send(const void* buf, unsigned int len) {
         tcp_conn_tx_arm_retransmit(conn);
     }
     return (int)queued;
+}
+
+int tcp_socket_shutdown(int how) {
+    tcp_conn_t* conn = tcp_active_conn();
+
+    if (!conn) {
+        return -ECONNRESET;
+    }
+    if (conn->state != TCP_STATE_ESTABLISHED &&
+        conn->state != TCP_STATE_FIN_WAIT) {
+        return -ECONNRESET;
+    }
+
+    if (how == SHUT_RD || how == SHUT_RDWR) {
+        conn->local_read_closed = 1;
+        tcp_conn_rx_release(conn);
+        socket_wake_tcp_connection(conn->local_port, conn->conn_id, POLLIN);
+    }
+
+    if (how == SHUT_WR || how == SHUT_RDWR) {
+        if (conn->state == TCP_STATE_ESTABLISHED &&
+            !conn->local_write_closed) {
+            tcp_begin_close(conn);
+        }
+        socket_wake_tcp_connection(conn->local_port, conn->conn_id, POLLOUT);
+    }
+
+    return 0;
 }
 
 unsigned int tcp_socket_poll_events(void) {
@@ -1234,6 +1285,8 @@ static void tcp_accept_syn(const u8* frame,
     conn->tx_retries = 0u;
     conn->close_requested = 0;
     conn->peer_closed = 0;
+    conn->local_read_closed = 0;
+    conn->local_write_closed = 0;
 
     tcp_send_segment(TCP_LOCAL_IP,
                      conn->remote_ip,
@@ -1246,6 +1299,75 @@ static void tcp_accept_syn(const u8* frame,
                      tcp_conn_rx_window(conn),
                      0,
                      0);
+}
+
+static void tcp_process_rx_payload(tcp_slot_t* slot,
+                                   tcp_conn_t* conn,
+                                   unsigned int conn_id,
+                                   const u8* payload,
+                                   u32 payload_len,
+                                   u32 seq,
+                                   u8 flags) {
+    if (!slot || !conn) {
+        return;
+    }
+    if (seq != conn->remote_seq_next) {
+        return;
+    }
+
+    conn->last_activity = timer_get_ticks();
+
+    if (payload_len > 0u) {
+        unsigned int accepted;
+
+        if (conn->local_read_closed) {
+            accepted = payload_len;
+        } else {
+            accepted = tcp_conn_rx_push(conn, payload, payload_len);
+            if (accepted > 0u) {
+                socket_wake_tcp_connection(slot->local_port, conn_id, POLLIN);
+            }
+        }
+
+        conn->remote_seq_next += accepted;
+        if (accepted < payload_len) {
+            tcp_send_segment(TCP_LOCAL_IP,
+                             conn->remote_ip,
+                             conn->remote_mac,
+                             conn->local_port,
+                             conn->remote_port,
+                             conn->local_seq_next,
+                             conn->remote_seq_next,
+                             TCP_ACK,
+                             tcp_conn_rx_window(conn),
+                             0,
+                             0);
+            return;
+        }
+    }
+
+    if (flags & TCP_FIN) {
+        conn->remote_seq_next += 1u;
+    }
+
+    tcp_send_segment(TCP_LOCAL_IP,
+                     conn->remote_ip,
+                     conn->remote_mac,
+                     conn->local_port,
+                     conn->remote_port,
+                     conn->local_seq_next,
+                     conn->remote_seq_next,
+                     TCP_ACK,
+                     tcp_conn_rx_window(conn),
+                     0,
+                     0);
+
+    if (flags & TCP_FIN) {
+        conn->peer_closed = 1;
+        socket_wake_tcp_connection(slot->local_port,
+                                   conn_id,
+                                   (short)(POLLIN | POLLHUP));
+    }
 }
 
 static void tcp_echo_payload(const u8* frame,
@@ -1304,28 +1426,16 @@ static void tcp_echo_payload(const u8* frame,
     }
 
     if (conn->state == TCP_STATE_FIN_WAIT) {
-        if (payload_len > 0u) {
+        if (payload_len > TCP_MAX_PAYLOAD) {
             return;
         }
-
-        if ((flags & TCP_ACK) != 0u) {
-            conn->last_activity = timer_get_ticks();
-        }
-
-        if ((flags & TCP_FIN) != 0u) {
-            tcp_send_segment(TCP_LOCAL_IP,
-                             conn->remote_ip,
-                             conn->remote_mac,
-                             conn->local_port,
-                             conn->remote_port,
-                             conn->local_seq_next,
-                             conn->remote_seq_next + 1u,
-                             TCP_ACK,
-                             tcp_conn_rx_window(conn),
-                             0,
-                             0);
-            tcp_reset_connection(conn);
-        }
+        tcp_process_rx_payload(slot,
+                               conn,
+                               conn_id,
+                               &frame[payload_off],
+                               payload_len,
+                               seq,
+                               flags);
         return;
     }
 
@@ -1343,7 +1453,7 @@ static void tcp_echo_payload(const u8* frame,
         conn->last_activity = timer_get_ticks();
         socket_wake_tcp_listener(slot->local_port);
 
-        if (payload_len == 0u) {
+        if (payload_len == 0u && (flags & TCP_FIN) == 0u) {
             return;
         }
     }
@@ -1356,58 +1466,13 @@ static void tcp_echo_payload(const u8* frame,
         return;
     }
 
-    if (seq != conn->remote_seq_next) {
-        return;
-    }
-
-    conn->last_activity = timer_get_ticks();
-
-    if (payload_len > 0u) {
-        unsigned int accepted = tcp_conn_rx_push(conn,
-                                                 &frame[payload_off],
-                                                 payload_len);
-        if (accepted > 0u) {
-            conn->remote_seq_next += accepted;
-            socket_wake_tcp_connection(slot->local_port, conn_id, POLLIN);
-        }
-        if (accepted < payload_len) {
-            tcp_send_segment(TCP_LOCAL_IP,
-                             conn->remote_ip,
-                             conn->remote_mac,
-                             conn->local_port,
-                             conn->remote_port,
-                             conn->local_seq_next,
-                             conn->remote_seq_next,
-                             TCP_ACK,
-                             tcp_conn_rx_window(conn),
-                             0,
-                             0);
-            return;
-        }
-    }
-
-    if (flags & TCP_FIN) {
-        conn->remote_seq_next += 1u;
-    }
-
-    tcp_send_segment(TCP_LOCAL_IP,
-                     conn->remote_ip,
-                     conn->remote_mac,
-                     conn->local_port,
-                     conn->remote_port,
-                     conn->local_seq_next,
-                     conn->remote_seq_next,
-                     TCP_ACK,
-                     tcp_conn_rx_window(conn),
-                     0,
-                     0);
-
-    if (flags & TCP_FIN) {
-        conn->peer_closed = 1;
-        socket_wake_tcp_connection(slot->local_port,
-                                   conn_id,
-                                   (short)(POLLIN | POLLHUP));
-    }
+    tcp_process_rx_payload(slot,
+                           conn,
+                           conn_id,
+                           &frame[payload_off],
+                           payload_len,
+                           seq,
+                           flags);
 }
 
 static void tcp_maybe_retransmit(void) {

@@ -1448,10 +1448,9 @@ static int sys_shutdown_impl(int fd, int how) {
     fd_entry_t* ent;
 
     if (!proc) return -EINVAL;
-    if (how != SHUT_RD && how != SHUT_WR && how != SHUT_RDWR) return -EINVAL;
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
-    return 0;
+    return socket_shutdown_tcp(ent->socket, how);
 }
 
 static int sys_getpeername_impl(int fd, struct sockaddr* addr, unsigned int* addrlen) {

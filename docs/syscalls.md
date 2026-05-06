@@ -386,7 +386,8 @@ queues bytes in a lazy 4 KiB PMM-backed per-connection TX ring, transmits from
 that ring, keeps sent bytes until ACKed, releases the ring once drained, and
 retries buffered payloads. Blocking socket writes wait on the socket write wait
 queue when the TX ring is full. Nonblocking socket writes can return a short
-byte count or `-EAGAIN`.
+byte count or `-EAGAIN`. After `shutdown(fd, SHUT_WR)`, sends fail with
+`-EPIPE`.
 
 ---
 
@@ -398,8 +399,9 @@ int sys_recv(int fd, void* buf, uint32_t len);
 
 Receives bytes from an established stream socket. The current server-side path
 blocks on the socket read wait queue until data arrives or the connection
-closes. Accepted TCP connections use a lazy PMM-backed 4 KiB receive ring and
-advertise the remaining receive window to the peer.
+closes, or returns EOF immediately after local `SHUT_RD`. Accepted TCP
+connections use a lazy PMM-backed 4 KiB receive ring and advertise the
+remaining receive window to the peer.
 
 ---
 
@@ -586,8 +588,10 @@ compatibility but close-on-exec state is not modeled yet.
 int sys_shutdown(int fd, int how);
 ```
 
-Validates a socket handle and `SHUT_RD`, `SHUT_WR`, or `SHUT_RDWR`. The syscall
-currently returns success without implementing TCP half-close state.
+Applies TCP half-close behavior to a connected socket. `SHUT_RD` makes future
+reads return EOF and discards queued/incoming payload bytes, `SHUT_WR` sends a
+FIN after any queued TX bytes drain and makes future writes fail with `EPIPE`,
+and `SHUT_RDWR` applies both directions.
 
 ---
 

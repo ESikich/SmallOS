@@ -120,7 +120,8 @@ commands on their own.
 guest port `2463`, starts `apps/services/sockeof`, then verifies that
 a 3072-byte multi-segment payload plus host half-close wakes guest `poll()`,
 leaves the full payload readable, returns `0` on the next `read()`, and still
-allows the guest to write back.
+allows the guest to write back before `shutdown(SHUT_WR)` rejects later writes
+and sends EOF to the host.
 
 `make socket-parallel-smoke` forwards host port `2323` to guest `tcpecho`,
 opens 8 parallel clients by default, sends small echo payloads over each

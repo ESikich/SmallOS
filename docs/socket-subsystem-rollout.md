@@ -53,8 +53,8 @@ less provisional before SSH or client-style programs depend on it:
 - Move timerfd and signalfd waits onto object-level wait queues and make epoll
   fully object-driven instead of partly scan-driven.
 - Implement outbound TCP `connect()`; `SYS_CONNECT` still returns `-ENOSYS`.
-- Implement real TCP half-close state for `shutdown()`; the syscall currently
-  validates arguments and returns success.
+- Expand TCP half-close behavior beyond the initial `shutdown()` support,
+  including fuller FIN retransmission and late close-state cleanup.
 - Raise the cserve smoke default to demonstrate the full 32 held
   keep-alive-client exit criterion once that run is stable.
 
@@ -392,6 +392,9 @@ Implemented so far:
 - Nonblocking `send()` / socket `write()` now return short writes or `-EAGAIN`
   when the TX ring is full; blocking socket writes wait on the socket write
   queue until space returns.
+- `shutdown()` has initial half-close behavior: `SHUT_RD` reports local EOF,
+  `SHUT_WR` drains queued TX before sending FIN, and later writes fail with
+  `EPIPE`.
 
 Target:
 
@@ -517,8 +520,8 @@ Before starting SSH:
 - per-connection RX ring exists
 - per-connection TX/retransmit buffer exists
 - `poll()` is object-driven
-- `shutdown()` has at least basic half-close semantics, or SSH integration is
-  written with known limitations
+- `shutdown()` has basic half-close semantics; SSH integration can build on it
+  while fuller FIN retransmission and close-state cleanup continue separately
 - idle long-lived TCP connections do not consume large kernel buffers
 
 SSH is interactive and long-lived. The old single socket waiter and tiny

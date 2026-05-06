@@ -71,7 +71,7 @@ Important current-state facts:
 - `netcheck` prints the gateway steps separately from the public ICMP probe so a `1.1.1.1` timeout does not imply the local NAT path is broken
 - `apps/services/tcpecho.elf`, `apps/services/sockeof.elf`, and `apps/services/ftpd.elf` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
 - `tcpecho.elf` listens on `2323` in the guest and is driven by `make socket-parallel-smoke` to verify multiple simultaneous echo clients
-- `sockeof.elf` listens on `2463` in the guest and is driven by `make socket-eof-smoke` to verify a multi-segment payload before EOF, `POLLHUP`, and post-EOF response writes
+- `sockeof.elf` listens on `2463` in the guest and is driven by `make socket-eof-smoke` to verify a multi-segment payload before EOF, `POLLHUP`, post-EOF response writes, and guest write-side shutdown
 - `ftpd.elf` listens on `2121` in the guest and expects passive data connections on `30000`; `make ftp-smoke` and `make ftp-loop-smoke` cover that path, and host-side clients such as `lftp`, WinSCP, and FileZilla should use passive mode
 
 ---
@@ -196,7 +196,8 @@ each client, and records `netinfo` before, during, and after the run.
 `make socket-eof-smoke` forwards guest port `2463`, launches `sockeof`, sends a
 3072-byte patterned payload followed by a host TCP half-close, and verifies that
 the guest drains the complete payload, observes EOF through `poll()`/`read()`,
-and can still send a final response.
+can still send a final response, and then uses `shutdown(SHUT_WR)` to reject
+later writes and deliver EOF to the host.
 
 `make cserve-smoke` forwards guest port `8080`, launches cserve with the seeded
 `cserve.ini`, checks the large `/www/index.html` static fixture, holds
@@ -325,7 +326,9 @@ socket syscalls and socket-backed poll/epoll waits. Accepted TCP streams now
 allocate a lazy 4 KiB PMM-backed RX ring on first payload and advertise the
 remaining receive window; socket writes use a matching lazy 4 KiB TX ring, ACK
 driven space reclamation, release-on-drain behavior, and write-waiter wakeups
-for basic send-side backpressure.
+for basic send-side backpressure. Basic `shutdown()` half-close behavior is
+implemented for passive streams: `SHUT_RD` reports local EOF, and `SHUT_WR`
+drains queued TX before sending FIN and rejecting later writes.
 Each process also carries cwd state, so user path syscalls resolve relative
 paths before entering VFS or ELF loading.
 FAT16-backed file behavior and path operations sit behind `vfs.c`, so

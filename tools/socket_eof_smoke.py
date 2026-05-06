@@ -160,6 +160,9 @@ def run_socket_eof_smoke(args):
                 response = data.recv(32)
                 if response != b"PASS\n":
                     raise RuntimeError(f"expected PASS response, got {response!r}")
+                eof = data.recv(1)
+                if eof != b"":
+                    raise RuntimeError(f"expected guest shutdown EOF, got {eof!r}")
             finally:
                 data.close()
 

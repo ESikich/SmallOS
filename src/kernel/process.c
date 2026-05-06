@@ -498,7 +498,13 @@ static int process_handle_socket_write(fd_entry_t* ent, const char* buf, unsigne
         }
 
         if (rc < 0 && rc != -EAGAIN) {
-            return done ? (int)done : (rc == -ENOMEM ? rc : -ECONNRESET);
+            if (done) {
+                return (int)done;
+            }
+            if (rc == -ENOMEM || rc == -EPIPE) {
+                return rc;
+            }
+            return -ECONNRESET;
         }
 
         if ((ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u) {

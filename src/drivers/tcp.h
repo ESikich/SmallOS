@@ -47,6 +47,7 @@ int  tcp_socket_peer_closed(void);
 int  tcp_socket_recv(void* buf, unsigned int len);
 int  tcp_socket_send_ready(void);
 int  tcp_socket_send(const void* buf, unsigned int len);
+int  tcp_socket_shutdown(int how);
 unsigned int tcp_socket_poll_events(void);
 unsigned int tcp_socket_peer_ip(void);
 unsigned int tcp_socket_peer_port(void);

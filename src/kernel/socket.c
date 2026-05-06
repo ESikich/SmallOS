@@ -3,8 +3,12 @@
 #include "klib.h"
 #include "uapi_errno.h"
 #include "uapi_poll.h"
+#include "uapi_socket.h"
 #include "wait.h"
 #include "../drivers/tcp.h"
+
+#define SOCKET_FLAG_READ_SHUTDOWN  0x00000001u
+#define SOCKET_FLAG_WRITE_SHUTDOWN 0x00000002u
 
 struct socket {
     socket_kind_t kind;
@@ -202,6 +206,7 @@ int socket_tcp_connection_established(socket_t* sock) {
 
 int socket_tcp_recv_ready(socket_t* sock) {
     if (!sock || sock->state != SOCKET_STATE_CONNECTED) return 0;
+    if ((sock->flags & SOCKET_FLAG_READ_SHUTDOWN) != 0u) return 1;
     socket_tcp_use(sock);
     return tcp_socket_recv_ready();
 }
@@ -214,20 +219,48 @@ int socket_tcp_peer_closed(socket_t* sock) {
 
 int socket_tcp_recv(socket_t* sock, void* buf, unsigned int len) {
     if (!sock || sock->state != SOCKET_STATE_CONNECTED) return -EINVAL;
+    if ((sock->flags & SOCKET_FLAG_READ_SHUTDOWN) != 0u) return 0;
     socket_tcp_use(sock);
     return tcp_socket_recv(buf, len);
 }
 
 int socket_tcp_send_ready(socket_t* sock) {
     if (!sock || sock->state != SOCKET_STATE_CONNECTED) return 0;
+    if ((sock->flags & SOCKET_FLAG_WRITE_SHUTDOWN) != 0u) return 0;
     socket_tcp_use(sock);
     return tcp_socket_send_ready();
 }
 
 int socket_tcp_send(socket_t* sock, const void* buf, unsigned int len) {
     if (!sock || sock->state != SOCKET_STATE_CONNECTED) return -EINVAL;
+    if ((sock->flags & SOCKET_FLAG_WRITE_SHUTDOWN) != 0u) return -EPIPE;
     socket_tcp_use(sock);
     return tcp_socket_send(buf, len);
+}
+
+int socket_shutdown_tcp(socket_t* sock, int how) {
+    int rc = 0;
+
+    if (!sock || sock->kind != SOCKET_KIND_TCP) return -EINVAL;
+    if (sock->state != SOCKET_STATE_CONNECTED) return -EINVAL;
+    if (how != SHUT_RD && how != SHUT_WR && how != SHUT_RDWR) return -EINVAL;
+
+    socket_tcp_use(sock);
+    if (how == SHUT_RD || how == SHUT_RDWR) {
+        rc = tcp_socket_shutdown(SHUT_RD);
+        if (rc < 0) return rc;
+        sock->flags |= SOCKET_FLAG_READ_SHUTDOWN;
+        wait_queue_wake_all(&sock->read_waiters);
+    }
+
+    if (rc >= 0 && (how == SHUT_WR || how == SHUT_RDWR)) {
+        rc = tcp_socket_shutdown(SHUT_WR);
+        if (rc < 0) return rc;
+        sock->flags |= SOCKET_FLAG_WRITE_SHUTDOWN;
+        wait_queue_wake_all(&sock->write_waiters);
+    }
+
+    return rc;
 }
 
 short socket_poll(socket_t* sock, short events) {
@@ -245,7 +278,9 @@ short socket_poll(socket_t* sock, short events) {
         int peer_closed;
 
         socket_tcp_use(sock);
-        if ((events & POLLIN) && tcp_socket_recv_ready()) {
+        if ((events & POLLIN) &&
+            (((sock->flags & SOCKET_FLAG_READ_SHUTDOWN) != 0u) ||
+             tcp_socket_recv_ready())) {
             revents |= POLLIN;
         }
         established = tcp_socket_connection_established();
@@ -253,7 +288,10 @@ short socket_poll(socket_t* sock, short events) {
         if (peer_closed || !established) {
             revents |= POLLHUP;
         }
-        if ((events & POLLOUT) && established && tcp_socket_send_ready()) {
+        if ((events & POLLOUT) &&
+            ((sock->flags & SOCKET_FLAG_WRITE_SHUTDOWN) == 0u) &&
+            established &&
+            tcp_socket_send_ready()) {
             revents |= POLLOUT;
         }
     }
