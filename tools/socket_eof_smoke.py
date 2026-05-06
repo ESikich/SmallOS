@@ -154,7 +154,8 @@ def run_socket_eof_smoke(args):
 
             data = connect_tcp("127.0.0.1", args.port, args.timeout)
             try:
-                data.sendall(b"payload")
+                payload = bytes(ord("A") + (i % 26) for i in range(3072))
+                data.sendall(payload)
                 data.shutdown(socket.SHUT_WR)
                 response = data.recv(32)
                 if response != b"PASS\n":

@@ -18,11 +18,15 @@ Current implementation status:
 - Phase 3 has an initial TCP scaling step: per-listener stream slots are now
   PMM-backed, capped `listen(backlog)` handling is in place, and the enlarged
   TCP table stays out of the low-memory VGA/BIOS hole. A full 4-tuple TCP
-  table and per-connection buffer/backpressure work remain.
+  table and send-side backpressure work remain.
 - Phase 4 has an initial socket wait-queue step: `wait_queue_t` is backed by a
   fixed node pool, sockets own accept/read/write queues, and blocking
   `accept`, `recv`, socket `read`, `poll`, and `epoll_wait` register on socket
   objects. Timerfd/signalfd wait queues and fully object-driven epoll remain.
+- Phase 5 has an initial receive-buffer step: accepted TCP connections allocate
+  a lazy PMM-backed 4 KiB RX ring on first payload, advertise the remaining RX
+  window, and stop ACKing bytes that could not be queued. TX queueing,
+  retransmit buffering, and full send-side backpressure remain.
 
 ## Goals
 
@@ -68,7 +72,7 @@ now uses `max_conn = 16` after the fd-table and socket-object foundation.
 
 ### TCP
 
-The TCP driver has a small fixed slot model:
+At the baseline, the TCP driver had a small fixed slot model:
 
 - fixed local-port slots
 - fixed accepted streams per slot
@@ -76,8 +80,12 @@ The TCP driver has a small fixed slot model:
 - one global TCP waiter
 - minimal per-stream receive buffer
 
-This is enough for the current smoke tests but not enough for SSH or larger
-HTTP/FTP concurrency.
+The current implementation has moved beyond that baseline: sockets own wait
+queues, fd entries point at `socket_t` objects, per-listener stream slots live
+in PMM-backed TCP tables, and accepted streams allocate a lazy 4 KiB PMM-backed
+RX ring on first payload. Remaining TCP limits are now the partial 4-tuple
+model, no TX queue/retransmit buffer, no real send-side backpressure, and
+limited resource visibility.
 
 ### Process allocation
 
@@ -337,16 +345,26 @@ Exit criteria:
 Purpose: support more connections without losing data or assuming immediate
 send completion.
 
+Implemented so far:
+
+- Accepted TCP connections allocate a 4 KiB PMM-backed RX ring lazily on first
+  payload.
+- The RX ring is released after userland drains the buffered data.
+- TCP ACKs advertise the remaining RX window and do not advance the receive
+  sequence past bytes that were not queued.
+- `make socket-eof-smoke` now sends a 3072-byte multi-segment payload before
+  the host half-close, so payload-before-EOF coverage exercises the RX ring.
+
 Target:
 
-- Per-connection RX ring buffer.
+- Per-connection RX ring buffer. (Initial implementation is in place.)
 - Per-connection TX queue or retransmit buffer.
 - Small default buffers with caps.
 - `send()` can return short writes or `EAGAIN` for nonblocking sockets.
 
 Suggested initial sizes:
 
-- RX buffer: 4 KiB per connection.
+- RX buffer: 4 KiB per active receiving connection. (Current implementation.)
 - TX buffer/retransmit queue: 4 KiB to 16 KiB per connection.
 - Global TCP memory cap.
 
@@ -449,15 +467,18 @@ Before starting SSH:
 - TCP connection table is keyed by 4-tuple
 - listen backlog exists
 - socket wait queues exist
-- per-connection RX/TX buffers exist
+- per-connection RX ring exists
+- per-connection TX/retransmit buffer exists
 - `poll()` is object-driven
 - `shutdown()` has at least basic half-close semantics, or SSH integration is
   written with known limitations
 - idle long-lived TCP connections do not consume large kernel buffers
 
 SSH is interactive and long-lived. The old single socket waiter and tiny
-fixed-fd table are gone, but SSH should still wait for the remaining 4-tuple
-connection-table and per-connection buffer/backpressure work.
+fixed-fd table are gone, and receive buffering has started, but SSH should
+still wait for the remaining 4-tuple connection-table cleanup, TX
+queue/retransmit buffering, send-side backpressure, and better shutdown
+semantics.
 
 ## Implementation Rules For The Next LLM
 
@@ -474,22 +495,26 @@ connection-table and per-connection buffer/backpressure work.
   before it reaches user space.
 - Update docs when syscall semantics or limits change.
 
-## Suggested First Commit For The Next LLM
+## Suggested Next Commit
 
 Title:
 
-`Move process fd tables out of process_t`
+`Add TCP send queue and socket write backpressure`
 
 Scope:
 
-- add dynamic fd table allocation
-- keep current socket behavior otherwise unchanged
-- update `errnoprobe` expected fd count
-- update docs for fd limits
+- add a small per-connection TX/retransmit buffer
+- make socket writability reflect available TX capacity
+- let blocking socket writes wait on the socket write queue
+- make nonblocking `send()` / socket `write()` return short writes or
+  `-EAGAIN` when the TX buffer is full
+- keep the existing lazy RX ring behavior unchanged
+- update docs for send semantics and TX limits
 - run `make test`, `make socket-eof-smoke`, `make ftp-smoke`
 
 Why first:
 
-It immediately removes the cserve/FTP/SSH fd ceiling while preserving the
-current TCP behavior. It is the lowest-risk foundation for the rest of the
-socket subsystem.
+The receive side now has a real bounded buffer and honest advertised window,
+but the send side still assumes immediate transmission. TX buffering and
+backpressure are the next step toward slow-reader safety for cserve, FTP, and
+eventually SSH.

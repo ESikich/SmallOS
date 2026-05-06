@@ -70,7 +70,7 @@ Important current-state facts:
 - `pinggw` and `ping 10.0.2.2` are the supported QEMU user-network checks; public ICMP is often unsupported by user-mode networking, so `pingpublic` is only a best-effort probe
 - `netcheck` prints the gateway steps separately from the public ICMP probe so a `1.1.1.1` timeout does not imply the local NAT path is broken
 - `apps/services/tcpecho.elf`, `apps/services/sockeof.elf`, and `apps/services/ftpd.elf` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
-- `sockeof.elf` listens on `2463` in the guest and is driven by `make socket-eof-smoke` to verify payload-before-EOF, `POLLHUP`, and post-EOF response writes
+- `sockeof.elf` listens on `2463` in the guest and is driven by `make socket-eof-smoke` to verify a multi-segment payload before EOF, `POLLHUP`, and post-EOF response writes
 - `ftpd.elf` listens on `2121` in the guest and expects passive data connections on `30000`; host-side clients such as `lftp`, WinSCP, and FileZilla should use passive mode
 
 ---
@@ -183,6 +183,11 @@ hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000
 `make ftp-smoke` sets those forwards, launches `ftpd`, and verifies login,
 negative path replies, directory listing, download, upload readback, delete,
 and `RMD` cleanup.
+
+`make socket-eof-smoke` forwards guest port `2463`, launches `sockeof`, sends a
+3072-byte patterned payload followed by a host TCP half-close, and verifies that
+the guest drains the complete payload, observes EOF through `poll()`/`read()`,
+and can still send a final response.
 
 ---
 
@@ -302,7 +307,10 @@ FTP/TCP smoke apps now share the dynamic PMM-backed process handle table owned
 by `process.c`. Each handle has readable/writable/dirty state plus ops for
 `read`, `write`, `seek`, `poll`, `flush`, and `close`; socket handles point at
 kernel `socket_t` objects whose accept/read/write wait queues wake blocking
-socket syscalls and socket-backed poll/epoll waits.
+socket syscalls and socket-backed poll/epoll waits. Accepted TCP streams now
+allocate a lazy 4 KiB PMM-backed RX ring on first payload and advertise the
+remaining receive window, while send-side queueing/backpressure remains future
+work.
 Each process also carries cwd state, so user path syscalls resolve relative
 paths before entering VFS or ELF loading.
 FAT16-backed file behavior and path operations sit behind `vfs.c`, so

@@ -118,8 +118,9 @@ commands on their own.
 
 `make socket-eof-smoke` boots QEMU with user-network host forwarding for
 guest port `2463`, starts `apps/services/sockeof`, then verifies that
-payload plus host half-close wakes guest `poll()`, leaves the payload readable,
-returns `0` on the next `read()`, and still allows the guest to write back.
+a 3072-byte multi-segment payload plus host half-close wakes guest `poll()`,
+leaves the full payload readable, returns `0` on the next `read()`, and still
+allows the guest to write back.
 
 `make ftp-smoke` boots QEMU with user-network host forwarding for FTP control
 port `2121` and passive data port `30000`, starts `apps/services/ftpd`, then
@@ -669,5 +670,6 @@ Replaces CHS `AH=0x02`. Removes the 18-sector-per-track limit. Required because 
 # Future Improvements
 
 * Outbound TCP `connect()` support for client-style user programs
+* TCP send queues, retransmit buffers, and send-side backpressure for slow readers
 * Richer filesystem metadata such as long filenames or permission bits
 * Environment-variable support for the hosted `main(argc, argv)` runtime path

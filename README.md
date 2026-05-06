@@ -47,7 +47,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * **`SYS_WRITEFILE_PATH`** — user process creates or overwrites a FAT16 file at any nested path
 * **ATA PIO driver** — polls the primary IDE channel (`0x1F0`) to read 512-byte sectors from disk in 32-bit protected mode; no DMA or IRQ required
 * **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing `/bin`, `apps/`, `tools/`, and sample sources; built by `tools/mkfat16.c` with no external dependencies; readable via ATA PIO with nested directory paths, writable at runtime through the kernel VFS shim for root-directory files and nested paths
-* **TCP service task** — kernel task that drains e1000 RX, dispatches ARP/IPv4/TCP frames, handles retransmit/idle timers, and wakes socket wait queues
+* **TCP service task** — kernel task that drains e1000 RX, dispatches ARP/IPv4/TCP frames, manages lazy PMM-backed receive rings for accepted streams, handles retransmit/idle timers, and wakes socket wait queues
 * **Guest TCP apps** — `apps/services/tcpecho.elf` proves the socket path end to end, `apps/services/sockeof.elf` pins down peer-close/read EOF semantics, and `apps/services/ftpd.elf` runs the vendored FTP session logic as a normal user-space ELF
 
 ---
@@ -169,9 +169,9 @@ FTP passive transfers also need the passive data port, currently guest
 `30000`, forwarded to the host.
 
 `make socket-eof-smoke` boots QEMU with host forwarding for
-`apps/services/sockeof`, sends payload plus a TCP half-close from the host,
-and verifies that guest `poll()`/`read()` observe EOF before the guest writes
-back `PASS`.
+`apps/services/sockeof`, sends a 3072-byte multi-segment payload plus a TCP
+half-close from the host, and verifies that guest `poll()`/`read()` observe EOF
+after the payload before the guest writes back `PASS`.
 
 `make ftp-smoke` runs the FTP path end to end: it boots QEMU with control and
 passive-data host forwarding, starts `apps/services/ftpd`, logs in as

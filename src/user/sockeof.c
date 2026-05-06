@@ -5,6 +5,7 @@
 #include "arpa/inet.h"
 
 #define SOCKEOF_PORT 2463
+#define SOCKEOF_PAYLOAD_LEN 3072
 
 static void fail(int fd, const char* msg) {
     u_puts("sockeof: ");
@@ -20,8 +21,9 @@ void _start(int argc, char** argv) {
     int server_fd;
     int client_fd;
     struct sockaddr_in addr;
-    char buf[32];
+    char buf[128];
     struct pollfd pfd;
+    unsigned int total;
     int n;
 
     (void)argc;
@@ -61,10 +63,24 @@ void _start(int argc, char** argv) {
         fail(server_fd, "payload poll failed");
     }
 
-    n = read(client_fd, buf, sizeof(buf));
-    if (n != 7 || memcmp(buf, "payload", 7) != 0) {
-        close(client_fd);
-        fail(server_fd, "payload read failed");
+    total = 0;
+    while (total < SOCKEOF_PAYLOAD_LEN) {
+        unsigned int remaining = SOCKEOF_PAYLOAD_LEN - total;
+        unsigned int want = remaining < sizeof(buf) ? remaining : sizeof(buf);
+
+        n = read(client_fd, buf, want);
+        if (n <= 0) {
+            close(client_fd);
+            fail(server_fd, "payload read failed");
+        }
+        for (int i = 0; i < n; i++) {
+            char expected = (char)('A' + ((total + (unsigned int)i) % 26u));
+            if (buf[i] != expected) {
+                close(client_fd);
+                fail(server_fd, "payload mismatch");
+            }
+        }
+        total += (unsigned int)n;
     }
 
     pfd.revents = 0;
