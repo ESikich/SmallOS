@@ -80,7 +80,8 @@ enum {
     SYS_OPEN_MODE   = 36,  /* mode-aware open; ebx=path ecx=SYS_OPEN_MODE_* */
     SYS_GETCWD      = 37,  /* copy process cwd into user buffer */
     SYS_CHDIR       = 38,  /* change process cwd */
-    SYS_FSYNC       = 39   /* flush writable fd data */
+    SYS_FSYNC       = 39,  /* flush writable fd data */
+    SYS_READ_RAW    = 40   /* read console input without echo */
 };
 
 #endif

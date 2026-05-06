@@ -121,6 +121,19 @@ Blocks until keyboard input is available, echoing each character. Terminates ear
 
 ---
 
+### SYS_READ_RAW (40)
+
+```c
+int sys_read_raw(char* buf, uint32_t len);
+```
+
+Reads console input like `SYS_READ`, but does not echo bytes through the
+terminal. Full-screen programs use this to consume ordinary characters plus
+ANSI-style special-key sequences for arrows, Home/End, Delete, PageUp/PageDown,
+and function keys.
+
+---
+
 ### SYS_YIELD (6)
 
 ```c

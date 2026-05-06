@@ -98,6 +98,12 @@ Descriptor layout:
 3+ user-opened files or sockets
 ```
 
+Interactive full-screen programs can use `sys_read_raw()` when they need
+keyboard input without kernel echo. Foreground process input reports ordinary
+characters plus ANSI-style special-key sequences for arrows, Home/End,
+Delete, PageUp/PageDown, and function keys; `edit` uses this path together
+with normal fd-backed writes to edit FAT16 text files.
+
 The kernel dispatches descriptors through per-handle ops:
 
 ```text

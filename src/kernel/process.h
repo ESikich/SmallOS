@@ -121,6 +121,7 @@ int        process_fd_open_file_mode(process_t* proc,
 int        process_fd_open_socket(process_t* proc, const char* name);
 void       process_fd_close(fd_entry_t* ent);
 int        process_fd_read(fd_entry_t* ent, char* buf, unsigned int len);
+int        process_fd_read_raw(fd_entry_t* ent, char* buf, unsigned int len);
 int        process_fd_write(fd_entry_t* ent, const char* buf, unsigned int len);
 short      process_fd_poll(fd_entry_t* ent, short events);
 int        process_fd_flush(fd_entry_t* ent);

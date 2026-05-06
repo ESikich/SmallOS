@@ -1,5 +1,22 @@
 # Changelog
 
+## [Current] — Full-screen userland text editor
+
+### Added
+
+* **`edit` user ELF** (`src/user/edit.c`, `Makefile`, `src/shell/commands.c`)
+  * Added `/bin/edit.elf`, a full-screen FAT16 text editor with a title bar, editable viewport, status/help bar, cursor movement, insertion/deletion, Enter line splitting, F2 save, and F3/Esc quit.
+  * Kept scripted `-c` command support for regression coverage and simple automation.
+  * Added `edit` to app-backed shell help, the seeded FAT16 `/bin` layout, and shell selftest coverage that writes and reads back a file.
+  * Reduced full-screen redraw flicker by repainting the viewport only when scrolling or line layout changes, and otherwise redrawing the active line/status/cursor.
+  * Fixed an Enter-triggered heap corruption crash by allocating editable line buffers at the editor's maximum line size instead of sizing them to their initial text.
+  * Shortened the footer to `F2 Save  F3 Exit` and avoids painting into the final VGA column so the cursor does not wrap to the next row.
+
+* **Raw terminal input and ANSI screen control** (`src/kernel/process.c`, `src/kernel/syscall.c`, `src/drivers/screen.c`)
+  * Added `SYS_READ_RAW` so full-screen user ELFs can read keyboard input without kernel echo.
+  * Foreground ELF keyboard input now receives arrow/Home/End/Delete/Page/F-key events as ANSI-style escape sequences.
+  * The VGA terminal now understands the ANSI cursor/clear subset used by text-mode apps.
+
 ## [Current] — Boot splash diagnostics
 
 ### Added

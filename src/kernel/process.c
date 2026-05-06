@@ -72,7 +72,41 @@ static void process_key_consumer(key_event_t ev) {
         return;
     }
 
-    if (!ev.ascii) return;
+    if (!ev.ascii) {
+        const char* seq = 0;
+
+        switch (ev.key) {
+            case KEY_UP:       seq = "\x1b[A"; break;
+            case KEY_DOWN:     seq = "\x1b[B"; break;
+            case KEY_RIGHT:    seq = "\x1b[C"; break;
+            case KEY_LEFT:     seq = "\x1b[D"; break;
+            case KEY_ESC:      seq = "\x1b"; break;
+            case KEY_HOME:     seq = "\x1b[H"; break;
+            case KEY_END:      seq = "\x1b[F"; break;
+            case KEY_INSERT:   seq = "\x1b[2~"; break;
+            case KEY_DELETE:   seq = "\x1b[3~"; break;
+            case KEY_PAGEUP:   seq = "\x1b[5~"; break;
+            case KEY_PAGEDOWN: seq = "\x1b[6~"; break;
+            case KEY_F1:       seq = "\x1bOP"; break;
+            case KEY_F2:       seq = "\x1bOQ"; break;
+            case KEY_F3:       seq = "\x1bOR"; break;
+            case KEY_F4:       seq = "\x1bOS"; break;
+            case KEY_F10:      seq = "\x1b[21~"; break;
+            default: break;
+        }
+
+        if (!seq) return;
+        for (int i = 0; seq[i] != '\0'; i++) {
+            keyboard_buf_push_char(seq[i]);
+        }
+
+        process_t* waiter = (process_t*)keyboard_get_waiting_process();
+        if (waiter && waiter->state == PROCESS_STATE_WAITING) {
+            waiter->state = PROCESS_STATE_RUNNING;
+            keyboard_set_waiting_process(0);
+        }
+        return;
+    }
 
     keyboard_buf_push_char(ev.ascii);
 
@@ -271,7 +305,7 @@ static short process_handle_socket_poll(fd_entry_t* ent, short events) {
     return revents;
 }
 
-static int process_handle_console_read(fd_entry_t* ent, char* buf, unsigned int len) {
+static int process_handle_console_read_common(fd_entry_t* ent, char* buf, unsigned int len, int echo) {
     process_t* proc = sched_current();
     unsigned int n = 0;
 
@@ -291,13 +325,19 @@ static int process_handle_console_read(fd_entry_t* ent, char* buf, unsigned int 
         }
 
         char c = keyboard_buf_pop();
-        terminal_putc(c);
+        if (echo) {
+            terminal_putc(c);
+        }
         buf[n++] = c;
         if (c == '\n') break;
     }
 
     __asm__ volatile ("cli");
     return (int)n;
+}
+
+static int process_handle_console_read(fd_entry_t* ent, char* buf, unsigned int len) {
+    return process_handle_console_read_common(ent, buf, len, 1);
 }
 
 static int process_handle_console_write(fd_entry_t* ent, const char* buf, unsigned int len) {
@@ -345,6 +385,14 @@ int process_fd_read(fd_entry_t* ent, char* buf, unsigned int len) {
     if (!ent || !ent->ops) return -EBADF;
     if (!ent->ops->read) return -ENOSYS;
     return ent->ops->read(ent, buf, len);
+}
+
+int process_fd_read_raw(fd_entry_t* ent, char* buf, unsigned int len) {
+    if (!ent || !ent->ops) return -EBADF;
+    if (ent->kind == PROCESS_HANDLE_KIND_CONSOLE) {
+        return process_handle_console_read_common(ent, buf, len, 0);
+    }
+    return process_fd_read(ent, buf, len);
 }
 
 int process_fd_write(fd_entry_t* ent, const char* buf, unsigned int len) {

@@ -227,6 +227,7 @@ rm <path>          remove a FAT16 file
 touch <path>       create or truncate a FAT16 file
 cp <src> <dst>     copy a FAT16 file
 mv <src> <dst>     move or rename a FAT16 entry
+edit <path>        full-screen edit a FAT16 text file
 runelf <name> [args] load and run an ELF from the FAT16 partition
 runelf_nowait <name> [args] enqueue an ELF and return immediately
 bg <name> [args]       run a reattachable background ELF
@@ -239,8 +240,13 @@ selftest            run all shipped ELF self-tests
 shelltest           run built-in shell command tests
 ```
 
+`edit <path>` opens a full-screen text editor for FAT16 files. It uses the
+cursor keys, Home/End, PageUp/PageDown, Enter, Backspace, and Delete for
+editing; F2 saves, and F3 or Esc exits. If there are unsaved changes, F2 saves
+and exits, F3 discards, and Esc cancels the quit prompt.
+
 Seeded FAT16 layout:
-- command-style apps live under `/bin/` (`echo`, `about`, `uptime`, `halt`, `reboot`, `pwd`, `cat`, `fsread`, `ls`, `fsls`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`)
+- command-style apps live under `/bin/` (`echo`, `about`, `uptime`, `halt`, `reboot`, `pwd`, `cat`, `fsread`, `ls`, `fsls`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, `edit`)
 - `apps/demo/hello` - print argc/argv and tick count
 - `apps/tests/ticks` - print the current tick count
 - `apps/tests/args` - print argc and argv

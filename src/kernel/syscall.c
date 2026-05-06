@@ -365,6 +365,16 @@ static int sys_read_impl(char* buf, unsigned int len) {
     return process_fd_read(process_fd_get(proc, 0), buf, len);
 }
 
+static int sys_read_raw_impl(char* buf, unsigned int len) {
+    if (len == 0) return 0;
+    if (!user_buf_ok((unsigned int)buf, len)) return -EFAULT;
+
+    process_t* proc = (process_t*)sched_current();
+    if (!proc) return -EINVAL;
+
+    return process_fd_read_raw(process_fd_get(proc, 0), buf, len);
+}
+
 /*
  * sys_exec_impl(name, argc, argv)
  *
@@ -1156,6 +1166,12 @@ void syscall_handler_main(syscall_regs_t* regs) {
 
         case SYS_READ:
             regs->eax = (unsigned int)sys_read_impl(
+                            (char*)regs->ebx,
+                            regs->ecx);
+            break;
+
+        case SYS_READ_RAW:
+            regs->eax = (unsigned int)sys_read_raw_impl(
                             (char*)regs->ebx,
                             regs->ecx);
             break;

@@ -1096,6 +1096,8 @@ static void cmd_shelltest(command_t* cmd) {
     static command_t cat_cmd = { 2, { "cat", "compiler.out" } };
     static command_t touch_cmd = { 2, { "touch", "EMPTY.TXT" } };
     static command_t fsread_touch_cmd = { 2, { "fsread", "EMPTY.TXT" } };
+    static command_t edit_cmd = { 14, { "edit", "EDIT.TXT", "-c", "c", "-c", "a", "-c", "first-line", "-c", "second-line", "-c", ".", "-c", "wq" } };
+    static command_t cat_edit_cmd = { 2, { "cat", "EDIT.TXT" } };
     static command_t runelf_cmd = { 4, { "runelf", "hello", "alpha", "beta" } };
     static command_t runelf_path_cmd = { 4, { "runelf", "apps/demo/hello", "alpha", "beta" } };
     static command_t runelf_nowait_cmd = { 2, { "runelf_nowait", "apps/tests/ticks" } };
@@ -1155,6 +1157,8 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_exec("cat", &cat_cmd);
     shelltest_exec("touch", &touch_cmd);
     shelltest_exec("fsread_touch", &fsread_touch_cmd);
+    shelltest_exec("edit", &edit_cmd);
+    shelltest_exec("cat_edit", &cat_edit_cmd);
     shelltest_call("cd", cmd_cd, &cd_demo_cmd);
     shelltest_exec("pwd", &pwd_demo_cmd);
     shelltest_exec("ls", &ls_demo_cmd);
@@ -1356,6 +1360,7 @@ static command_entry_t app_commands[] = {
     { "touch",         "create or truncate a FAT16 file", 0 },
     { "cp",            "copy a FAT16 file",            0 },
     { "mv",            "move or rename a FAT16 entry", 0 },
+    { "edit",          "edit a FAT16 text file",       0 },
 };
 
 #define APP_COMMAND_COUNT (sizeof(app_commands) / sizeof(app_commands[0]))
