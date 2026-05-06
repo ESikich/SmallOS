@@ -14,9 +14,16 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 TEST_PACKAGES = ("tests.shell", "tests.elfs")
 TRANSCRIPT_LIMIT = 262144
 TRANSCRIPT_TRIM = 131072
+STATUS_WIDTH = 38
 
 
 sys.path.insert(0, str(REPO_ROOT))
+
+
+class TranscriptTimeout(RuntimeError):
+    def __init__(self, message, transcript):
+        super().__init__(message)
+        self.transcript = transcript
 
 
 def wait_for_path(path, timeout_s):
@@ -82,18 +89,56 @@ def tee_stdout(text):
         sys.stdout.flush()
 
 
+def status_begin(label):
+    print(f"{label:<{STATUS_WIDTH}} ", end="", flush=True)
+
+
+def status_end(ok, detail=None):
+    suffix = "PASS" if ok else "FAIL"
+    if detail:
+        suffix += f" ({detail})"
+    print(suffix, flush=True)
+
+
+def status_line(label, ok, detail=None):
+    status_begin(label)
+    status_end(ok, detail)
+
+
+def print_transcript_tail(title, transcript, line_count=80):
+    lines = transcript.splitlines()
+    if not lines:
+        return
+    print(f"\n--- {title} transcript tail ---", file=sys.stderr)
+    for line in lines[-line_count:]:
+        print(line, file=sys.stderr)
+    print(f"--- end {title} transcript tail ---", file=sys.stderr)
+
+
+def saw_prompt_after(buf, marker):
+    marker_at = buf.rfind(marker)
+    prompt_at = buf.rfind("/> ")
+    return marker_at >= 0 and prompt_at > marker_at
+
+
 def load_cases():
     cases = []
 
     for package_name in TEST_PACKAGES:
         pkg = importlib.import_module(package_name)
         pkg_path = Path(pkg.__file__).resolve().parent
+        suite = package_name.rsplit(".", 1)[-1]
+        if suite == "elfs":
+            suite = "elf"
 
         for modinfo in sorted(pkgutil.iter_modules([str(pkg_path)]), key=lambda m: m.name):
             if modinfo.name.startswith("_"):
                 continue
             mod = importlib.import_module(f"{package_name}.{modinfo.name}")
-            cases.extend(getattr(mod, "CASES", []))
+            for case in getattr(mod, "CASES", []):
+                loaded_case = dict(case)
+                loaded_case["suite"] = suite
+                cases.append(loaded_case)
 
     return cases
 
@@ -101,6 +146,7 @@ def load_cases():
 def normalize_case(case):
     normalized = {
         "name": case["name"],
+        "suite": case.get("suite", "case"),
         "must_contain": list(case.get("must_contain", [])),
         "interactive": list(case.get("interactive", [])),
         "timeout": float(case.get("timeout", 30.0)),
@@ -108,11 +154,12 @@ def normalize_case(case):
     return normalized
 
 
-def collect_selftest_transcript(sock, log, start_offset, deadline, cases):
+def collect_selftest_transcript(sock, log, start_offset, deadline, cases, echo=True):
     buf = ""
     log_offset = start_offset
 
-    tee_stdout("\n[selftest] ")
+    if echo:
+        tee_stdout("\n[selftest] ")
     send_text(sock, "selftest")
     send_key(sock, "ret")
 
@@ -125,7 +172,8 @@ def collect_selftest_transcript(sock, log, start_offset, deadline, cases):
     while time.time() < deadline:
         chunk, log_offset = read_new(log, log_offset)
         if chunk:
-            tee_stdout(chunk)
+            if echo:
+                tee_stdout(chunk)
             buf += chunk
 
             for marker, response in interactive:
@@ -145,28 +193,49 @@ def collect_selftest_transcript(sock, log, start_offset, deadline, cases):
         else:
             time.sleep(0.05)
 
-    raise RuntimeError("timed out waiting for guest selftest")
+    raise TranscriptTimeout("timed out waiting for guest selftest", buf)
 
 
-def verify_cases(cases, transcript):
+def verify_cases(cases, transcript, report=True):
     overall_pass = True
+    failures = []
     for case in cases:
         missing = [marker for marker in case["must_contain"] if marker not in transcript]
         if missing:
-            print(f"[{case['name']}] FAIL")
-            for marker in missing:
-                print(f"  missing: {marker}")
+            if report:
+                status_line(f"{case['suite']}: {case['name']}", False)
+                for marker in missing:
+                    print(f"  missing: {marker}")
+            failures.append((case, missing))
             overall_pass = False
         else:
-            print(f"[{case['name']}] PASS")
-    return overall_pass
+            if report:
+                status_line(f"{case['suite']}: {case['name']}", True)
+    return overall_pass, failures
 
 
-def run_interactive_regressions(sock, log, start_offset, deadline):
+def report_case_failures(failures):
+    for case, missing in failures:
+        print(f"  {case['suite']}: {case['name']}: missing {len(missing)} marker(s)")
+        for marker in missing[:5]:
+            print(f"    missing: {marker}")
+        if len(missing) > 5:
+            print(f"    ... {len(missing) - 5} more")
+
+
+def report_cases(cases, failures):
+    failed = {(case["suite"], case["name"]) for case, _ in failures}
+    for case in cases:
+        case_key = (case["suite"], case["name"])
+        status_line(f"{case['suite']}: {case['name']}", case_key not in failed)
+
+
+def run_interactive_regressions(sock, log, start_offset, deadline, echo=True, report=True):
     buf = ""
     log_offset = start_offset
 
-    tee_stdout("\n[interactive-regression] ")
+    if echo:
+        tee_stdout("\n[interactive-regression] ")
     send_text(sock, "runelf poop")
     send_key(sock, "ret")
 
@@ -174,29 +243,33 @@ def run_interactive_regressions(sock, log, start_offset, deadline):
     while time.time() < deadline:
         chunk, log_offset = read_new(log, log_offset)
         if chunk:
-            tee_stdout(chunk)
+            if echo:
+                tee_stdout(chunk)
             buf += chunk
             if "runelf: failed" in buf and not saw_failed:
                 saw_failed = True
                 send_text(sock, "pwd")
                 send_key(sock, "ret")
-            if saw_failed and "pwd: /" in buf:
-                print("[runelf_missing_keeps_input] PASS")
+            if saw_failed and saw_prompt_after(buf, "pwd: /"):
+                if report:
+                    print("[runelf_missing_keeps_input] PASS")
                 return True, log_offset
             if len(buf) > TRANSCRIPT_LIMIT:
                 buf = buf[-TRANSCRIPT_TRIM:]
         else:
             time.sleep(0.05)
 
-    print("[runelf_missing_keeps_input] FAIL")
+    if report:
+        print("[runelf_missing_keeps_input] FAIL")
     return False, log_offset
 
 
-def run_ctrl_c_regression(sock, log, start_offset, deadline):
+def run_ctrl_c_regression(sock, log, start_offset, deadline, echo=True, report=True):
     buf = ""
     log_offset = start_offset
 
-    tee_stdout("\n[ctrl-c-regression] ")
+    if echo:
+        tee_stdout("\n[ctrl-c-regression] ")
     send_text(sock, "runelf apps/tests/spinwkr late ctrlc.txt 500")
     send_key(sock, "ret")
     time.sleep(0.5)
@@ -207,7 +280,8 @@ def run_ctrl_c_regression(sock, log, start_offset, deadline):
     while time.time() < deadline:
         chunk, log_offset = read_new(log, log_offset)
         if chunk:
-            tee_stdout(chunk)
+            if echo:
+                tee_stdout(chunk)
             buf += chunk
 
             if "^C" in buf and not saw_interrupt:
@@ -218,12 +292,14 @@ def run_ctrl_c_regression(sock, log, start_offset, deadline):
                 send_key(sock, "ret")
                 sent_probe = True
 
-            if saw_interrupt and "pwd: /" in buf:
-                print("[foreground_ctrl_c] PASS")
+            if saw_interrupt and saw_prompt_after(buf, "pwd: /"):
+                if report:
+                    print("[foreground_ctrl_c] PASS")
                 return True, log_offset
 
             if "spinwkr late PASS" in buf:
-                print("[foreground_ctrl_c] FAIL")
+                if report:
+                    print("[foreground_ctrl_c] FAIL")
                 return False, log_offset
 
             if len(buf) > TRANSCRIPT_LIMIT:
@@ -231,7 +307,8 @@ def run_ctrl_c_regression(sock, log, start_offset, deadline):
         else:
             time.sleep(0.05)
 
-    print("[foreground_ctrl_c] FAIL")
+    if report:
+        print("[foreground_ctrl_c] FAIL")
     return False, log_offset
 
 
@@ -268,6 +345,11 @@ def main():
     parser.add_argument("--serial", default="/tmp/smallos-serial.log")
     parser.add_argument("--pidfile", default="/tmp/smallos.pid")
     parser.add_argument("--timeout", type=float, default=120.0)
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="print a concise phase summary instead of the full serial transcript",
+    )
     args = parser.parse_args()
 
     if not wait_for_path(args.monitor, args.timeout):
@@ -283,31 +365,83 @@ def main():
     log_offset = 0
     deadline = time.time() + args.timeout
     buf = ""
+    echo = not args.summary
 
     with open(args.serial, "r", encoding="utf-8", errors="replace") as log:
+        if args.summary:
+            status_begin("boot: shell prompt")
         while time.time() < deadline:
             chunk, log_offset = read_new(log, log_offset)
             if chunk:
-                tee_stdout(chunk)
+                if echo:
+                    tee_stdout(chunk)
                 buf += chunk
                 if "> " in buf:
+                    if args.summary:
+                        status_end(True)
                     break
                 if len(buf) > TRANSCRIPT_LIMIT:
                     buf = buf[-TRANSCRIPT_TRIM:]
             else:
                 time.sleep(0.05)
         else:
+            if args.summary:
+                status_end(False)
+                print_transcript_tail("boot", buf)
             print("timed out waiting for shell prompt", file=sys.stderr)
-            return 1
+            return shutdown_qemu(sock, args.pidfile, False)
 
-        transcript, log_offset = collect_selftest_transcript(sock, log, log_offset, deadline, cases)
-        overall_pass = verify_cases(cases, transcript)
-        interactive_pass, log_offset = run_interactive_regressions(sock, log, log_offset, deadline)
+        if args.summary:
+            status_begin("guest: selftest")
+        try:
+            transcript, log_offset = collect_selftest_transcript(
+                sock, log, log_offset, deadline, cases, echo=echo
+            )
+        except RuntimeError as exc:
+            if args.summary:
+                status_end(False)
+                print_transcript_tail("selftest", getattr(exc, "transcript", buf))
+            print(str(exc), file=sys.stderr)
+            return shutdown_qemu(sock, args.pidfile, False)
+
+        guest_pass = "selftest: PASS" in transcript and "selftest: FAIL" not in transcript
+        if args.summary:
+            status_end(guest_pass)
+            if not guest_pass:
+                print_transcript_tail("selftest", transcript)
+
+        case_pass, failures = verify_cases(cases, transcript, report=not args.summary)
+        if args.summary:
+            report_cases(cases, failures)
+            detail = f"{len(cases) - len(failures)}/{len(cases)} cases"
+            status_line("guest: expected markers", case_pass, detail)
+            if failures:
+                report_case_failures(failures)
+
+        overall_pass = guest_pass and case_pass
+
+        if args.summary:
+            status_begin("interactive: runelf missing")
+        interactive_pass, log_offset = run_interactive_regressions(
+            sock, log, log_offset, deadline, echo=echo, report=not args.summary
+        )
+        if args.summary:
+            status_end(interactive_pass)
         overall_pass = overall_pass and interactive_pass
-        ctrl_c_pass, log_offset = run_ctrl_c_regression(sock, log, log_offset, deadline)
+
+        if args.summary:
+            status_begin("interactive: foreground ctrl-c")
+        ctrl_c_pass, log_offset = run_ctrl_c_regression(
+            sock, log, log_offset, deadline, echo=echo, report=not args.summary
+        )
+        if args.summary:
+            status_end(ctrl_c_pass)
         overall_pass = overall_pass and ctrl_c_pass
 
-    return shutdown_qemu(sock, args.pidfile, overall_pass)
+    result = shutdown_qemu(sock, args.pidfile, overall_pass)
+    if args.summary:
+        status_line("result", result == 0)
+    return result
 
 
 if __name__ == "__main__":

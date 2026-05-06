@@ -2,6 +2,7 @@ ASM=nasm
 CC=i686-elf-gcc
 LD=i686-elf-ld
 OBJCOPY=i686-elf-objcopy
+MAKEFLAGS += --no-print-directory
 
 SRC_DIR=src
 BOOT_DIR=$(SRC_DIR)/boot
@@ -259,6 +260,8 @@ MONITOR_SOCK=/tmp/smallos-monitor.sock
 PIDFILE=/tmp/smallos.pid
 SMOKE_TIMEOUT=120.0
 PYTHON3=python3
+TEST_SETUP_LOG=$(BUILD_DIR)/test-setup.log
+QEMU_SELFTEST_FLAGS?=--summary
 QEMU_NET_MODE?=user
 QEMU_NET_IFACE?=tap0
 QEMU_NET_MAC?=52:54:00:12:34:56
@@ -294,16 +297,31 @@ run-headless-tap: image-layout-check
 	$(MAKE) run-headless QEMU_NET_MODE=tap
 
 test:
-	$(MAKE) reset-disk
-	$(MAKE) image-layout-check
+	@mkdir -p $(BUILD_DIR)
+	@printf '%-38s ' '[test] reset disk'
+	@if $(MAKE) --silent reset-disk >$(TEST_SETUP_LOG) 2>&1; then \
+		printf 'PASS\n'; \
+	else \
+		printf 'FAIL\n'; \
+		cat $(TEST_SETUP_LOG); \
+		exit 1; \
+	fi
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
-	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
-	$(MAKE) run-headless
-	$(PYTHON3) tools/qemu_selftest.py \
+	@rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
+	@printf '%-38s ' '[test] boot qemu'
+	@if $(MAKE) --silent run-headless >>$(TEST_SETUP_LOG) 2>&1; then \
+		printf 'PASS\n'; \
+	else \
+		printf 'FAIL\n'; \
+		cat $(TEST_SETUP_LOG); \
+		exit 1; \
+	fi
+	@$(PYTHON3) tools/qemu_selftest.py \
 		--monitor $(MONITOR_SOCK) \
 		--serial $(SERIAL_LOG) \
 		--pidfile $(PIDFILE) \
-		--timeout 600
+		--timeout 600 \
+		$(QEMU_SELFTEST_FLAGS)
 
 ftp-smoke: reset-disk image-layout-check
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
