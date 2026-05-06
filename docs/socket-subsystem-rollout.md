@@ -34,11 +34,11 @@ Current implementation status:
   limit is 128, the sample cserve config uses `max_conn = 32` and a 5 second
   keep-alive timeout, and `netinfo` reports socket-object counts, TCP listener
   and connection counts, and RX/TX ring usage.
-- Phase 7 has the first cserve-shaped stress smoke: `make cserve-smoke`
-  launches cserve, fetches the large static fixture, checks a 404, holds 24
-  keep-alive clients by default, exercises one slow reader, and captures
-  `netinfo`. It is intentionally still below the 32-client exit criterion so
-  the next stress pass has room to prove the full target.
+- Phase 7 now has the first stress matrix: `make cserve-smoke` launches
+  cserve, fetches the large static fixture, checks a 404, holds 24 keep-alive
+  clients by default, exercises one slow reader, and captures `netinfo`;
+  `make socket-parallel-smoke` drives 8 parallel tcpecho clients by default;
+  and `make ftp-loop-smoke` repeats FTP passive `LIST`/`RETR`/`STOR` cycles.
 
 ## Remaining Implementation Work
 
@@ -55,10 +55,8 @@ less provisional before SSH or client-style programs depend on it:
 - Implement outbound TCP `connect()`; `SYS_CONNECT` still returns `-ENOSYS`.
 - Implement real TCP half-close state for `shutdown()`; the syscall currently
   validates arguments and returns success.
-- Add the remaining Phase 7 stress tools: `socket_parallel_smoke.py`,
-  `ftp_loop_smoke.py`, and their Makefile targets.
-- Raise or parameterize the cserve smoke to demonstrate the full 32 held
-  keep-alive-client exit criterion once the broader stress matrix is in place.
+- Raise the cserve smoke default to demonstrate the full 32 held
+  keep-alive-client exit criterion once that run is stable.
 
 ## Goals
 
@@ -477,11 +475,11 @@ Add tools:
   - opens N keep-alive clients
   - exercises one slow reader
   - captures guest `netinfo` counters
-- `tools/socket_parallel_smoke.py`
+- `tools/socket_parallel_smoke.py` (implemented)
   - opens N connections to a simple guest service
   - sends small payloads
   - verifies all responses
-- `tools/ftp_loop_smoke.py`
+- `tools/ftp_loop_smoke.py` (implemented)
   - repeats PASV/LIST/RETR/STOR cycles
 
 Make targets:
@@ -494,7 +492,9 @@ Run matrix:
 
 - `make test`
 - `make socket-eof-smoke`
+- `make socket-parallel-smoke`
 - `make ftp-smoke`
+- `make ftp-loop-smoke`
 - `make cserve-smoke`
 
 Exit criteria:
@@ -546,21 +546,19 @@ semantics.
 
 Title:
 
-`Add socket parallel and FTP loop stress`
+`Raise cserve smoke to the 32-client gate`
 
 Scope:
 
-- add `tools/socket_parallel_smoke.py` against `apps/services/tcpecho.elf`
-  or another tiny guest service
-- add `tools/ftp_loop_smoke.py` that repeats PASV/LIST/RETR/STOR cycles
-- keep `make cserve-smoke` in the run matrix while adding
-  `make socket-parallel-smoke` and `make ftp-loop-smoke`
-- use the `netinfo` socket/TCP counters to report resource usage before and
-  after each stress loop
+- run the full stress matrix, including `make socket-parallel-smoke`,
+  `make ftp-loop-smoke`, and `CSERVE_SMOKE_CLIENTS=32 make cserve-smoke`
+- if the 32-client cserve smoke is stable, make 32 the default
+  `CSERVE_SMOKE_CLIENTS` gate
+- keep `netinfo` captures in the stress logs so socket/TCP counts and RX/TX
+  ring usage remain visible
 
 Why first:
 
-The cserve-shaped smoke and first resource counters cover the web-service path.
-The next useful step is widening the stress matrix to repeated FTP passive data
-connections and simple parallel echo traffic, so regressions show up before SSH
-adds longer-lived interactive sessions.
+The broader Phase 7 stress tools now exist. The next useful proof point is
+turning the original cserve exit criterion from an opt-in target into the
+default gate before moving back into larger TCP internals.

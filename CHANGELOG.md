@@ -4,10 +4,15 @@
 
 ### Changed
 
+* **Socket stress harnesses** (`src/user/tcpecho.c`, `tools/socket_parallel_smoke.py`, `tools/ftp_loop_smoke.py`, `Makefile`, `docs/`)
+  * Updated `tcpecho` to poll the listener plus up to 32 active clients so it can serve as a real parallel socket stress target.
+  * Added `make socket-parallel-smoke`, which launches `tcpecho`, opens parallel host clients, verifies echoed payloads, and captures `netinfo` before, during, and after the run.
+  * Added `make ftp-loop-smoke`, which repeatedly drives fresh FTP control sessions through passive `LIST`, `RETR`, and `STOR` cycles while recording `netinfo` counters.
+
 * **Dynamic process fd tables** (`src/kernel/process.*`, `src/kernel/pmm.*`, `src/user/errnoprobe.c`, `docs/`)
-  * Moved fd tables out of `process_t` into PMM-backed allocations that start at 16 slots and grow to the default 64-fd process limit, with a 256-fd hard cap.
+  * Moved fd tables out of `process_t` into PMM-backed allocations that start at 16 slots and grow to the default 128-fd process limit, with a 256-fd hard cap.
   * Added contiguous PMM frame allocation/free helpers so fd tables remain reclaimable at process teardown.
-  * Updated `errnoprobe` to exhaust 61 user-open descriptors before `ENFILE`.
+  * Updated `errnoprobe` to exhaust 125 user-open descriptors before `ENFILE`.
 
 * **Socket object layer** (`src/kernel/socket.*`, `src/kernel/wait.*`, `src/kernel/syscall.c`, `src/drivers/tcp.*`)
   * Socket fds now point at `socket_t` objects that own TCP listener/connection state instead of relying on fd-local `socket_port/socket_conn` fields for active behavior.
@@ -15,7 +20,7 @@
   * Added a fixed-pool wait queue primitive and socket-level accept/read/write queues; blocking `accept`, `recv`, socket `read`, `poll`, and `epoll_wait` now register on the relevant socket object instead of a single TCP waiter.
   * Added lazy PMM-backed 4 KiB TCP receive rings per active connection and advertised the remaining RX window instead of ACKing bytes that were not queued.
   * Added lazy PMM-backed 4 KiB TCP transmit rings per active writing connection; sent bytes are retained until ACKed, payloads are retried from the ring, `POLLOUT` reflects remaining TX capacity, and blocking socket writes wait for TX space while nonblocking writes can short-write or return `EAGAIN`.
-  * Raised the sample cserve config to `max_conn = 16`.
+  * Raised the sample cserve config to `max_conn = 32`.
   * Expanded the socket EOF smoke to send a multi-segment payload before the host half-close.
 
 ## [Current] — Full-screen userland text editor

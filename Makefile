@@ -286,6 +286,10 @@ PIDFILE=/tmp/smallos.pid
 SMOKE_TIMEOUT=120.0
 CSERVE_SMOKE_PORT?=8080
 CSERVE_SMOKE_CLIENTS?=24
+SOCKET_PARALLEL_PORT?=2323
+SOCKET_PARALLEL_CLIENTS?=8
+SOCKET_PARALLEL_ROUNDS?=3
+FTP_LOOP_ITERATIONS?=5
 PYTHON3=python3
 TEST_SETUP_LOG=$(BUILD_DIR)/test-setup.log
 QEMU_SELFTEST_FLAGS?=--summary
@@ -301,7 +305,7 @@ QEMUFLAGS=-drive format=raw,file=$(IMG_DIR)/os-image.bin -boot c -m 32 \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all dirs run run-gtk run-sdl run-tap run-headless run-headless-tap test socket-eof-smoke ftp-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify reset-disk tinycc-host tinycc-host-clean
+.PHONY: all dirs run run-gtk run-sdl run-tap run-headless run-headless-tap test socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify reset-disk tinycc-host tinycc-host-clean
 
 run: image-layout-check
 	$(QEMU) $(QEMUFLAGS) -display $(QEMU_DISPLAY)
@@ -368,6 +372,30 @@ socket-eof-smoke: reset-disk image-layout-check
 		--monitor $(MONITOR_SOCK) \
 		--serial $(SERIAL_LOG) \
 		--pidfile $(PIDFILE) \
+		--timeout 120
+
+socket-parallel-smoke: reset-disk image-layout-check
+	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
+	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
+	$(MAKE) run-headless QEMU_NET_HOSTFWD=',hostfwd=tcp::$(SOCKET_PARALLEL_PORT)-:2323'
+	$(PYTHON3) tools/socket_parallel_smoke.py \
+		--monitor $(MONITOR_SOCK) \
+		--serial $(SERIAL_LOG) \
+		--pidfile $(PIDFILE) \
+		--port $(SOCKET_PARALLEL_PORT) \
+		--clients $(SOCKET_PARALLEL_CLIENTS) \
+		--rounds $(SOCKET_PARALLEL_ROUNDS) \
+		--timeout 120
+
+ftp-loop-smoke: reset-disk image-layout-check
+	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
+	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
+	$(MAKE) run-headless QEMU_NET_HOSTFWD=',hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000'
+	$(PYTHON3) tools/ftp_loop_smoke.py \
+		--monitor $(MONITOR_SOCK) \
+		--serial $(SERIAL_LOG) \
+		--pidfile $(PIDFILE) \
+		--iterations $(FTP_LOOP_ITERATIONS) \
 		--timeout 120
 
 cserve-smoke: reset-disk image-layout-check

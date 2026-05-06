@@ -48,7 +48,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * **ATA PIO driver** — polls the primary IDE channel (`0x1F0`) to read 512-byte sectors from disk in 32-bit protected mode; no DMA or IRQ required
 * **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing `/bin`, `apps/`, `tools/`, and sample sources; built by `tools/mkfat16.c` with no external dependencies; readable via ATA PIO with nested directory paths, writable at runtime through the kernel VFS shim for root-directory files and nested paths
 * **TCP service task** — kernel task that drains e1000 RX, dispatches ARP/IPv4/TCP frames, manages lazy PMM-backed RX/TX rings for accepted streams, handles control and buffered-payload retransmit/idle timers, and wakes socket wait queues
-* **Guest TCP apps** — `apps/services/tcpecho.elf` proves the socket path end to end, `apps/services/sockeof.elf` pins down peer-close/read EOF semantics, and `apps/services/ftpd.elf` runs the vendored FTP session logic as a normal user-space ELF
+* **Guest TCP apps** — `apps/services/tcpecho.elf` handles parallel echo clients for socket stress, `apps/services/sockeof.elf` pins down peer-close/read EOF semantics, and `apps/services/ftpd.elf` runs the vendored FTP session logic as a normal user-space ELF
 
 ---
 
@@ -173,10 +173,17 @@ FTP passive transfers also need the passive data port, currently guest
 half-close from the host, and verifies that guest `poll()`/`read()` observe EOF
 after the payload before the guest writes back `PASS`.
 
+`make socket-parallel-smoke` boots QEMU with host forwarding for
+`apps/services/tcpecho`, opens 8 parallel host clients by default, verifies
+echoed payloads, and captures `netinfo` before, during, and after the run.
+
 `make ftp-smoke` runs the FTP path end to end: it boots QEMU with control and
 passive-data host forwarding, starts `apps/services/ftpd`, logs in as
 `ftp`/`ftp`, checks negative replies, and verifies `LIST`, `RETR`, `STOR`
 readback, `DELE`, nested directory cleanup, and `RMD`.
+
+`make ftp-loop-smoke` keeps `ftpd` running and repeats fresh FTP control
+sessions through passive `LIST`, `RETR`, and `STOR` cycles.
 
 `make test` boots the image headlessly, verifies the boot diagnostics
 splash markers, runs the shell `selftest` command, feeds the interactive

@@ -70,8 +70,9 @@ Important current-state facts:
 - `pinggw` and `ping 10.0.2.2` are the supported QEMU user-network checks; public ICMP is often unsupported by user-mode networking, so `pingpublic` is only a best-effort probe
 - `netcheck` prints the gateway steps separately from the public ICMP probe so a `1.1.1.1` timeout does not imply the local NAT path is broken
 - `apps/services/tcpecho.elf`, `apps/services/sockeof.elf`, and `apps/services/ftpd.elf` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
+- `tcpecho.elf` listens on `2323` in the guest and is driven by `make socket-parallel-smoke` to verify multiple simultaneous echo clients
 - `sockeof.elf` listens on `2463` in the guest and is driven by `make socket-eof-smoke` to verify a multi-segment payload before EOF, `POLLHUP`, and post-EOF response writes
-- `ftpd.elf` listens on `2121` in the guest and expects passive data connections on `30000`; host-side clients such as `lftp`, WinSCP, and FileZilla should use passive mode
+- `ftpd.elf` listens on `2121` in the guest and expects passive data connections on `30000`; `make ftp-smoke` and `make ftp-loop-smoke` cover that path, and host-side clients such as `lftp`, WinSCP, and FileZilla should use passive mode
 
 ---
 
@@ -183,6 +184,14 @@ hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000
 `make ftp-smoke` sets those forwards, launches `ftpd`, and verifies login,
 negative path replies, directory listing, download, upload readback, delete,
 and `RMD` cleanup.
+
+`make ftp-loop-smoke` uses the same forwards, keeps `ftpd` running, and repeats
+fresh control sessions with passive `LIST`, `RETR`, `STOR`, uploaded-file
+readback, and cleanup cycles.
+
+`make socket-parallel-smoke` forwards guest port `2323`, launches `tcpecho`,
+opens 8 parallel echo clients by default, verifies small payload responses on
+each client, and records `netinfo` before, during, and after the run.
 
 `make socket-eof-smoke` forwards guest port `2463`, launches `sockeof`, sends a
 3072-byte patterned payload followed by a host TCP half-close, and verifies that

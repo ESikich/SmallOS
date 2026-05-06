@@ -122,10 +122,20 @@ a 3072-byte multi-segment payload plus host half-close wakes guest `poll()`,
 leaves the full payload readable, returns `0` on the next `read()`, and still
 allows the guest to write back.
 
+`make socket-parallel-smoke` forwards host port `2323` to guest `tcpecho`,
+opens 8 parallel clients by default, sends small echo payloads over each
+connection, holds the sockets briefly, and captures guest `netinfo` before,
+during, and after the run. Override `SOCKET_PARALLEL_CLIENTS`,
+`SOCKET_PARALLEL_ROUNDS`, or `SOCKET_PARALLEL_PORT` when needed.
+
 `make ftp-smoke` boots QEMU with user-network host forwarding for FTP control
 port `2121` and passive data port `30000`, starts `apps/services/ftpd`, then
 drives login, negative path checks, `LIST`, `RETR`, `STOR` readback,
 `DELE`, and `RMD` cleanup from the host.
+
+`make ftp-loop-smoke` uses the same FTP forwards and repeats fresh control
+sessions with passive `LIST`, `RETR`, `STOR`, uploaded-file readback, and
+cleanup cycles. Override `FTP_LOOP_ITERATIONS` to change the loop count.
 
 `make cserve-smoke` forwards host port `8080` to guest cserve, starts
 `apps/services/cserve.elf --config cserve.ini`, fetches the large static
