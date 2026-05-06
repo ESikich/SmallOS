@@ -192,7 +192,8 @@ read / write / seek / poll / flush / close
 resource backends own the behavior behind each handle: FAT16-backed file
 handles are initialized by `vfs_file_init()` and implemented in `vfs.c`,
 socket handles point at `socket_t` objects implemented in `socket.c`, and
-console handles own terminal writes and keyboard-buffer reads. `syscall.c`
+socket blocking readiness is tracked by socket-owned wait queues. Console
+handles own terminal writes and keyboard-buffer reads. `syscall.c`
 therefore stays focused on user-pointer validation and dispatch instead of
 knowing the internals of each resource type.
 
@@ -408,7 +409,7 @@ The active consumer is managed by `keyboard_set_consumer()`:
 - `shell_init()` registers `shell_key_consumer` at boot
 - `process_set_foreground(proc)` clears `kb_buf` (discarding any stale input, e.g. the Enter that launched `runelf`), then registers `process_key_consumer` when a user process takes the foreground
 - `process_key_consumer` pushes ASCII into `kb_buf`; after each push it checks `keyboard_get_waiting_process()` and, if a process is parked in `PROCESS_STATE_WAITING`, sets it back to `PROCESS_STATE_RUNNING` and clears the waiter slot so the scheduler picks it up
-- Ctrl+C is handled by `process_key_consumer` as a terminal interrupt. It prints `^C`, clears pending console/socket waiters, assigns exit status `130`, and kills the foreground process. If the foreground process was interrupted while actively running, IRQ1 delivers the pending interrupt using the saved IRQ frame ESP and switches away immediately.
+- Ctrl+C is handled by `process_key_consumer` as a terminal interrupt. It prints `^C`, clears pending console waiters and socket wait-queue registrations, assigns exit status `130`, and kills the foreground process. If the foreground process was interrupted while actively running, IRQ1 delivers the pending interrupt using the saved IRQ frame ESP and switches away immediately.
 - `process_set_foreground(0)` calls `shell_register_consumer()` to restore the shell consumer on exit
 
 The keyboard driver makes no routing decisions. It decodes scancodes and calls whoever is registered.
@@ -678,8 +679,9 @@ SYS_GETCWD / SYS_CHDIR — per-process cwd state; relative user paths are normal
 SYS_OPEN / SYS_OPEN_MODE / SYS_CLOSE / SYS_FREAD — dynamic PMM-backed per-process handle table backed by readable/writable handle ops; fd 0/1/2 are console handles, user-opened files start at fd 3+, and VFS-backed file reads cache FAT16 data in PMM-backed pages until close
 SYS_BRK / user heap — per-process heap break managed in user space through `SYS_BRK` and a shared user allocator
 SYS_OPEN_WRITE / SYS_WRITEFD / SYS_LSEEK / SYS_FSYNC / SYS_UNLINK / SYS_RENAME / SYS_STAT — VFS-backed writable file handles plus path metadata and file management for compiler-style tools; dirty writable handles flush on close, append/read-write modes preserve existing bytes, and stdout/stderr writes also use fd-backed console handles
-SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_SEND / SYS_RECV / SYS_POLL / SYS_SETSOCKOPT / SYS_GETSOCKNAME — socket ABI for passive TCP servers and FTP userland; fd handles point at kernel socket objects and socket readiness plugs into the same handle poll path
-TCP service task — drains NIC RX, dispatches ARP/IPv4/TCP frames, services retransmit/idle timers, and wakes socket waiters
+SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_ACCEPT4 / SYS_SEND / SYS_RECV / SYS_SHUTDOWN / SYS_GETSOCKNAME / SYS_GETPEERNAME — socket ABI for passive TCP servers and FTP userland; fd handles point at kernel socket objects and socket readiness plugs into the same handle poll path
+SYS_FCNTL / SYS_POLL / SYS_EPOLL_* / SYS_TIMERFD_* / SYS_SIGNALFD — descriptor flags and event-loop shims for cserve-style guest services; socket waits register on socket wait queues while timerfd deadlines use scheduler sleep deadlines
+TCP service task — drains NIC RX, dispatches ARP/IPv4/TCP frames, services retransmit/idle timers, and wakes socket wait queues
 page-aware copy-from-user validation — syscall pointer arguments are checked against user address space [USER_CODE_BASE, USER_STACK_TOP) and mapped user pages before dereference
 preemptive round-robin scheduler — timer IRQ context switch, `SCHED_QUANTUM_MS` quantum
 ATA PIO driver — 28-bit LBA polling reads from primary IDE channel (0x1F0)

@@ -95,7 +95,7 @@ struct fd_entry {
 #define PROCESS_ARG_BYTES 256
 #define PROCESS_CWD_MAX   PROCESS_FD_NAME_MAX
 
-typedef struct {
+typedef struct process {
     u32*            pd;                 /* PMM physical page-directory frame */
     u32             kernel_stack_frame; /* PMM physical kernel-stack frame */
     unsigned int    sched_esp;

@@ -72,6 +72,7 @@ KERNEL_C_SRCS=\
 	$(KERNEL_DIR)/pmm.c \
 	$(KERNEL_DIR)/vfs.c \
 	$(KERNEL_DIR)/socket.c \
+	$(KERNEL_DIR)/wait.c \
 	$(KERNEL_DIR)/process.c \
 	$(KERNEL_DIR)/scheduler.c \
 	$(SHELL_DIR)/parse.c \

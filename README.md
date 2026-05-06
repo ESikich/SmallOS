@@ -37,7 +37,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Per-process kernel stacks — dedicated PMM frame per process; TSS ESP0 set from it; freed on exit
 * Syscall layer via `int 0x80` (DPL=3 gate): console, process, heap, cwd, file, directory, and socket calls shared by the kernel and user runtime headers
 * Small VFS boundary for FAT16-backed file handles and path operations; `process.c` owns fd lifetime while `vfs.c` owns file behavior
-* Socket ABI via `int 0x80`: `SYS_SOCKET`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_CONNECT`, `SYS_SEND`, `SYS_RECV`, `SYS_POLL`, `SYS_SETSOCKOPT`, and `SYS_GETSOCKNAME`
+* Socket/poll ABI via `int 0x80`: passive TCP sockets, `accept4`, basic `shutdown`, `getsockname`/`getpeername`, `poll`, `epoll`, `timerfd`, and `signalfd` shims for guest services
 * `sys_exit()` is scheduler-owned: it switches to the kernel page directory, marks the current task `PROCESS_STATE_ZOMBIE`, and switches to the next runnable task
 * Shell now runs as an explicit kernel task scheduled by `scheduler.c`
 * **Preemptive round-robin scheduler** — PIT timer IRQ at `SMALLOS_TIMER_HZ`, with a named 20 ms scheduler quantum
@@ -47,7 +47,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * **`SYS_WRITEFILE_PATH`** — user process creates or overwrites a FAT16 file at any nested path
 * **ATA PIO driver** — polls the primary IDE channel (`0x1F0`) to read 512-byte sectors from disk in 32-bit protected mode; no DMA or IRQ required
 * **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing `/bin`, `apps/`, `tools/`, and sample sources; built by `tools/mkfat16.c` with no external dependencies; readable via ATA PIO with nested directory paths, writable at runtime through the kernel VFS shim for root-directory files and nested paths
-* **TCP service task** — kernel task that drains e1000 RX, dispatches ARP/IPv4/TCP frames, handles retransmit/idle timers, and wakes socket waiters
+* **TCP service task** — kernel task that drains e1000 RX, dispatches ARP/IPv4/TCP frames, handles retransmit/idle timers, and wakes socket wait queues
 * **Guest TCP apps** — `apps/services/tcpecho.elf` proves the socket path end to end, `apps/services/sockeof.elf` pins down peer-close/read EOF semantics, and `apps/services/ftpd.elf` runs the vendored FTP session logic as a normal user-space ELF
 
 ---

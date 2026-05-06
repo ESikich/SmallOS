@@ -10,6 +10,7 @@
 #include "../kernel/pmm.h"
 #include "../kernel/process.h"
 #include "../kernel/scheduler.h"
+#include "../kernel/socket.h"
 #include "../kernel/timer.h"
 #include "terminal.h"
 
@@ -46,6 +47,8 @@ typedef unsigned short u16;
 typedef struct {
     int state;
     int accepted;
+    u16 local_port;
+    unsigned int conn_id;
     u8 remote_mac[6];
     u32 remote_ip;
     u16 remote_port;
@@ -74,7 +77,6 @@ static u32 s_slots_frame;
 static u32 s_slots_frames;
 static u16 s_active_port = TCP_LISTEN_PORT;
 static unsigned int s_active_conn = TCP_SOCKET_CONN_NONE;
-static process_t* s_socket_waiter;
 static u16 s_ip_id = 1u;
 static u8 s_tx_frame[TCP_MAX_FRAME];
 static u8 s_checksum_scratch[12u + TCP_MAX_FRAME];
@@ -412,16 +414,23 @@ static u32 tcp_build_frame(u8* frame,
 }
 
 static void tcp_reset_connection(tcp_conn_t* conn) {
+    u16 local_port;
+    unsigned int conn_id;
+
     if (!conn) {
         return;
     }
 
+    local_port = conn->local_port;
+    conn_id = conn->conn_id;
+    if (local_port != 0u && conn_id != TCP_SOCKET_CONN_NONE) {
+        socket_wake_tcp_connection(local_port,
+                                   conn_id,
+                                   (short)(POLLIN | POLLOUT | POLLHUP));
+    }
+
     k_memset(conn, 0, sizeof(*conn));
     conn->state = TCP_STATE_CLOSED;
-    if (s_socket_waiter) {
-        s_socket_waiter->state = PROCESS_STATE_RUNNING;
-        s_socket_waiter = 0;
-    }
 }
 
 static void tcp_reset_slot(tcp_slot_t* slot) {
@@ -453,6 +462,9 @@ static void tcp_begin_close(tcp_conn_t* conn) {
     conn->last_activity = timer_get_ticks();
     conn->retransmit_at = conn->last_activity + TCP_RETRY_TICKS;
     conn->retries = 0;
+    socket_wake_tcp_connection(conn->local_port,
+                               conn->conn_id,
+                               (short)(POLLIN | POLLOUT | POLLHUP));
 }
 
 void tcp_socket_use_port(unsigned int port) {
@@ -463,29 +475,6 @@ void tcp_socket_use_port(unsigned int port) {
 void tcp_socket_use_connection(unsigned int port, unsigned int conn_id) {
     s_active_port = (u16)port;
     s_active_conn = conn_id;
-}
-
-static void tcp_wake_waiter(void) {
-    if (s_socket_waiter &&
-        (s_socket_waiter->state == PROCESS_STATE_WAITING ||
-         s_socket_waiter->state == PROCESS_STATE_SLEEPING)) {
-        s_socket_waiter->state = PROCESS_STATE_RUNNING;
-        s_socket_waiter = 0;
-    }
-}
-
-void tcp_socket_set_waiter(process_t* proc) {
-    s_socket_waiter = proc;
-}
-
-void tcp_socket_clear_waiter(process_t* proc) {
-    if (s_socket_waiter == proc) {
-        s_socket_waiter = 0;
-    }
-}
-
-void tcp_socket_wake_waiter(void) {
-    tcp_wake_waiter();
 }
 
 void tcp_socket_close_listener(unsigned int port) {
@@ -499,6 +488,7 @@ void tcp_socket_close_listener(unsigned int port) {
     tcp_socket_use_port(port);
     slot->listener_active = 0;
     slot->listen_backlog = 0u;
+    socket_wake_tcp_listener(port);
     for (unsigned int i = 0; i < TCP_MAX_CONNS_PER_SLOT; i++) {
         tcp_conn_t* pending = &slot->conns[i];
         if (!pending->accepted) {
@@ -779,6 +769,8 @@ static void tcp_accept_syn(const u8* frame,
     for (unsigned int i = 0; i < 6; i++) {
         conn->remote_mac[i] = frame[6 + i];
     }
+    conn->local_port = dst_port;
+    conn->conn_id = conn_id;
     conn->remote_ip = src_ip;
     conn->remote_port = src_port;
     conn->remote_seq_next = seq + 1u;
@@ -889,7 +881,7 @@ static void tcp_echo_payload(const u8* frame,
         conn->state = TCP_STATE_ESTABLISHED;
         conn->local_seq_next += 1u;
         conn->last_activity = timer_get_ticks();
-        tcp_wake_waiter();
+        socket_wake_tcp_listener(slot->local_port);
 
         if (payload_len == 0u) {
             return;
@@ -925,7 +917,7 @@ static void tcp_echo_payload(const u8* frame,
                     conn->rx_buf[conn->rx_len + i] = frame[payload_off + i];
                 }
                 conn->rx_len += to_copy;
-                tcp_wake_waiter();
+                socket_wake_tcp_connection(slot->local_port, conn_id, POLLIN);
             }
 
             tcp_send_segment(TCP_LOCAL_IP,
@@ -966,7 +958,9 @@ static void tcp_echo_payload(const u8* frame,
 
     if (flags & TCP_FIN) {
         conn->peer_closed = 1;
-        tcp_wake_waiter();
+        socket_wake_tcp_connection(slot->local_port,
+                                   conn_id,
+                                   (short)(POLLIN | POLLHUP));
     }
 }
 
@@ -1071,7 +1065,6 @@ int tcp_init(void) {
         return 0;
     }
     tcp_socket_use_port(TCP_LISTEN_PORT);
-    s_socket_waiter = 0;
     tcp_reset_slot(tcp_active_slot());
 
     if (!sched_enqueue(proc)) {

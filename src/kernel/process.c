@@ -52,7 +52,7 @@ static void process_key_consumer(key_event_t ev) {
         if (keyboard_get_waiting_process() == (void*)proc) {
             keyboard_set_waiting_process(0);
         }
-        tcp_socket_clear_waiter(proc);
+        socket_wait_clear_process(proc);
 
         proc->exit_status = PROCESS_TERMINATED_BY_CTRL_C;
         if (proc == sched_current()) {
@@ -423,6 +423,7 @@ void process_fd_close(fd_entry_t* ent) {
 static int process_handle_socket_read(fd_entry_t* ent, char* buf, unsigned int len) {
     int rc;
     socket_t* sock;
+    process_t* proc;
 
     if (!ent || !ent->valid) return -EBADF;
     sock = ent->socket;
@@ -434,15 +435,42 @@ static int process_handle_socket_read(fd_entry_t* ent, char* buf, unsigned int l
             return -EAGAIN;
         }
     }
-    __asm__ __volatile__("sti");
+
+    proc = sched_current();
     while (!socket_tcp_recv_ready(sock)) {
+        int wait_rc;
+
         if (!socket_tcp_connection_established(sock)) {
             __asm__ __volatile__("cli");
             return 0;
         }
-        __asm__ __volatile__("hlt");
+
+        if (!proc) {
+            __asm__ __volatile__("sti; hlt; cli");
+            continue;
+        }
+
+        proc->state = PROCESS_STATE_WAITING;
+        wait_rc = socket_wait(sock, proc, POLLIN);
+        if (wait_rc < 0) {
+            proc->state = PROCESS_STATE_RUNNING;
+            socket_wait_clear_process(proc);
+            return wait_rc;
+        }
+        if (socket_tcp_recv_ready(sock)) {
+            proc->state = PROCESS_STATE_RUNNING;
+            break;
+        }
+
+        __asm__ __volatile__("sti");
+        while (proc->state != PROCESS_STATE_RUNNING) {
+            __asm__ __volatile__("hlt");
+        }
+        __asm__ __volatile__("cli");
+        socket_wait_clear_process(proc);
     }
     __asm__ __volatile__("cli");
+    socket_wait_clear_process(proc);
     rc = socket_tcp_recv(sock, buf, len);
     return rc < 0 ? -ECONNRESET : rc;
 }
@@ -816,7 +844,7 @@ void process_destroy(process_t* proc) {
     if (keyboard_get_waiting_process() == (void*)proc) {
         keyboard_set_waiting_process(0);
     }
-    tcp_socket_clear_waiter(proc);
+    socket_wait_clear_process(proc);
 
     for (unsigned int i = 0; i < proc->fd_capacity; i++) {
         if (proc->fds[i].valid) {
@@ -880,7 +908,7 @@ void process_deliver_pending_terminal_interrupt(unsigned int esp) {
     if (keyboard_get_waiting_process() == (void*)proc) {
         keyboard_set_waiting_process(0);
     }
-    tcp_socket_clear_waiter(proc);
+    socket_wait_clear_process(proc);
     paging_switch(paging_get_kernel_pd());
     sched_kill(proc, esp);
 }

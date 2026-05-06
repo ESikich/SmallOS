@@ -18,8 +18,11 @@ Current implementation status:
 - Phase 3 has an initial TCP scaling step: per-listener stream slots are now
   PMM-backed, capped `listen(backlog)` handling is in place, and the enlarged
   TCP table stays out of the low-memory VGA/BIOS hole. A full 4-tuple TCP
-  table, per-socket wait queues, and per-connection buffer/backpressure work
-  remain.
+  table and per-connection buffer/backpressure work remain.
+- Phase 4 has an initial socket wait-queue step: `wait_queue_t` is backed by a
+  fixed node pool, sockets own accept/read/write queues, and blocking
+  `accept`, `recv`, socket `read`, `poll`, and `epoll_wait` register on socket
+  objects. Timerfd/signalfd wait queues and fully object-driven epoll remain.
 
 ## Goals
 
@@ -292,6 +295,7 @@ Add a small wait queue abstraction:
 ```c
 typedef struct wait_node {
     process_t* proc;
+    struct wait_queue* queue;
     struct wait_node* next;
 } wait_node_t;
 
@@ -303,7 +307,7 @@ typedef struct wait_queue {
 Initial implementation can be simple:
 
 - one wait node embedded per process for now, or a small fixed wait-node pool
-- `wait_queue_sleep(queue, timeout)`
+- `wait_queue_add(queue, proc)` and cleanup of all wait nodes for a process
 - `wait_queue_wake_one(queue)`
 - `wait_queue_wake_all(queue)`
 
@@ -325,7 +329,7 @@ Tests:
 
 Exit criteria:
 
-- No global TCP waiter remains.
+- No global TCP waiter remains. (Implemented for socket waits.)
 - `poll()`/`epoll_wait()` wake from the object that became ready.
 
 ## Phase 5: Per-Connection Buffers And Backpressure
@@ -451,8 +455,9 @@ Before starting SSH:
   written with known limitations
 - idle long-lived TCP connections do not consume large kernel buffers
 
-SSH is interactive and long-lived. Do not start it on top of the single-waiter
-or tiny fixed-fd model.
+SSH is interactive and long-lived. The old single socket waiter and tiny
+fixed-fd table are gone, but SSH should still wait for the remaining 4-tuple
+connection-table and per-connection buffer/backpressure work.
 
 ## Implementation Rules For The Next LLM
 

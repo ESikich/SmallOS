@@ -24,6 +24,7 @@ eax = syscall number
 ebx = arg1
 ecx = arg2
 edx = arg3
+esi = arg4 for four-argument calls
 
 return value → eax
 ```
@@ -36,24 +37,36 @@ Syscalls return non-negative results on success and negative errno values on
 failure. Low-level `sys_*` helpers expose those raw values directly; POSIX-style
 user runtime wrappers return `-1` and set `errno` to the positive error code.
 
-Initial shared errno values:
+Shared errno values:
 
 | Name | Value | Meaning |
 | --- | ---: | --- |
 | `EPERM` | 1 | operation not permitted |
 | `ENOENT` | 2 | no such file or directory |
+| `EINTR` | 4 | interrupted system call |
 | `EIO` | 5 | input/output error |
+| `EAGAIN` / `EWOULDBLOCK` | 11 | resource temporarily unavailable |
 | `EBADF` | 9 | bad file descriptor |
 | `ENOMEM` | 12 | out of memory |
 | `EACCES` | 13 | permission denied |
 | `EFAULT` | 14 | bad user address |
+| `EBUSY` | 16 | resource busy |
+| `EEXIST` | 17 | file exists |
 | `ENOTDIR` | 20 | not a directory |
 | `EISDIR` | 21 | is a directory |
 | `EINVAL` | 22 | invalid argument |
 | `ENFILE` | 23 | descriptor table full |
 | `EFBIG` | 27 | file too large |
+| `EPIPE` | 32 | broken pipe |
 | `ENAMETOOLONG` | 36 | path or name too long |
 | `ENOSYS` | 38 | function not implemented |
+| `ENOTEMPTY` | 39 | directory not empty |
+| `EPROTO` | 71 | protocol error |
+| `EOVERFLOW` | 75 | value too large |
+| `EMSGSIZE` | 90 | message too long |
+| `EADDRINUSE` | 98 | address already in use |
+| `ECONNRESET` | 104 | connection reset |
+| `ETIMEDOUT` | 110 | connection timed out |
 
 ---
 
@@ -332,7 +345,8 @@ Associates a socket with an IPv4 address/port tuple.
 int sys_listen(int fd, int backlog);
 ```
 
-Puts a bound socket into passive-listen mode. `backlog` is currently accepted but not used.
+Puts a bound socket into passive-listen mode. `backlog` is honored up to the
+kernel socket backlog cap; values below 1 become a single pending connection.
 
 ---
 
@@ -342,7 +356,10 @@ Puts a bound socket into passive-listen mode. `backlog` is currently accepted bu
 int sys_accept(int fd, struct sockaddr* addr, socklen_t* addrlen);
 ```
 
-Waits for an incoming TCP connection on a listening socket and returns a connected handle.
+Waits for an incoming TCP connection on a listening socket and returns a
+connected handle. Blocking accepts park on the listening socket's accept wait
+queue; nonblocking sockets or `accept4(..., SOCK_NONBLOCK)` return `-EAGAIN`
+when no accepted connection is queued.
 
 If `addr` and `addrlen` are supplied, the kernel writes back the peer address using network byte order for the port field.
 
@@ -374,7 +391,9 @@ Sends bytes on an established stream socket.
 int sys_recv(int fd, void* buf, uint32_t len);
 ```
 
-Receives bytes from an established stream socket. The current server-side path blocks until data arrives or the connection closes.
+Receives bytes from an established stream socket. The current server-side path
+blocks on the socket read wait queue until data arrives or the connection
+closes.
 
 ---
 
@@ -388,7 +407,8 @@ Checks readiness by asking each handle's `poll` operation. Current handle
 support includes socket readiness, writable console descriptors, readable
 console input when a key is already buffered, and basic file readability /
 writability. `timeout` follows the POSIX millisecond convention and is rounded
-up to the configured timer tick rate for sleeping waits.
+up to the configured timer tick rate for sleeping waits. Socket polls register
+with socket-owned accept/read/write queues while sleeping.
 
 ---
 
@@ -430,12 +450,15 @@ uses this syscall after `opendir()` validates the directory with `SYS_STAT`.
 ### SYS_SETSOCKOPT (34)
 
 ```c
-int sys_setsockopt(int fd, int level, int optname);
+int sys_setsockopt(int fd, int level, int optname,
+                   const void* optval, socklen_t optlen);
 ```
 
-Validates that `fd` is a socket and currently returns success for accepted
-options. This keeps common server code that calls `setsockopt(SO_REUSEADDR)`
-portable while the kernel TCP stack stays small.
+Validates that `fd` is a socket and currently returns success. The raw kernel
+syscall consumes `fd`, `level`, and `optname`; the user helper has the
+POSIX-shaped `optval` / `optlen` arguments and ignores them. This keeps common
+server code that calls `setsockopt(SO_REUSEADDR)` portable while the kernel TCP
+stack stays small.
 
 ---
 
@@ -448,6 +471,140 @@ int sys_getsockname(int fd, struct sockaddr* addr, socklen_t* addrlen);
 Writes back the local IPv4 socket address for a socket handle. The current
 implementation reports the socket port and a loopback-style address for
 compatibility with simple user-space service code.
+
+---
+
+### SYS_FCNTL (41)
+
+```c
+int sys_fcntl(int fd, int cmd, uint32_t arg);
+```
+
+Supports `SYS_FCNTL_GETFL` / `F_GETFL` and `SYS_FCNTL_SETFL` / `F_SETFL`.
+Only `SYS_FD_FLAG_NONBLOCK` / `O_NONBLOCK` is persisted today; unsupported
+commands return `-EINVAL`.
+
+---
+
+### SYS_EPOLL_CREATE (42)
+
+```c
+int sys_epoll_create(int flags);
+```
+
+Creates an epoll handle. `EPOLL_CLOEXEC` is accepted for compatibility but
+close-on-exec state is not modeled yet.
+
+---
+
+### SYS_EPOLL_CTL (43)
+
+```c
+int sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event* event);
+```
+
+Adds, modifies, or deletes a watched descriptor from an epoll handle. Watches
+are stored in a PMM-backed page and are currently capped at 64 entries.
+`EPOLL_CTL_ADD`, `EPOLL_CTL_MOD`, and `EPOLL_CTL_DEL` are supported.
+
+---
+
+### SYS_EPOLL_WAIT (44)
+
+```c
+int sys_epoll_wait(int epfd, struct epoll_event* events,
+                   int maxevents, int timeout);
+```
+
+Scans watched descriptors through their handle `poll` operations and sleeps
+until readiness or timeout. Socket watches register with socket-owned
+accept/read/write wait queues while sleeping. Timerfd watches contribute their
+next expiry deadline to the sleep timeout.
+
+---
+
+### SYS_TIMERFD_CREATE (45)
+
+```c
+int sys_timerfd_create(int clock_id, int flags);
+```
+
+Creates a timerfd handle for `CLOCK_REALTIME` or `CLOCK_MONOTONIC`.
+`TFD_NONBLOCK` is persisted as descriptor nonblocking state; `TFD_CLOEXEC` is
+accepted for compatibility but close-on-exec state is not modeled yet.
+
+---
+
+### SYS_TIMERFD_SETTIME (46)
+
+```c
+int sys_timerfd_settime(int fd, int flags,
+                        const struct itimerspec* new_value,
+                        struct itimerspec* old_value);
+```
+
+Arms or disarms a timerfd using seconds/nanoseconds converted to kernel timer
+ticks. One-shot and periodic timers are supported. `flags` must be `0`; when
+`old_value` is supplied the current implementation writes back zeros.
+
+---
+
+### SYS_SIGNALFD (47)
+
+```c
+int sys_signalfd(int fd, const sigset_t* mask, int flags);
+```
+
+Creates or reconfigures a signalfd placeholder. `SFD_NONBLOCK` is persisted as
+descriptor nonblocking state and `SFD_CLOEXEC` is accepted for compatibility,
+but no synthetic signals are queued yet, so reads return `-EAGAIN`.
+
+---
+
+### SYS_ACCEPT4 (48)
+
+```c
+int sys_accept4(int fd, struct sockaddr* addr,
+                socklen_t* addrlen, int flags);
+```
+
+Accepts a queued TCP connection like `SYS_ACCEPT`, with support for
+`SOCK_NONBLOCK` on the returned descriptor. `SOCK_CLOEXEC` is accepted for
+compatibility but close-on-exec state is not modeled yet.
+
+---
+
+### SYS_SHUTDOWN (49)
+
+```c
+int sys_shutdown(int fd, int how);
+```
+
+Validates a socket handle and `SHUT_RD`, `SHUT_WR`, or `SHUT_RDWR`. The syscall
+currently returns success without implementing TCP half-close state.
+
+---
+
+### SYS_GETPEERNAME (50)
+
+```c
+int sys_getpeername(int fd, struct sockaddr* addr, socklen_t* addrlen);
+```
+
+Writes back the IPv4 peer address for a connected socket using network byte
+order for the port field.
+
+---
+
+### SYS_FSTAT (51)
+
+```c
+int sys_fstat(int fd, uint32_t* out_size, int* out_is_dir);
+```
+
+Reports descriptor metadata from the open handle. File descriptors report the
+cached file size and directory flag; non-file handles report their current
+handle metadata.
 
 ---
 
@@ -640,6 +797,17 @@ sys_connect(fd, addr, addrlen)
 sys_send(fd, buf, len)
 sys_recv(fd, buf, len)
 sys_poll(fds, nfds, timeout)
+sys_fcntl(fd, cmd, arg)
+sys_epoll_create(flags)
+sys_epoll_ctl(epfd, op, fd, event)
+sys_epoll_wait(epfd, events, maxevents, timeout)
+sys_timerfd_create(clock_id, flags)
+sys_timerfd_settime(fd, flags, new_value, old_value)
+sys_signalfd(fd, mask, flags)
+sys_accept4(fd, addr, addrlen, flags)
+sys_shutdown(fd, how)
+sys_getpeername(fd, addr, addrlen)
+sys_fstat(fd, out_size, out_is_dir)
 sys_mkdir(path, mode)
 sys_rmdir(path)
 sys_dirlist(path, index, out)
@@ -676,7 +844,7 @@ u_stat(...)        query path metadata
 * `SYS_YIELD` and the timer path use the same stub layout, but the real scheduler resume ESP is `esp - 8`, not raw `esp`
 * EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`
 * The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.
-* fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`); user-opened files and sockets start at fd 3. The handle table is PMM-backed process state: it starts at 16 slots, grows up to the default 64-fd process limit, and has a kernel hard cap of 256. Every handle carries readable/writable/dirty state plus an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`. `process.c` owns fd lifetime and dispatch, `vfs.c` owns FAT16-backed file behavior, and `socket.c` owns kernel socket objects that wrap TCP listener/connection state.
+* fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`); user-opened files and sockets start at fd 3. The handle table is PMM-backed process state: it starts at 16 slots, grows up to the default 64-fd process limit, and has a kernel hard cap of 256. Every handle carries readable/writable/dirty state plus an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`. `process.c` owns fd lifetime and dispatch, `vfs.c` owns FAT16-backed file behavior, and `socket.c` owns kernel socket objects plus accept/read/write wait queues that wrap TCP listener/connection state.
 * `SYS_WRITEFILE` is the simplest root-only persistence path for user tools that want to emit a generated artifact without managing an fd-based write stream.
 * `SYS_WRITEFILE_PATH` is the preferred path-aware persistence primitive for compilers and build tools, especially when writing into nested directories.
 

@@ -9,9 +9,10 @@
   * Added contiguous PMM frame allocation/free helpers so fd tables remain reclaimable at process teardown.
   * Updated `errnoprobe` to exhaust 61 user-open descriptors before `ENFILE`.
 
-* **Socket object layer** (`src/kernel/socket.*`, `src/kernel/syscall.c`, `src/drivers/tcp.*`)
+* **Socket object layer** (`src/kernel/socket.*`, `src/kernel/wait.*`, `src/kernel/syscall.c`, `src/drivers/tcp.*`)
   * Socket fds now point at `socket_t` objects that own TCP listener/connection state instead of relying on fd-local `socket_port/socket_conn` fields for active behavior.
   * Raised TCP per-listener stream slots, moved the enlarged TCP slot table into PMM-backed memory instead of low `.bss`, and wired `listen(backlog)` through a capped backlog value.
+  * Added a fixed-pool wait queue primitive and socket-level accept/read/write queues; blocking `accept`, `recv`, socket `read`, `poll`, and `epoll_wait` now register on the relevant socket object instead of a single TCP waiter.
   * Raised the sample cserve config to `max_conn = 16`.
 
 ## [Current] — Full-screen userland text editor
@@ -77,7 +78,7 @@
 * **Foreground Ctrl+C termination** (`src/kernel/process.c`, `src/kernel/scheduler.c`, `src/kernel/idt.c`, `src/kernel/interrupts.asm`, `src/drivers/tcp.c`, `docs/`)
   * Ctrl+C is now treated as a terminal interrupt for the foreground process instead of ordinary input.
   * The foreground process exits with status `130`; `runelf` waits observe the zombie and restore the shell prompt, while a currently running foreground process is switched away directly from the IRQ1 frame.
-  * Keyboard and socket waiter pointers are cleared on interrupt/destruction so blocked reads, accepts, polls, and receives cannot wake a freed process.
+  * Keyboard waiter pointers and socket wait-queue registrations are cleared on interrupt/destruction so blocked reads, accepts, polls, and receives cannot wake a freed process.
   * `irq1_stub` now passes its saved ESP to C so pending terminal interrupts can use the same safe scheduler exit path as `SYS_EXIT` and user faults.
   * The QEMU selftest now injects `ctrl-c` into a CPU-bound foreground ELF and verifies the shell can accept input afterward.
 

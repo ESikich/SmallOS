@@ -3,6 +3,7 @@
 
 #include "types.h"
 
+typedef struct process process_t;
 typedef enum {
     SOCKET_KIND_NONE = 0,
     SOCKET_KIND_TCP  = 1
@@ -41,6 +42,12 @@ int            socket_tcp_peer_closed(socket_t* sock);
 int            socket_tcp_recv(socket_t* sock, void* buf, unsigned int len);
 int            socket_tcp_send(socket_t* sock, const void* buf, unsigned int len);
 short          socket_poll(socket_t* sock, short events);
+int            socket_wait(socket_t* sock, process_t* proc, short events);
+void           socket_wait_clear_process(process_t* proc);
+void           socket_wake_tcp_listener(unsigned int port);
+void           socket_wake_tcp_connection(unsigned int port,
+                                          unsigned int conn_id,
+                                          short events);
 void           socket_close(socket_t* sock);
 
 #endif /* SOCKET_H */

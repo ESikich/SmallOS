@@ -826,15 +826,23 @@ static int sys_accept_impl(syscall_regs_t* regs,
     }
 
     while (!socket_accept_ready(ent->socket)) {
+        int wait_rc;
+
         proc->state = PROCESS_STATE_WAITING;
-        tcp_socket_set_waiter(proc);
+        wait_rc = socket_wait(ent->socket, proc, POLLIN);
+        if (wait_rc < 0) {
+            proc->state = PROCESS_STATE_RUNNING;
+            socket_wait_clear_process(proc);
+            return wait_rc;
+        }
         if (socket_accept_ready(ent->socket)) {
             proc->state = PROCESS_STATE_RUNNING;
             break;
         }
         sys_wait_until_current_running(proc);
+        socket_wait_clear_process(proc);
     }
-    tcp_socket_set_waiter(0);
+    socket_wait_clear_process(proc);
 
     new_fd = process_fd_open_socket(proc, "socket");
     if (new_fd < 0) return new_fd;
@@ -878,7 +886,6 @@ static int sys_accept_impl(syscall_regs_t* regs,
         *addrlen = sizeof(sa);
     }
 
-    tcp_socket_wake_waiter();
     return new_fd;
 }
 
@@ -926,19 +933,27 @@ static int sys_recv_impl(syscall_regs_t* regs, int fd, void* buf, unsigned int l
     }
 
     while (!socket_tcp_recv_ready(ent->socket)) {
+        int wait_rc;
+
         if (!socket_tcp_connection_established(ent->socket)) {
             return 0;
         }
         proc->state = PROCESS_STATE_WAITING;
-        tcp_socket_set_waiter(proc);
+        wait_rc = socket_wait(ent->socket, proc, POLLIN);
+        if (wait_rc < 0) {
+            proc->state = PROCESS_STATE_RUNNING;
+            socket_wait_clear_process(proc);
+            return wait_rc;
+        }
         if (socket_tcp_recv_ready(ent->socket)) {
             proc->state = PROCESS_STATE_RUNNING;
             break;
         }
         (void)regs;
         sys_wait_until_current_running(proc);
+        socket_wait_clear_process(proc);
     }
-    tcp_socket_set_waiter(0);
+    socket_wait_clear_process(proc);
 
     rc = socket_tcp_recv(ent->socket, buf, len);
     return rc < 0 ? -ECONNRESET : rc;
@@ -962,6 +977,27 @@ static unsigned int sys_poll_snapshot(process_t* proc, struct pollfd* fds,
     }
 
     return ready;
+}
+
+static int sys_poll_register_socket_waits(process_t* proc,
+                                          struct pollfd* fds,
+                                          unsigned int nfds) {
+    if (!proc || !fds) return -EINVAL;
+
+    for (unsigned int i = 0; i < nfds; i++) {
+        fd_entry_t* ent = process_fd_get(proc, fds[i].fd);
+        int rc;
+
+        if (!socket_fd_is_socket(ent)) continue;
+
+        rc = socket_wait(ent->socket, proc, fds[i].events);
+        if (rc < 0) {
+            socket_wait_clear_process(proc);
+            return rc;
+        }
+    }
+
+    return 0;
 }
 
 static unsigned int sys_poll_timeout_ticks(int timeout_ms) {
@@ -990,30 +1026,37 @@ static int sys_poll_impl(syscall_regs_t* regs, struct pollfd* fds,
     for (;;) {
         unsigned int ready = sys_poll_snapshot(proc, fds, nfds);
         if (ready != 0u) {
-            tcp_socket_set_waiter(0);
+            socket_wait_clear_process(proc);
             return (int)ready;
         }
 
         if (!infinite_wait && (int)(timer_get_ticks() - deadline) >= 0) {
-            tcp_socket_set_waiter(0);
+            socket_wait_clear_process(proc);
             return 0;
         }
 
         proc->sleep_until = infinite_wait ? 0u : deadline;
         proc->state = infinite_wait ? PROCESS_STATE_WAITING
                                     : PROCESS_STATE_SLEEPING;
-        tcp_socket_set_waiter(proc);
+        {
+            int wait_rc = sys_poll_register_socket_waits(proc, fds, nfds);
+            if (wait_rc < 0) {
+                proc->state = PROCESS_STATE_RUNNING;
+                socket_wait_clear_process(proc);
+                return wait_rc;
+            }
+        }
         ready = sys_poll_snapshot(proc, fds, nfds);
         if (ready != 0u) {
             proc->state = PROCESS_STATE_RUNNING;
-            tcp_socket_set_waiter(0);
+            socket_wait_clear_process(proc);
             return (int)ready;
         }
 
         (void)regs;
         sys_wait_until_current_running(proc);
 
-        tcp_socket_set_waiter(0);
+        socket_wait_clear_process(proc);
     }
 }
 
@@ -1188,6 +1231,31 @@ static unsigned int epoll_snapshot(process_t* proc,
     return ready;
 }
 
+static int epoll_register_socket_waits(process_t* proc, epoll_watch_t* watches) {
+    if (!proc) return -EINVAL;
+    if (!watches) return 0;
+
+    for (unsigned int i = 0; i < EPOLL_MAX_WATCHES; i++) {
+        fd_entry_t* ent;
+        int rc;
+
+        if (!watches[i].used) continue;
+
+        ent = process_fd_get(proc, watches[i].fd);
+        if (!socket_fd_is_socket(ent)) continue;
+
+        rc = socket_wait(ent->socket,
+                         proc,
+                         (short)(watches[i].events & 0xFFFFu));
+        if (rc < 0) {
+            socket_wait_clear_process(proc);
+            return rc;
+        }
+    }
+
+    return 0;
+}
+
 static int sys_epoll_wait_impl(syscall_regs_t* regs,
                                int epfd,
                                struct epoll_event* events,
@@ -1224,12 +1292,12 @@ static int sys_epoll_wait_impl(syscall_regs_t* regs,
                                                       (unsigned int)maxevents)
                                      : 0u;
         if (ready != 0u) {
-            tcp_socket_set_waiter(0);
+            socket_wait_clear_process(proc);
             return (int)ready;
         }
 
         if (!infinite_wait && (int)(timer_get_ticks() - timeout_deadline) >= 0) {
-            tcp_socket_set_waiter(0);
+            socket_wait_clear_process(proc);
             return 0;
         }
 
@@ -1251,20 +1319,27 @@ static int sys_epoll_wait_impl(syscall_regs_t* regs,
             proc->sleep_until = 0u;
             proc->state = PROCESS_STATE_WAITING;
         }
-        tcp_socket_set_waiter(proc);
+        {
+            int wait_rc = epoll_register_socket_waits(proc, watches);
+            if (wait_rc < 0) {
+                proc->state = PROCESS_STATE_RUNNING;
+                socket_wait_clear_process(proc);
+                return wait_rc;
+            }
+        }
         ready = watches ? epoll_snapshot(proc, watches, events,
                                          (unsigned int)maxevents)
                         : 0u;
         if (ready != 0u) {
             proc->state = PROCESS_STATE_RUNNING;
-            tcp_socket_set_waiter(0);
+            socket_wait_clear_process(proc);
             return (int)ready;
         }
 
         (void)regs;
         sys_wait_until_current_running(proc);
 
-        tcp_socket_set_waiter(0);
+        socket_wait_clear_process(proc);
     }
 }
 

@@ -110,6 +110,10 @@ The kernel dispatches descriptors through per-handle ops:
 read / write / seek / poll / flush / close
 ```
 
+Socket descriptors point at kernel `socket_t` objects; blocking socket reads,
+accepts, and socket-backed `poll`/`epoll_wait` waits use socket-owned
+accept/read/write wait queues.
+
 FAT16-backed file descriptors support:
 
 - read-only opens
@@ -145,7 +149,7 @@ The runtime provides a small POSIX-shaped surface:
 - `rename`
 - `mkdir`, `rmdir`
 - `getcwd`, `chdir`
-- socket and polling wrappers used by guest services
+- socket, poll, epoll, timerfd, and signalfd wrappers used by guest services
 
 `access(path, mode)` validates mode bits and checks existence through
 `SYS_STAT`. SmallOS does not currently model Unix permission bits, so `R_OK`,

@@ -301,7 +301,8 @@ The file, console, and socket syscalls used by shell tools, TinyCC, and the
 FTP/TCP smoke apps now share the dynamic PMM-backed process handle table owned
 by `process.c`. Each handle has readable/writable/dirty state plus ops for
 `read`, `write`, `seek`, `poll`, `flush`, and `close`; socket handles point at
-kernel `socket_t` objects.
+kernel `socket_t` objects whose accept/read/write wait queues wake blocking
+socket syscalls and socket-backed poll/epoll waits.
 Each process also carries cwd state, so user path syscalls resolve relative
 paths before entering VFS or ELF loading.
 FAT16-backed file behavior and path operations sit behind `vfs.c`, so

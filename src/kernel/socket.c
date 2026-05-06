@@ -3,6 +3,7 @@
 #include "klib.h"
 #include "uapi_errno.h"
 #include "uapi_poll.h"
+#include "wait.h"
 #include "../drivers/tcp.h"
 
 struct socket {
@@ -13,6 +14,9 @@ struct socket {
     unsigned int backlog;
     unsigned short local_port;
     unsigned int conn_id;
+    wait_queue_t read_waiters;
+    wait_queue_t write_waiters;
+    wait_queue_t accept_waiters;
 };
 
 static socket_t s_sockets[SOCKET_MAX];
@@ -36,6 +40,9 @@ socket_t* socket_create_tcp(void) {
             sock->state = SOCKET_STATE_OPEN;
             sock->refs = 1u;
             sock->conn_id = TCP_SOCKET_CONN_NONE;
+            wait_queue_init(&sock->read_waiters);
+            wait_queue_init(&sock->write_waiters);
+            wait_queue_init(&sock->accept_waiters);
             return sock;
         }
     }
@@ -193,14 +200,19 @@ short socket_poll(socket_t* sock, short events) {
             revents |= POLLIN;
         }
     } else if (sock->state == SOCKET_STATE_CONNECTED) {
+        int established;
+        int peer_closed;
+
         socket_tcp_use(sock);
         if ((events & POLLIN) && tcp_socket_recv_ready()) {
             revents |= POLLIN;
         }
-        if (tcp_socket_peer_closed()) {
+        established = tcp_socket_connection_established();
+        peer_closed = tcp_socket_peer_closed();
+        if (peer_closed || !established) {
             revents |= POLLHUP;
         }
-        if ((events & POLLOUT) && tcp_socket_connection_established()) {
+        if ((events & POLLOUT) && established) {
             revents |= POLLOUT;
         }
     }
@@ -208,8 +220,77 @@ short socket_poll(socket_t* sock, short events) {
     return revents;
 }
 
+int socket_wait(socket_t* sock, process_t* proc, short events) {
+    int rc = 0;
+
+    if (!sock || !proc) return -EINVAL;
+    if (sock->kind != SOCKET_KIND_TCP) return -EINVAL;
+
+    if (sock->state == SOCKET_STATE_LISTENING) {
+        if ((events & POLLIN) != 0) {
+            rc = wait_queue_add(&sock->accept_waiters, proc);
+        }
+    } else if (sock->state == SOCKET_STATE_CONNECTED) {
+        if ((events & POLLIN) != 0) {
+            rc = wait_queue_add(&sock->read_waiters, proc);
+        }
+        if (rc >= 0 && (events & POLLOUT) != 0) {
+            rc = wait_queue_add(&sock->write_waiters, proc);
+        }
+    }
+
+    if (rc < 0) {
+        wait_queue_remove_proc(proc);
+    }
+    return rc;
+}
+
+void socket_wait_clear_process(process_t* proc) {
+    wait_queue_remove_proc(proc);
+}
+
+void socket_wake_tcp_listener(unsigned int port) {
+    if (port == 0u) return;
+
+    for (unsigned int i = 0; i < SOCKET_MAX; i++) {
+        socket_t* sock = &s_sockets[i];
+        if (sock->refs == 0u) continue;
+        if (sock->kind != SOCKET_KIND_TCP) continue;
+        if (sock->state != SOCKET_STATE_LISTENING) continue;
+        if (sock->local_port != (unsigned short)port) continue;
+
+        wait_queue_wake_all(&sock->accept_waiters);
+    }
+}
+
+void socket_wake_tcp_connection(unsigned int port,
+                                unsigned int conn_id,
+                                short events) {
+    if (port == 0u || conn_id == TCP_SOCKET_CONN_NONE) return;
+
+    for (unsigned int i = 0; i < SOCKET_MAX; i++) {
+        socket_t* sock = &s_sockets[i];
+        if (sock->refs == 0u) continue;
+        if (sock->kind != SOCKET_KIND_TCP) continue;
+        if (sock->state != SOCKET_STATE_CONNECTED) continue;
+        if (sock->local_port != (unsigned short)port) continue;
+        if (sock->conn_id != conn_id) continue;
+
+        if ((events & (POLLIN | POLLHUP | POLLERR)) != 0) {
+            wait_queue_wake_all(&sock->read_waiters);
+        }
+        if ((events & (POLLOUT | POLLHUP | POLLERR)) != 0) {
+            wait_queue_wake_all(&sock->write_waiters);
+        }
+    }
+}
+
 void socket_close(socket_t* sock) {
     if (!sock || sock->refs == 0u || sock->kind != SOCKET_KIND_TCP) return;
+
+    wait_queue_wake_all(&sock->accept_waiters);
+    wait_queue_wake_all(&sock->read_waiters);
+    wait_queue_wake_all(&sock->write_waiters);
 
     if (sock->state == SOCKET_STATE_LISTENING) {
         tcp_socket_close_listener(sock->local_port);
