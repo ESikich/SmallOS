@@ -18,6 +18,7 @@
 #include "klib.h"
 
 #define SHELL_JOB_MAX 8
+#define SHELL_SIGTERM 15
 
 static void print_command_list(void);
 static int run_app_command(command_t* cmd, const char* program);
@@ -1052,6 +1053,13 @@ static void cmd_kill(command_t* cmd) {
     shell_job_t* job = job_find(id);
     if (!job || !job->proc) {
         terminal_puts("kill: no such job\n");
+        return;
+    }
+
+    if (process_signal_deliver(job->proc, SHELL_SIGTERM)) {
+        terminal_puts("kill: signaled ");
+        terminal_puts(job->command);
+        terminal_putc('\n');
         return;
     }
 

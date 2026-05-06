@@ -51,7 +51,8 @@ typedef enum {
     PROCESS_SOCKET_STATE_OPEN      = 1,
     PROCESS_SOCKET_STATE_BOUND     = 2,
     PROCESS_SOCKET_STATE_LISTENER  = 3,
-    PROCESS_SOCKET_STATE_CONNECTED = 4
+    PROCESS_SOCKET_STATE_CONNECTING = 4,
+    PROCESS_SOCKET_STATE_CONNECTED = 5
 } process_socket_state_t;
 
 typedef struct process_handle_ops {
@@ -148,6 +149,7 @@ int        process_fd_flush(fd_entry_t* ent);
 int        process_fd_seek(fd_entry_t* ent, int offset, int whence);
 int        process_fd_set_flags(fd_entry_t* ent, unsigned int flags);
 unsigned int process_fd_get_flags(fd_entry_t* ent);
+int        process_fd_set_signalfd_mask(fd_entry_t* ent, unsigned int mask);
 void       process_wake_timerfds(process_t* proc, unsigned int now);
 void       process_claim_for_wait(process_t* proc);
 int        process_set_args(process_t* proc, int argc, char** argv);
@@ -163,6 +165,7 @@ process_t* process_get_current(void);
  */
 void       process_set_foreground(process_t* proc);
 process_t* process_get_foreground(void);
+int        process_signal_deliver(process_t* proc, int signum);
 
 /*
  * Terminal interrupt delivery.

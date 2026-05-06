@@ -687,7 +687,8 @@ Replaces CHS `AH=0x02`. Removes the 18-sector-per-track limit. Required because 
 
 # Future Improvements
 
-* Outbound TCP `connect()` support for client-style user programs
-* Larger TCP send queues and fuller slow-reader/window handling
+* TAP-mode coverage for outbound TCP `connect()` in addition to the default
+  QEMU user-network smoke
+* Fuller TCP close-state coverage
 * Richer filesystem metadata such as long filenames or permission bits
 * Environment-variable support for the hosted `main(argc, argv)` runtime path

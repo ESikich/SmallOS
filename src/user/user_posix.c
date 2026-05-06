@@ -323,9 +323,15 @@ char* strerror(int errnum) {
         case ENAMETOOLONG: return "file name too long";
         case EFBIG: return "file too large";
         case EPIPE: return "broken pipe";
+        case ENETUNREACH: return "network unreachable";
         case EADDRINUSE: return "address already in use";
+        case EISCONN: return "socket is connected";
         case ECONNRESET: return "connection reset";
         case ETIMEDOUT: return "connection timed out";
+        case ECONNREFUSED: return "connection refused";
+        case EHOSTUNREACH: return "host unreachable";
+        case EALREADY: return "operation already in progress";
+        case EINPROGRESS: return "operation now in progress";
         default: return "unknown error";
     }
 }

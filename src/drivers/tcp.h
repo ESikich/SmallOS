@@ -42,9 +42,15 @@ void tcp_socket_use_port(unsigned int port);
 void tcp_socket_use_connection(unsigned int port, unsigned int conn_id);
 int  tcp_socket_bind(unsigned int port);
 int  tcp_socket_listen(unsigned int backlog);
+int  tcp_socket_connect(unsigned int local_port,
+                        unsigned int remote_ip,
+                        unsigned int remote_port,
+                        unsigned int* out_local_port,
+                        unsigned int* out_conn_id);
 int  tcp_socket_accept_ready(void);
 unsigned int tcp_socket_mark_accepted(void);
 int  tcp_socket_connection_established(void);
+int  tcp_socket_connect_pending(void);
 int  tcp_socket_recv_ready(void);
 int  tcp_socket_peer_closed(void);
 int  tcp_socket_recv(void* buf, unsigned int len);
@@ -54,6 +60,7 @@ int  tcp_socket_shutdown(int how);
 unsigned int tcp_socket_poll_events(void);
 unsigned int tcp_socket_peer_ip(void);
 unsigned int tcp_socket_peer_port(void);
+unsigned int tcp_socket_local_ip(void);
 unsigned int tcp_socket_local_port(void);
 
 #define TCP_SOCKET_CONN_NONE 0xFFFFFFFFu

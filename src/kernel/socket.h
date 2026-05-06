@@ -14,7 +14,8 @@ typedef enum {
     SOCKET_STATE_OPEN      = 1,
     SOCKET_STATE_BOUND     = 2,
     SOCKET_STATE_LISTENING = 3,
-    SOCKET_STATE_CONNECTED = 4
+    SOCKET_STATE_CONNECTING = 4,
+    SOCKET_STATE_CONNECTED = 5
 } socket_state_t;
 
 typedef struct socket socket_t;
@@ -39,15 +40,20 @@ void           socket_get_stats(socket_stats_t* out);
 socket_kind_t  socket_kind(socket_t* sock);
 socket_state_t socket_state(socket_t* sock);
 unsigned int   socket_local_port(socket_t* sock);
+unsigned int   socket_local_ip(socket_t* sock);
 unsigned int   socket_conn_id(socket_t* sock);
 unsigned int   socket_peer_ip(socket_t* sock);
 unsigned int   socket_peer_port(socket_t* sock);
 
 int            socket_bind_tcp(socket_t* sock, unsigned int port);
 int            socket_listen_tcp(socket_t* sock, int backlog);
+int            socket_connect_tcp(socket_t* sock,
+                                  unsigned int remote_ip,
+                                  unsigned int remote_port);
 int            socket_accept_ready(socket_t* sock);
 int            socket_accept_tcp(socket_t* listener, socket_t* child);
 int            socket_tcp_connection_established(socket_t* sock);
+int            socket_tcp_connect_pending(socket_t* sock);
 int            socket_tcp_recv_ready(socket_t* sock);
 int            socket_tcp_peer_closed(socket_t* sock);
 int            socket_tcp_recv(socket_t* sock, void* buf, unsigned int len);

@@ -65,8 +65,14 @@ Shared errno values:
 | `EOVERFLOW` | 75 | value too large |
 | `EMSGSIZE` | 90 | message too long |
 | `EADDRINUSE` | 98 | address already in use |
+| `ENETUNREACH` | 101 | network unreachable |
 | `ECONNRESET` | 104 | connection reset |
+| `EISCONN` | 106 | socket is already connected |
 | `ETIMEDOUT` | 110 | connection timed out |
+| `ECONNREFUSED` | 111 | connection refused |
+| `EHOSTUNREACH` | 113 | host unreachable |
+| `EALREADY` | 114 | operation already in progress |
+| `EINPROGRESS` | 115 | operation now in progress |
 
 ---
 
@@ -361,7 +367,8 @@ connected handle. Blocking accepts park on the listening socket's accept wait
 queue; nonblocking sockets or `accept4(..., SOCK_NONBLOCK)` return `-EAGAIN`
 when no accepted connection is queued.
 
-If `addr` and `addrlen` are supplied, the kernel writes back the peer address using network byte order for the port field.
+If `addr` and `addrlen` are supplied, the kernel writes back the peer address
+using network byte order for the address and port fields.
 
 ---
 
@@ -371,7 +378,12 @@ If `addr` and `addrlen` are supplied, the kernel writes back the peer address us
 int sys_connect(int fd, const struct sockaddr* addr, socklen_t addrlen);
 ```
 
-Currently returns `-ENOSYS`. Outbound TCP connect support is not wired yet.
+Starts an outbound TCP active open for an IPv4 stream socket. Open or bound
+sockets may connect; unbound sockets receive an ephemeral local port. Blocking
+connect waits for the SYN/SYN-ACK/ACK handshake to complete or for the TCP
+retry path to fail. Nonblocking sockets return `-EINPROGRESS` while the
+handshake is pending; `poll(..., POLLOUT)` reports completion, while
+`POLLERR`/`POLLHUP` report connection failure.
 
 ---
 
@@ -381,13 +393,14 @@ Currently returns `-ENOSYS`. Outbound TCP connect support is not wired yet.
 int sys_send(int fd, const void* buf, uint32_t len);
 ```
 
-Sends bytes on an established stream socket. The current server-side TCP path
-uses accepted streams from a global 4-tuple TCP table, queues bytes in a lazy
-4 KiB PMM-backed per-connection TX ring, transmits from that ring, keeps sent
-bytes until ACKed, releases the ring once drained, and retries buffered
-payloads. Blocking socket writes wait on the socket write wait queue when the
-TX ring is full. Nonblocking socket writes can return a short byte count or
-`-EAGAIN`. After `shutdown(fd, SHUT_WR)`, sends fail with `-EPIPE`.
+Sends bytes on an established stream socket. TCP streams are stored in the
+global 4-tuple TCP table, queue bytes in a lazy 16 KiB PMM-backed
+per-connection TX ring, transmit from that ring, keep sent bytes until ACKed,
+release the ring once drained, retry buffered payloads, and send zero-window
+probes for queued unsent data. Blocking socket writes wait on the socket write
+wait queue when the TX ring is full. Nonblocking socket writes can return a
+short byte count or `-EAGAIN`. After `shutdown(fd, SHUT_WR)`, sends fail with
+`-EPIPE`.
 
 ---
 
@@ -397,12 +410,11 @@ TX ring is full. Nonblocking socket writes can return a short byte count or
 int sys_recv(int fd, void* buf, uint32_t len);
 ```
 
-Receives bytes from an established stream socket. The current server-side path
-blocks on the socket read wait queue until data arrives or the connection
-closes, or returns EOF immediately after local `SHUT_RD`. Accepted TCP
-connections are looked up from the global 4-tuple TCP table, use a lazy
-PMM-backed 4 KiB receive ring, and advertise the remaining receive window to
-the peer.
+Receives bytes from an established stream socket. TCP sockets block on their
+read wait queue until data arrives or the connection closes, or return EOF
+immediately after local `SHUT_RD`. Connected TCP streams are looked up from the
+global 4-tuple TCP table, use a lazy PMM-backed 4 KiB receive ring, and
+advertise the remaining receive window to the peer.
 
 ---
 
@@ -477,9 +489,8 @@ stack stays small.
 int sys_getsockname(int fd, struct sockaddr* addr, socklen_t* addrlen);
 ```
 
-Writes back the local IPv4 socket address for a socket handle. The current
-implementation reports the socket port and a loopback-style address for
-compatibility with simple user-space service code.
+Writes back the local IPv4 socket address for a socket handle using network
+byte order for the address and port fields.
 
 ---
 
@@ -565,9 +576,13 @@ ticks. One-shot and periodic timers are supported. `flags` must be `0`; when
 int sys_signalfd(int fd, const sigset_t* mask, int flags);
 ```
 
-Creates or reconfigures a signalfd placeholder. `SFD_NONBLOCK` is persisted as
-descriptor nonblocking state and `SFD_CLOEXEC` is accepted for compatibility,
-but no synthetic signals are queued yet, so reads return `-EAGAIN`.
+Creates or reconfigures a signalfd handle. `SFD_NONBLOCK` is persisted as
+descriptor nonblocking state and `SFD_CLOEXEC` is accepted for compatibility.
+Kernel terminal interrupts now queue `SIGINT` to matching foreground
+signalfds before falling back to Ctrl+C termination, and shell job `kill`
+queues `SIGTERM` to matching job signalfds before force-killing the job.
+Reads return one `struct signalfd_siginfo` for a pending masked signal, or
+`-EAGAIN` for nonblocking reads when none is queued.
 
 ---
 
@@ -604,7 +619,7 @@ int sys_getpeername(int fd, struct sockaddr* addr, socklen_t* addrlen);
 ```
 
 Writes back the IPv4 peer address for a connected socket using network byte
-order for the port field.
+order for the address and port fields.
 
 ---
 
@@ -717,7 +732,7 @@ process exists.
 int sys_fread(int fd, char* buf, uint32_t len);
 ```
 
-Reads up to `len` bytes from an open readable handle at `fd` into `buf`. File handles read from the current file position and advance it by the number of bytes actually read. Socket handles read from the TCP receive path, which uses the accepted stream's lazy 4 KiB PMM-backed RX ring. Socket writes use a matching lazy 4 KiB PMM-backed TX ring and report writable readiness from remaining TX capacity. fd `0` reads from the console input buffer with the same blocking behavior as `SYS_READ`. Returns the number of bytes read, `0` at end-of-file / closed socket, or a negative errno on error.
+Reads up to `len` bytes from an open readable handle at `fd` into `buf`. File handles read from the current file position and advance it by the number of bytes actually read. Socket handles read from the TCP receive path, which uses the connected stream's lazy 4 KiB PMM-backed RX ring. Socket writes use a lazy 16 KiB PMM-backed TX ring, observe global RX/TX caps, and report writable readiness from remaining TX capacity. fd `0` reads from the console input buffer with the same blocking behavior as `SYS_READ`. Returns the number of bytes read, `0` at end-of-file / closed socket, or a negative errno on error.
 
 For file handles, the read op loads the file once into PMM-backed per-fd cache pages on first use, then copies the requested slice from that cache into the validated user buffer. The cache stays live until `sys_close()` or process teardown, so repeated reads from the same descriptor avoid extra ATA traffic.
 

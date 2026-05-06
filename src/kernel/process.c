@@ -26,10 +26,36 @@ static volatile int s_terminal_interrupt_pending = 0;
 static volatile process_t* s_detach_requested = 0;
 
 #define PROCESS_TERMINATED_BY_CTRL_C 130
+#define PROCESS_SIGINT  2
+#define PROCESS_SIGPIPE 13
+#define PROCESS_SIGTERM 15
 
 typedef struct special_wait_object {
     wait_queue_t read_waiters;
+    unsigned int signal_mask;
+    unsigned int pending_signals;
 } special_wait_object_t;
+
+typedef struct kernel_signalfd_siginfo {
+    u32 ssi_signo;
+    u32 ssi_errno;
+    u32 ssi_code;
+    u32 ssi_pid;
+    u32 ssi_uid;
+    u32 ssi_fd;
+    u32 ssi_tid;
+    u32 ssi_band;
+    u32 ssi_overrun;
+    u32 ssi_trapno;
+    int ssi_status;
+    int ssi_int;
+    unsigned long long ssi_ptr;
+    unsigned long long ssi_utime;
+    unsigned long long ssi_stime;
+    unsigned long long ssi_addr;
+    unsigned short ssi_addr_lsb;
+    u8 pad[46];
+} kernel_signalfd_siginfo_t;
 
 /*
  * process_key_consumer — keyboard consumer active while a user process
@@ -56,6 +82,10 @@ static void process_key_consumer(key_event_t ev) {
         keyboard_buf_clear();
         if (keyboard_get_waiting_process() == (void*)proc) {
             keyboard_set_waiting_process(0);
+        }
+
+        if (process_signal_deliver(proc, PROCESS_SIGINT)) {
+            return;
         }
         socket_wait_clear_process(proc);
 
@@ -432,7 +462,8 @@ static int process_handle_socket_read(fd_entry_t* ent, char* buf, unsigned int l
 
     if (!ent || !ent->valid) return -EBADF;
     sock = ent->socket;
-    if (socket_state(sock) != SOCKET_STATE_CONNECTED) return -EINVAL;
+    if (socket_state(sock) != SOCKET_STATE_CONNECTED &&
+        socket_state(sock) != SOCKET_STATE_CONNECTING) return -EINVAL;
     if (len == 0) return 0;
 
     if (!socket_tcp_recv_ready(sock)) {
@@ -446,8 +477,30 @@ static int process_handle_socket_read(fd_entry_t* ent, char* buf, unsigned int l
         int wait_rc;
 
         if (!socket_tcp_connection_established(sock)) {
+            if (!socket_tcp_connect_pending(sock)) {
+                __asm__ __volatile__("cli");
+                return 0;
+            }
+
+            if (!proc) {
+                __asm__ __volatile__("sti; hlt; cli");
+                continue;
+            }
+
+            proc->state = PROCESS_STATE_WAITING;
+            wait_rc = socket_wait(sock, proc, POLLOUT);
+            if (wait_rc < 0) {
+                proc->state = PROCESS_STATE_RUNNING;
+                socket_wait_clear_process(proc);
+                return wait_rc;
+            }
+            __asm__ __volatile__("sti");
+            while (proc->state != PROCESS_STATE_RUNNING) {
+                __asm__ __volatile__("hlt");
+            }
             __asm__ __volatile__("cli");
-            return 0;
+            socket_wait_clear_process(proc);
+            continue;
         }
 
         if (!proc) {
@@ -488,7 +541,8 @@ static int process_handle_socket_write(fd_entry_t* ent, const char* buf, unsigne
 
     if (!ent || !ent->valid) return -EBADF;
     sock = ent->socket;
-    if (socket_state(sock) != SOCKET_STATE_CONNECTED) return -EINVAL;
+    if (socket_state(sock) != SOCKET_STATE_CONNECTED &&
+        socket_state(sock) != SOCKET_STATE_CONNECTING) return -EINVAL;
     if (len == 0) return 0;
 
     proc = sched_current();
@@ -507,6 +561,9 @@ static int process_handle_socket_write(fd_entry_t* ent, const char* buf, unsigne
                 return (int)done;
             }
             if (rc == -ENOMEM || rc == -EPIPE) {
+                if (rc == -EPIPE && proc) {
+                    (void)process_signal_deliver(proc, PROCESS_SIGPIPE);
+                }
                 return rc;
             }
             return -ECONNRESET;
@@ -517,7 +574,9 @@ static int process_handle_socket_write(fd_entry_t* ent, const char* buf, unsigne
         }
 
         if (!socket_tcp_connection_established(sock)) {
-            return done ? (int)done : -ECONNRESET;
+            if (!socket_tcp_connect_pending(sock)) {
+                return done ? (int)done : -ECONNRESET;
+            }
         }
 
         if (!proc) {
@@ -668,6 +727,43 @@ static int special_wait_readable(fd_entry_t* ent, process_t* proc) {
     return wait_queue_add(&obj->read_waiters, proc);
 }
 
+static unsigned int signal_bit(int signum) {
+    if (signum <= 0 || signum >= 32) return 0u;
+    return 1u << (unsigned int)signum;
+}
+
+static int signalfd_ready(fd_entry_t* ent) {
+    special_wait_object_t* obj;
+
+    if (!ent || ent->kind != PROCESS_HANDLE_KIND_SIGNALFD) return 0;
+    obj = special_wait_object(ent, 0);
+    return obj && (obj->pending_signals & obj->signal_mask) != 0u;
+}
+
+static int signalfd_consume(fd_entry_t* ent, kernel_signalfd_siginfo_t* out) {
+    special_wait_object_t* obj;
+    unsigned int pending;
+
+    if (!ent || !out || ent->kind != PROCESS_HANDLE_KIND_SIGNALFD) return -EINVAL;
+    obj = special_wait_object(ent, 0);
+    if (!obj) return -EAGAIN;
+
+    pending = obj->pending_signals & obj->signal_mask;
+    if (pending == 0u) return -EAGAIN;
+
+    for (unsigned int signum = 1u; signum < 32u; signum++) {
+        unsigned int bit = 1u << signum;
+        if ((pending & bit) == 0u) continue;
+
+        obj->pending_signals &= ~bit;
+        k_memset(out, 0, sizeof(*out));
+        out->ssi_signo = signum;
+        return 0;
+    }
+
+    return -EAGAIN;
+}
+
 static int timerfd_ready_at(fd_entry_t* ent, unsigned int now) {
     if (!ent || ent->kind != PROCESS_HANDLE_KIND_TIMERFD) return 0;
     return ent->timer_deadline != 0u &&
@@ -749,7 +845,50 @@ static int process_handle_special_read(fd_entry_t* ent, char* buf, unsigned int 
     }
 
     if (ent->kind == PROCESS_HANDLE_KIND_SIGNALFD) {
-        return -EAGAIN;
+        kernel_signalfd_siginfo_t info;
+
+        if (len < sizeof(info)) return -EINVAL;
+
+        if (!signalfd_ready(ent) &&
+            (ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u) {
+            return -EAGAIN;
+        }
+
+        proc = sched_current();
+        while (!signalfd_ready(ent)) {
+            int wait_rc;
+
+            if (!proc) {
+                __asm__ __volatile__("sti; hlt; cli");
+                continue;
+            }
+
+            proc->state = PROCESS_STATE_WAITING;
+            wait_rc = special_wait_readable(ent, proc);
+            if (wait_rc < 0) {
+                proc->state = PROCESS_STATE_RUNNING;
+                wait_queue_remove_proc(proc);
+                return wait_rc;
+            }
+            if (signalfd_ready(ent)) {
+                proc->state = PROCESS_STATE_RUNNING;
+                break;
+            }
+
+            __asm__ __volatile__("sti");
+            while (proc->state != PROCESS_STATE_RUNNING) {
+                __asm__ __volatile__("hlt");
+            }
+            __asm__ __volatile__("cli");
+            wait_queue_remove_proc(proc);
+        }
+        wait_queue_remove_proc(proc);
+
+        if (signalfd_consume(ent, &info) < 0) {
+            return -EAGAIN;
+        }
+        k_memcpy(buf, &info, sizeof(info));
+        return (int)sizeof(info);
     }
 
     return -EINVAL;
@@ -782,7 +921,10 @@ static short process_handle_special_poll(fd_entry_t* ent, short events) {
     }
 
     if (ent->kind == PROCESS_HANDLE_KIND_SIGNALFD) {
-        return 0;
+        if ((events & POLLIN) && signalfd_ready(ent)) {
+            revents |= POLLIN;
+        }
+        return revents;
     }
 
     return POLLERR;
@@ -869,6 +1011,20 @@ int process_fd_set_flags(fd_entry_t* ent, unsigned int flags) {
 unsigned int process_fd_get_flags(fd_entry_t* ent) {
     if (!ent || !ent->valid) return 0;
     return ent->flags;
+}
+
+int process_fd_set_signalfd_mask(fd_entry_t* ent, unsigned int mask) {
+    special_wait_object_t* obj;
+
+    if (!ent || !ent->valid || ent->kind != PROCESS_HANDLE_KIND_SIGNALFD) {
+        return -EBADF;
+    }
+
+    obj = special_wait_object(ent, 1);
+    if (!obj) return -ENOMEM;
+    obj->signal_mask = mask;
+    obj->pending_signals &= mask;
+    return 0;
 }
 
 void process_wake_timerfds(process_t* proc, unsigned int now) {
@@ -1067,6 +1223,33 @@ void process_set_foreground(process_t* proc) {
 
 process_t* process_get_foreground(void) {
     return s_foreground;
+}
+
+int process_signal_deliver(process_t* proc, int signum) {
+    unsigned int bit = signal_bit(signum);
+    int delivered = 0;
+
+    if (!proc || !proc->fds || bit == 0u) return 0;
+
+    for (unsigned int i = 0; i < proc->fd_capacity; i++) {
+        fd_entry_t* ent = &proc->fds[i];
+        special_wait_object_t* obj;
+
+        if (!ent->valid || ent->kind != PROCESS_HANDLE_KIND_SIGNALFD) {
+            continue;
+        }
+
+        obj = special_wait_object(ent, 0);
+        if (!obj || (obj->signal_mask & bit) == 0u) {
+            continue;
+        }
+
+        obj->pending_signals |= bit;
+        wait_queue_wake_all(&obj->read_waiters);
+        delivered = 1;
+    }
+
+    return delivered;
 }
 
 void process_deliver_pending_terminal_interrupt(unsigned int esp) {

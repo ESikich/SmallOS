@@ -6,6 +6,7 @@ import os
 import pkgutil
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -26,6 +27,7 @@ BOOT_SPLASH_MARKERS = (
     "boot: PASS shell: task queued",
     "SmallOS ready",
 )
+CONNECTPROBE_PORT = 45123
 
 
 sys.path.insert(0, str(REPO_ROOT))
@@ -57,6 +59,47 @@ def connect_monitor(path, timeout_s):
         except OSError:
             time.sleep(0.05)
     raise RuntimeError(f"timed out waiting for monitor socket: {path}")
+
+
+class HostEchoServer:
+    def __init__(self, port):
+        self.port = port
+        self.ready = threading.Event()
+        self.done = threading.Event()
+        self.error = None
+        self.thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self):
+        self.thread.start()
+        if not self.ready.wait(2.0):
+            raise RuntimeError("host echo server did not start")
+
+    def _run(self):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
+                srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                srv.bind(("127.0.0.1", self.port))
+                srv.listen(1)
+                srv.settimeout(15.0)
+                self.ready.set()
+
+                conn, _ = srv.accept()
+                with conn:
+                    conn.settimeout(5.0)
+                    data = conn.recv(1024)
+                    if data:
+                        conn.sendall(data)
+        except Exception as exc:
+            self.error = exc
+        finally:
+            self.ready.set()
+            self.done.set()
+
+    def wait(self, timeout_s):
+        if not self.done.wait(timeout_s):
+            raise RuntimeError("host echo server did not finish")
+        if self.error:
+            raise RuntimeError(f"host echo server failed: {self.error}")
 
 
 def monitor_send(sock, cmd):
@@ -334,6 +377,100 @@ def run_ctrl_c_regression(sock, log, start_offset, deadline, echo=True, report=T
     return False, log_offset
 
 
+def run_signalfd_regression(sock, log, start_offset, deadline, echo=True, report=True):
+    buf = ""
+    log_offset = start_offset
+
+    if echo:
+        tee_stdout("\n[signalfd-regression] ")
+    send_text(sock, "runelf apps/tests/signalfdprobe")
+    send_key(sock, "ret")
+
+    sent_interrupt = False
+    while time.time() < deadline:
+        chunk, log_offset = read_new(log, log_offset)
+        if chunk:
+            if echo:
+                tee_stdout(chunk)
+            buf += chunk
+
+            if "signalfdprobe waiting" in buf and not sent_interrupt:
+                send_key(sock, "ctrl-c")
+                sent_interrupt = True
+
+            if "signalfdprobe PASS" in buf and saw_prompt_after(buf, "signalfdprobe PASS"):
+                if report:
+                    print("[signalfd_ctrl_c] PASS")
+                return True, log_offset
+
+            if "signalfdprobe FAIL" in buf:
+                if report:
+                    print("[signalfd_ctrl_c] FAIL")
+                return False, log_offset
+
+            if sent_interrupt and "^C" in buf and "signalfdprobe PASS" not in buf:
+                pass
+
+            if len(buf) > TRANSCRIPT_LIMIT:
+                buf = buf[-TRANSCRIPT_TRIM:]
+        else:
+            time.sleep(0.05)
+
+    if report:
+        print("[signalfd_ctrl_c] FAIL")
+    return False, log_offset
+
+
+def run_connect_regression(sock, log, start_offset, deadline, echo=True, report=True):
+    buf = ""
+    log_offset = start_offset
+    server = HostEchoServer(CONNECTPROBE_PORT)
+
+    try:
+        server.start()
+    except RuntimeError as exc:
+        if report:
+            print(f"[outbound_connect] FAIL: {exc}")
+        return False, log_offset
+
+    if echo:
+        tee_stdout("\n[connect-regression] ")
+    send_text(sock, "runelf apps/tests/connectprobe")
+    send_key(sock, "ret")
+
+    while time.time() < deadline:
+        chunk, log_offset = read_new(log, log_offset)
+        if chunk:
+            if echo:
+                tee_stdout(chunk)
+            buf += chunk
+
+            if "connectprobe PASS" in buf and saw_prompt_after(buf, "connectprobe PASS"):
+                try:
+                    server.wait(2.0)
+                except RuntimeError as exc:
+                    if report:
+                        print(f"[outbound_connect] FAIL: {exc}")
+                    return False, log_offset
+                if report:
+                    print("[outbound_connect] PASS")
+                return True, log_offset
+
+            if "connectprobe FAIL" in buf:
+                if report:
+                    print("[outbound_connect] FAIL")
+                return False, log_offset
+
+            if len(buf) > TRANSCRIPT_LIMIT:
+                buf = buf[-TRANSCRIPT_TRIM:]
+        else:
+            time.sleep(0.05)
+
+    if report:
+        print("[outbound_connect] FAIL")
+    return False, log_offset
+
+
 def shutdown_qemu(sock, pidfile, result_pass):
     try:
         monitor_send(sock, "quit")
@@ -469,6 +606,24 @@ def main():
         if args.summary:
             status_end(ctrl_c_pass)
         overall_pass = overall_pass and ctrl_c_pass
+
+        if args.summary:
+            status_begin("interactive: signalfd ctrl-c")
+        signalfd_pass, log_offset = run_signalfd_regression(
+            sock, log, log_offset, deadline, echo=echo, report=not args.summary
+        )
+        if args.summary:
+            status_end(signalfd_pass)
+        overall_pass = overall_pass and signalfd_pass
+
+        if args.summary:
+            status_begin("interactive: outbound connect")
+        connect_pass, log_offset = run_connect_regression(
+            sock, log, log_offset, deadline, echo=echo, report=not args.summary
+        )
+        if args.summary:
+            status_end(connect_pass)
+        overall_pass = overall_pass and connect_pass
 
     result = shutdown_qemu(sock, args.pidfile, overall_pass)
     if args.summary:

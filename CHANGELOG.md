@@ -8,6 +8,7 @@
   * Updated `tcpecho` to poll the listener plus up to 32 active clients so it can serve as a real parallel socket stress target.
   * Added `make socket-parallel-smoke`, which launches `tcpecho`, opens parallel host clients, verifies echoed payloads, and captures `netinfo` before, during, and after the run.
   * Added `make ftp-loop-smoke`, which repeatedly drives fresh FTP control sessions through passive `LIST`, `RETR`, and `STOR` cycles while recording `netinfo` counters.
+  * Added QEMU selftest probes for signalfd-backed Ctrl+C delivery and outbound TCP `connect()` through a host echo endpoint.
 
 * **Dynamic process fd tables** (`src/kernel/process.*`, `src/kernel/pmm.*`, `src/user/errnoprobe.c`, `docs/`)
   * Moved fd tables out of `process_t` into PMM-backed allocations that start at 16 slots and grow to the default 128-fd process limit, with a 256-fd hard cap.
@@ -19,12 +20,13 @@
   * Replaced the per-listener stream arrays with PMM-backed TCP tables: passive listeners live separately from a global connection table keyed by local IP, local port, remote IP, and remote port.
   * Wired `listen(backlog)` through a capped backlog value while keeping connection ids stable as global TCP table indexes.
   * Added a fixed-pool wait queue primitive and socket-level accept/read/write queues; blocking `accept`, `recv`, socket `read`, `poll`, and `epoll_wait` now register on the relevant socket object instead of a single TCP waiter.
-  * Moved timerfd/signalfd-style waits onto per-handle read wait queues; expired timerfds are woken by the scheduler timer path, and `poll()`/`epoll_wait()` now register through generic fd wait hooks.
+  * Moved timerfd/signalfd-style waits onto per-handle read wait queues; expired timerfds are woken by the scheduler timer path, Ctrl+C/SIGTERM can queue to matching signalfds, and `poll()`/`epoll_wait()` now register through generic fd wait hooks.
   * Added lazy PMM-backed 4 KiB TCP receive rings per active connection and advertised the remaining RX window instead of ACKing bytes that were not queued.
-  * Added lazy PMM-backed 4 KiB TCP transmit rings per active writing connection; sent bytes are retained until ACKed, payloads are retried from the ring, `POLLOUT` reflects remaining TX capacity, and blocking socket writes wait for TX space while nonblocking writes can short-write or return `EAGAIN`.
+  * Added lazy PMM-backed 16 KiB TCP transmit rings per active writing connection; sent bytes are retained until ACKed, payloads are retried from the ring, zero-window probes cover queued unsent data, `POLLOUT` reflects remaining TX capacity, and blocking socket writes wait for TX space while nonblocking writes can short-write or return `EAGAIN`.
+  * Implemented outbound TCP active opens for `connect()`, including ephemeral local ports, SYN retransmission, nonblocking `EINPROGRESS`, and `POLLOUT` / `POLLERR` connect readiness.
   * Added basic TCP half-close behavior for `shutdown()`: `SHUT_RD` reports local EOF, `SHUT_WR` drains queued TX before sending FIN, passive FINs are retransmitted until ACKed or cleaned up, and later writes fail with `EPIPE`.
   * Updated `netinfo` so TCP buffers report currently allocated RX/TX ring capacity separately from global RX/TX caps.
-  * Raised the sample cserve config and default `make cserve-smoke` gate to `max_conn = 32`.
+  * Raised the sample cserve config to `max_conn = 40`; the default `make cserve-smoke` gate still holds 32 keep-alive clients and adds a slow-reader connection.
   * Expanded the socket EOF smoke to send a multi-segment payload before the host half-close and to verify guest-side write shutdown.
 
 ## [Current] — Full-screen userland text editor

@@ -193,10 +193,12 @@ resource backends own the behavior behind each handle: FAT16-backed file
 handles are initialized by `vfs_file_init()` and implemented in `vfs.c`,
 socket handles point at `socket_t` objects implemented in `socket.c`, and
 socket blocking readiness is tracked by socket-owned wait queues. The TCP
-driver owns passive listeners plus a PMM-backed global 4-tuple connection
-table, with lazy 4 KiB PMM-backed RX/TX rings for accepted streams; TX payloads
-remain queued until ACKed and writable readiness reflects remaining TX
-capacity. Basic socket `shutdown()` half-close state is split between the
+driver owns passive listeners plus outbound active-open streams in a
+PMM-backed global 4-tuple connection table, with lazy 4 KiB PMM-backed RX
+rings and lazy 16 KiB PMM-backed TX rings for streams; TX payloads remain
+queued until ACKed, writable readiness reflects remaining TX capacity, and
+global RX/TX caps bound ring allocation. Basic socket `shutdown()` half-close
+state is split between the
 socket object and TCP stream so `SHUT_RD` reports local EOF and `SHUT_WR`
 drains queued TX before sending FIN, with FIN retransmission and late cleanup
 on the passive close path. Console handles own terminal writes and
@@ -686,9 +688,9 @@ SYS_GETCWD / SYS_CHDIR — per-process cwd state; relative user paths are normal
 SYS_OPEN / SYS_OPEN_MODE / SYS_CLOSE / SYS_FREAD — dynamic PMM-backed per-process handle table backed by readable/writable handle ops; fd 0/1/2 are console handles, user-opened files start at fd 3+, and VFS-backed file reads cache FAT16 data in PMM-backed pages until close
 SYS_BRK / user heap — per-process heap break managed in user space through `SYS_BRK` and a shared user allocator
 SYS_OPEN_WRITE / SYS_WRITEFD / SYS_LSEEK / SYS_FSYNC / SYS_UNLINK / SYS_RENAME / SYS_STAT — VFS-backed writable file handles plus path metadata and file management for compiler-style tools; dirty writable handles flush on close, append/read-write modes preserve existing bytes, and stdout/stderr writes also use fd-backed console handles
-SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_ACCEPT4 / SYS_SEND / SYS_RECV / SYS_SHUTDOWN / SYS_GETSOCKNAME / SYS_GETPEERNAME — socket ABI for passive TCP servers and FTP userland; fd handles point at kernel socket objects, accepted TCP streams are backed by a global 4-tuple TCP table plus lazy PMM-backed RX/TX rings, basic `shutdown()` half-close state is implemented, and socket readiness plugs into the same handle poll path
-SYS_FCNTL / SYS_POLL / SYS_EPOLL_* / SYS_TIMERFD_* / SYS_SIGNALFD — descriptor flags and event-loop shims for cserve-style guest services; socket waits register on socket wait queues, and timerfd/signalfd-style handles register read waiters that timer IRQs can wake when timerfds expire
-TCP service task — drains NIC RX, dispatches ARP/IPv4/TCP frames, advertises receive windows from per-connection RX rings, services retransmit/idle timers for control, buffered TX payloads, and passive FINs, handles passive-stream FIN/ACK transitions, and wakes socket wait queues
+SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_ACCEPT4 / SYS_CONNECT / SYS_SEND / SYS_RECV / SYS_SHUTDOWN / SYS_GETSOCKNAME / SYS_GETPEERNAME — socket ABI for passive TCP servers, FTP userland, and client-style active opens; fd handles point at kernel socket objects, TCP streams are backed by a global 4-tuple TCP table plus lazy 4 KiB RX rings and 16 KiB TX rings, basic `shutdown()` half-close state is implemented, and socket readiness plugs into the same handle poll path
+SYS_FCNTL / SYS_POLL / SYS_EPOLL_* / SYS_TIMERFD_* / SYS_SIGNALFD — descriptor flags and event-loop shims for cserve-style guest services; socket waits register on socket wait queues, timerfd handles register read waiters that timer IRQs can wake when timerfds expire, and signalfd handles can be woken by kernel SIGINT/SIGTERM delivery
+TCP service task — drains NIC RX, dispatches ARP/IPv4/TCP frames, advertises receive windows from per-connection RX rings, services retransmit/idle timers for control handshakes, buffered TX payloads, active-open SYNs, and passive FINs, handles passive-stream FIN/ACK transitions, and wakes socket wait queues
 page-aware copy-from-user validation — syscall pointer arguments are checked against user address space [USER_CODE_BASE, USER_STACK_TOP) and mapped user pages before dereference
 preemptive round-robin scheduler — timer IRQ context switch, `SCHED_QUANTUM_MS` quantum
 ATA PIO driver — 28-bit LBA polling reads from primary IDE channel (0x1F0)

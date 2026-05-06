@@ -23,42 +23,40 @@ Current implementation status:
 - Phase 4 is implemented for sockets plus timerfd/signalfd-style descriptors:
   `wait_queue_t` is backed by a fixed node pool, sockets own accept/read/write
   queues, timerfd/signalfd handles own read wait queues, and blocking
-  `accept`, `recv`, socket `read`, timerfd `read`, `poll`, and `epoll_wait`
-  register on the objects they are waiting for. Timer IRQs wake expired
-  timerfd waiters directly. Real signalfd signal delivery remains a future
-  source of readiness.
+  `accept`, `recv`, socket `read`, timerfd/signalfd `read`, `poll`, and
+  `epoll_wait` register on the objects they are waiting for. Timer IRQs wake
+  expired timerfd waiters directly, Ctrl+C queues `SIGINT` to matching
+  foreground signalfds, and shell job `kill` queues `SIGTERM` to matching job
+  signalfds before falling back to force-kill behavior.
 - Phase 5 has an initial receive-buffer step: accepted TCP connections allocate
   a lazy PMM-backed 4 KiB RX ring on first payload, advertise the remaining RX
   window, and stop ACKing bytes that could not be queued. It also has an
   initial send-buffer step: connected TCP streams allocate a lazy PMM-backed
-  4 KiB TX ring, keep sent bytes until ACKed, release the ring once drained,
-  retry buffered payloads, and report socket writability from remaining TX
-  capacity. FIN retransmission and late close cleanup have been added for the
-  passive close path. Larger TX limits and fuller slow-reader/window behavior
-  remain.
+  16 KiB TX ring, keep sent bytes until ACKed, release the ring once drained,
+  retry buffered payloads, send zero-window probes for queued unsent data, and
+  report socket writability from remaining TX capacity. FIN retransmission and
+  late close cleanup have been added for the passive close path. RX/TX ring
+  allocation now observes global caps.
 - Phase 6 has an initial visibility/configuration step: the default process fd
-  limit is 128, the sample cserve config uses `max_conn = 32` and a 5 second
-  keep-alive timeout, and `netinfo` reports socket-object counts, TCP listener
+  limit is 128, the sample cserve config uses `max_conn = 40` with the smoke
+  gate still holding 32 keep-alive clients plus a slow reader, and `netinfo`
+  reports socket-object counts, TCP listener
   and connection counts, RX/TX ring usage, allocated ring capacity, and global
   RX/TX caps.
 - Phase 7 now has the first stress matrix: `make cserve-smoke` launches
   cserve, fetches the large static fixture, checks a 404, holds 32 keep-alive
   clients by default, exercises one slow reader, and captures `netinfo`;
   `make socket-parallel-smoke` drives 8 parallel tcpecho clients by default;
-  and `make ftp-loop-smoke` repeats FTP passive `LIST`/`RETR`/`STOR` cycles.
+  `make ftp-loop-smoke` repeats FTP passive `LIST`/`RETR`/`STOR` cycles; and
+  `make test` now includes an outbound `connect()` probe against a host echo
+  endpoint reachable through QEMU user networking at `10.0.2.2`.
 
 ## Remaining Implementation Work
 
-The cserve/FTP server-side milestone is in a useful, tested state. The
-remaining implementation work is mostly about making the TCP/socket subsystem
-less provisional before SSH or client-style programs depend on it:
+The cserve/FTP server-side milestone and the basic active-open client path are
+in a useful, tested state. The remaining implementation work is mostly about
+making less common TCP close paths less provisional before SSH depends on them:
 
-- Finish send-side/window behavior for slow readers, including larger or
-  configurable TX limits and firmer enforcement of global socket/TCP memory
-  caps.
-- Add real signalfd signal production; signalfd handles now have read wait
-  queues, but no kernel signal source feeds them yet.
-- Implement outbound TCP `connect()`; `SYS_CONNECT` still returns `-ENOSYS`.
 - Expand TCP half-close behavior beyond the current passive FIN
   retransmission/cleanup support, especially around less common close-state
   transitions.
@@ -76,7 +74,8 @@ less provisional before SSH or client-style programs depend on it:
 ## Non-Goals For The First Pass
 
 - Full production TCP congestion control.
-- Outbound `connect()` for client programs.
+- Production-grade outbound TCP behavior beyond the default QEMU user-network
+  smoke.
 - TLS or SSH protocol implementation.
 - SMP safety.
 - POSIX-perfect socket semantics.
@@ -103,8 +102,9 @@ cserve consumes baseline fds for:
 - each static file being sent
 
 That is why the baseline sample config used `max_conn = 4`; the current sample
-now uses `max_conn = 32` after the fd-table, socket-object, and resource
-visibility foundation.
+now uses `max_conn = 40` after the fd-table, socket-object, and resource
+visibility foundation. The default smoke gate still holds 32 keep-alive clients
+and opens one additional slow-reader connection.
 
 ### TCP
 
@@ -118,10 +118,9 @@ At the baseline, the TCP driver had a small fixed slot model:
 
 The current implementation has moved beyond that baseline: sockets own wait
 queues, fd entries point at `socket_t` objects, listeners and global
-4-tuple-keyed connection state live in PMM-backed TCP tables, and accepted
-streams allocate lazy 4 KiB PMM-backed RX/TX rings on first use. Remaining TCP
-limits are now small fixed RX/TX ring sizes, incomplete slow-reader/window
-handling, outbound `connect()`, and further close-state coverage.
+4-tuple-keyed connection state live in PMM-backed TCP tables, and connected
+streams allocate lazy 4 KiB RX rings plus 16 KiB TX rings on first use.
+Remaining TCP limits are now fixed ring sizes and further close-state coverage.
 
 ### Process allocation
 
@@ -326,7 +325,8 @@ Exit criteria:
 - TCP connection table is keyed by 4-tuple. This is now true for the passive
   server path: accepted streams use global connection ids into the PMM-backed
   table keyed by local IP, local port, remote IP, and remote port.
-- cserve `max_conn = 32` works under the default QEMU memory setting.
+- cserve `max_conn = 40` works under the default QEMU memory setting while the
+  smoke holds 32 keep-alive clients and one slow reader.
 - FTP control and passive data sockets can coexist repeatedly.
 
 ## Phase 4: Wait Queues And Readiness
@@ -382,8 +382,7 @@ Exit criteria:
 
 - No global TCP waiter remains. (Implemented for socket waits.)
 - `poll()`/`epoll_wait()` wake from the object that became ready. (Implemented
-  for sockets and timerfd; signalfd has object waits but still lacks a signal
-  producer.)
+  for sockets, timerfd, and signalfd-backed Ctrl+C/SIGTERM delivery.)
 
 ## Phase 5: Per-Connection Buffers And Backpressure
 
@@ -399,10 +398,11 @@ Implemented so far:
   sequence past bytes that were not queued.
 - `make socket-eof-smoke` now sends a 3072-byte multi-segment payload before
   the host half-close, so payload-before-EOF coverage exercises the RX ring.
-- Connected TCP streams allocate a 4 KiB PMM-backed TX ring lazily on first
+- Connected TCP streams allocate a 16 KiB PMM-backed TX ring lazily on first
   write, keep queued bytes until ACKed, release the ring once drained, retry
-  buffered payloads, wake socket writers when ACKs free space, and make
-  `POLLOUT` depend on TX capacity.
+  buffered payloads, wake socket writers when ACKs free space, make `POLLOUT`
+  depend on TX capacity, and send a one-byte zero-window probe when queued
+  unsent data is stuck behind a closed peer window.
 - Nonblocking `send()` / socket `write()` now return short writes or `-EAGAIN`
   when the TX ring is full; blocking socket writes wait on the socket write
   queue until space returns.
@@ -415,15 +415,16 @@ Target:
 - Per-connection RX ring buffer. (Initial implementation is in place.)
 - Per-connection TX queue or retransmit buffer. (Initial implementation is in
   place.)
-- Small default buffers with caps.
+- Small default buffers with global RX/TX caps. (Initial caps are in place.)
 - `send()` can return short writes or `EAGAIN` for nonblocking sockets.
   (Initial implementation is in place.)
 
 Suggested initial sizes:
 
 - RX buffer: 4 KiB per active receiving connection. (Current implementation.)
-- TX buffer/retransmit queue: 4 KiB to 16 KiB per connection.
-- Global TCP memory cap.
+- TX buffer/retransmit queue: 16 KiB per connection. (Current implementation.)
+- Global TCP memory cap. (Current implementation: 512 KiB RX cap and 1 MiB TX
+  cap.)
 
 Important:
 
@@ -471,7 +472,8 @@ Suggested first practical settings:
 - system sockets: 256
 - TCP connections: 128
 - accept backlog cap: 32
-- cserve `max_conn`: 32
+- cserve `max_conn`: 40 for the sample config; the smoke still holds 32
+  keep-alive clients and one slow reader
 - cserve `keepalive_timeout_ms`: 5000
 - QEMU memory: 64 MB or 128 MB for service testing
 
@@ -537,10 +539,10 @@ Before starting SSH:
 - idle long-lived TCP connections do not consume large kernel buffers
 
 SSH is interactive and long-lived. The old single socket waiter and tiny
-fixed-fd table are gone, receive buffering has started, and timerfd event-loop
-wakes are object-driven, but SSH should still wait for outbound `connect()`,
-fuller slow-reader/window handling, real signalfd signal production, and
-additional shutdown-state coverage.
+fixed-fd table are gone, receive buffering has started, timerfd event-loop wakes
+are object-driven, outbound `connect()` has a QEMU user-network smoke, and basic
+signalfd signal production is wired. SSH should still wait for additional
+shutdown-state coverage.
 
 ## Implementation Rules For The Next LLM
 

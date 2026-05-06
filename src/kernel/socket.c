@@ -28,7 +28,8 @@ static socket_t s_sockets[SOCKET_MAX];
 static void socket_tcp_use(socket_t* sock) {
     if (!sock || sock->kind != SOCKET_KIND_TCP) return;
 
-    if (sock->state == SOCKET_STATE_CONNECTED) {
+    if (sock->state == SOCKET_STATE_CONNECTED ||
+        sock->state == SOCKET_STATE_CONNECTING) {
         tcp_socket_use_connection(sock->local_port, sock->conn_id);
     } else {
         tcp_socket_use_port(sock->local_port);
@@ -96,6 +97,9 @@ void socket_get_stats(socket_stats_t* out) {
         case SOCKET_STATE_LISTENING:
             out->listening_sockets++;
             break;
+        case SOCKET_STATE_CONNECTING:
+            out->connected_sockets++;
+            break;
         case SOCKET_STATE_CONNECTED:
             out->connected_sockets++;
             break;
@@ -118,18 +122,28 @@ unsigned int socket_local_port(socket_t* sock) {
     return sock ? sock->local_port : 0u;
 }
 
+unsigned int socket_local_ip(socket_t* sock) {
+    if (!sock || sock->kind != SOCKET_KIND_TCP) return 0u;
+    socket_tcp_use(sock);
+    return tcp_socket_local_ip();
+}
+
 unsigned int socket_conn_id(socket_t* sock) {
     return sock ? sock->conn_id : TCP_SOCKET_CONN_NONE;
 }
 
 unsigned int socket_peer_ip(socket_t* sock) {
-    if (!sock || sock->state != SOCKET_STATE_CONNECTED) return 0u;
+    if (!sock ||
+        (sock->state != SOCKET_STATE_CONNECTED &&
+         sock->state != SOCKET_STATE_CONNECTING)) return 0u;
     socket_tcp_use(sock);
     return tcp_socket_peer_ip();
 }
 
 unsigned int socket_peer_port(socket_t* sock) {
-    if (!sock || sock->state != SOCKET_STATE_CONNECTED) return 0u;
+    if (!sock ||
+        (sock->state != SOCKET_STATE_CONNECTED &&
+         sock->state != SOCKET_STATE_CONNECTING)) return 0u;
     socket_tcp_use(sock);
     return tcp_socket_peer_port();
 }
@@ -167,6 +181,46 @@ int socket_listen_tcp(socket_t* sock, int backlog) {
     return 0;
 }
 
+int socket_connect_tcp(socket_t* sock,
+                       unsigned int remote_ip,
+                       unsigned int remote_port) {
+    unsigned int local_port;
+    unsigned int conn_id;
+    int rc;
+
+    if (!sock || sock->kind != SOCKET_KIND_TCP) return -EINVAL;
+    if (sock->state == SOCKET_STATE_CONNECTED) return -EISCONN;
+    if (sock->state == SOCKET_STATE_CONNECTING) {
+        socket_tcp_use(sock);
+        if (tcp_socket_connection_established()) {
+            sock->state = SOCKET_STATE_CONNECTED;
+            return -EISCONN;
+        }
+        if (tcp_socket_connect_pending()) return -EALREADY;
+        sock->state = SOCKET_STATE_CLOSED;
+        return -ECONNRESET;
+    }
+    if (sock->state != SOCKET_STATE_OPEN && sock->state != SOCKET_STATE_BOUND) {
+        return -EINVAL;
+    }
+
+    rc = tcp_socket_connect(sock->local_port,
+                            remote_ip,
+                            remote_port,
+                            &local_port,
+                            &conn_id);
+    if (rc < 0) return rc;
+
+    sock->local_port = (unsigned short)local_port;
+    sock->conn_id = conn_id;
+    sock->state = SOCKET_STATE_CONNECTING;
+    socket_tcp_use(sock);
+    if (tcp_socket_connection_established()) {
+        sock->state = SOCKET_STATE_CONNECTED;
+    }
+    return 0;
+}
+
 int socket_accept_ready(socket_t* sock) {
     if (!sock || sock->state != SOCKET_STATE_LISTENING) return 0;
     socket_tcp_use(sock);
@@ -199,40 +253,72 @@ int socket_accept_tcp(socket_t* listener, socket_t* child) {
 }
 
 int socket_tcp_connection_established(socket_t* sock) {
-    if (!sock || sock->state != SOCKET_STATE_CONNECTED) return 0;
+    if (!sock ||
+        (sock->state != SOCKET_STATE_CONNECTED &&
+         sock->state != SOCKET_STATE_CONNECTING)) {
+        return 0;
+    }
     socket_tcp_use(sock);
-    return tcp_socket_connection_established();
+    if (tcp_socket_connection_established()) {
+        if (sock->state == SOCKET_STATE_CONNECTING) {
+            sock->state = SOCKET_STATE_CONNECTED;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+int socket_tcp_connect_pending(socket_t* sock) {
+    if (!sock || sock->state != SOCKET_STATE_CONNECTING) return 0;
+    socket_tcp_use(sock);
+    if (tcp_socket_connection_established()) {
+        sock->state = SOCKET_STATE_CONNECTED;
+        return 0;
+    }
+    return tcp_socket_connect_pending();
 }
 
 int socket_tcp_recv_ready(socket_t* sock) {
-    if (!sock || sock->state != SOCKET_STATE_CONNECTED) return 0;
+    if (!sock ||
+        (sock->state != SOCKET_STATE_CONNECTED &&
+         sock->state != SOCKET_STATE_CONNECTING)) return 0;
     if ((sock->flags & SOCKET_FLAG_READ_SHUTDOWN) != 0u) return 1;
     socket_tcp_use(sock);
     return tcp_socket_recv_ready();
 }
 
 int socket_tcp_peer_closed(socket_t* sock) {
-    if (!sock || sock->state != SOCKET_STATE_CONNECTED) return 0;
+    if (!sock ||
+        (sock->state != SOCKET_STATE_CONNECTED &&
+         sock->state != SOCKET_STATE_CONNECTING)) return 0;
     socket_tcp_use(sock);
     return tcp_socket_peer_closed();
 }
 
 int socket_tcp_recv(socket_t* sock, void* buf, unsigned int len) {
-    if (!sock || sock->state != SOCKET_STATE_CONNECTED) return -EINVAL;
+    if (!sock ||
+        (sock->state != SOCKET_STATE_CONNECTED &&
+         sock->state != SOCKET_STATE_CONNECTING)) return -EINVAL;
+    if (!socket_tcp_connection_established(sock)) return -EAGAIN;
     if ((sock->flags & SOCKET_FLAG_READ_SHUTDOWN) != 0u) return 0;
     socket_tcp_use(sock);
     return tcp_socket_recv(buf, len);
 }
 
 int socket_tcp_send_ready(socket_t* sock) {
-    if (!sock || sock->state != SOCKET_STATE_CONNECTED) return 0;
+    if (!sock ||
+        (sock->state != SOCKET_STATE_CONNECTED &&
+         sock->state != SOCKET_STATE_CONNECTING)) return 0;
     if ((sock->flags & SOCKET_FLAG_WRITE_SHUTDOWN) != 0u) return 0;
     socket_tcp_use(sock);
     return tcp_socket_send_ready();
 }
 
 int socket_tcp_send(socket_t* sock, const void* buf, unsigned int len) {
-    if (!sock || sock->state != SOCKET_STATE_CONNECTED) return -EINVAL;
+    if (!sock ||
+        (sock->state != SOCKET_STATE_CONNECTED &&
+         sock->state != SOCKET_STATE_CONNECTING)) return -EINVAL;
+    if (!socket_tcp_connection_established(sock)) return -EAGAIN;
     if ((sock->flags & SOCKET_FLAG_WRITE_SHUTDOWN) != 0u) return -EPIPE;
     socket_tcp_use(sock);
     return tcp_socket_send(buf, len);
@@ -273,6 +359,16 @@ short socket_poll(socket_t* sock, short events) {
         if ((events & POLLIN) && tcp_socket_accept_ready()) {
             revents |= POLLIN;
         }
+    } else if (sock->state == SOCKET_STATE_CONNECTING) {
+        socket_tcp_use(sock);
+        if (tcp_socket_connection_established()) {
+            sock->state = SOCKET_STATE_CONNECTED;
+            if ((events & POLLOUT) != 0) {
+                revents |= POLLOUT;
+            }
+        } else if (!tcp_socket_connect_pending()) {
+            revents |= POLLERR | POLLHUP;
+        }
     } else if (sock->state == SOCKET_STATE_CONNECTED) {
         int established;
         int peer_closed;
@@ -309,7 +405,8 @@ int socket_wait(socket_t* sock, process_t* proc, short events) {
         if ((events & POLLIN) != 0) {
             rc = wait_queue_add(&sock->accept_waiters, proc);
         }
-    } else if (sock->state == SOCKET_STATE_CONNECTED) {
+    } else if (sock->state == SOCKET_STATE_CONNECTED ||
+               sock->state == SOCKET_STATE_CONNECTING) {
         if ((events & POLLIN) != 0) {
             rc = wait_queue_add(&sock->read_waiters, proc);
         }
@@ -351,7 +448,8 @@ void socket_wake_tcp_connection(unsigned int port,
         socket_t* sock = &s_sockets[i];
         if (sock->refs == 0u) continue;
         if (sock->kind != SOCKET_KIND_TCP) continue;
-        if (sock->state != SOCKET_STATE_CONNECTED) continue;
+        if (sock->state != SOCKET_STATE_CONNECTED &&
+            sock->state != SOCKET_STATE_CONNECTING) continue;
         if (sock->local_port != (unsigned short)port) continue;
         if (sock->conn_id != conn_id) continue;
 
@@ -373,7 +471,8 @@ void socket_close(socket_t* sock) {
 
     if (sock->state == SOCKET_STATE_LISTENING) {
         tcp_socket_close_listener(sock->local_port);
-    } else if (sock->state == SOCKET_STATE_CONNECTED) {
+    } else if (sock->state == SOCKET_STATE_CONNECTED ||
+               sock->state == SOCKET_STATE_CONNECTING) {
         tcp_socket_close_connection(sock->local_port, sock->conn_id);
     }
 
