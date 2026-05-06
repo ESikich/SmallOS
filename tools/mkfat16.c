@@ -2,7 +2,7 @@
  * mkfat16.c — SmallOS FAT16 image builder
  *
  * Usage:
- *   mkfat16 output.img [dest=]source ...
+ *   mkfat16 output.img [dest=]source ... dir/ ...
  *
  * Produces a raw FAT16 disk image (no partition table — the image IS
  * the FAT16 volume).  The image is a fixed 16 MB (32768 sectors).
@@ -18,8 +18,8 @@
  *
  * Entries are stored as a small directory tree.  If a destination path is
  * supplied, intermediate directories are created in the image; otherwise the
- * source basename is placed at the FAT16 root.  Filenames are stored in 8.3
- * format.
+ * source basename is placed at the FAT16 root.  Arguments ending in '/' create
+ * explicit empty directories.  Filenames are stored in 8.3 format.
  *
  * Build:
  *   gcc -o build/tools/mkfat16 tools/mkfat16.c
@@ -239,9 +239,34 @@ static void copy_path_base(char* dst, size_t dst_size, const char* src) {
     dst[i] = '\0';
 }
 
-static const char* parse_spec(const char* spec, char* dest, size_t dest_size) {
+static int path_ends_with_sep(const char* path) {
+    size_t len = path ? strlen(path) : 0;
+    return len > 0 && is_sep(path[len - 1]);
+}
+
+static void trim_trailing_seps(char* path) {
+    size_t len = path ? strlen(path) : 0;
+    while (len > 0 && is_sep(path[len - 1])) {
+        path[--len] = '\0';
+    }
+}
+
+static const char* parse_spec(const char* spec, char* dest, size_t dest_size,
+                              int* out_is_dir) {
     const char* eq = strchr(spec, '=');
+    if (out_is_dir) *out_is_dir = 0;
     if (!eq) {
+        if (path_ends_with_sep(spec)) {
+            size_t len = strlen(spec);
+            if (len >= dest_size) {
+                return 0;
+            }
+            memcpy(dest, spec, len + 1u);
+            trim_trailing_seps(dest);
+            if (out_is_dir) *out_is_dir = 1;
+            return 0;
+        }
+
         copy_path_base(dest, dest_size, spec);
         return spec;
     }
@@ -252,6 +277,11 @@ static const char* parse_spec(const char* spec, char* dest, size_t dest_size) {
     }
     memcpy(dest, spec, dest_len);
     dest[dest_len] = '\0';
+    if (eq[1] == '\0' && path_ends_with_sep(dest)) {
+        trim_trailing_seps(dest);
+        if (out_is_dir) *out_is_dir = 1;
+        return 0;
+    }
     return eq + 1;
 }
 
@@ -347,6 +377,43 @@ static void add_file_entry(node_t* root, const char* dest_path, const char* src_
     memcpy(file->name83, name83, 11);
     file->size = measure_file(src_path);
     node_add_child(parent, file);
+}
+
+static void add_directory_entry(node_t* root, const char* dest_path) {
+    node_t* cur = root;
+    const char* p = dest_path;
+    char component[PATH_MAX_CHARS];
+
+    while (*p) {
+        while (*p && is_sep(*p)) p++;
+        if (!*p) break;
+
+        size_t len = 0;
+        while (p[len] && !is_sep(p[len])) len++;
+        if (len == 0 || len >= sizeof(component)) {
+            die("path component too long");
+        }
+
+        memcpy(component, p, len);
+        component[len] = '\0';
+        p += len;
+
+        u8 name83[11];
+        to_83(component, name83);
+        if (name83[0] == ' ') die("invalid directory name");
+
+        node_t* next = node_find_child(cur, name83);
+        if (!next) {
+            next = node_create(1, 0);
+            memcpy(next->name83, name83, 11);
+            node_add_child(cur, next);
+        } else if (!next->is_dir) {
+            die("directory path collides with file");
+        }
+        cur = next;
+    }
+
+    if (cur == root) die("invalid directory name");
 }
 
 static void compute_layout(node_t* node) {
@@ -585,7 +652,7 @@ static u32 measure_file(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: mkfat16 output.img [dest=]source ...\n");
+        fprintf(stderr, "Usage: mkfat16 output.img [dest=]source ... dir/ ...\n");
         return 1;
     }
 
@@ -599,9 +666,14 @@ int main(int argc, char** argv) {
 
     for (int i = 0; i < nspecs; i++) {
         char dest[PATH_MAX_CHARS];
-        const char* src = parse_spec(argv[2 + i], dest, sizeof(dest));
-        if (!src) die("invalid destination path");
-        add_file_entry(&root_node, dest, src);
+        int is_dir = 0;
+        const char* src = parse_spec(argv[2 + i], dest, sizeof(dest), &is_dir);
+        if (is_dir) {
+            add_directory_entry(&root_node, dest);
+        } else {
+            if (!src) die("invalid destination path");
+            add_file_entry(&root_node, dest, src);
+        }
     }
 
     compute_layout(&root_node);

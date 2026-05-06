@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SmallOS cserve static fixture</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18202f;
+      --muted: #5a6475;
+      --line: #d9dee8;
+      --paper: #fbfcff;
+      --panel: #ffffff;
+      --accent: #0f766e;
+      --accent-2: #9a3412;
+      --accent-3: #1d4ed8;
+      --soft: #eef7f6;
+      --warn: #fff4e8;
+      --code: #111827;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      color: var(--ink);
+      background: var(--paper);
+    }
+
+    header {
+      padding: 32px clamp(16px, 5vw, 64px) 24px;
+      border-bottom: 1px solid var(--line);
+      background:
+        linear-gradient(90deg, rgba(15, 118, 110, 0.12), rgba(29, 78, 216, 0.09)),
+        #ffffff;
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px clamp(16px, 4vw, 48px) 72px;
+    }
+
+    h1, h2, h3 {
+      line-height: 1.15;
+      margin: 0 0 12px;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 4vw, 4.6rem);
+      max-width: 900px;
+    }
+
+    h2 {
+      margin-top: 42px;
+      font-size: 1.55rem;
+    }
+
+    p {
+      margin: 0 0 14px;
+    }
+
+    a {
+      color: var(--accent-3);
+      text-decoration-thickness: 2px;
+    }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 24px;
+    }
+
+    nav a,
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      padding: 5px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+      text-decoration: none;
+      font-size: 0.92rem;
+    }
+
+    .lede {
+      max-width: 760px;
+      font-size: 1.08rem;
+      color: var(--muted);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+      gap: 14px;
+      margin: 18px 0 4px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      background: var(--panel);
+    }
+
+    .card strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--accent);
+    }
+
+    .metric {
+      font-size: 1.8rem;
+      font-weight: 750;
+      letter-spacing: 0;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 14px;
+      background: #fff;
+      border: 1px solid var(--line);
+    }
+
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f5f7fb;
+      font-weight: 700;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    code,
+    pre {
+      font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    pre {
+      overflow: auto;
+      padding: 16px;
+      border-radius: 8px;
+      background: var(--code);
+      color: #f9fafb;
+      border: 1px solid #000;
+    }
+
+    form {
+      display: grid;
+      gap: 12px;
+      max-width: 680px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    label {
+      display: grid;
+      gap: 4px;
+      font-weight: 650;
+    }
+
+    input,
+    select,
+    textarea,
+    button {
+      font: inherit;
+      border-radius: 6px;
+    }
+
+    input,
+    select,
+    textarea {
+      border: 1px solid #c8cfda;
+      padding: 9px 10px;
+      background: #fff;
+    }
+
+    button {
+      width: fit-content;
+      border: 1px solid #0d5f59;
+      background: var(--accent);
+      color: #fff;
+      padding: 9px 14px;
+      cursor: default;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+      gap: 22px;
+      align-items: start;
+    }
+
+    .note {
+      padding: 14px 16px;
+      border-left: 4px solid var(--accent-2);
+      background: var(--warn);
+    }
+
+    .payload {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 10px;
+    }
+
+    .payload article {
+      min-height: 150px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    footer {
+      border-top: 1px solid var(--line);
+      padding-top: 24px;
+      margin-top: 48px;
+      color: var(--muted);
+    }
+
+    @media (max-width: 720px) {
+      .split {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="pill">SmallOS network stack fixture</p>
+    <h1>cserve on SmallOS</h1>
+    <p class="lede">
+      This larger static page is served by the vendored cserver ELF. It exists to
+      give the kernel, VFS, TCP path, and userspace runtime a more meaningful
+      response body than a tiny hello page.
+    </p>
+    <nav aria-label="fixture sections">
+      <a href="#overview">Overview</a>
+      <a href="#matrix">Matrix</a>
+      <a href="#forms">Forms</a>
+      <a href="#payload">Payload</a>
+      <a href="#headers">Headers</a>
+      <a href="#footer">Footer</a>
+    </nav>
+  </header>
+
+  <main>
+    <section id="overview">
+      <h2>Overview</h2>
+      <div class="grid">
+        <div class="card">
+          <strong>Static file path</strong>
+          <div class="metric">/www/index.html</div>
+          <p class="muted">The file is seeded into the FAT image from samples/cserve_index.html.</p>
+        </div>
+        <div class="card">
+          <strong>Server binary</strong>
+          <div class="metric">ELF32</div>
+          <p class="muted">Built from third_party/cserver without modifying the upstream program.</p>
+        </div>
+        <div class="card">
+          <strong>Log destination</strong>
+          <div class="metric">/logs</div>
+          <p class="muted">Background output should stay quiet while request logs go to cserve.log.</p>
+        </div>
+        <div class="card">
+          <strong>Purpose</strong>
+          <div class="metric">smoke</div>
+          <p class="muted">Large enough to catch short reads, partial writes, and awkward buffering.</p>
+        </div>
+      </div>
+
+      <p>
+        A static server fixture should do a little more than say hello. This page
+        includes internal anchors, a table, form controls, preformatted text,
+        nested sections, many repeated blocks, and enough CSS to make the asset
+        non-trivial while still staying plain and portable.
+      </p>
+      <p>
+        The important compatibility marker remains present near the top of the
+        document: <code>cserve on SmallOS</code>. Existing smoke tests can keep
+        looking for that string while manual browser checks get something nicer
+        to look at.
+      </p>
+    </section>
+
+    <section id="matrix">
+      <h2>Behavior Matrix</h2>
+      <p>
+        These rows describe the pieces this page is useful for touching. They
+        are written as normal content so the same bytes travel through the real
+        static-file path instead of a test-only endpoint.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Area</th>
+            <th>Expected observation</th>
+            <th>Manual check</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>FAT16 lookup</td>
+            <td>Server opens <code>/www/index.html</code> from the seeded volume.</td>
+            <td>Run <code>fsls www</code> in the shell.</td>
+            <td>Directory support is exercised before the server sends anything.</td>
+          </tr>
+          <tr>
+            <td>File read</td>
+            <td>The full body reaches the HTTP client.</td>
+            <td>Compare <code>Content-Length</code> to the local file size.</td>
+            <td>A larger response helps reveal truncation and EOF mistakes.</td>
+          </tr>
+          <tr>
+            <td>TCP send</td>
+            <td>Payload moves through several packets under QEMU user networking.</td>
+            <td>Fetch with <code>curl http://127.0.0.1:8080/</code>.</td>
+            <td>Useful with host forwarding such as port 8080.</td>
+          </tr>
+          <tr>
+            <td>Background process</td>
+            <td>The shell prompt returns after <code>bg apps/services/cserve --config cserve.ini</code>.</td>
+            <td>Make another request while typing in the shell.</td>
+            <td>Request logs should not spill into the terminal.</td>
+          </tr>
+          <tr>
+            <td>Headers</td>
+            <td>The response reports HTML content and a stable length.</td>
+            <td>Run <code>curl -i</code> and inspect the first lines.</td>
+            <td>This is also helpful when changing file metadata or stat behavior.</td>
+          </tr>
+          <tr>
+            <td>Parser tolerance</td>
+            <td>Browsers handle the page with normal HTML5 behavior.</td>
+            <td>Open the forwarded URL in a desktop browser.</td>
+            <td>The document avoids external assets so every byte comes from one file.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="forms" class="split">
+      <div>
+        <h2>Form Controls</h2>
+        <p>
+          This form is intentionally inert. It gives the browser a handful of
+          common elements to render while keeping the server-side behavior as a
+          simple static GET response.
+        </p>
+        <form action="/" method="get">
+          <label>
+            Request label
+            <input name="label" value="manual-browser-smoke">
+          </label>
+          <label>
+            Scenario
+            <select name="scenario">
+              <option>normal request</option>
+              <option>large response check</option>
+              <option>background logging check</option>
+              <option>keepalive curiosity</option>
+            </select>
+          </label>
+          <label>
+            Notes
+            <textarea name="notes" rows="5">This textarea is part of the static fixture. Submitting it is optional and only changes the query string.</textarea>
+          </label>
+          <button type="submit">Send GET</button>
+        </form>
+      </div>
+
+      <aside class="note">
+        <h3>What this is not</h3>
+        <p>
+          It is not a compatibility shim for cserver. It is just a better static
+          asset for the OS image, so the operating system keeps owning the
+          filesystem, networking, process, and syscall behavior.
+        </p>
+        <p>
+          That makes it a decent little canary for future kernel changes without
+          coupling the page to the program implementation.
+        </p>
+      </aside>
+    </section>
+
+    <section id="headers">
+      <h2>Representative Request</h2>
+      <p>
+        The page should be easy to inspect with a terminal client. This example
+        is here as rendered text and as extra bytes in the response body.
+      </p>
+      <pre>GET / HTTP/1.1
+Host: 127.0.0.1:8080
+User-Agent: curl/fixture
+Accept: text/html
+Connection: close
+
+Expected:
+  status: 200
+  content-type: text/html or text/html; charset=utf-8
+  body-marker: cserve on SmallOS
+  log-file: /logs/cserve.log</pre>
+    </section>
+
+    <section id="payload">
+      <h2>Payload Blocks</h2>
+      <p>
+        The following repeated cards deliberately pad the page while still being
+        readable. Their content is varied enough to make quick visual scanning
+        pleasant, but regular enough that a broken transfer is easy to spot.
+      </p>
+      <div class="payload">
+        <article>
+          <h3>Block 01: boot</h3>
+          <p>The image boots, mounts FAT16, starts the shell, and leaves the cserver ELF available under apps/services.</p>
+          <p class="muted">Signal: if this card appears, the first payload segment arrived intact.</p>
+        </article>
+        <article>
+          <h3>Block 02: filesystem</h3>
+          <p>Static content is read from a normal seeded file. The page does not depend on generated responses or hidden host files.</p>
+          <p class="muted">Signal: directory traversal and file metadata have already done useful work.</p>
+        </article>
+        <article>
+          <h3>Block 03: scheduler</h3>
+          <p>Serving the response while the shell stays alive gives foreground and background process behavior a real workload.</p>
+          <p class="muted">Signal: background output stays quiet when logging is configured to a file.</p>
+        </article>
+        <article>
+          <h3>Block 04: sockets</h3>
+          <p>The TCP path should carry this document as a stream, even when the browser or curl reads in small chunks.</p>
+          <p class="muted">Signal: short sends and repeated polls should not truncate the document.</p>
+        </article>
+        <article>
+          <h3>Block 05: headers</h3>
+          <p>Content-Length, status, and connection handling are easier to check with a response that is larger than a single screen.</p>
+          <p class="muted">Signal: the header block and body boundary remain clear.</p>
+        </article>
+        <article>
+          <h3>Block 06: cacheless</h3>
+          <p>There are no external scripts, fonts, images, or style sheets, so every visible byte is delivered by one request.</p>
+          <p class="muted">Signal: browser rendering is isolated from network side quests.</p>
+        </article>
+        <article>
+          <h3>Block 07: layout</h3>
+          <p>The CSS uses grids, tables, code blocks, and responsive rules, giving a browser more structure to parse.</p>
+          <p class="muted">Signal: manual testing gets a page that is easier to recognize at a glance.</p>
+        </article>
+        <article>
+          <h3>Block 08: anchors</h3>
+          <p>Internal links exercise fragment navigation without requiring the server to understand anything beyond path lookup.</p>
+          <p class="muted">Signal: top navigation should jump to each section locally in the browser.</p>
+        </article>
+        <article>
+          <h3>Block 09: forms</h3>
+          <p>The GET form can add a query string. It is a simple way to poke request parsing while using the same static file.</p>
+          <p class="muted">Signal: unsupported methods are not needed for this fixture.</p>
+        </article>
+        <article>
+          <h3>Block 10: logging</h3>
+          <p>The server configuration writes request logs to /logs/cserve.log so background service output does not interrupt typing.</p>
+          <p class="muted">Signal: terminal output should show shell prompts, not access log lines.</p>
+        </article>
+        <article>
+          <h3>Block 11: repeated reads</h3>
+          <p>Reloading the page should reopen and resend the same seeded file every time without changing guest disk state.</p>
+          <p class="muted">Signal: repeated requests should have the same byte count.</p>
+        </article>
+        <article>
+          <h3>Block 12: long body</h3>
+          <p>This paragraph exists mostly to add more body text, which is exactly what makes it useful for transfer testing.</p>
+          <p class="muted">Signal: the lower half of the document should not disappear.</p>
+        </article>
+        <article>
+          <h3>Block 13: root path</h3>
+          <p>A request for / should map cleanly to the configured document root and default index file behavior.</p>
+          <p class="muted">Signal: curl against the forwarded port returns this page without extra path spelling.</p>
+        </article>
+        <article>
+          <h3>Block 14: direct path</h3>
+          <p>A request for /index.html should reach the same file and produce a body that matches the root request.</p>
+          <p class="muted">Signal: simple static path resolution works for explicit filenames.</p>
+        </article>
+        <article>
+          <h3>Block 15: table rendering</h3>
+          <p>The behavior matrix above adds many small text nodes and table cells, useful for visual and byte-count checks.</p>
+          <p class="muted">Signal: the middle section should render as a clean bordered table.</p>
+        </article>
+        <article>
+          <h3>Block 16: preformatted text</h3>
+          <p>The request sample includes line breaks that should survive exactly as authored inside the pre element.</p>
+          <p class="muted">Signal: whitespace in the source body is preserved by ordinary HTML rules.</p>
+        </article>
+        <article>
+          <h3>Block 17: color mix</h3>
+          <p>The palette uses teal, blue, white, gray, and a small warm note to avoid a single-color wall.</p>
+          <p class="muted">Signal: browser checks should feel like an app fixture, not a blank document.</p>
+        </article>
+        <article>
+          <h3>Block 18: small screens</h3>
+          <p>The layout collapses naturally on narrow viewports, which is handy when opening the page from different devices.</p>
+          <p class="muted">Signal: text stays readable without needing external CSS.</p>
+        </article>
+        <article>
+          <h3>Block 19: no script</h3>
+          <p>There is intentionally no JavaScript. The page should be entirely visible from one static HTML response.</p>
+          <p class="muted">Signal: a strict or minimal browser can still render the whole fixture.</p>
+        </article>
+        <article>
+          <h3>Block 20: final marker</h3>
+          <p>If this block is visible, the transfer reached the final payload group after many earlier sections.</p>
+          <p class="muted">Signal: this is a nice place to scroll to after a large-response change.</p>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <h2>Long Text Section</h2>
+      <p>
+        This section is intentionally verbose. Static serving bugs often show up
+        only once a response crosses a boundary: one disk sector, one cluster,
+        one TCP segment, one userspace buffer, or one loop in a send path. A
+        realistic page gives those boundaries more chances to appear while still
+        being simple enough to debug from serial output and curl.
+      </p>
+      <p>
+        A useful test fixture also needs recognizable structure. If the document
+        ends halfway through a table row, a pre block, or a repeated card, the
+        failure is visible before any tooling gets involved. If the document
+        reaches the footer, the entire route from QEMU host forwarding to cserve,
+        through the kernel socket layer, through the VFS, and back over TCP has
+        done a decent amount of work.
+      </p>
+      <p>
+        This file is deliberately ordinary HTML. It does not rely on browser
+        APIs, compression, chunked transfer encoding, external styles, or a build
+        step. That keeps the signal clean: when something changes in the OS, this
+        page can help show whether a plain static response still behaves.
+      </p>
+      <p>
+        Manual checks that work well with this page include opening the browser
+        developer tools, checking the response length, reloading several times,
+        requesting the direct index path, testing an unknown path for a 404, and
+        watching that the shell prompt remains usable while cserve runs in the
+        background.
+      </p>
+    </section>
+
+    <footer id="footer">
+      <p><strong>End of fixture.</strong> The full cserve on SmallOS test page reached the browser.</p>
+      <p>
+        Suggested manual command:
+        <code>curl -i http://127.0.0.1:8080/ | head</code>
+      </p>
+      <p class="muted">
+        This file is intentionally self-contained and fairly large so it remains
+        useful as the OS grows into a fuller environment.
+      </p>
+    </footer>
+  </main>
+</body>
+</html>

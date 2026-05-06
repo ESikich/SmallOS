@@ -110,7 +110,7 @@ def connect_tcp(host, port, timeout_s):
     while time.time() < deadline:
         try:
             sock = socket.create_connection((host, port), timeout=1.0)
-            sock.settimeout(1.0)
+            sock.settimeout(min(timeout_s, 5.0))
             return sock
         except OSError as exc:
             last_error = exc

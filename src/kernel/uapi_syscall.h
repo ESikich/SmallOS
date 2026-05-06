@@ -12,6 +12,7 @@
  *   ebx = arg1
  *   ecx = arg2
  *   edx = arg3
+ *   esi = arg4 for four-argument calls
  *
  * Return value:
  *   eax = result
@@ -32,6 +33,11 @@
 #define SYS_OPEN_MODE_CREATE 0x04u
 #define SYS_OPEN_MODE_TRUNC  0x08u
 #define SYS_OPEN_MODE_APPEND 0x10u
+
+#define SYS_FD_FLAG_NONBLOCK 0x00000800u
+
+#define SYS_FCNTL_GETFL 3
+#define SYS_FCNTL_SETFL 4
 
 enum {
     SYS_WRITE     = 1,
@@ -81,7 +87,19 @@ enum {
     SYS_GETCWD      = 37,  /* copy process cwd into user buffer */
     SYS_CHDIR       = 38,  /* change process cwd */
     SYS_FSYNC       = 39,  /* flush writable fd data */
-    SYS_READ_RAW    = 40   /* read console input without echo */
+    SYS_READ_RAW    = 40,  /* read console input without echo */
+
+    SYS_FCNTL       = 41,  /* descriptor flag operations */
+    SYS_EPOLL_CREATE = 42,
+    SYS_EPOLL_CTL    = 43,
+    SYS_EPOLL_WAIT   = 44,
+    SYS_TIMERFD_CREATE = 45,
+    SYS_TIMERFD_SETTIME = 46,
+    SYS_SIGNALFD       = 47,
+    SYS_ACCEPT4        = 48,
+    SYS_SHUTDOWN       = 49,
+    SYS_GETPEERNAME    = 50,
+    SYS_FSTAT          = 51
 };
 
 #endif

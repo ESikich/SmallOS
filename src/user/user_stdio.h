@@ -89,6 +89,7 @@ void* bsearch(const void* key, const void* base, size_t nmemb, size_t size, int 
 char* strerror(int errnum);
 
 int atoi(const char* nptr);
+long long atoll(const char* nptr);
 long int strtol(const char* nptr, char** endptr, int base);
 unsigned long int strtoul(const char* nptr, char** endptr, int base);
 long long int strtoll(const char* nptr, char** endptr, int base);
@@ -97,7 +98,7 @@ float strtof(const char* nptr, char** endptr);
 long double strtold(const char* nptr, char** endptr);
 double strtod(const char* nptr, char** endptr);
 long double ldexpl(long double x, int exp);
-void exit(int);
+__attribute__((noreturn)) void exit(int);
 char* getenv(const char* name);
 
 void* dlopen(const char* filename, int flag);

@@ -193,6 +193,7 @@ static int vfs_file_read(fd_entry_t* ent, char* buf, unsigned int len) {
     u32 read_len = 0;
 
     if (!ent || !ent->valid || !ent->readable) return -EBADF;
+    if (ent->is_dir) return -EISDIR;
     if (len == 0) return 0;
     if (ent->offset >= ent->size) return 0;
 
@@ -223,6 +224,7 @@ static int vfs_file_read(fd_entry_t* ent, char* buf, unsigned int len) {
 
 static int vfs_file_write(fd_entry_t* ent, const char* buf, unsigned int len) {
     if (!ent || !ent->valid || !ent->writable) return -EBADF;
+    if (ent->is_dir) return -EISDIR;
     if (len == 0) return 0;
 
     unsigned int end = ent->offset + len;

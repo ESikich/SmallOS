@@ -13,12 +13,31 @@
 #include "uapi_errno.h"
 #include "uapi_dirent.h"
 #include "uapi_socket.h"
+#include "uapi_epoll.h"
 #include "../exec/elf_loader.h"
 #include "vfs.h"
 
 #define SYSCALL_MAX_WRITE_LEN 4096u
 #define EXEC_NAME_MAX         PROCESS_FD_NAME_MAX
-#define SCHED_RESUME_RETADDR_OFFSET 8u  /* push esp + call return address */
+#define EPOLL_MAX_WATCHES     64u
+
+typedef struct epoll_watch {
+    int used;
+    int fd;
+    unsigned int events;
+    unsigned int data_u32;
+} epoll_watch_t;
+
+struct user_itimerspec {
+    struct {
+        unsigned int tv_sec;
+        long tv_nsec;
+    } it_interval;
+    struct {
+        unsigned int tv_sec;
+        long tv_nsec;
+    } it_value;
+};
 
 static int path_is_sep(char c) {
     return c == '/' || c == '\\';
@@ -288,8 +307,16 @@ static unsigned int sys_get_ticks_impl(void) {
     return timer_get_ticks();
 }
 
-static int sys_yield_impl(unsigned int esp) {
-    sched_yield_now(esp - SCHED_RESUME_RETADDR_OFFSET);
+static void sys_wait_until_current_running(process_t* proc) {
+    __asm__ volatile ("sti");
+    while (proc && proc->state != PROCESS_STATE_RUNNING) {
+        __asm__ volatile ("hlt");
+    }
+    __asm__ volatile ("cli");
+}
+
+static int sys_yield_impl(void) {
+    __asm__ volatile ("sti; hlt; cli");
     return 0;
 }
 
@@ -297,9 +324,9 @@ static int sys_yield_impl(unsigned int esp) {
  * sys_sleep_impl(regs, ticks)
  *
  * Block the current process until at least ticks timer ticks have elapsed.
- * The task marks itself SLEEPING, stores a wake deadline, then yields to
- * the scheduler.  When the timer reaches the deadline the scheduler wakes
- * the task and this function continues.
+ * The task marks itself SLEEPING, stores a wake deadline, then parks with
+ * interrupts enabled.  When the timer reaches the deadline the scheduler
+ * wakes the task and this function continues.
  */
 static int sys_sleep_impl(syscall_regs_t* regs, unsigned int ticks) {
     if (ticks == 0) return 0;
@@ -311,18 +338,11 @@ static int sys_sleep_impl(syscall_regs_t* regs, unsigned int ticks) {
     proc->state = PROCESS_STATE_SLEEPING;
 
     /*
-     * Yield immediately so other runnable tasks can execute while this
-     * one sleeps.  If there is no other runnable task, sched_yield_now()
-     * simply returns and the local hlt loop keeps the CPU idle.
+     * Park with interrupts enabled.  The next timer IRQ can switch to another
+     * runnable task, and this syscall frame resumes once the sleeper is woken.
      */
-    __asm__ volatile ("sti");
-    sched_yield_now((unsigned int)regs - SCHED_RESUME_RETADDR_OFFSET);
-
-    while (proc->state != PROCESS_STATE_RUNNING) {
-        __asm__ volatile ("hlt");
-    }
-
-    __asm__ volatile ("cli");
+    (void)regs;
+    sys_wait_until_current_running(proc);
     return 0;
 }
 
@@ -593,12 +613,14 @@ static int sys_open_impl(const char* name) {
     u32 file_size = 0;
     int is_dir = 0;
     if (!vfs_stat(kname, &file_size, &is_dir)) return path_lookup_errno(kname);
-    if (is_dir) return -EISDIR;
 
     process_t* proc = (process_t*)sched_current();
     if (!proc) return -EINVAL;
 
-    return process_fd_open_file(proc, kname, file_size, 0);
+    int fd = process_fd_open_file(proc, kname, file_size, 0);
+    fd_entry_t* ent = process_fd_get(proc, fd);
+    if (ent) ent->is_dir = is_dir ? 1 : 0;
+    return fd;
 }
 
 /*
@@ -656,7 +678,7 @@ static int sys_open_mode_impl(const char* name, unsigned int mode) {
     if (path_rc < 0) return path_rc;
 
     exists = vfs_stat(kname, &file_size, &is_dir);
-    if (exists && is_dir) return -EISDIR;
+    if (exists && is_dir && writable) return -EISDIR;
     if (!exists && !create) return path_lookup_errno(kname);
     if (!exists || trunc) file_size = 0;
 
@@ -671,6 +693,7 @@ static int sys_open_mode_impl(const char* name, unsigned int mode) {
         sys_close_impl(fd);
         return -EBADF;
     }
+    ent->is_dir = (exists && is_dir) ? 1 : 0;
 
     if (!exists || trunc) {
         if (!vfs_write_path(kname, 0, 0)) {
@@ -719,12 +742,24 @@ static unsigned short swap_u16(unsigned short value) {
 
 static int sys_socket_impl(int domain, int type, int protocol) {
     process_t* proc = (process_t*)sched_current();
+    int fd;
+    int sock_type = type & SOCK_TYPE_MASK;
+    unsigned int fd_flags = 0u;
+
     if (!proc) return -EINVAL;
     if (domain != AF_INET) return -EINVAL;
-    if (type != SOCK_STREAM) return -EINVAL;
+    if (sock_type != SOCK_STREAM) return -EINVAL;
+    if ((type & ~(SOCK_TYPE_MASK | SOCK_NONBLOCK | SOCK_CLOEXEC)) != 0) return -EINVAL;
     if (protocol != 0 && protocol != IPPROTO_TCP) return -EINVAL;
 
-    return process_fd_open_socket(proc, "socket");
+    fd = process_fd_open_socket(proc, "socket");
+    if (fd < 0) return fd;
+    if ((type & SOCK_NONBLOCK) != 0) {
+        fd_entry_t* ent = process_fd_get(proc, fd);
+        fd_flags |= SYS_FD_FLAG_NONBLOCK;
+        (void)process_fd_set_flags(ent, fd_flags);
+    }
+    return fd;
 }
 
 static int sys_bind_impl(int fd, const struct sockaddr* addr, unsigned int addrlen) {
@@ -766,26 +801,40 @@ static int sys_listen_impl(int fd, int backlog) {
 static int sys_accept_impl(syscall_regs_t* regs,
                            int fd,
                            struct sockaddr* addr,
-                           unsigned int* addrlen) {
+                           unsigned int* addrlen,
+                           unsigned int flags) {
     process_t* proc = (process_t*)sched_current();
     fd_entry_t* ent;
     unsigned int peer_ip;
     unsigned int peer_port;
+    unsigned int conn_id;
     int new_fd;
 
     if (!proc) return -EINVAL;
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
     if (ent->socket_state != PROCESS_SOCKET_STATE_LISTENER) return -EINVAL;
+    if ((flags & ~(SOCK_NONBLOCK | SOCK_CLOEXEC)) != 0u) return -EINVAL;
     tcp_socket_use_port(ent->socket_port);
 
-    __asm__ __volatile__("sti");
+    if (!tcp_socket_accept_ready() &&
+        ((ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u ||
+         (flags & SOCK_NONBLOCK) != 0u)) {
+        return -EAGAIN;
+    }
+
     while (!tcp_socket_accept_ready()) {
         proc->state = PROCESS_STATE_WAITING;
         tcp_socket_set_waiter(proc);
-        __asm__ __volatile__("hlt");
+        tcp_socket_use_port(ent->socket_port);
+        if (tcp_socket_accept_ready()) {
+            proc->state = PROCESS_STATE_RUNNING;
+            break;
+        }
+        sys_wait_until_current_running(proc);
+        tcp_socket_use_port(ent->socket_port);
     }
-    __asm__ __volatile__("cli");
+    tcp_socket_set_waiter(0);
 
     new_fd = process_fd_open_socket(proc, "socket");
     if (new_fd < 0) return new_fd;
@@ -797,8 +846,16 @@ static int sys_accept_impl(syscall_regs_t* regs,
         }
         new_ent->socket_state = PROCESS_SOCKET_STATE_CONNECTED;
         new_ent->socket_port = ent->socket_port;
+        conn_id = tcp_socket_mark_accepted();
+        if (conn_id == TCP_SOCKET_CONN_NONE) {
+            process_fd_close(new_ent);
+            return -EAGAIN;
+        }
+        new_ent->socket_conn = conn_id;
+        if ((flags & SOCK_NONBLOCK) != 0u) {
+            new_ent->flags |= SYS_FD_FLAG_NONBLOCK;
+        }
     }
-    tcp_socket_mark_accepted();
 
     peer_ip = tcp_socket_peer_ip();
     peer_port = tcp_socket_peer_port();
@@ -856,6 +913,7 @@ static int sys_send_impl(int fd, const void* buf, unsigned int len) {
 static int sys_recv_impl(syscall_regs_t* regs, int fd, void* buf, unsigned int len) {
     process_t* proc = (process_t*)sched_current();
     fd_entry_t* ent;
+    int rc;
 
     if (!proc) return -EINVAL;
     if (len == 0u) return 0;
@@ -864,7 +922,11 @@ static int sys_recv_impl(syscall_regs_t* regs, int fd, void* buf, unsigned int l
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
     if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -EINVAL;
-    tcp_socket_use_port(ent->socket_port);
+    tcp_socket_use_connection(ent->socket_port, ent->socket_conn);
+
+    if (!tcp_socket_recv_ready() && (ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u) {
+        return -EAGAIN;
+    }
 
     while (!tcp_socket_recv_ready()) {
         if (!tcp_socket_connection_established()) {
@@ -872,15 +934,19 @@ static int sys_recv_impl(syscall_regs_t* regs, int fd, void* buf, unsigned int l
         }
         proc->state = PROCESS_STATE_WAITING;
         tcp_socket_set_waiter(proc);
-        __asm__ __volatile__("sti");
-        sched_yield_now((unsigned int)regs - SCHED_RESUME_RETADDR_OFFSET);
-        while (proc->state != PROCESS_STATE_RUNNING) {
-            __asm__ __volatile__("hlt");
+        tcp_socket_use_connection(ent->socket_port, ent->socket_conn);
+        if (tcp_socket_recv_ready()) {
+            proc->state = PROCESS_STATE_RUNNING;
+            break;
         }
-        __asm__ __volatile__("cli");
+        (void)regs;
+        sys_wait_until_current_running(proc);
+        tcp_socket_use_connection(ent->socket_port, ent->socket_conn);
     }
+    tcp_socket_set_waiter(0);
 
-    return tcp_socket_recv(buf, len);
+    rc = tcp_socket_recv(buf, len);
+    return rc < 0 ? -ECONNRESET : rc;
 }
 
 static short sys_poll_revents_for_fd(process_t* proc, struct pollfd* pfd) {
@@ -942,16 +1008,404 @@ static int sys_poll_impl(syscall_regs_t* regs, struct pollfd* fds,
         proc->state = infinite_wait ? PROCESS_STATE_WAITING
                                     : PROCESS_STATE_SLEEPING;
         tcp_socket_set_waiter(proc);
-
-        __asm__ __volatile__("sti");
-        sched_yield_now((unsigned int)regs - SCHED_RESUME_RETADDR_OFFSET);
-        while (proc->state != PROCESS_STATE_RUNNING) {
-            __asm__ __volatile__("hlt");
+        ready = sys_poll_snapshot(proc, fds, nfds);
+        if (ready != 0u) {
+            proc->state = PROCESS_STATE_RUNNING;
+            tcp_socket_set_waiter(0);
+            return (int)ready;
         }
-        __asm__ __volatile__("cli");
+
+        (void)regs;
+        sys_wait_until_current_running(proc);
 
         tcp_socket_set_waiter(0);
     }
+}
+
+static int sys_fcntl_impl(int fd, int cmd, unsigned int arg) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+
+    if (!proc) return -EINVAL;
+    ent = process_fd_get(proc, fd);
+    if (!ent) return -EBADF;
+
+    if (cmd == SYS_FCNTL_GETFL) {
+        return (int)process_fd_get_flags(ent);
+    }
+    if (cmd == SYS_FCNTL_SETFL) {
+        return process_fd_set_flags(ent, arg);
+    }
+
+    return -EINVAL;
+}
+
+static epoll_watch_t* epoll_watches(fd_entry_t* ent, int create) {
+    if (!ent || ent->kind != PROCESS_HANDLE_KIND_EPOLL) return 0;
+    if (!ent->aux_frame && create) {
+        ent->aux_frame = pmm_alloc_frame();
+        if (!ent->aux_frame) return 0;
+        k_memset(paging_phys_to_kernel_virt(ent->aux_frame), 0, PAGE_SIZE);
+    }
+    if (!ent->aux_frame) return 0;
+    return (epoll_watch_t*)paging_phys_to_kernel_virt(ent->aux_frame);
+}
+
+static int epoll_find_watch(epoll_watch_t* watches, int fd) {
+    if (!watches) return -1;
+    for (unsigned int i = 0; i < EPOLL_MAX_WATCHES; i++) {
+        if (watches[i].used && watches[i].fd == fd) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static int sys_epoll_create_impl(int flags) {
+    process_t* proc = (process_t*)sched_current();
+    int fd;
+    fd_entry_t* ent;
+
+    if (!proc) return -EINVAL;
+    if ((flags & ~EPOLL_CLOEXEC) != 0) return -EINVAL;
+
+    fd = process_fd_open_special(proc, PROCESS_HANDLE_KIND_EPOLL, "epoll");
+    if (fd < 0) return fd;
+    ent = process_fd_get(proc, fd);
+    if (!ent) return -EBADF;
+    return fd;
+}
+
+static int sys_epoll_ctl_impl(int epfd, int op, int fd,
+                              struct epoll_event* user_event) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* epent;
+    fd_entry_t* target;
+    epoll_watch_t* watches;
+    struct epoll_event event;
+    int idx;
+
+    if (!proc) return -EINVAL;
+    epent = process_fd_get(proc, epfd);
+    if (!epent || epent->kind != PROCESS_HANDLE_KIND_EPOLL) return -EBADF;
+    target = process_fd_get(proc, fd);
+    if (!target) return -EBADF;
+    if (fd == epfd) return -EINVAL;
+
+    if (op != EPOLL_CTL_DEL) {
+        if (!user_event ||
+            !user_buf_ok((unsigned int)user_event, sizeof(*user_event))) {
+            return -EFAULT;
+        }
+        k_memcpy(&event, user_event, sizeof(event));
+    } else {
+        k_memset(&event, 0, sizeof(event));
+    }
+
+    watches = epoll_watches(epent, op != EPOLL_CTL_DEL);
+    if (!watches) return -ENOMEM;
+    idx = epoll_find_watch(watches, fd);
+
+    if (op == EPOLL_CTL_ADD) {
+        if (idx >= 0) return -EEXIST;
+        for (unsigned int i = 0; i < EPOLL_MAX_WATCHES; i++) {
+            if (!watches[i].used) {
+                watches[i].used = 1;
+                watches[i].fd = fd;
+                watches[i].events = event.events;
+                watches[i].data_u32 = event.data.u32;
+                return 0;
+            }
+        }
+        return -ENFILE;
+    }
+
+    if (op == EPOLL_CTL_MOD) {
+        if (idx < 0) return -ENOENT;
+        watches[idx].events = event.events;
+        watches[idx].data_u32 = event.data.u32;
+        return 0;
+    }
+
+    if (op == EPOLL_CTL_DEL) {
+        if (idx < 0) return -ENOENT;
+        k_memset(&watches[idx], 0, sizeof(watches[idx]));
+        return 0;
+    }
+
+    return -EINVAL;
+}
+
+static int epoll_timer_deadline_elapsed(unsigned int deadline) {
+    return deadline != 0u && (int)(timer_get_ticks() - deadline) >= 0;
+}
+
+static unsigned int epoll_next_timer_deadline(process_t* proc,
+                                              epoll_watch_t* watches) {
+    unsigned int best = 0u;
+
+    if (!proc || !watches) return 0u;
+
+    for (unsigned int i = 0; i < EPOLL_MAX_WATCHES; i++) {
+        if (!watches[i].used) continue;
+        fd_entry_t* ent = process_fd_get(proc, watches[i].fd);
+        if (!ent || ent->kind != PROCESS_HANDLE_KIND_TIMERFD) continue;
+        if (ent->timer_deadline == 0u) continue;
+        if (epoll_timer_deadline_elapsed(ent->timer_deadline)) {
+            return timer_get_ticks();
+        }
+        if (best == 0u || (int)(ent->timer_deadline - best) < 0) {
+            best = ent->timer_deadline;
+        }
+    }
+
+    return best;
+}
+
+static unsigned int epoll_snapshot(process_t* proc,
+                                   epoll_watch_t* watches,
+                                   struct epoll_event* events,
+                                   unsigned int maxevents) {
+    unsigned int ready = 0u;
+
+    if (!proc || !watches || !events) return 0u;
+
+    for (unsigned int i = 0; i < EPOLL_MAX_WATCHES && ready < maxevents; i++) {
+        if (!watches[i].used) continue;
+
+        fd_entry_t* ent = process_fd_get(proc, watches[i].fd);
+        short revents;
+
+        if (!ent) {
+            revents = EPOLLERR;
+        } else {
+            revents = process_fd_poll(ent, (short)(watches[i].events & 0xFFFFu));
+        }
+
+        if (revents) {
+            k_memset(&events[ready], 0, sizeof(events[ready]));
+            events[ready].events = (unsigned int)revents;
+            events[ready].data.u32 = watches[i].data_u32;
+            ready++;
+        }
+    }
+
+    return ready;
+}
+
+static int sys_epoll_wait_impl(syscall_regs_t* regs,
+                               int epfd,
+                               struct epoll_event* events,
+                               int maxevents,
+                               int timeout) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* epent;
+    epoll_watch_t* watches;
+    unsigned int timeout_ticks;
+    unsigned int timeout_deadline;
+    int infinite_wait;
+
+    if (!proc) return -EINVAL;
+    if (maxevents <= 0) return -EINVAL;
+    if (!events ||
+        !user_buf_ok((unsigned int)events,
+                     (unsigned int)maxevents * sizeof(struct epoll_event))) {
+        return -EFAULT;
+    }
+
+    epent = process_fd_get(proc, epfd);
+    if (!epent || epent->kind != PROCESS_HANDLE_KIND_EPOLL) return -EBADF;
+    watches = epoll_watches(epent, 0);
+    if (!watches) {
+        if (timeout == 0) return 0;
+    }
+
+    infinite_wait = timeout < 0;
+    timeout_ticks = infinite_wait ? 0u : sys_poll_timeout_ticks(timeout);
+    timeout_deadline = infinite_wait ? 0u : timer_get_ticks() + timeout_ticks;
+
+    for (;;) {
+        unsigned int ready = watches ? epoll_snapshot(proc, watches, events,
+                                                      (unsigned int)maxevents)
+                                     : 0u;
+        if (ready != 0u) {
+            tcp_socket_set_waiter(0);
+            return (int)ready;
+        }
+
+        if (!infinite_wait && (int)(timer_get_ticks() - timeout_deadline) >= 0) {
+            tcp_socket_set_waiter(0);
+            return 0;
+        }
+
+        unsigned int timer_deadline = watches ? epoll_next_timer_deadline(proc, watches) : 0u;
+        unsigned int sleep_deadline = 0u;
+
+        if (!infinite_wait) {
+            sleep_deadline = timeout_deadline;
+        }
+        if (timer_deadline != 0u &&
+            (sleep_deadline == 0u || (int)(timer_deadline - sleep_deadline) < 0)) {
+            sleep_deadline = timer_deadline;
+        }
+
+        if (sleep_deadline != 0u) {
+            proc->sleep_until = sleep_deadline;
+            proc->state = PROCESS_STATE_SLEEPING;
+        } else {
+            proc->sleep_until = 0u;
+            proc->state = PROCESS_STATE_WAITING;
+        }
+        tcp_socket_set_waiter(proc);
+        ready = watches ? epoll_snapshot(proc, watches, events,
+                                         (unsigned int)maxevents)
+                        : 0u;
+        if (ready != 0u) {
+            proc->state = PROCESS_STATE_RUNNING;
+            tcp_socket_set_waiter(0);
+            return (int)ready;
+        }
+
+        (void)regs;
+        sys_wait_until_current_running(proc);
+
+        tcp_socket_set_waiter(0);
+    }
+}
+
+static unsigned int timerfd_timespec_to_ticks(unsigned int sec, long nsec) {
+    unsigned int hz = timer_get_hz();
+    unsigned int ticks;
+    unsigned int ns_per_tick;
+
+    if (nsec < 0 || nsec >= (long)SMALLOS_NS_PER_SECOND) {
+        return 0xFFFFFFFFu;
+    }
+    if (hz == 0u) return 0xFFFFFFFFu;
+    if (sec > 0xFFFFFFFEu / hz) return 0xFFFFFFFEu;
+
+    ticks = sec * hz;
+    if (nsec > 0) {
+        ns_per_tick = SMALLOS_NS_PER_SECOND / hz;
+        ticks += ((unsigned int)nsec + ns_per_tick - 1u) / ns_per_tick;
+    }
+    return ticks;
+}
+
+static int sys_timerfd_create_impl(int clock_id, int flags) {
+    process_t* proc = (process_t*)sched_current();
+    int fd;
+    fd_entry_t* ent;
+
+    if (!proc) return -EINVAL;
+    if (clock_id != CLOCK_REALTIME && clock_id != CLOCK_MONOTONIC) return -EINVAL;
+    if ((flags & ~(SYS_FD_FLAG_NONBLOCK | SOCK_CLOEXEC)) != 0) return -EINVAL;
+
+    fd = process_fd_open_special(proc, PROCESS_HANDLE_KIND_TIMERFD, "timerfd");
+    if (fd < 0) return fd;
+    ent = process_fd_get(proc, fd);
+    if (ent) {
+        (void)process_fd_set_flags(ent, flags);
+    }
+    return fd;
+}
+
+static int sys_timerfd_settime_impl(int fd,
+                                    int flags,
+                                    const struct user_itimerspec* new_value,
+                                    struct user_itimerspec* old_value) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+    struct user_itimerspec spec;
+    unsigned int first_ticks;
+    unsigned int interval_ticks;
+
+    if (!proc) return -EINVAL;
+    if (flags != 0) return -EINVAL;
+    ent = process_fd_get(proc, fd);
+    if (!ent || ent->kind != PROCESS_HANDLE_KIND_TIMERFD) return -EBADF;
+    if (!new_value ||
+        !user_buf_ok((unsigned int)new_value, sizeof(*new_value))) {
+        return -EFAULT;
+    }
+    if (old_value &&
+        !user_buf_ok((unsigned int)old_value, sizeof(*old_value))) {
+        return -EFAULT;
+    }
+
+    if (old_value) {
+        k_memset(old_value, 0, sizeof(*old_value));
+    }
+
+    k_memcpy(&spec, new_value, sizeof(spec));
+    first_ticks = timerfd_timespec_to_ticks(spec.it_value.tv_sec,
+                                            spec.it_value.tv_nsec);
+    interval_ticks = timerfd_timespec_to_ticks(spec.it_interval.tv_sec,
+                                               spec.it_interval.tv_nsec);
+    if (first_ticks == 0xFFFFFFFFu || interval_ticks == 0xFFFFFFFFu) {
+        return -EINVAL;
+    }
+
+    ent->timer_interval = interval_ticks;
+    ent->timer_deadline = first_ticks ? timer_get_ticks() + first_ticks : 0u;
+    return 0;
+}
+
+static int sys_signalfd_impl(int fd, const void* mask, int flags) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+    int out_fd = fd;
+
+    if (!proc) return -EINVAL;
+    if (mask && !user_buf_ok((unsigned int)mask, sizeof(unsigned int))) {
+        return -EFAULT;
+    }
+    if ((flags & ~(SYS_FD_FLAG_NONBLOCK | SOCK_CLOEXEC)) != 0) return -EINVAL;
+
+    if (fd < 0) {
+        out_fd = process_fd_open_special(proc, PROCESS_HANDLE_KIND_SIGNALFD, "signalfd");
+        if (out_fd < 0) return out_fd;
+    }
+
+    ent = process_fd_get(proc, out_fd);
+    if (!ent || ent->kind != PROCESS_HANDLE_KIND_SIGNALFD) return -EBADF;
+    (void)process_fd_set_flags(ent, flags);
+    return out_fd;
+}
+
+static int sys_shutdown_impl(int fd, int how) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+
+    if (!proc) return -EINVAL;
+    if (how != SHUT_RD && how != SHUT_WR && how != SHUT_RDWR) return -EINVAL;
+    ent = process_fd_get(proc, fd);
+    if (!socket_fd_is_socket(ent)) return -EBADF;
+    return 0;
+}
+
+static int sys_getpeername_impl(int fd, struct sockaddr* addr, unsigned int* addrlen) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+    struct sockaddr_in sa;
+
+    if (!proc) return -EINVAL;
+    ent = process_fd_get(proc, fd);
+    if (!socket_fd_is_socket(ent)) return -EBADF;
+    if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -EINVAL;
+    if (!addr || !addrlen) return -EFAULT;
+    if (!user_buf_ok((unsigned int)addrlen, sizeof(unsigned int))) return -EFAULT;
+    if (*addrlen < sizeof(struct sockaddr_in)) return -EINVAL;
+    if (!user_buf_ok((unsigned int)addr, sizeof(struct sockaddr_in))) return -EFAULT;
+
+    tcp_socket_use_connection(ent->socket_port, ent->socket_conn);
+    k_memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = swap_u16((unsigned short)tcp_socket_peer_port());
+    sa.sin_addr.s_addr = tcp_socket_peer_ip();
+    k_memcpy(addr, &sa, sizeof(sa));
+    *addrlen = sizeof(sa);
+    return 0;
 }
 
 static int sys_mkdir_impl(const char* path, unsigned int mode) {
@@ -1096,6 +1550,25 @@ static int sys_stat_impl(const char* path, unsigned int* out_size, int* out_is_d
     return 0;
 }
 
+static int sys_fstat_impl(int fd, unsigned int* out_size, int* out_is_dir) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+
+    if (!proc) return -EINVAL;
+    ent = process_fd_get(proc, fd);
+    if (!ent) return -EBADF;
+
+    if (out_size) {
+        if (!user_buf_ok((unsigned int)out_size, sizeof(unsigned int))) return -EFAULT;
+        *out_size = ent->is_dir ? 0u : ent->size;
+    }
+    if (out_is_dir) {
+        if (!user_buf_ok((unsigned int)out_is_dir, sizeof(int))) return -EFAULT;
+        *out_is_dir = ent->is_dir ? 1 : 0;
+    }
+    return 0;
+}
+
 static int sys_getcwd_impl(char* buf, unsigned int size) {
     process_t* proc = (process_t*)sched_current();
     unsigned int pos = 0;
@@ -1177,7 +1650,7 @@ void syscall_handler_main(syscall_regs_t* regs) {
             break;
 
         case SYS_YIELD:
-            regs->eax = (unsigned int)sys_yield_impl((unsigned int)regs);
+            regs->eax = (unsigned int)sys_yield_impl();
             break;
 
         case SYS_SLEEP:
@@ -1308,7 +1781,8 @@ void syscall_handler_main(syscall_regs_t* regs) {
             regs->eax = (unsigned int)sys_accept_impl(regs,
                                                       (int)regs->ebx,
                                                       (struct sockaddr*)regs->ecx,
-                                                      (unsigned int*)regs->edx);
+                                                      (unsigned int*)regs->edx,
+                                                      0u);
             break;
         }
 
@@ -1376,6 +1850,75 @@ void syscall_handler_main(syscall_regs_t* regs) {
 
         case SYS_FSYNC:
             regs->eax = (unsigned int)sys_fsync_impl((int)regs->ebx);
+            break;
+
+        case SYS_FCNTL:
+            regs->eax = (unsigned int)sys_fcntl_impl((int)regs->ebx,
+                                                     (int)regs->ecx,
+                                                     regs->edx);
+            break;
+
+        case SYS_EPOLL_CREATE:
+            regs->eax = (unsigned int)sys_epoll_create_impl((int)regs->ebx);
+            break;
+
+        case SYS_EPOLL_CTL:
+            regs->eax = (unsigned int)sys_epoll_ctl_impl((int)regs->ebx,
+                                                         (int)regs->ecx,
+                                                         (int)regs->edx,
+                                                         (struct epoll_event*)regs->esi);
+            break;
+
+        case SYS_EPOLL_WAIT:
+            regs->eax = (unsigned int)sys_epoll_wait_impl(regs,
+                                                          (int)regs->ebx,
+                                                          (struct epoll_event*)regs->ecx,
+                                                          (int)regs->edx,
+                                                          (int)regs->esi);
+            break;
+
+        case SYS_TIMERFD_CREATE:
+            regs->eax = (unsigned int)sys_timerfd_create_impl((int)regs->ebx,
+                                                              (int)regs->ecx);
+            break;
+
+        case SYS_TIMERFD_SETTIME:
+            regs->eax = (unsigned int)sys_timerfd_settime_impl(
+                            (int)regs->ebx,
+                            (int)regs->ecx,
+                            (const struct user_itimerspec*)regs->edx,
+                            (struct user_itimerspec*)regs->esi);
+            break;
+
+        case SYS_SIGNALFD:
+            regs->eax = (unsigned int)sys_signalfd_impl((int)regs->ebx,
+                                                        (const void*)regs->ecx,
+                                                        (int)regs->edx);
+            break;
+
+        case SYS_ACCEPT4:
+            regs->eax = (unsigned int)sys_accept_impl(regs,
+                                                      (int)regs->ebx,
+                                                      (struct sockaddr*)regs->ecx,
+                                                      (unsigned int*)regs->edx,
+                                                      regs->esi);
+            break;
+
+        case SYS_SHUTDOWN:
+            regs->eax = (unsigned int)sys_shutdown_impl((int)regs->ebx,
+                                                       (int)regs->ecx);
+            break;
+
+        case SYS_GETPEERNAME:
+            regs->eax = (unsigned int)sys_getpeername_impl((int)regs->ebx,
+                                                           (struct sockaddr*)regs->ecx,
+                                                           (unsigned int*)regs->edx);
+            break;
+
+        case SYS_FSTAT:
+            regs->eax = (unsigned int)sys_fstat_impl((int)regs->ebx,
+                                                     (unsigned int*)regs->ecx,
+                                                     (int*)regs->edx);
             break;
 
         default:

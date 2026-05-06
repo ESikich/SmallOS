@@ -5,9 +5,15 @@
 #include "poll.h"
 #include "time.h"
 #include "sys/time.h"
+#include "sys/epoll.h"
+#include "sys/timerfd.h"
+#include "sys/signalfd.h"
+#include "sys/uio.h"
+#include "sys/sendfile.h"
 #include "fcntl.h"
 #include "unistd.h"
 #include "errno.h"
+#include "signal.h"
 
 int errno = 0;
 
@@ -50,6 +56,30 @@ static uint32_t open_flags_to_mode(int flags) {
 
 int open(const char* path, int flags, ...) {
     return errno_from_raw(sys_open_mode(path, open_flags_to_mode(flags)));
+}
+
+int fcntl(int fd, int cmd, ...) {
+    __builtin_va_list ap;
+    uint32_t arg = 0;
+
+    if (cmd == F_SETFL || cmd == F_SETFD) {
+        __builtin_va_start(ap, cmd);
+        arg = (uint32_t)__builtin_va_arg(ap, int);
+        __builtin_va_end(ap);
+    }
+
+    if (cmd == F_GETFL || cmd == F_SETFL) {
+        return errno_from_raw(sys_fcntl(fd, cmd, arg));
+    }
+    if (cmd == F_GETFD) {
+        return 0;
+    }
+    if (cmd == F_SETFD) {
+        return 0;
+    }
+
+    set_errno(EINVAL);
+    return -1;
 }
 
 int close(int fd) {
@@ -101,13 +131,33 @@ int stat(const char* path, struct stat* st) {
 }
 
 int fstat(int fd, struct stat* st) {
-    (void)fd;
+    uint32_t size = 0;
+    int is_dir = 0;
+    int cur;
+    int end;
+
     if (!st) {
         set_errno(EFAULT);
         return -1;
     }
     memset(st, 0, sizeof(*st));
-    st->st_mode = S_IFREG;
+    if (errno_from_raw(sys_fstat(fd, &size, &is_dir)) < 0) {
+        return -1;
+    }
+    st->st_mode = is_dir ? S_IFDIR : S_IFREG;
+    st->st_size = (long)size;
+    if (is_dir) {
+        return 0;
+    }
+
+    cur = sys_lseek(fd, 0, SEEK_CUR);
+    if (cur >= 0) {
+        end = sys_lseek(fd, 0, SEEK_END);
+        if (end >= 0) {
+            st->st_size = end;
+            (void)sys_lseek(fd, cur, SEEK_SET);
+        }
+    }
     return 0;
 }
 
@@ -149,18 +199,24 @@ int listen(int fd, int backlog) {
 }
 
 int accept(int fd, struct sockaddr* addr, socklen_t* addrlen) {
-    return errno_from_raw(sys_accept(fd, addr, addrlen));
+    return errno_from_raw(sys_accept4(fd, addr, addrlen, 0));
+}
+
+int accept4(int fd, struct sockaddr* addr, socklen_t* addrlen, int flags) {
+    return errno_from_raw(sys_accept4(fd, addr, addrlen, flags));
 }
 
 int connect(int fd, const struct sockaddr* addr, socklen_t addrlen) {
     return errno_from_raw(sys_connect(fd, addr, addrlen));
 }
 
-int send(int fd, const void* buf, unsigned int len) {
+int send(int fd, const void* buf, size_t len, int flags) {
+    (void)flags;
     return errno_from_raw(sys_send(fd, buf, len));
 }
 
-int recv(int fd, void* buf, unsigned int len) {
+int recv(int fd, void* buf, size_t len, int flags) {
+    (void)flags;
     return errno_from_raw(sys_recv(fd, buf, len));
 }
 
@@ -252,7 +308,9 @@ char* strerror(int errnum) {
     switch (errnum) {
         case EPERM: return "operation not permitted";
         case ENOENT: return "no such file or directory";
+        case EINTR: return "interrupted system call";
         case EIO: return "input/output error";
+        case EAGAIN: return "resource temporarily unavailable";
         case EBADF: return "bad file descriptor";
         case ENOMEM: return "out of memory";
         case EACCES: return "permission denied";
@@ -264,6 +322,10 @@ char* strerror(int errnum) {
         case ENFILE: return "file table full";
         case ENAMETOOLONG: return "file name too long";
         case EFBIG: return "file too large";
+        case EPIPE: return "broken pipe";
+        case EADDRINUSE: return "address already in use";
+        case ECONNRESET: return "connection reset";
+        case ETIMEDOUT: return "connection timed out";
         default: return "unknown error";
     }
 }
@@ -286,6 +348,159 @@ int setsockopt(int fd, int level, int optname, const void* optval, unsigned int 
 
 int getsockname(int fd, struct sockaddr* addr, socklen_t* addrlen) {
     return errno_from_raw(sys_getsockname(fd, addr, addrlen));
+}
+
+int getpeername(int fd, struct sockaddr* addr, socklen_t* addrlen) {
+    return errno_from_raw(sys_getpeername(fd, addr, addrlen));
+}
+
+int shutdown(int fd, int how) {
+    return errno_from_raw(sys_shutdown(fd, how));
+}
+
+int epoll_create1(int flags) {
+    return errno_from_raw(sys_epoll_create(flags));
+}
+
+int epoll_ctl(int epfd, int op, int fd, struct epoll_event* event) {
+    return errno_from_raw(sys_epoll_ctl(epfd, op, fd, event));
+}
+
+int epoll_wait(int epfd, struct epoll_event* events, int maxevents, int timeout) {
+    return errno_from_raw(sys_epoll_wait(epfd, events, maxevents, timeout));
+}
+
+int timerfd_create(int clockid, int flags) {
+    return errno_from_raw(sys_timerfd_create(clockid, flags));
+}
+
+int timerfd_settime(int fd, int flags,
+                    const struct itimerspec* new_value,
+                    struct itimerspec* old_value) {
+    return errno_from_raw(sys_timerfd_settime(fd, flags, new_value, old_value));
+}
+
+int signalfd(int fd, const sigset_t* mask, int flags) {
+    return errno_from_raw(sys_signalfd(fd, mask, flags));
+}
+
+int sigemptyset(sigset_t* set) {
+    if (!set) {
+        set_errno(EFAULT);
+        return -1;
+    }
+    *set = 0;
+    return 0;
+}
+
+int sigaddset(sigset_t* set, int signum) {
+    if (!set || signum <= 0 || signum >= 32) {
+        set_errno(EINVAL);
+        return -1;
+    }
+    *set |= (1u << (unsigned int)signum);
+    return 0;
+}
+
+int sigprocmask(int how, const sigset_t* set, sigset_t* oldset) {
+    static sigset_t current_mask = 0;
+    if (oldset) {
+        *oldset = current_mask;
+    }
+    if (set) {
+        if (how == SIG_BLOCK) {
+            current_mask |= *set;
+        } else if (how == SIG_UNBLOCK) {
+            current_mask &= ~(*set);
+        } else if (how == SIG_SETMASK) {
+            current_mask = *set;
+        } else {
+            set_errno(EINVAL);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+sighandler_t signal(int signum, sighandler_t handler) {
+    (void)signum;
+    (void)handler;
+    return SIG_DFL;
+}
+
+ssize_t writev(int fd, const struct iovec* iov, int iovcnt) {
+    ssize_t total = 0;
+
+    if (!iov || iovcnt < 0) {
+        set_errno(EINVAL);
+        return -1;
+    }
+
+    for (int i = 0; i < iovcnt; i++) {
+        const char* base = (const char*)iov[i].iov_base;
+        size_t len = iov[i].iov_len;
+        size_t done = 0;
+
+        while (done < len) {
+            int n = write(fd, base + done, (unsigned int)(len - done));
+            if (n < 0) {
+                return total > 0 ? total : -1;
+            }
+            if (n == 0) {
+                return total;
+            }
+            done += (size_t)n;
+            total += n;
+        }
+    }
+
+    return total;
+}
+
+ssize_t sendfile(int out_fd, int in_fd, off_t* offset, size_t count) {
+    char buf[1024];
+    size_t total = 0;
+    off_t pos = 0;
+
+    if (offset) {
+        pos = *offset;
+        if (lseek(in_fd, pos, SEEK_SET) < 0) {
+            return -1;
+        }
+    }
+
+    while (total < count) {
+        size_t want = count - total;
+        if (want > sizeof(buf)) want = sizeof(buf);
+
+        int nread = read(in_fd, buf, (unsigned int)want);
+        if (nread < 0) {
+            return total > 0 ? (ssize_t)total : -1;
+        }
+        if (nread == 0) {
+            break;
+        }
+
+        size_t written = 0;
+        while (written < (size_t)nread) {
+            int nw = write(out_fd, buf + written, (unsigned int)((size_t)nread - written));
+            if (nw < 0) {
+                if (offset) *offset = pos + (off_t)total;
+                return total > 0 ? (ssize_t)total : -1;
+            }
+            if (nw == 0) {
+                if (offset) *offset = pos + (off_t)total;
+                return (ssize_t)total;
+            }
+            written += (size_t)nw;
+            total += (size_t)nw;
+        }
+    }
+
+    if (offset) {
+        *offset = pos + (off_t)total;
+    }
+    return (ssize_t)total;
 }
 
 time_t time(time_t* out) {
@@ -326,7 +541,7 @@ int clock_gettime(int clock_id, struct timespec* ts) {
     unsigned int ticks;
     unsigned int rem;
 
-    if (!ts || clock_id != CLOCK_REALTIME) {
+    if (!ts || (clock_id != CLOCK_REALTIME && clock_id != CLOCK_MONOTONIC)) {
         set_errno(EINVAL);
         return -1;
     }

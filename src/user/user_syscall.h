@@ -5,6 +5,7 @@
 #include "uapi_time.h"
 #include "uapi_socket.h"
 #include "uapi_poll.h"
+#include "uapi_epoll.h"
 
 struct dirent;
 
@@ -18,6 +19,7 @@ typedef unsigned int uint32_t;
  *   ebx = arg1
  *   ecx = arg2
  *   edx = arg3
+ *   esi = arg4 for four-argument calls
  *
  * Return:
  *   eax = result
@@ -65,6 +67,17 @@ static inline int syscall3(int num, uint32_t arg1, uint32_t arg2, uint32_t arg3)
         "int $0x80"
         : "=a"(ret)
         : "a"(num), "b"(arg1), "c"(arg2), "d"(arg3)
+        : "memory"
+    );
+    return ret;
+}
+
+static inline int syscall4(int num, uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4) {
+    int ret;
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(num), "b"(arg1), "c"(arg2), "d"(arg3), "S"(arg4)
         : "memory"
     );
     return ret;
@@ -241,6 +254,10 @@ static inline int sys_stat(const char* path, uint32_t* out_size, int* out_is_dir
     return syscall3(SYS_STAT, (uint32_t)path, (uint32_t)out_size, (uint32_t)out_is_dir);
 }
 
+static inline int sys_fstat(int fd, uint32_t* out_size, int* out_is_dir) {
+    return syscall3(SYS_FSTAT, (uint32_t)fd, (uint32_t)out_size, (uint32_t)out_is_dir);
+}
+
 static inline int sys_socket(int domain, int type, int protocol) {
     return syscall3(SYS_SOCKET, (uint32_t)domain, (uint32_t)type, (uint32_t)protocol);
 }
@@ -255,6 +272,10 @@ static inline int sys_listen(int fd, int backlog) {
 
 static inline int sys_accept(int fd, struct sockaddr* addr, socklen_t* addrlen) {
     return syscall3(SYS_ACCEPT, (uint32_t)fd, (uint32_t)addr, (uint32_t)addrlen);
+}
+
+static inline int sys_accept4(int fd, struct sockaddr* addr, socklen_t* addrlen, int flags) {
+    return syscall4(SYS_ACCEPT4, (uint32_t)fd, (uint32_t)addr, (uint32_t)addrlen, (uint32_t)flags);
 }
 
 static inline int sys_connect(int fd, const struct sockaddr* addr, socklen_t addrlen) {
@@ -297,6 +318,42 @@ static inline int sys_setsockopt(int fd, int level, int optname,
 
 static inline int sys_getsockname(int fd, struct sockaddr* addr, socklen_t* addrlen) {
     return syscall3(SYS_GETSOCKNAME, (uint32_t)fd, (uint32_t)addr, (uint32_t)addrlen);
+}
+
+static inline int sys_getpeername(int fd, struct sockaddr* addr, socklen_t* addrlen) {
+    return syscall3(SYS_GETPEERNAME, (uint32_t)fd, (uint32_t)addr, (uint32_t)addrlen);
+}
+
+static inline int sys_shutdown(int fd, int how) {
+    return syscall2(SYS_SHUTDOWN, (uint32_t)fd, (uint32_t)how);
+}
+
+static inline int sys_fcntl(int fd, int cmd, uint32_t arg) {
+    return syscall3(SYS_FCNTL, (uint32_t)fd, (uint32_t)cmd, arg);
+}
+
+static inline int sys_epoll_create(int flags) {
+    return syscall1(SYS_EPOLL_CREATE, (uint32_t)flags);
+}
+
+static inline int sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event* event) {
+    return syscall4(SYS_EPOLL_CTL, (uint32_t)epfd, (uint32_t)op, (uint32_t)fd, (uint32_t)event);
+}
+
+static inline int sys_epoll_wait(int epfd, struct epoll_event* events, int maxevents, int timeout) {
+    return syscall4(SYS_EPOLL_WAIT, (uint32_t)epfd, (uint32_t)events, (uint32_t)maxevents, (uint32_t)timeout);
+}
+
+static inline int sys_timerfd_create(int clock_id, int flags) {
+    return syscall2(SYS_TIMERFD_CREATE, (uint32_t)clock_id, (uint32_t)flags);
+}
+
+static inline int sys_timerfd_settime(int fd, int flags, const void* new_value, void* old_value) {
+    return syscall4(SYS_TIMERFD_SETTIME, (uint32_t)fd, (uint32_t)flags, (uint32_t)new_value, (uint32_t)old_value);
+}
+
+static inline int sys_signalfd(int fd, const void* mask, int flags) {
+    return syscall3(SYS_SIGNALFD, (uint32_t)fd, (uint32_t)mask, (uint32_t)flags);
 }
 
 /*

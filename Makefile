@@ -23,6 +23,9 @@ TINYCC_CONFIG_STAMP=$(TINYCC_DIR)/.configured
 TINYCC_SMALOS_OBJ_DIR=$(OBJ_DIR)/tinycc-smalos
 TINYCC_SMALOS_OBJ=$(TINYCC_SMALOS_OBJ_DIR)/tcc.o
 TINYCC_SMALOS_BIN=$(BIN_DIR)/tcc-smalos.elf
+CSERVER_DIR=$(CURDIR)/third_party/cserver
+CSERVER_OBJ_DIR=$(OBJ_DIR)/cserver
+CSERVER_BIN=$(BIN_DIR)/cserve.elf
 STATE_DIR=.state
 
 BOOT_SECTOR_SIZE := $(shell awk '/^BOOT_SECTOR_SIZE[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
@@ -89,12 +92,26 @@ KERNEL_C_SRCS=\
 USER_PROGS=echo about uptime halt reboot pwd cat fsread ls fsls touch rm mkdir rmdir cp mv edit hello ticks args runelf_test readline exec_test fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe fault sleep_test ptrguard spinwkr preempt_test crtprobe tcpecho sockeof ftpd
 USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
 USER_RUNTIME_SRCS=$(USER_DIR)/user_alloc.c $(USER_DIR)/user_stdio.c $(USER_DIR)/user_posix.c $(USER_DIR)/user_time.c $(USER_DIR)/user_dirent.c $(USER_DIR)/user_crypt.c $(USER_DIR)/setjmp.asm
+CSERVER_SRCS=\
+	$(CSERVER_DIR)/src/main.c \
+	$(CSERVER_DIR)/src/server.c \
+	$(CSERVER_DIR)/src/conn.c \
+	$(CSERVER_DIR)/src/parser.c \
+	$(CSERVER_DIR)/src/router.c \
+	$(CSERVER_DIR)/src/static.c \
+	$(CSERVER_DIR)/src/response.c \
+	$(CSERVER_DIR)/src/log.c \
+	$(CSERVER_DIR)/src/config.c \
+	$(CSERVER_DIR)/src/util.c
+CSERVER_OBJS=$(patsubst $(CSERVER_DIR)/src/%.c,$(CSERVER_OBJ_DIR)/%.o,$(CSERVER_SRCS))
 FAT16_BIN_ENTRIES=bin/echo.elf=$(BIN_DIR)/echo.elf bin/about.elf=$(BIN_DIR)/about.elf bin/uptime.elf=$(BIN_DIR)/uptime.elf bin/halt.elf=$(BIN_DIR)/halt.elf bin/reboot.elf=$(BIN_DIR)/reboot.elf bin/pwd.elf=$(BIN_DIR)/pwd.elf bin/cat.elf=$(BIN_DIR)/cat.elf bin/fsread.elf=$(BIN_DIR)/fsread.elf bin/ls.elf=$(BIN_DIR)/ls.elf bin/fsls.elf=$(BIN_DIR)/fsls.elf bin/touch.elf=$(BIN_DIR)/touch.elf bin/rm.elf=$(BIN_DIR)/rm.elf bin/mkdir.elf=$(BIN_DIR)/mkdir.elf bin/rmdir.elf=$(BIN_DIR)/rmdir.elf bin/cp.elf=$(BIN_DIR)/cp.elf bin/mv.elf=$(BIN_DIR)/mv.elf bin/edit.elf=$(BIN_DIR)/edit.elf
 FAT16_DEMO_ENTRIES=apps/demo/hello.elf=$(BIN_DIR)/hello.elf
 FAT16_TEST_ENTRIES=apps/tests/ticks.elf=$(BIN_DIR)/ticks.elf apps/tests/args.elf=$(BIN_DIR)/args.elf apps/tests/runelf_test.elf=$(BIN_DIR)/runelf_test.elf apps/tests/readline.elf=$(BIN_DIR)/readline.elf apps/tests/exec_test.elf=$(BIN_DIR)/exec_test.elf apps/tests/fileread.elf=$(BIN_DIR)/fileread.elf apps/tests/compiler_demo.elf=$(BIN_DIR)/compiler_demo.elf apps/tests/heapprobe.elf=$(BIN_DIR)/heapprobe.elf apps/tests/statprobe.elf=$(BIN_DIR)/statprobe.elf apps/tests/fileprobe.elf=$(BIN_DIR)/fileprobe.elf apps/tests/cwdprobe.elf=$(BIN_DIR)/cwdprobe.elf apps/tests/stdioprobe.elf=$(BIN_DIR)/stdioprobe.elf apps/tests/dirprobe.elf=$(BIN_DIR)/dirprobe.elf apps/tests/errnoprobe.elf=$(BIN_DIR)/errnoprobe.elf apps/tests/fault.elf=$(BIN_DIR)/fault.elf apps/tests/sleep_test.elf=$(BIN_DIR)/sleep_test.elf apps/tests/ptrguard.elf=$(BIN_DIR)/ptrguard.elf apps/tests/spinwkr.elf=$(BIN_DIR)/spinwkr.elf apps/tests/preempt_test.elf=$(BIN_DIR)/preempt_test.elf apps/tests/crtprobe.elf=$(BIN_DIR)/crtprobe.elf
 FAT16_APP_ENTRIES=$(FAT16_BIN_ENTRIES) $(FAT16_DEMO_ENTRIES) $(FAT16_TEST_ENTRIES)
 FAT16_APP_ENTRIES+= apps/services/tcpecho.elf=$(BIN_DIR)/tcpecho.elf apps/services/sockeof.elf=$(BIN_DIR)/sockeof.elf apps/services/ftpd.elf=$(BIN_DIR)/ftpd.elf
-FAT16_EXTRA_ENTRIES=tools/tcc.elf=$(TINYCC_SMALOS_BIN) tccmath.c=$(CURDIR)/samples/tccmath.c tccagg.c=$(CURDIR)/samples/tccagg.c tcctree.c=$(CURDIR)/samples/tcctree.c tccmini.c=$(CURDIR)/samples/tccmini.c
+FAT16_APP_ENTRIES+= apps/services/cserve.elf=$(CSERVER_BIN)
+FAT16_EXTRA_DIRS=logs/
+FAT16_EXTRA_ENTRIES=tools/tcc.elf=$(TINYCC_SMALOS_BIN) tccmath.c=$(CURDIR)/samples/tccmath.c tccagg.c=$(CURDIR)/samples/tccagg.c tcctree.c=$(CURDIR)/samples/tcctree.c tccmini.c=$(CURDIR)/samples/tccmini.c cserve.ini=$(CURDIR)/samples/cserve.ini www/index.html=$(CURDIR)/samples/cserve_index.html
 FAT16_EXTRA_FILES=$(foreach entry,$(FAT16_EXTRA_ENTRIES),$(word 2,$(subst =, ,$(entry))))
 
 KERNEL_OBJS=$(patsubst $(SRC_DIR)/%.asm,$(OBJ_DIR)/%.o,$(KERNEL_ASM_SRCS)) \
@@ -112,7 +129,7 @@ OBJ_SUBDIRS=$(sort \
 )
 
 BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
-BUILD_SUBDIRS+=$(TINYCC_SMALOS_OBJ_DIR)
+BUILD_SUBDIRS+=$(TINYCC_SMALOS_OBJ_DIR) $(CSERVER_OBJ_DIR)
 
 all: $(IMG_DIR)/os-image.bin
 
@@ -149,6 +166,12 @@ $(TINYCC_SMALOS_OBJ): $(CURDIR)/third_party/tinycc/tcc.c $(TINYCC_CONFIG_STAMP) 
 $(TINYCC_SMALOS_BIN): $(TINYCC_SMALOS_OBJ) $(USER_CRT0_OBJ) $(USER_RUNTIME_OBJS) | dirs
 	$(LD) $(USER_LDFLAGS) -s --gc-sections $^ $(LIBGCC_FILE) -o $@
 
+$(CSERVER_OBJ_DIR)/%.o: $(CSERVER_DIR)/src/%.c | dirs
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -std=c2x -D_GNU_SOURCE -I$(CSERVER_DIR)/include -c $< -o $@
+
+$(CSERVER_BIN): $(CSERVER_OBJS) $(USER_CRT0_OBJ) $(USER_RUNTIME_OBJS) | dirs
+	$(LD) $(USER_LDFLAGS) $^ $(LIBGCC_FILE) -o $@
+
 $(BIN_DIR)/crtprobe.elf: $(OBJ_DIR)/user/crtprobe.o $(USER_CRT0_OBJ) $(USER_RUNTIME_OBJS) | dirs
 	$(LD) $(USER_LDFLAGS) $^ -o $@
 
@@ -169,8 +192,8 @@ $(TOOLS_DIR)/mkimage: tools/mkimage.c | dirs
 
 # FAT16 seed image (generated from the current tree)
 #
-$(BIN_DIR)/fat16.seed.img: $(USER_ELFS) $(TOOLS_DIR)/mkfat16 $(FAT16_EXTRA_FILES) Makefile | dirs
-	$(TOOLS_DIR)/mkfat16 $@ $(FAT16_APP_ENTRIES) $(FAT16_EXTRA_ENTRIES)
+$(BIN_DIR)/fat16.seed.img: $(USER_ELFS) $(CSERVER_BIN) $(TOOLS_DIR)/mkfat16 $(FAT16_EXTRA_FILES) Makefile | dirs
+	$(TOOLS_DIR)/mkfat16 $@ $(FAT16_APP_ENTRIES) $(FAT16_EXTRA_ENTRIES) $(FAT16_EXTRA_DIRS)
 
 $(STATE_DIR)/fat16.img: $(BIN_DIR)/fat16.seed.img | dirs
 	cp $< $@

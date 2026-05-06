@@ -16,10 +16,11 @@ int  tcp_init(void);
 int  tcp_handle_ipv4_frame(const unsigned char* frame, unsigned int len);
 void tcp_socket_handle_close(fd_entry_t* ent);
 void tcp_socket_use_port(unsigned int port);
+void tcp_socket_use_connection(unsigned int port, unsigned int conn_id);
 int  tcp_socket_bind(unsigned int port);
 int  tcp_socket_listen(void);
 int  tcp_socket_accept_ready(void);
-void tcp_socket_mark_accepted(void);
+unsigned int tcp_socket_mark_accepted(void);
 int  tcp_socket_connection_established(void);
 int  tcp_socket_recv_ready(void);
 int  tcp_socket_peer_closed(void);
@@ -32,5 +33,7 @@ void tcp_socket_wake_waiter(void);
 unsigned int tcp_socket_peer_ip(void);
 unsigned int tcp_socket_peer_port(void);
 unsigned int tcp_socket_local_port(void);
+
+#define TCP_SOCKET_CONN_NONE 0xFFFFFFFFu
 
 #endif /* TCP_H */

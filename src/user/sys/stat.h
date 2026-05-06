@@ -20,7 +20,10 @@ struct stat {
     time_t st_ctime;
 };
 
+#ifndef USER_MODE_T_DEFINED
 typedef unsigned int mode_t;
+#define USER_MODE_T_DEFINED
+#endif
 
 #define S_IFREG 0100000
 #define S_IFDIR  0040000

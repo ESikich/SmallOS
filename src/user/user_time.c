@@ -6,6 +6,10 @@ static const char* s_months[] = {
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
 };
 
+static const char* s_weekdays[] = {
+    "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
+};
+
 struct tm* gmtime_r(const time_t* timep, struct tm* result) {
     time_t v = timep ? *timep : time(0);
     memset(result, 0, sizeof(*result));
@@ -16,6 +20,113 @@ struct tm* gmtime_r(const time_t* timep, struct tm* result) {
     result->tm_min = (int)((v / 60u) % 60u);
     result->tm_sec = (int)(v % 60u);
     return result;
+}
+
+static int str_eq_n(const char* a, const char* b, unsigned int n) {
+    for (unsigned int i = 0; i < n; i++) {
+        if (a[i] != b[i]) return 0;
+    }
+    return 1;
+}
+
+static int str_eq(const char* a, const char* b) {
+    while (*a && *b && *a == *b) {
+        a++;
+        b++;
+    }
+    return *a == *b;
+}
+
+static int parse_u2(const char** p, int* out) {
+    int value = 0;
+    int digits = 0;
+    while (**p >= '0' && **p <= '9' && digits < 2) {
+        value = value * 10 + (**p - '0');
+        (*p)++;
+        digits++;
+    }
+    if (digits == 0) return 0;
+    *out = value;
+    return 1;
+}
+
+static int parse_u4(const char** p, int* out) {
+    int value = 0;
+    for (int i = 0; i < 4; i++) {
+        if ((*p)[i] < '0' || (*p)[i] > '9') return 0;
+        value = value * 10 + ((*p)[i] - '0');
+    }
+    *p += 4;
+    *out = value;
+    return 1;
+}
+
+static int parse_name(const char** p, const char* const* names, int count) {
+    for (int i = 0; i < count; i++) {
+        if (str_eq_n(*p, names[i], 3)) {
+            *p += 3;
+            return i;
+        }
+    }
+    return -1;
+}
+
+char* strptime(const char* buf, const char* fmt, struct tm* tm) {
+    const char* p = buf;
+
+    if (!buf || !fmt || !tm) return 0;
+
+    if (!str_eq(fmt, "%a, %d %b %Y %H:%M:%S GMT")) {
+        return 0;
+    }
+
+    int wday = parse_name(&p, s_weekdays, 7);
+    if (wday < 0 || *p++ != ',' || *p++ != ' ') return 0;
+    tm->tm_wday = wday;
+    if (!parse_u2(&p, &tm->tm_mday) || *p++ != ' ') return 0;
+    int mon = parse_name(&p, s_months, 12);
+    if (mon < 0 || *p++ != ' ') return 0;
+    tm->tm_mon = mon;
+    int year = 0;
+    if (!parse_u4(&p, &year) || *p++ != ' ') return 0;
+    tm->tm_year = year - 1900;
+    if (!parse_u2(&p, &tm->tm_hour) || *p++ != ':') return 0;
+    if (!parse_u2(&p, &tm->tm_min) || *p++ != ':') return 0;
+    if (!parse_u2(&p, &tm->tm_sec) || *p++ != ' ') return 0;
+    if (!str_eq_n(p, "GMT", 3)) return 0;
+    return (char*)p + 3;
+}
+
+static int is_leap(int year) {
+    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+}
+
+time_t timegm(struct tm* tm) {
+    static const int month_days[] = {
+        31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+    };
+    unsigned int days = 0;
+    int year;
+
+    if (!tm) return 0;
+    year = tm->tm_year + 1900;
+    if (year < 1970) return 0;
+
+    for (int y = 1970; y < year; y++) {
+        days += is_leap(y) ? 366u : 365u;
+    }
+    for (int m = 0; m < tm->tm_mon && m < 12; m++) {
+        days += (unsigned int)month_days[m];
+        if (m == 1 && is_leap(year)) days++;
+    }
+    if (tm->tm_mday > 0) {
+        days += (unsigned int)(tm->tm_mday - 1);
+    }
+
+    return (time_t)(days * 86400u +
+                    (unsigned int)tm->tm_hour * 3600u +
+                    (unsigned int)tm->tm_min * 60u +
+                    (unsigned int)tm->tm_sec);
 }
 
 static void append_ch(char* out, size_t max, size_t* pos, char c) {

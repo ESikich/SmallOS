@@ -25,6 +25,18 @@ struct sockaddr_in {
 
 #define AF_INET      2
 #define SOCK_STREAM  1
+#define SOCK_NONBLOCK SYS_FD_FLAG_NONBLOCK
+#define SOCK_CLOEXEC  0x00080000u
+#define SOCK_TYPE_MASK 0x0000000Fu
 #define IPPROTO_TCP  6
+
+#define SOL_SOCKET   1
+#define SO_REUSEADDR 2
+
+#define SOMAXCONN    128
+
+#define SHUT_RD      0
+#define SHUT_WR      1
+#define SHUT_RDWR    2
 
 #endif /* UAPI_SOCKET_H */

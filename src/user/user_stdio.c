@@ -1061,6 +1061,10 @@ int atoi(const char* nptr) {
     return (int)strtol(nptr, 0, 10);
 }
 
+long long atoll(const char* nptr) {
+    return strtoll(nptr, 0, 10);
+}
+
 static int digit_value(int c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'a' && c <= 'z') return c - 'a' + 10;
@@ -1226,8 +1230,9 @@ long double ldexpl(long double x, int exp) {
     return x;
 }
 
-void exit(int code) {
+__attribute__((noreturn)) void exit(int code) {
     sys_exit(code);
+    for (;;) {}
 }
 
 char* getenv(const char* name) {

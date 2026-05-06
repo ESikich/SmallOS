@@ -54,7 +54,26 @@ void _start(int argc, char** argv) {
     check_errno("read bad fd", EBADF, read(99, argv, 1));
 
     errno = 0;
-    check_errno("open directory", EISDIR, open("apps", O_RDONLY));
+    {
+        int dfd = open("apps", O_RDONLY);
+        check_int("open directory", 0, dfd >= 0 ? 0 : -1);
+        if (dfd >= 0) {
+            struct stat st;
+            char byte;
+
+            check_int("fstat directory", 0, fstat(dfd, &st));
+            check_int("fstat directory mode", 1, S_ISDIR(st.st_mode) ? 1 : 0);
+
+            errno = 0;
+            check_errno("read directory", EISDIR, read(dfd, &byte, 1));
+            check_int("close directory", 0, close(dfd));
+        } else {
+            check_int("fstat directory", 0, -1);
+            check_int("fstat directory mode", 1, 0);
+            check_int("read directory", -1, 0);
+            check_int("close directory", 0, -1);
+        }
+    }
 
     errno = 0;
     check_errno("chdir file", ENOTDIR, chdir("apps/demo/hello.elf"));
@@ -71,17 +90,17 @@ void _start(int argc, char** argv) {
 
     errno = 0;
     {
-        int fds[8];
+        int fds[16];
         int count = 0;
         int fd;
-        while (count < 8) {
+        while (count < 16) {
             fd = open("apps/demo/hello.elf", O_RDONLY);
             if (fd < 0) {
                 break;
             }
             fds[count++] = fd;
         }
-        check_int("fd exhaustion count", 5, count);
+        check_int("fd exhaustion count", 13, count);
         check_int("fd exhaustion errno", ENFILE, errno);
         for (int i = 0; i < count; i++) {
             close(fds[i]);

@@ -1,6 +1,9 @@
 #ifndef USER_TIME_WRAPPER_H
 #define USER_TIME_WRAPPER_H
 
+#include "stddef.h"
+#include "uapi_time.h"
+
 typedef unsigned int time_t;
 
 struct timespec {
@@ -25,7 +28,7 @@ struct tm* localtime(const time_t* timep);
 struct tm* gmtime_r(const time_t* timep, struct tm* result);
 size_t strftime(char* s, size_t max, const char* format, const struct tm* tm);
 int clock_gettime(int clock_id, struct timespec* ts);
-
-#define CLOCK_REALTIME 0
+char* strptime(const char* buf, const char* fmt, struct tm* tm);
+time_t timegm(struct tm* tm);
 
 #endif

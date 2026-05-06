@@ -1,0 +1,6 @@
+#ifndef USER_NETINET_TCP_H
+#define USER_NETINET_TCP_H
+
+#define TCP_NODELAY 1
+
+#endif /* USER_NETINET_TCP_H */

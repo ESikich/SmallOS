@@ -4,12 +4,19 @@
 #include "user_syscall.h"
 #include "sys/stat.h"
 
+#ifndef USER_SSIZE_T_DEFINED
 typedef int ssize_t;
+#define USER_SSIZE_T_DEFINED
+#endif
 
 #define F_OK 0
 #define X_OK 1
 #define W_OK 2
 #define R_OK 4
+
+#define STDIN_FILENO 0
+#define STDOUT_FILENO 1
+#define STDERR_FILENO 2
 
 int close(int fd);
 int read(int fd, void* buf, unsigned int len);

@@ -25,7 +25,7 @@ typedef enum {
  * User-opened files start at fd 3.  PROCESS_FD_MAX controls the total
  * table size (including the reserved slots).
  */
-#define PROCESS_FD_MAX      8
+#define PROCESS_FD_MAX      16
 #define PROCESS_FD_FIRST    3        /* first allocatable fd */
 #define PROCESS_FD_NAME_MAX 128      /* max path length stored in fd entry */
 #define PROCESS_FD_CACHE_PAGES 1024  /* 4 MB small-file read cache / 4 KB pages */
@@ -36,7 +36,10 @@ typedef enum {
     PROCESS_HANDLE_KIND_NONE  = 0,
     PROCESS_HANDLE_KIND_FILE  = 1,
     PROCESS_HANDLE_KIND_SOCKET = 2,
-    PROCESS_HANDLE_KIND_CONSOLE = 3
+    PROCESS_HANDLE_KIND_CONSOLE = 3,
+    PROCESS_HANDLE_KIND_EPOLL = 4,
+    PROCESS_HANDLE_KIND_TIMERFD = 5,
+    PROCESS_HANDLE_KIND_SIGNALFD = 6
 } process_handle_kind_t;
 
 typedef enum {
@@ -63,8 +66,14 @@ struct fd_entry {
     int  readable;                         /* 1 if reads are permitted */
     int  writable;                         /* 1 if writes should buffer */
     int  dirty;                            /* 1 if buffered file writes need flush */
+    int  is_dir;                           /* 1 for directory descriptors */
+    u32  flags;                            /* SYS_FD_FLAG_* descriptor status flags */
     u32  socket_state;                     /* PROCESS_SOCKET_STATE_* */
     u32  socket_port;                      /* listener or peer port */
+    u32  socket_conn;                      /* accepted TCP stream id for this port */
+    u32  aux_frame;                        /* kind-specific PMM frame */
+    u32  timer_deadline;                   /* timerfd next expiry tick, 0 if disarmed */
+    u32  timer_interval;                   /* timerfd periodic interval in ticks */
     char name[PROCESS_FD_NAME_MAX];        /* normalized path for file handles */
     u32  size;                             /* file size in bytes */
     u32  offset;                           /* current read position */
@@ -119,6 +128,7 @@ int        process_fd_open_file_mode(process_t* proc,
                                      int readable,
                                      int writable);
 int        process_fd_open_socket(process_t* proc, const char* name);
+int        process_fd_open_special(process_t* proc, int kind, const char* name);
 void       process_fd_close(fd_entry_t* ent);
 int        process_fd_read(fd_entry_t* ent, char* buf, unsigned int len);
 int        process_fd_read_raw(fd_entry_t* ent, char* buf, unsigned int len);
@@ -126,6 +136,8 @@ int        process_fd_write(fd_entry_t* ent, const char* buf, unsigned int len);
 short      process_fd_poll(fd_entry_t* ent, short events);
 int        process_fd_flush(fd_entry_t* ent);
 int        process_fd_seek(fd_entry_t* ent, int offset, int whence);
+int        process_fd_set_flags(fd_entry_t* ent, unsigned int flags);
+unsigned int process_fd_get_flags(fd_entry_t* ent);
 void       process_claim_for_wait(process_t* proc);
 int        process_set_args(process_t* proc, int argc, char** argv);
 

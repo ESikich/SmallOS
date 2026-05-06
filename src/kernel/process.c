@@ -6,9 +6,11 @@
 #include "scheduler.h"
 #include "keyboard.h"
 #include "shell.h"
+#include "timer.h"
 #include "../drivers/tcp.h"
 #include "uapi_poll.h"
 #include "uapi_errno.h"
+#include "uapi_syscall.h"
 #include "vfs.h"
 
 typedef char process_t_must_fit_in_one_frame[(sizeof(process_t) <= 4096u) ? 1 : -1];
@@ -140,6 +142,12 @@ static int process_handle_socket_seek(fd_entry_t* ent, int offset, int whence);
 static short process_handle_socket_poll(fd_entry_t* ent, short events);
 static void process_handle_socket_close(fd_entry_t* ent);
 
+static int process_handle_special_read(fd_entry_t* ent, char* buf, unsigned int len);
+static int process_handle_special_write(fd_entry_t* ent, const char* buf, unsigned int len);
+static int process_handle_special_seek(fd_entry_t* ent, int offset, int whence);
+static short process_handle_special_poll(fd_entry_t* ent, short events);
+static void process_handle_special_close(fd_entry_t* ent);
+
 static const process_handle_ops_t s_socket_handle_ops = {
     .read = process_handle_socket_read,
     .write = process_handle_socket_write,
@@ -147,6 +155,15 @@ static const process_handle_ops_t s_socket_handle_ops = {
     .poll = process_handle_socket_poll,
     .flush = 0,
     .close = process_handle_socket_close,
+};
+
+static const process_handle_ops_t s_special_handle_ops = {
+    .read = process_handle_special_read,
+    .write = process_handle_special_write,
+    .seek = process_handle_special_seek,
+    .poll = process_handle_special_poll,
+    .flush = 0,
+    .close = process_handle_special_close,
 };
 
 static const process_handle_ops_t s_console_handle_ops = {
@@ -219,6 +236,34 @@ int process_fd_open_socket(process_t* proc, const char* name) {
             ent->ops = &s_socket_handle_ops;
             ent->socket_state = PROCESS_SOCKET_STATE_OPEN;
             ent->socket_port = 0;
+            ent->socket_conn = TCP_SOCKET_CONN_NONE;
+            ent->readable = 1;
+            ent->writable = 0;
+            if (name) {
+                k_memcpy(ent->name, name, (k_size_t)k_strlen(name) + 1u);
+            }
+            return fd;
+        }
+    }
+
+    return -ENFILE;
+}
+
+int process_fd_open_special(process_t* proc, int kind, const char* name) {
+    if (!proc) return -EINVAL;
+    if (kind != PROCESS_HANDLE_KIND_EPOLL &&
+        kind != PROCESS_HANDLE_KIND_TIMERFD &&
+        kind != PROCESS_HANDLE_KIND_SIGNALFD) {
+        return -EINVAL;
+    }
+
+    for (int fd = PROCESS_FD_FIRST; fd < PROCESS_FD_MAX; fd++) {
+        if (!proc->fds[fd].valid) {
+            fd_entry_t* ent = &proc->fds[fd];
+            k_memset(ent, 0, sizeof(*ent));
+            ent->valid = 1;
+            ent->kind = kind;
+            ent->ops = &s_special_handle_ops;
             ent->readable = 1;
             ent->writable = 0;
             if (name) {
@@ -247,11 +292,18 @@ void process_fd_close(fd_entry_t* ent) {
 }
 
 static int process_handle_socket_read(fd_entry_t* ent, char* buf, unsigned int len) {
+    int rc;
+
     if (!ent || !ent->valid) return -EBADF;
     if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -EINVAL;
     if (len == 0) return 0;
 
-    tcp_socket_use_port(ent->socket_port);
+    tcp_socket_use_connection(ent->socket_port, ent->socket_conn);
+    if (!tcp_socket_recv_ready()) {
+        if ((ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u) {
+            return -EAGAIN;
+        }
+    }
     __asm__ __volatile__("sti");
     while (!tcp_socket_recv_ready()) {
         if (!tcp_socket_connection_established()) {
@@ -261,16 +313,20 @@ static int process_handle_socket_read(fd_entry_t* ent, char* buf, unsigned int l
         __asm__ __volatile__("hlt");
     }
     __asm__ __volatile__("cli");
-    return tcp_socket_recv(buf, len);
+    rc = tcp_socket_recv(buf, len);
+    return rc < 0 ? -ECONNRESET : rc;
 }
 
 static int process_handle_socket_write(fd_entry_t* ent, const char* buf, unsigned int len) {
+    int rc;
+
     if (!ent || !ent->valid) return -EBADF;
     if (ent->socket_state != PROCESS_SOCKET_STATE_CONNECTED) return -EINVAL;
     if (len == 0) return 0;
 
-    tcp_socket_use_port(ent->socket_port);
-    return tcp_socket_send(buf, len);
+    tcp_socket_use_connection(ent->socket_port, ent->socket_conn);
+    rc = tcp_socket_send(buf, len);
+    return rc < 0 ? -ECONNRESET : rc;
 }
 
 static int process_handle_socket_seek(fd_entry_t* ent, int offset, int whence) {
@@ -284,17 +340,18 @@ static short process_handle_socket_poll(fd_entry_t* ent, short events) {
     short revents = 0;
 
     if (!ent || !ent->valid) return POLLERR;
-    tcp_socket_use_port(ent->socket_port);
 
     if (ent->socket_state == PROCESS_SOCKET_STATE_LISTENER) {
+        tcp_socket_use_port(ent->socket_port);
         if ((events & POLLIN) && tcp_socket_accept_ready()) {
             revents |= POLLIN;
         }
     } else if (ent->socket_state == PROCESS_SOCKET_STATE_CONNECTED) {
+        tcp_socket_use_connection(ent->socket_port, ent->socket_conn);
         if ((events & POLLIN) && tcp_socket_recv_ready()) {
             revents |= POLLIN;
         }
-        if ((events & POLLHUP) && tcp_socket_peer_closed()) {
+        if (tcp_socket_peer_closed()) {
             revents |= POLLHUP;
         }
         if ((events & POLLOUT) && tcp_socket_connection_established()) {
@@ -381,6 +438,95 @@ static void process_handle_socket_close(fd_entry_t* ent) {
     k_memset(ent, 0, sizeof(*ent));
 }
 
+static int timerfd_ready(fd_entry_t* ent) {
+    if (!ent || ent->kind != PROCESS_HANDLE_KIND_TIMERFD) return 0;
+    return ent->timer_deadline != 0u &&
+           (int)(timer_get_ticks() - ent->timer_deadline) >= 0;
+}
+
+static unsigned long long timerfd_consume(fd_entry_t* ent) {
+    unsigned int now;
+    unsigned int elapsed;
+    unsigned int expirations;
+
+    if (!timerfd_ready(ent)) return 0;
+    now = timer_get_ticks();
+    expirations = 1u;
+
+    if (ent->timer_interval != 0u) {
+        elapsed = now - ent->timer_deadline;
+        expirations += elapsed / ent->timer_interval;
+        ent->timer_deadline += expirations * ent->timer_interval;
+    } else {
+        ent->timer_deadline = 0u;
+    }
+
+    return (unsigned long long)expirations;
+}
+
+static int process_handle_special_read(fd_entry_t* ent, char* buf, unsigned int len) {
+    unsigned long long expirations;
+
+    if (!ent || !ent->valid) return -EBADF;
+    if (!buf) return -EFAULT;
+
+    if (ent->kind == PROCESS_HANDLE_KIND_TIMERFD) {
+        if (len < sizeof(unsigned long long)) return -EINVAL;
+        if (!timerfd_ready(ent)) return -EAGAIN;
+
+        expirations = timerfd_consume(ent);
+        k_memcpy(buf, &expirations, sizeof(expirations));
+        return (int)sizeof(expirations);
+    }
+
+    if (ent->kind == PROCESS_HANDLE_KIND_SIGNALFD) {
+        return -EAGAIN;
+    }
+
+    return -EINVAL;
+}
+
+static int process_handle_special_write(fd_entry_t* ent, const char* buf, unsigned int len) {
+    (void)ent;
+    (void)buf;
+    (void)len;
+    return -EBADF;
+}
+
+static int process_handle_special_seek(fd_entry_t* ent, int offset, int whence) {
+    (void)ent;
+    (void)offset;
+    (void)whence;
+    return -EINVAL;
+}
+
+static short process_handle_special_poll(fd_entry_t* ent, short events) {
+    short revents = 0;
+
+    if (!ent || !ent->valid) return POLLERR;
+
+    if (ent->kind == PROCESS_HANDLE_KIND_TIMERFD) {
+        if ((events & POLLIN) && timerfd_ready(ent)) {
+            revents |= POLLIN;
+        }
+        return revents;
+    }
+
+    if (ent->kind == PROCESS_HANDLE_KIND_SIGNALFD) {
+        return 0;
+    }
+
+    return POLLERR;
+}
+
+static void process_handle_special_close(fd_entry_t* ent) {
+    if (!ent) return;
+    if (ent->aux_frame) {
+        pmm_free_frame(ent->aux_frame);
+    }
+    k_memset(ent, 0, sizeof(*ent));
+}
+
 int process_fd_read(fd_entry_t* ent, char* buf, unsigned int len) {
     if (!ent || !ent->ops) return -EBADF;
     if (!ent->ops->read) return -ENOSYS;
@@ -415,6 +561,17 @@ int process_fd_seek(fd_entry_t* ent, int offset, int whence) {
 int process_fd_flush(fd_entry_t* ent) {
     if (!ent || !ent->ops || !ent->ops->flush) return 0;
     return ent->ops->flush(ent);
+}
+
+int process_fd_set_flags(fd_entry_t* ent, unsigned int flags) {
+    if (!ent || !ent->valid) return -EBADF;
+    ent->flags = flags & SYS_FD_FLAG_NONBLOCK;
+    return 0;
+}
+
+unsigned int process_fd_get_flags(fd_entry_t* ent) {
+    if (!ent || !ent->valid) return 0;
+    return ent->flags;
 }
 
 void process_claim_for_wait(process_t* proc) {
