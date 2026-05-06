@@ -26,7 +26,7 @@ typedef enum {
  * it starts small and grows up to the per-process limit.
  */
 #define PROCESS_FD_INITIAL_CAPACITY 16
-#define PROCESS_FD_LIMIT_DEFAULT    64
+#define PROCESS_FD_LIMIT_DEFAULT    128
 #define PROCESS_FD_LIMIT_HARD       256
 #define PROCESS_FD_MAX              PROCESS_FD_LIMIT_DEFAULT
 #define PROCESS_FD_FIRST            3        /* first allocatable fd */

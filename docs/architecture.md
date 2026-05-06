@@ -39,7 +39,7 @@ kernel_main()
   gdt_init()        ← null, k-code, k-data, u-code, u-data, TSS + ltr
   paging_init()     ← identity-maps first 8 MB, enables CR0.PG
   memory_init()     ← bump allocator base at 0x100000
-  pmm_init()        ← bitmap allocator at 0x200000–0x7FFFFF
+  pmm_init()        ← bitmap allocator at 0x200000–0x1FFFFFF
   boot diagnostics  ← splash PASS/WARN/FAIL checks for startup invariants
   keyboard/timer/idt
   #PF handler      ← logs CR2 / error code, kills user faults, panics on kernel faults
@@ -108,7 +108,7 @@ Inside `kernel_main()`:
 2. `gdt_init()` — install GDT with ring-3 segments and TSS; load task register with `ltr`
 3. `paging_init()` — enable paging, identity-map 8 MB
 4. `memory_init(0x100000)` — bump allocator starts at 1 MB
-5. `pmm_init()` — bitmap allocator covers 0x200000–0x7FFFFF; all frames start free
+5. `pmm_init()` — bitmap allocator covers 0x200000–0x1FFFFFF; all frames start free
 6. `kernel_selfcheck()` — report splash checks for TSS selector, boot stack, heap base, and PMM baseline
 7. `keyboard_init()`, `timer_init(SMALLOS_TIMER_HZ)`, `idt_init()` — drivers and interrupt table
 8. `sched_init()` — initialise the scheduler data structures
@@ -179,7 +179,7 @@ the longest regression paths.
 The handle table is generic rather than file-specific now. `process_create()`
 pre-opens fd `0`, `1`, and `2` as console handles for stdin/stdout/stderr.
 User-opened files and sockets start at fd `3`. The table starts with 16 slots,
-grows from PMM-backed contiguous frames on demand, and defaults to a 64-fd
+grows from PMM-backed contiguous frames on demand, and defaults to a 128-fd
 process limit with a 256-fd hard cap.
 
 Each handle slot carries its own kind and ops table:
@@ -457,7 +457,7 @@ Programs are linked at fixed virtual address `0x400000`, loaded into private use
                                    ELF segment frames, user stack frames,
                                    all process-private page tables,
                                    per-process kernel stack frames
-0x00800000   PMM ceiling (= identity-map limit)
+0x02000000   PMM ceiling for the default 32 MB guest memory
 0x00400000   USER_CODE_BASE — user ELF virtual address (per-process mapping)
 0xBFFFF000   user stack virtual address (per-process mapping)
 ```
@@ -471,8 +471,8 @@ Programs are linked at fixed virtual address `0x400000`, loaded into private use
 0x00400000 – 0x007FFFFF   user ELF segments (private, PAGE_USER | PAGE_WRITE)
 0xBFFFF000                user stack page (private, PAGE_USER | PAGE_WRITE)
 0xC0000000 – 0xFFFFFFFF   shared kernel mappings (supervisor-only)
-0xE0000000 – 0xE05FFFFF   shared kernel PMM alias, mapping physical
-                          0x00200000 – 0x007FFFFF
+0xE0000000 – 0xE1DFFFFF   shared kernel PMM alias, mapping physical
+                          0x00200000 – 0x01FFFFFF
 ```
 
 ## Process Paging Ownership

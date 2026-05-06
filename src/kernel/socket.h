@@ -22,9 +22,20 @@ typedef struct socket socket_t;
 #define SOCKET_MAX         256u
 #define SOCKET_BACKLOG_MAX 32u
 
+typedef struct {
+    unsigned int max_sockets;
+    unsigned int used_sockets;
+    unsigned int tcp_sockets;
+    unsigned int open_sockets;
+    unsigned int bound_sockets;
+    unsigned int listening_sockets;
+    unsigned int connected_sockets;
+} socket_stats_t;
+
 socket_t*      socket_create_tcp(void);
 void           socket_retain(socket_t* sock);
 void           socket_release(socket_t* sock);
+void           socket_get_stats(socket_stats_t* out);
 socket_kind_t  socket_kind(socket_t* sock);
 socket_state_t socket_state(socket_t* sock);
 unsigned int   socket_local_port(socket_t* sock);

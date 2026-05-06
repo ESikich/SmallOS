@@ -90,17 +90,17 @@ void _start(int argc, char** argv) {
 
     errno = 0;
     {
-        int fds[64];
+        int fds[128];
         int count = 0;
         int fd;
-        while (count < 64) {
+        while (count < 128) {
             fd = open("apps/demo/hello.elf", O_RDONLY);
             if (fd < 0) {
                 break;
             }
             fds[count++] = fd;
         }
-        check_int("fd exhaustion count", 61, count);
+        check_int("fd exhaustion count", 125, count);
         check_int("fd exhaustion errno", ENFILE, errno);
         for (int i = 0; i < count; i++) {
             close(fds[i]);

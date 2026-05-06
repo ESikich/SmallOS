@@ -10,8 +10,29 @@
  * backs normal guest services such as tcpecho, sockeof, and ftpd.
  */
 
+typedef struct {
+    unsigned int max_listeners;
+    unsigned int listeners;
+    unsigned int max_connections;
+    unsigned int max_connections_per_listener;
+    unsigned int connections;
+    unsigned int syn_recv_connections;
+    unsigned int established_connections;
+    unsigned int fin_wait_connections;
+    unsigned int accepted_connections;
+    unsigned int pending_connections;
+    unsigned int max_backlog;
+    unsigned int rx_rings;
+    unsigned int tx_rings;
+    unsigned int rx_bytes;
+    unsigned int tx_bytes;
+    unsigned int rx_buffer_bytes;
+    unsigned int tx_buffer_bytes;
+} tcp_stats_t;
+
 int  tcp_init(void);
 int  tcp_handle_ipv4_frame(const unsigned char* frame, unsigned int len);
+void tcp_get_stats(tcp_stats_t* out);
 void tcp_socket_close_listener(unsigned int port);
 void tcp_socket_close_connection(unsigned int port, unsigned int conn_id);
 void tcp_socket_use_port(unsigned int port);

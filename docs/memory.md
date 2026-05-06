@@ -10,7 +10,7 @@ SmallOS currently uses three distinct memory pools:
 
 ```text
 0x100000 – 0x1FFFFF   kernel bump heap (kmalloc / kmalloc_page)
-0x200000 – 0x7FFFFF   reclaimable PMM frame pool
+0x200000 – 0x1FFFFFF  reclaimable PMM frame pool
 0x10000000+           per-process user heap (SYS_BRK)
 ```
 
@@ -44,7 +44,9 @@ The reported heap top should remain unchanged across user ELF runs when no kerne
 
 # PMM Frame Pool
 
-`pmm_init()` manages reclaimable frames from `0x200000` through `0x7FFFFF`.
+`pmm_init()` manages reclaimable frames from `0x200000` through `0x1FFFFFF`,
+which uses the rest of the default 32 MB QEMU memory after the low kernel
+heap range.
 
 Use PMM frames for:
 

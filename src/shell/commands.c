@@ -7,12 +7,14 @@
 #include "ata.h"
 #include "e1000.h"
 #include "net.h"
+#include "tcp.h"
 #include "arp.h"
 #include "ipv4.h"
 #include "fat16.h"
 #include "vfs.h"
 #include "process.h"
 #include "scheduler.h"
+#include "socket.h"
 #include "klib.h"
 
 #define SHELL_JOB_MAX 8
@@ -371,10 +373,65 @@ static void cmd_meminfo(command_t* cmd) {
 }
 
 static void cmd_netinfo(command_t* cmd) {
+    socket_stats_t socket_stats;
+    tcp_stats_t tcp_stats;
+
     (void)cmd;
 
     terminal_puts("netinfo: ");
     e1000_print_info();
+
+    socket_get_stats(&socket_stats);
+    terminal_puts("sockets: ");
+    terminal_put_uint(socket_stats.used_sockets);
+    terminal_putc('/');
+    terminal_put_uint(socket_stats.max_sockets);
+    terminal_puts(" used tcp=");
+    terminal_put_uint(socket_stats.tcp_sockets);
+    terminal_puts(" open=");
+    terminal_put_uint(socket_stats.open_sockets);
+    terminal_puts(" bound=");
+    terminal_put_uint(socket_stats.bound_sockets);
+    terminal_puts(" listen=");
+    terminal_put_uint(socket_stats.listening_sockets);
+    terminal_puts(" conn=");
+    terminal_put_uint(socket_stats.connected_sockets);
+    terminal_putc('\n');
+
+    tcp_get_stats(&tcp_stats);
+    terminal_puts("tcp: listeners ");
+    terminal_put_uint(tcp_stats.listeners);
+    terminal_putc('/');
+    terminal_put_uint(tcp_stats.max_listeners);
+    terminal_puts(" conns ");
+    terminal_put_uint(tcp_stats.connections);
+    terminal_putc('/');
+    terminal_put_uint(tcp_stats.max_connections);
+    terminal_puts(" established=");
+    terminal_put_uint(tcp_stats.established_connections);
+    terminal_puts(" accepted=");
+    terminal_put_uint(tcp_stats.accepted_connections);
+    terminal_puts(" pending=");
+    terminal_put_uint(tcp_stats.pending_connections);
+    terminal_puts(" syn=");
+    terminal_put_uint(tcp_stats.syn_recv_connections);
+    terminal_puts(" fin=");
+    terminal_put_uint(tcp_stats.fin_wait_connections);
+    terminal_putc('\n');
+
+    terminal_puts("tcp buffers: rx ");
+    terminal_put_uint(tcp_stats.rx_rings);
+    terminal_puts(" rings ");
+    terminal_put_uint(tcp_stats.rx_bytes);
+    terminal_puts(" bytes queued / ");
+    terminal_put_uint(tcp_stats.rx_buffer_bytes / 1024u);
+    terminal_puts(" KB cap, tx ");
+    terminal_put_uint(tcp_stats.tx_rings);
+    terminal_puts(" rings ");
+    terminal_put_uint(tcp_stats.tx_bytes);
+    terminal_puts(" bytes queued / ");
+    terminal_put_uint(tcp_stats.tx_buffer_bytes / 1024u);
+    terminal_puts(" KB cap\n");
 }
 
 static void cmd_netsend(command_t* cmd) {

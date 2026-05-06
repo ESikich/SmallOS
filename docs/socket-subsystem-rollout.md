@@ -12,7 +12,7 @@ adds epoll/timerfd/signalfd/user-runtime shims, raises the process fd table to
 Current implementation status:
 
 - Phase 1 is implemented: process fd tables are PMM-backed, start at 16 slots,
-  grow to the default 64-fd limit, and are freed on process teardown.
+  grow to the default 128-fd limit, and are freed on process teardown.
 - Phase 2 is implemented as a first socket-object layer: socket fds point at
   `socket_t` objects that own TCP listener/connection ids.
 - Phase 3 has an initial TCP scaling step: per-listener stream slots are now
@@ -30,6 +30,35 @@ Current implementation status:
   4 KiB TX ring, keep sent bytes until ACKed, release the ring once drained,
   retry buffered payloads, and report socket writability from remaining TX
   capacity. Larger TX limits and fuller slow-reader/window handling remain.
+- Phase 6 has an initial visibility/configuration step: the default process fd
+  limit is 128, the sample cserve config uses `max_conn = 32` and a 5 second
+  keep-alive timeout, and `netinfo` reports socket-object counts, TCP listener
+  and connection counts, and RX/TX ring usage.
+- Phase 7 has the first cserve-shaped stress smoke: `make cserve-smoke`
+  launches cserve, fetches the large static fixture, checks a 404, holds 24
+  keep-alive clients by default, exercises one slow reader, and captures
+  `netinfo`. It is intentionally still below the 32-client exit criterion so
+  the next stress pass has room to prove the full target.
+
+## Remaining Implementation Work
+
+The cserve/FTP server-side milestone is in a useful, tested state. The
+remaining implementation work is mostly about making the TCP/socket subsystem
+less provisional before SSH or client-style programs depend on it:
+
+- Replace the per-listener connection-slot model with a real TCP table keyed
+  by local IP, local port, remote IP, and remote port.
+- Finish send-side/window behavior for slow readers, including larger or
+  configurable TX limits and clearer global socket/TCP memory caps.
+- Move timerfd and signalfd waits onto object-level wait queues and make epoll
+  fully object-driven instead of partly scan-driven.
+- Implement outbound TCP `connect()`; `SYS_CONNECT` still returns `-ENOSYS`.
+- Implement real TCP half-close state for `shutdown()`; the syscall currently
+  validates arguments and returns success.
+- Add the remaining Phase 7 stress tools: `socket_parallel_smoke.py`,
+  `ftp_loop_smoke.py`, and their Makefile targets.
+- Raise or parameterize the cserve smoke to demonstrate the full 32 held
+  keep-alive-client exit criterion once the broader stress matrix is in place.
 
 ## Goals
 
@@ -71,7 +100,8 @@ cserve consumes baseline fds for:
 - each static file being sent
 
 That is why the baseline sample config used `max_conn = 4`; the current sample
-now uses `max_conn = 16` after the fd-table and socket-object foundation.
+now uses `max_conn = 32` after the fd-table, socket-object, and resource
+visibility foundation.
 
 ### TCP
 
@@ -88,7 +118,7 @@ queues, fd entries point at `socket_t` objects, per-listener stream slots live
 in PMM-backed TCP tables, and accepted streams allocate a lazy 4 KiB PMM-backed
 RX ring on first payload. Remaining TCP limits are now the partial 4-tuple
 model, small fixed RX/TX ring sizes, incomplete slow-reader/window handling,
-and limited resource visibility.
+and initial-but-not-complete resource limits and visibility.
 
 ### Process allocation
 
@@ -127,7 +157,7 @@ resource backend at once.
 
 Target:
 
-- Default per-process fd limit: 64.
+- Initial target was a 64-fd default; the current practical default is 128.
 - Hard cap: 256, preferably configurable by a kernel constant.
 - `process_t` remains one page or gets a deliberate replacement allocation
   model.
@@ -417,6 +447,7 @@ Add constants or config fields for:
 Expose some visibility through shell commands:
 
 - `netinfo` should show listeners, connection count, and maybe socket memory.
+  (Initial socket/TCP counts plus RX/TX ring usage are implemented.)
 - `meminfo` should make fd/socket growth visible enough for debugging.
 
 Suggested first practical settings:
@@ -440,11 +471,12 @@ Purpose: keep the socket work honest as SSH arrives.
 
 Add tools:
 
-- `tools/cserve_smoke.py`
+- `tools/cserve_smoke.py` (implemented)
   - launches cserve
   - fetches large page
   - opens N keep-alive clients
-  - checks no terminal log spill
+  - exercises one slow reader
+  - captures guest `netinfo` counters
 - `tools/socket_parallel_smoke.py`
   - opens N connections to a simple guest service
   - sends small payloads
@@ -467,7 +499,10 @@ Run matrix:
 
 Exit criteria:
 
-- 32 cserve keep-alive clients pass reliably.
+- 32 cserve keep-alive clients pass reliably. The implemented
+  `make cserve-smoke` currently holds 24 by default; use
+  `CSERVE_SMOKE_CLIENTS=32` as the direct target once the next stress pass is
+  ready to make that the default gate.
 - FTP passive data transfers pass repeatedly.
 - Socket EOF semantics stay stable.
 
@@ -511,21 +546,21 @@ semantics.
 
 Title:
 
-`Add socket stress smoke and resource visibility`
+`Add socket parallel and FTP loop stress`
 
 Scope:
 
-- add a host-side cserve smoke that opens many keep-alive clients and includes
-  at least one slow reader
-- add a small socket/TCP resource summary command or log-visible diagnostic
-  for listener count, connection count, and RX/TX ring pages
-- make resource-limit failures explicit in the diagnostics and docs
-- run `make test`, `make socket-eof-smoke`, `make ftp-smoke`, and the new
-  cserve smoke
+- add `tools/socket_parallel_smoke.py` against `apps/services/tcpecho.elf`
+  or another tiny guest service
+- add `tools/ftp_loop_smoke.py` that repeats PASV/LIST/RETR/STOR cycles
+- keep `make cserve-smoke` in the run matrix while adding
+  `make socket-parallel-smoke` and `make ftp-loop-smoke`
+- use the `netinfo` socket/TCP counters to report resource usage before and
+  after each stress loop
 
 Why first:
 
-The RX and TX paths now both have bounded per-connection buffers. The next
-useful step is making the behavior observable and covered by stress that looks
-like cserve traffic, so regressions show up before SSH adds longer-lived
-sessions.
+The cserve-shaped smoke and first resource counters cover the web-service path.
+The next useful step is widening the stress matrix to repeated FTP passive data
+connections and simple parallel echo traffic, so regressions show up before SSH
+adds longer-lived interactive sessions.

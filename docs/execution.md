@@ -189,6 +189,11 @@ and `RMD` cleanup.
 the guest drains the complete payload, observes EOF through `poll()`/`read()`,
 and can still send a final response.
 
+`make cserve-smoke` forwards guest port `8080`, launches cserve with the seeded
+`cserve.ini`, checks the large `/www/index.html` static fixture, holds
+keep-alive clients, exercises a slow reader, verifies `/favicon.ico` returns
+404, and records the guest `netinfo` socket/TCP summary.
+
 ---
 
 # ELF Load Path

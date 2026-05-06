@@ -67,6 +67,41 @@ void socket_release(socket_t* sock) {
     k_memset(sock, 0, sizeof(*sock));
 }
 
+void socket_get_stats(socket_stats_t* out) {
+    if (!out) return;
+
+    k_memset(out, 0, sizeof(*out));
+    out->max_sockets = SOCKET_MAX;
+
+    for (unsigned int i = 0; i < SOCKET_MAX; i++) {
+        socket_t* sock = &s_sockets[i];
+        if (sock->refs == 0u) continue;
+
+        out->used_sockets++;
+        if (sock->kind == SOCKET_KIND_TCP) {
+            out->tcp_sockets++;
+        }
+
+        switch (sock->state) {
+        case SOCKET_STATE_OPEN:
+            out->open_sockets++;
+            break;
+        case SOCKET_STATE_BOUND:
+            out->bound_sockets++;
+            break;
+        case SOCKET_STATE_LISTENING:
+            out->listening_sockets++;
+            break;
+        case SOCKET_STATE_CONNECTED:
+            out->connected_sockets++;
+            break;
+        case SOCKET_STATE_CLOSED:
+        default:
+            break;
+        }
+    }
+}
+
 socket_kind_t socket_kind(socket_t* sock) {
     return sock ? sock->kind : SOCKET_KIND_NONE;
 }

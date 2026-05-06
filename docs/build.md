@@ -127,6 +127,12 @@ port `2121` and passive data port `30000`, starts `apps/services/ftpd`, then
 drives login, negative path checks, `LIST`, `RETR`, `STOR` readback,
 `DELE`, and `RMD` cleanup from the host.
 
+`make cserve-smoke` forwards host port `8080` to guest cserve, starts
+`apps/services/cserve.elf --config cserve.ini`, fetches the large static
+fixture with browser-shaped requests, holds keep-alive clients open, runs one
+slow reader, checks a 404, and captures guest `netinfo` socket/TCP counters.
+Override `CSERVE_SMOKE_CLIENTS` or `CSERVE_SMOKE_PORT` when needed.
+
 For networking, the default `run` and `test` targets keep using QEMU's
 user-network NAT so CI stays simple. `make run-tap` and
 `make run-headless-tap` switch the e1000 NIC over to a host TAP device

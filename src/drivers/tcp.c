@@ -1483,6 +1483,66 @@ int tcp_handle_ipv4_frame(const unsigned char* frame, unsigned int len) {
     return 1;
 }
 
+void tcp_get_stats(tcp_stats_t* out) {
+    if (!out) {
+        return;
+    }
+
+    k_memset(out, 0, sizeof(*out));
+    out->max_listeners = TCP_MAX_SLOTS;
+    out->max_connections_per_listener = TCP_MAX_CONNS_PER_SLOT;
+    out->max_connections = TCP_MAX_SLOTS * TCP_MAX_CONNS_PER_SLOT;
+    out->max_backlog = TCP_MAX_BACKLOG;
+
+    if (!s_slots) {
+        return;
+    }
+
+    for (unsigned int i = 0; i < TCP_MAX_SLOTS; i++) {
+        tcp_slot_t* slot = &s_slots[i];
+        if (slot->local_port == 0u) {
+            continue;
+        }
+
+        if (slot->listener_active) {
+            out->listeners++;
+        }
+
+        for (unsigned int c = 0; c < TCP_MAX_CONNS_PER_SLOT; c++) {
+            tcp_conn_t* conn = &slot->conns[c];
+            if (conn->state == TCP_STATE_CLOSED) {
+                continue;
+            }
+
+            out->connections++;
+            if (conn->accepted) {
+                out->accepted_connections++;
+            } else {
+                out->pending_connections++;
+            }
+
+            if (conn->state == TCP_STATE_SYN_RCVD) {
+                out->syn_recv_connections++;
+            } else if (conn->state == TCP_STATE_ESTABLISHED) {
+                out->established_connections++;
+            } else if (conn->state == TCP_STATE_FIN_WAIT) {
+                out->fin_wait_connections++;
+            }
+
+            if (conn->rx_frame != 0u) {
+                out->rx_rings++;
+                out->rx_buffer_bytes += TCP_RX_BUFFER_SIZE;
+            }
+            if (conn->tx_frame != 0u) {
+                out->tx_rings++;
+                out->tx_buffer_bytes += TCP_TX_BUFFER_SIZE;
+            }
+            out->rx_bytes += conn->rx_len;
+            out->tx_bytes += conn->tx_len;
+        }
+    }
+}
+
 static void tcp_service_main(void) {
     for (;;) {
         net_poll_drain();

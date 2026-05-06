@@ -284,6 +284,8 @@ SERIAL_LOG=/tmp/smallos-serial.log
 MONITOR_SOCK=/tmp/smallos-monitor.sock
 PIDFILE=/tmp/smallos.pid
 SMOKE_TIMEOUT=120.0
+CSERVE_SMOKE_PORT?=8080
+CSERVE_SMOKE_CLIENTS?=24
 PYTHON3=python3
 TEST_SETUP_LOG=$(BUILD_DIR)/test-setup.log
 QEMU_SELFTEST_FLAGS?=--summary
@@ -299,7 +301,7 @@ QEMUFLAGS=-drive format=raw,file=$(IMG_DIR)/os-image.bin -boot c -m 32 \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all dirs run run-gtk run-sdl run-tap run-headless run-headless-tap test socket-eof-smoke ftp-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify reset-disk tinycc-host tinycc-host-clean
+.PHONY: all dirs run run-gtk run-sdl run-tap run-headless run-headless-tap test socket-eof-smoke ftp-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify reset-disk tinycc-host tinycc-host-clean
 
 run: image-layout-check
 	$(QEMU) $(QEMUFLAGS) -display $(QEMU_DISPLAY)
@@ -366,6 +368,18 @@ socket-eof-smoke: reset-disk image-layout-check
 		--monitor $(MONITOR_SOCK) \
 		--serial $(SERIAL_LOG) \
 		--pidfile $(PIDFILE) \
+		--timeout 120
+
+cserve-smoke: reset-disk image-layout-check
+	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
+	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
+	$(MAKE) run-headless QEMU_NET_HOSTFWD=',hostfwd=tcp::$(CSERVE_SMOKE_PORT)-:8080'
+	$(PYTHON3) tools/cserve_smoke.py \
+		--monitor $(MONITOR_SOCK) \
+		--serial $(SERIAL_LOG) \
+		--pidfile $(PIDFILE) \
+		--port $(CSERVE_SMOKE_PORT) \
+		--clients $(CSERVE_SMOKE_CLIENTS) \
 		--timeout 120
 
 smoke: reset-disk image-layout-check
