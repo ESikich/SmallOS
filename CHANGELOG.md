@@ -9,6 +9,7 @@
   * Added `make socket-parallel-smoke`, which launches `tcpecho`, opens parallel host clients, verifies echoed payloads, and captures `netinfo` before, during, and after the run.
   * Added `make ftp-loop-smoke`, which repeatedly drives fresh FTP control sessions through passive `LIST`, `RETR`, and `STOR` cycles while recording `netinfo` counters.
   * Added QEMU selftest probes for signalfd-backed Ctrl+C delivery and outbound TCP `connect()` through a host echo endpoint.
+  * Converted the completed socket rollout plan into a status/reference document.
 
 * **Dynamic process fd tables** (`src/kernel/process.*`, `src/kernel/pmm.*`, `src/user/errnoprobe.c`, `docs/`)
   * Moved fd tables out of `process_t` into PMM-backed allocations that start at 16 slots and grow to the default 128-fd process limit, with a 256-fd hard cap.
