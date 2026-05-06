@@ -382,9 +382,11 @@ int sys_send(int fd, const void* buf, uint32_t len);
 ```
 
 Sends bytes on an established stream socket. The current server-side TCP path
-transmits immediately and does not yet have a per-connection TX queue or
-send-side backpressure; that means slow-reader behavior is still a known
-socket-subsystem follow-up.
+queues bytes in a lazy 4 KiB PMM-backed per-connection TX ring, transmits from
+that ring, keeps sent bytes until ACKed, releases the ring once drained, and
+retries buffered payloads. Blocking socket writes wait on the socket write wait
+queue when the TX ring is full. Nonblocking socket writes can return a short
+byte count or `-EAGAIN`.
 
 ---
 
@@ -709,7 +711,7 @@ process exists.
 int sys_fread(int fd, char* buf, uint32_t len);
 ```
 
-Reads up to `len` bytes from an open readable handle at `fd` into `buf`. File handles read from the current file position and advance it by the number of bytes actually read. Socket handles read from the TCP receive path, which uses the accepted stream's lazy 4 KiB PMM-backed RX ring. fd `0` reads from the console input buffer with the same blocking behavior as `SYS_READ`. Returns the number of bytes read, `0` at end-of-file / closed socket, or a negative errno on error.
+Reads up to `len` bytes from an open readable handle at `fd` into `buf`. File handles read from the current file position and advance it by the number of bytes actually read. Socket handles read from the TCP receive path, which uses the accepted stream's lazy 4 KiB PMM-backed RX ring. Socket writes use a matching lazy 4 KiB PMM-backed TX ring and report writable readiness from remaining TX capacity. fd `0` reads from the console input buffer with the same blocking behavior as `SYS_READ`. Returns the number of bytes read, `0` at end-of-file / closed socket, or a negative errno on error.
 
 For file handles, the read op loads the file once into PMM-backed per-fd cache pages on first use, then copies the requested slice from that cache into the validated user buffer. The cache stays live until `sys_close()` or process teardown, so repeated reads from the same descriptor avoid extra ATA traffic.
 
@@ -848,7 +850,7 @@ u_stat(...)        query path metadata
 * `SYS_YIELD` and the timer path use the same stub layout, but the real scheduler resume ESP is `esp - 8`, not raw `esp`
 * EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`
 * The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.
-* fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`); user-opened files and sockets start at fd 3. The handle table is PMM-backed process state: it starts at 16 slots, grows up to the default 64-fd process limit, and has a kernel hard cap of 256. Every handle carries readable/writable/dirty state plus an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`. `process.c` owns fd lifetime and dispatch, `vfs.c` owns FAT16-backed file behavior, `socket.c` owns kernel socket objects plus accept/read/write wait queues, and `tcp.c` owns TCP listener/connection state plus the lazy RX rings behind connected sockets.
+* fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`); user-opened files and sockets start at fd 3. The handle table is PMM-backed process state: it starts at 16 slots, grows up to the default 64-fd process limit, and has a kernel hard cap of 256. Every handle carries readable/writable/dirty state plus an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`. `process.c` owns fd lifetime and dispatch, `vfs.c` owns FAT16-backed file behavior, `socket.c` owns kernel socket objects plus accept/read/write wait queues, and `tcp.c` owns TCP listener/connection state plus the lazy RX/TX rings behind connected sockets.
 * `SYS_WRITEFILE` is the simplest root-only persistence path for user tools that want to emit a generated artifact without managing an fd-based write stream.
 * `SYS_WRITEFILE_PATH` is the preferred path-aware persistence primitive for compilers and build tools, especially when writing into nested directories.
 

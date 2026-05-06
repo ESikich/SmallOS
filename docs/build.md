@@ -670,6 +670,6 @@ Replaces CHS `AH=0x02`. Removes the 18-sector-per-track limit. Required because 
 # Future Improvements
 
 * Outbound TCP `connect()` support for client-style user programs
-* TCP send queues, retransmit buffers, and send-side backpressure for slow readers
+* Larger TCP send queues and fuller slow-reader/window handling
 * Richer filesystem metadata such as long filenames or permission bits
 * Environment-variable support for the hosted `main(argc, argv)` runtime path

@@ -40,7 +40,7 @@ Descriptor slots are owned by `process.c`, not the syscall dispatcher. fd `0`,
 `1`, and `2` are real console handles created with each process; user-opened
 files and sockets start at fd `3`. FAT16-backed file handles and path helpers
 live behind `vfs.c`; socket objects and accept/read/write wait queues live
-behind `socket.c`; TCP listener/connection state and lazy receive rings live
+behind `socket.c`; TCP listener/connection state and lazy RX/TX rings live
 behind `tcp.c`; and `process.c` keeps the generic fd lifetime and dispatch
 rules. If we add a new resource type later, it should get a handle kind and ops
 table for `read`, `write`, `seek`, `poll`, `flush`, and `close` so resource

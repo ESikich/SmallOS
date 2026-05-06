@@ -18,15 +18,18 @@ Current implementation status:
 - Phase 3 has an initial TCP scaling step: per-listener stream slots are now
   PMM-backed, capped `listen(backlog)` handling is in place, and the enlarged
   TCP table stays out of the low-memory VGA/BIOS hole. A full 4-tuple TCP
-  table and send-side backpressure work remain.
+  table and fuller send-side/window handling remain.
 - Phase 4 has an initial socket wait-queue step: `wait_queue_t` is backed by a
   fixed node pool, sockets own accept/read/write queues, and blocking
   `accept`, `recv`, socket `read`, `poll`, and `epoll_wait` register on socket
   objects. Timerfd/signalfd wait queues and fully object-driven epoll remain.
 - Phase 5 has an initial receive-buffer step: accepted TCP connections allocate
   a lazy PMM-backed 4 KiB RX ring on first payload, advertise the remaining RX
-  window, and stop ACKing bytes that could not be queued. TX queueing,
-  retransmit buffering, and full send-side backpressure remain.
+  window, and stop ACKing bytes that could not be queued. It also has an
+  initial send-buffer step: connected TCP streams allocate a lazy PMM-backed
+  4 KiB TX ring, keep sent bytes until ACKed, release the ring once drained,
+  retry buffered payloads, and report socket writability from remaining TX
+  capacity. Larger TX limits and fuller slow-reader/window handling remain.
 
 ## Goals
 
@@ -84,8 +87,8 @@ The current implementation has moved beyond that baseline: sockets own wait
 queues, fd entries point at `socket_t` objects, per-listener stream slots live
 in PMM-backed TCP tables, and accepted streams allocate a lazy 4 KiB PMM-backed
 RX ring on first payload. Remaining TCP limits are now the partial 4-tuple
-model, no TX queue/retransmit buffer, no real send-side backpressure, and
-limited resource visibility.
+model, small fixed RX/TX ring sizes, incomplete slow-reader/window handling,
+and limited resource visibility.
 
 ### Process allocation
 
@@ -354,13 +357,22 @@ Implemented so far:
   sequence past bytes that were not queued.
 - `make socket-eof-smoke` now sends a 3072-byte multi-segment payload before
   the host half-close, so payload-before-EOF coverage exercises the RX ring.
+- Connected TCP streams allocate a 4 KiB PMM-backed TX ring lazily on first
+  write, keep queued bytes until ACKed, release the ring once drained, retry
+  buffered payloads, wake socket writers when ACKs free space, and make
+  `POLLOUT` depend on TX capacity.
+- Nonblocking `send()` / socket `write()` now return short writes or `-EAGAIN`
+  when the TX ring is full; blocking socket writes wait on the socket write
+  queue until space returns.
 
 Target:
 
 - Per-connection RX ring buffer. (Initial implementation is in place.)
-- Per-connection TX queue or retransmit buffer.
+- Per-connection TX queue or retransmit buffer. (Initial implementation is in
+  place.)
 - Small default buffers with caps.
 - `send()` can return short writes or `EAGAIN` for nonblocking sockets.
+  (Initial implementation is in place.)
 
 Suggested initial sizes:
 
@@ -476,8 +488,8 @@ Before starting SSH:
 
 SSH is interactive and long-lived. The old single socket waiter and tiny
 fixed-fd table are gone, and receive buffering has started, but SSH should
-still wait for the remaining 4-tuple connection-table cleanup, TX
-queue/retransmit buffering, send-side backpressure, and better shutdown
+still wait for the remaining 4-tuple connection-table cleanup, fuller
+slow-reader/window handling, resource visibility, and better shutdown
 semantics.
 
 ## Implementation Rules For The Next LLM
@@ -499,22 +511,21 @@ semantics.
 
 Title:
 
-`Add TCP send queue and socket write backpressure`
+`Add socket stress smoke and resource visibility`
 
 Scope:
 
-- add a small per-connection TX/retransmit buffer
-- make socket writability reflect available TX capacity
-- let blocking socket writes wait on the socket write queue
-- make nonblocking `send()` / socket `write()` return short writes or
-  `-EAGAIN` when the TX buffer is full
-- keep the existing lazy RX ring behavior unchanged
-- update docs for send semantics and TX limits
-- run `make test`, `make socket-eof-smoke`, `make ftp-smoke`
+- add a host-side cserve smoke that opens many keep-alive clients and includes
+  at least one slow reader
+- add a small socket/TCP resource summary command or log-visible diagnostic
+  for listener count, connection count, and RX/TX ring pages
+- make resource-limit failures explicit in the diagnostics and docs
+- run `make test`, `make socket-eof-smoke`, `make ftp-smoke`, and the new
+  cserve smoke
 
 Why first:
 
-The receive side now has a real bounded buffer and honest advertised window,
-but the send side still assumes immediate transmission. TX buffering and
-backpressure are the next step toward slow-reader safety for cserve, FTP, and
-eventually SSH.
+The RX and TX paths now both have bounded per-connection buffers. The next
+useful step is making the behavior observable and covered by stress that looks
+like cserve traffic, so regressions show up before SSH adds longer-lived
+sessions.

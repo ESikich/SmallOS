@@ -40,6 +40,7 @@ int            socket_tcp_connection_established(socket_t* sock);
 int            socket_tcp_recv_ready(socket_t* sock);
 int            socket_tcp_peer_closed(socket_t* sock);
 int            socket_tcp_recv(socket_t* sock, void* buf, unsigned int len);
+int            socket_tcp_send_ready(socket_t* sock);
 int            socket_tcp_send(socket_t* sock, const void* buf, unsigned int len);
 short          socket_poll(socket_t* sock, short events);
 int            socket_wait(socket_t* sock, process_t* proc, short events);

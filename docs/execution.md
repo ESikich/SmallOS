@@ -309,8 +309,9 @@ by `process.c`. Each handle has readable/writable/dirty state plus ops for
 kernel `socket_t` objects whose accept/read/write wait queues wake blocking
 socket syscalls and socket-backed poll/epoll waits. Accepted TCP streams now
 allocate a lazy 4 KiB PMM-backed RX ring on first payload and advertise the
-remaining receive window, while send-side queueing/backpressure remains future
-work.
+remaining receive window; socket writes use a matching lazy 4 KiB TX ring, ACK
+driven space reclamation, release-on-drain behavior, and write-waiter wakeups
+for basic send-side backpressure.
 Each process also carries cwd state, so user path syscalls resolve relative
 paths before entering VFS or ELF loading.
 FAT16-backed file behavior and path operations sit behind `vfs.c`, so

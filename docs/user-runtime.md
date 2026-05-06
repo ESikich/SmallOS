@@ -114,8 +114,9 @@ Socket descriptors point at kernel `socket_t` objects; blocking socket reads,
 accepts, and socket-backed `poll`/`epoll_wait` waits use socket-owned
 accept/read/write wait queues. Accepted TCP streams allocate a 4 KiB PMM-backed
 receive ring on first payload and release it again after userland drains the
-buffer. Send-side queueing/backpressure is not implemented yet, so the current
-TCP send path still assumes immediate transmission.
+buffer. Socket writes allocate a matching 4 KiB TX ring on first payload, keep
+queued bytes until ACKed, release the ring once drained, and wake write waiters
+as TX space returns.
 
 FAT16-backed file descriptors support:
 

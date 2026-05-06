@@ -478,14 +478,63 @@ static int process_handle_socket_read(fd_entry_t* ent, char* buf, unsigned int l
 static int process_handle_socket_write(fd_entry_t* ent, const char* buf, unsigned int len) {
     int rc;
     socket_t* sock;
+    process_t* proc;
+    unsigned int done = 0u;
 
     if (!ent || !ent->valid) return -EBADF;
     sock = ent->socket;
     if (socket_state(sock) != SOCKET_STATE_CONNECTED) return -EINVAL;
     if (len == 0) return 0;
 
-    rc = socket_tcp_send(sock, buf, len);
-    return rc < 0 ? -ECONNRESET : rc;
+    proc = sched_current();
+    while (done < len) {
+        rc = socket_tcp_send(sock, buf + done, len - done);
+        if (rc > 0) {
+            done += (unsigned int)rc;
+            if ((ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u) {
+                break;
+            }
+            continue;
+        }
+
+        if (rc < 0 && rc != -EAGAIN) {
+            return done ? (int)done : (rc == -ENOMEM ? rc : -ECONNRESET);
+        }
+
+        if ((ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u) {
+            return done ? (int)done : -EAGAIN;
+        }
+
+        if (!socket_tcp_connection_established(sock)) {
+            return done ? (int)done : -ECONNRESET;
+        }
+
+        if (!proc) {
+            __asm__ __volatile__("sti; hlt; cli");
+            continue;
+        }
+
+        proc->state = PROCESS_STATE_WAITING;
+        rc = socket_wait(sock, proc, POLLOUT);
+        if (rc < 0) {
+            proc->state = PROCESS_STATE_RUNNING;
+            socket_wait_clear_process(proc);
+            return done ? (int)done : rc;
+        }
+        if (socket_tcp_send_ready(sock) ||
+            !socket_tcp_connection_established(sock)) {
+            proc->state = PROCESS_STATE_RUNNING;
+        }
+
+        __asm__ __volatile__("sti");
+        while (proc->state != PROCESS_STATE_RUNNING) {
+            __asm__ __volatile__("hlt");
+        }
+        __asm__ __volatile__("cli");
+        socket_wait_clear_process(proc);
+    }
+
+    return (int)done;
 }
 
 static int process_handle_socket_seek(fd_entry_t* ent, int offset, int whence) {

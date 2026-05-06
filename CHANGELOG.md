@@ -14,6 +14,7 @@
   * Raised TCP per-listener stream slots, moved the enlarged TCP slot table into PMM-backed memory instead of low `.bss`, and wired `listen(backlog)` through a capped backlog value.
   * Added a fixed-pool wait queue primitive and socket-level accept/read/write queues; blocking `accept`, `recv`, socket `read`, `poll`, and `epoll_wait` now register on the relevant socket object instead of a single TCP waiter.
   * Added lazy PMM-backed 4 KiB TCP receive rings per active connection and advertised the remaining RX window instead of ACKing bytes that were not queued.
+  * Added lazy PMM-backed 4 KiB TCP transmit rings per active writing connection; sent bytes are retained until ACKed, payloads are retried from the ring, `POLLOUT` reflects remaining TX capacity, and blocking socket writes wait for TX space while nonblocking writes can short-write or return `EAGAIN`.
   * Raised the sample cserve config to `max_conn = 16`.
   * Expanded the socket EOF smoke to send a multi-segment payload before the host half-close.
 

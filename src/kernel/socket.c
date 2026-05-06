@@ -183,6 +183,12 @@ int socket_tcp_recv(socket_t* sock, void* buf, unsigned int len) {
     return tcp_socket_recv(buf, len);
 }
 
+int socket_tcp_send_ready(socket_t* sock) {
+    if (!sock || sock->state != SOCKET_STATE_CONNECTED) return 0;
+    socket_tcp_use(sock);
+    return tcp_socket_send_ready();
+}
+
 int socket_tcp_send(socket_t* sock, const void* buf, unsigned int len) {
     if (!sock || sock->state != SOCKET_STATE_CONNECTED) return -EINVAL;
     socket_tcp_use(sock);
@@ -212,7 +218,7 @@ short socket_poll(socket_t* sock, short events) {
         if (peer_closed || !established) {
             revents |= POLLHUP;
         }
-        if ((events & POLLOUT) && established) {
+        if ((events & POLLOUT) && established && tcp_socket_send_ready()) {
             revents |= POLLOUT;
         }
     }
