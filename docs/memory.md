@@ -57,6 +57,7 @@ Use PMM frames for:
 - ELF segment frames
 - other memory that should be freed on process exit
 - dynamic per-process handle tables referenced by `process_t`
+- TCP listener and global 4-tuple connection tables
 - lazy TCP receive and transmit rings for accepted socket streams
 
 Do not allocate process-owned paging structures with `kmalloc_page()`. They must come from PMM so the process can be torn down cleanly.

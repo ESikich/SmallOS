@@ -201,8 +201,8 @@ later writes and deliver EOF to the host.
 
 `make cserve-smoke` forwards guest port `8080`, launches cserve with the seeded
 `cserve.ini`, checks the large `/www/index.html` static fixture, holds
-keep-alive clients, exercises a slow reader, verifies `/favicon.ico` returns
-404, and records the guest `netinfo` socket/TCP summary.
+32 keep-alive clients by default, exercises a slow reader, verifies
+`/favicon.ico` returns 404, and records the guest `netinfo` socket/TCP summary.
 
 ---
 
@@ -323,12 +323,14 @@ by `process.c`. Each handle has readable/writable/dirty state plus ops for
 `read`, `write`, `seek`, `poll`, `flush`, and `close`; socket handles point at
 kernel `socket_t` objects whose accept/read/write wait queues wake blocking
 socket syscalls and socket-backed poll/epoll waits. Accepted TCP streams now
-allocate a lazy 4 KiB PMM-backed RX ring on first payload and advertise the
-remaining receive window; socket writes use a matching lazy 4 KiB TX ring, ACK
-driven space reclamation, release-on-drain behavior, and write-waiter wakeups
-for basic send-side backpressure. Basic `shutdown()` half-close behavior is
-implemented for passive streams: `SHUT_RD` reports local EOF, and `SHUT_WR`
-drains queued TX before sending FIN and rejecting later writes.
+live in a global 4-tuple TCP table, allocate a lazy 4 KiB PMM-backed RX ring on
+first payload, and advertise the remaining receive window; socket writes use a
+matching lazy 4 KiB TX ring, ACK-driven space reclamation, release-on-drain
+behavior, and write-waiter wakeups for basic send-side backpressure. Basic
+`shutdown()` half-close behavior is implemented for passive streams: `SHUT_RD`
+reports local EOF, and `SHUT_WR` drains queued TX before sending FIN and
+rejecting later writes. The passive FIN path retransmits and cleans up once the
+peer close/ACK sequence completes or idles out.
 Each process also carries cwd state, so user path syscalls resolve relative
 paths before entering VFS or ELF loading.
 FAT16-backed file behavior and path operations sit behind `vfs.c`, so

@@ -425,12 +425,16 @@ static void cmd_netinfo(command_t* cmd) {
     terminal_put_uint(tcp_stats.rx_bytes);
     terminal_puts(" bytes queued / ");
     terminal_put_uint(tcp_stats.rx_buffer_bytes / 1024u);
+    terminal_puts(" KB allocated / ");
+    terminal_put_uint(tcp_stats.max_rx_buffer_bytes / 1024u);
     terminal_puts(" KB cap, tx ");
     terminal_put_uint(tcp_stats.tx_rings);
     terminal_puts(" rings ");
     terminal_put_uint(tcp_stats.tx_bytes);
     terminal_puts(" bytes queued / ");
     terminal_put_uint(tcp_stats.tx_buffer_bytes / 1024u);
+    terminal_puts(" KB allocated / ");
+    terminal_put_uint(tcp_stats.max_tx_buffer_bytes / 1024u);
     terminal_puts(" KB cap\n");
 }
 

@@ -41,16 +41,18 @@
 #define TCP_MAX_PAYLOAD    (TCP_MAX_FRAME - 14u - 20u - 20u)
 #define TCP_RX_BUFFER_SIZE  PAGE_SIZE
 #define TCP_TX_BUFFER_SIZE  PAGE_SIZE
-#define TCP_CONTROL_PORT     2121u
-#define TCP_MAX_CONNS_PER_SLOT 32u
-#define TCP_DEFAULT_BACKLOG     1u
-#define TCP_MAX_BACKLOG        32u
+#define TCP_CONTROL_PORT        2121u
+#define TCP_MAX_LISTENERS          8u
+#define TCP_MAX_CONNECTIONS      256u
+#define TCP_DEFAULT_BACKLOG        1u
+#define TCP_MAX_BACKLOG           32u
 
 typedef unsigned short u16;
 
 typedef struct {
     int state;
     int accepted;
+    u32 local_ip;
     u16 local_port;
     unsigned int conn_id;
     u8 remote_mac[6];
@@ -79,20 +81,25 @@ typedef struct {
     int peer_closed;
     int local_read_closed;
     int local_write_closed;
+    int local_fin_acked;
 } tcp_conn_t;
 
 typedef struct {
     u16 local_port;
     int listener_active;
     unsigned int listen_backlog;
-    tcp_conn_t conns[TCP_MAX_CONNS_PER_SLOT];
 } tcp_slot_t;
 
-#define TCP_MAX_SLOTS 8
+typedef struct {
+    tcp_slot_t slots[TCP_MAX_LISTENERS];
+    tcp_conn_t conns[TCP_MAX_CONNECTIONS];
+} tcp_tables_t;
 
+static tcp_tables_t* s_tables;
 static tcp_slot_t* s_slots;
-static u32 s_slots_frame;
-static u32 s_slots_frames;
+static tcp_conn_t* s_conns;
+static u32 s_tables_frame;
+static u32 s_tables_frames;
 static u16 s_active_port = TCP_LISTEN_PORT;
 static unsigned int s_active_conn = TCP_SOCKET_CONN_NONE;
 static u16 s_ip_id = 1u;
@@ -102,7 +109,7 @@ static u8 s_checksum_scratch[12u + TCP_MAX_FRAME];
 static tcp_slot_t* tcp_slot_for_port(u16 port) {
     if (!s_slots) return 0;
 
-    for (unsigned int i = 0; i < TCP_MAX_SLOTS; i++) {
+    for (unsigned int i = 0; i < TCP_MAX_LISTENERS; i++) {
         if (s_slots[i].local_port == port) {
             return &s_slots[i];
         }
@@ -116,7 +123,7 @@ static tcp_slot_t* tcp_slot_for_port_create(u16 port) {
         return slot;
     }
 
-    for (unsigned int i = 0; i < TCP_MAX_SLOTS; i++) {
+    for (unsigned int i = 0; i < TCP_MAX_LISTENERS; i++) {
         if (s_slots[i].local_port == 0u) {
             k_memset(&s_slots[i], 0, sizeof(s_slots[i]));
             s_slots[i].local_port = port;
@@ -138,18 +145,23 @@ static tcp_slot_t* tcp_active_slot(void) {
     return &s_slots[0];
 }
 
-#define s_socket_listener_port (tcp_active_slot()->local_port)
-#define s_socket_listener_active (tcp_active_slot()->listener_active)
-
-static tcp_conn_t* tcp_slot_conn(tcp_slot_t* slot, unsigned int conn_id) {
-    if (!slot || conn_id >= TCP_MAX_CONNS_PER_SLOT) {
+static tcp_conn_t* tcp_conn_by_id(unsigned int conn_id) {
+    if (!s_conns || conn_id >= TCP_MAX_CONNECTIONS) {
         return 0;
     }
-    return &slot->conns[conn_id];
+    return &s_conns[conn_id];
 }
 
 static tcp_conn_t* tcp_active_conn(void) {
-    return tcp_slot_conn(tcp_active_slot(), s_active_conn);
+    tcp_conn_t* conn = tcp_conn_by_id(s_active_conn);
+
+    if (!conn || conn->state == TCP_STATE_CLOSED) {
+        return 0;
+    }
+    if (conn->local_port != s_active_port) {
+        return 0;
+    }
+    return conn;
 }
 
 static void tcp_conn_rx_release(tcp_conn_t* conn) {
@@ -411,15 +423,18 @@ static void tcp_conn_tx_arm_retransmit(tcp_conn_t* conn) {
     conn->tx_retransmit_at = timer_get_ticks() + TCP_RETRY_TICKS;
 }
 
-static tcp_conn_t* tcp_find_conn(tcp_slot_t* slot,
+static tcp_conn_t* tcp_find_conn(u32 local_ip,
+                                 u16 local_port,
                                  u32 remote_ip,
                                  u16 remote_port,
                                  unsigned int* out_id) {
-    if (!slot) return 0;
+    if (!s_conns) return 0;
 
-    for (unsigned int i = 0; i < TCP_MAX_CONNS_PER_SLOT; i++) {
-        tcp_conn_t* conn = &slot->conns[i];
+    for (unsigned int i = 0; i < TCP_MAX_CONNECTIONS; i++) {
+        tcp_conn_t* conn = &s_conns[i];
         if (conn->state != TCP_STATE_CLOSED &&
+            conn->local_ip == local_ip &&
+            conn->local_port == local_port &&
             conn->remote_ip == remote_ip &&
             conn->remote_port == remote_port) {
             if (out_id) *out_id = i;
@@ -430,11 +445,11 @@ static tcp_conn_t* tcp_find_conn(tcp_slot_t* slot,
     return 0;
 }
 
-static tcp_conn_t* tcp_alloc_conn(tcp_slot_t* slot, unsigned int* out_id) {
-    if (!slot) return 0;
+static tcp_conn_t* tcp_alloc_conn(unsigned int* out_id) {
+    if (!s_conns) return 0;
 
-    for (unsigned int i = 0; i < TCP_MAX_CONNS_PER_SLOT; i++) {
-        tcp_conn_t* conn = &slot->conns[i];
+    for (unsigned int i = 0; i < TCP_MAX_CONNECTIONS; i++) {
+        tcp_conn_t* conn = &s_conns[i];
         if (conn->state == TCP_STATE_CLOSED) {
             if (out_id) *out_id = i;
             return conn;
@@ -447,10 +462,13 @@ static tcp_conn_t* tcp_alloc_conn(tcp_slot_t* slot, unsigned int* out_id) {
 static unsigned int tcp_slot_pending_count(tcp_slot_t* slot) {
     unsigned int count = 0u;
 
-    if (!slot) return 0u;
-    for (unsigned int i = 0; i < TCP_MAX_CONNS_PER_SLOT; i++) {
-        tcp_conn_t* conn = &slot->conns[i];
-        if (conn->state != TCP_STATE_CLOSED && !conn->accepted) {
+    if (!slot || !s_conns) return 0u;
+    for (unsigned int i = 0; i < TCP_MAX_CONNECTIONS; i++) {
+        tcp_conn_t* conn = &s_conns[i];
+        if (conn->state != TCP_STATE_CLOSED &&
+            conn->local_ip == TCP_LOCAL_IP &&
+            conn->local_port == slot->local_port &&
+            !conn->accepted) {
             count++;
         }
     }
@@ -550,7 +568,7 @@ static void tcp_conn_tx_flush(tcp_conn_t* conn) {
             break;
         }
 
-        if (!tcp_send_segment(TCP_LOCAL_IP,
+        if (!tcp_send_segment(conn->local_ip,
                               conn->remote_ip,
                               conn->remote_mac,
                               conn->local_port,
@@ -599,7 +617,7 @@ static void tcp_conn_tx_retransmit(tcp_conn_t* conn) {
         return;
     }
 
-    (void)tcp_send_segment(TCP_LOCAL_IP,
+    (void)tcp_send_segment(conn->local_ip,
                            conn->remote_ip,
                            conn->remote_mac,
                            conn->local_port,
@@ -812,12 +830,17 @@ static void tcp_reset_connection(tcp_conn_t* conn) {
     conn->state = TCP_STATE_CLOSED;
 }
 
-static void tcp_reset_slot(tcp_slot_t* slot) {
-    if (!slot) {
+static void tcp_reset_slot_connections(tcp_slot_t* slot, int accepted_too) {
+    if (!slot || !s_conns) {
         return;
     }
-    for (unsigned int i = 0; i < TCP_MAX_CONNS_PER_SLOT; i++) {
-        tcp_reset_connection(&slot->conns[i]);
+    for (unsigned int i = 0; i < TCP_MAX_CONNECTIONS; i++) {
+        tcp_conn_t* conn = &s_conns[i];
+        if (conn->state == TCP_STATE_CLOSED) continue;
+        if (conn->local_ip != TCP_LOCAL_IP) continue;
+        if (conn->local_port != slot->local_port) continue;
+        if (!accepted_too && conn->accepted) continue;
+        tcp_reset_connection(conn);
     }
 }
 
@@ -833,7 +856,7 @@ static void tcp_begin_close(tcp_conn_t* conn) {
         return;
     }
 
-    tcp_send_segment(TCP_LOCAL_IP,
+    tcp_send_segment(conn->local_ip,
                      conn->remote_ip,
                      conn->remote_mac,
                      conn->local_port,
@@ -846,6 +869,7 @@ static void tcp_begin_close(tcp_conn_t* conn) {
                      0);
     conn->local_seq_next += 1u;
     conn->close_requested = 0;
+    conn->local_fin_acked = 0;
     conn->state = TCP_STATE_FIN_WAIT;
     conn->last_activity = timer_get_ticks();
     conn->retransmit_at = conn->last_activity + TCP_RETRY_TICKS;
@@ -890,9 +914,28 @@ static void tcp_conn_tx_ack(tcp_conn_t* conn, u32 ack) {
 
     if (conn->close_requested) {
         tcp_begin_close(conn);
-        if (conn->peer_closed) {
+        if (conn->peer_closed && conn->local_fin_acked) {
             tcp_reset_connection(conn);
         }
+    }
+}
+
+static void tcp_conn_fin_ack(tcp_conn_t* conn, u32 ack) {
+    if (!conn || conn->state != TCP_STATE_FIN_WAIT) {
+        return;
+    }
+    if (conn->local_fin_acked) {
+        return;
+    }
+    if ((int)(ack - conn->local_seq_next) < 0) {
+        return;
+    }
+
+    conn->local_fin_acked = 1;
+    conn->retransmit_at = 0u;
+    conn->retries = 0u;
+    if (conn->peer_closed) {
+        tcp_reset_connection(conn);
     }
 }
 
@@ -918,12 +961,7 @@ void tcp_socket_close_listener(unsigned int port) {
     slot->listener_active = 0;
     slot->listen_backlog = 0u;
     socket_wake_tcp_listener(port);
-    for (unsigned int i = 0; i < TCP_MAX_CONNS_PER_SLOT; i++) {
-        tcp_conn_t* pending = &slot->conns[i];
-        if (!pending->accepted) {
-            tcp_reset_connection(pending);
-        }
-    }
+    tcp_reset_slot_connections(slot, 0);
 }
 
 void tcp_socket_close_connection(unsigned int port, unsigned int conn_id) {
@@ -943,7 +981,9 @@ void tcp_socket_close_connection(unsigned int port, unsigned int conn_id) {
 
     if (conn->state == TCP_STATE_ESTABLISHED) {
         tcp_begin_close(conn);
-        if (conn->state == TCP_STATE_FIN_WAIT && conn->peer_closed) {
+        if (conn->state == TCP_STATE_FIN_WAIT &&
+            conn->peer_closed &&
+            conn->local_fin_acked) {
             tcp_reset_connection(conn);
         }
         return;
@@ -956,13 +996,14 @@ int tcp_socket_bind(unsigned int port) {
         return -1;
     }
 
-    if (!tcp_slot_for_port_create((u16)port)) {
+    tcp_slot_t* slot = tcp_slot_for_port_create((u16)port);
+    if (!slot) {
         return -1;
     }
     tcp_socket_use_port(port);
-    s_socket_listener_active = 1;
-    tcp_active_slot()->listen_backlog = TCP_DEFAULT_BACKLOG;
-    tcp_reset_slot(tcp_active_slot());
+    slot->listener_active = 1;
+    slot->listen_backlog = TCP_DEFAULT_BACKLOG;
+    tcp_reset_slot_connections(slot, 1);
     return 0;
 }
 
@@ -978,7 +1019,7 @@ int tcp_socket_listen(unsigned int backlog) {
     if (backlog > TCP_MAX_BACKLOG) {
         backlog = TCP_MAX_BACKLOG;
     }
-    s_socket_listener_active = 1;
+    slot->listener_active = 1;
     slot->listen_backlog = backlog;
     return 0;
 }
@@ -987,9 +1028,13 @@ int tcp_socket_accept_ready(void) {
     tcp_slot_t* slot = tcp_active_slot();
     if (!slot) return 0;
 
-    for (unsigned int i = 0; i < TCP_MAX_CONNS_PER_SLOT; i++) {
-        tcp_conn_t* conn = &slot->conns[i];
-        if (conn->state == TCP_STATE_ESTABLISHED && !conn->accepted) {
+    if (!s_conns) return 0;
+    for (unsigned int i = 0; i < TCP_MAX_CONNECTIONS; i++) {
+        tcp_conn_t* conn = &s_conns[i];
+        if (conn->state == TCP_STATE_ESTABLISHED &&
+            conn->local_ip == TCP_LOCAL_IP &&
+            conn->local_port == slot->local_port &&
+            !conn->accepted) {
             return 1;
         }
     }
@@ -1001,9 +1046,13 @@ unsigned int tcp_socket_mark_accepted(void) {
     tcp_slot_t* slot = tcp_active_slot();
     if (!slot) return TCP_SOCKET_CONN_NONE;
 
-    for (unsigned int i = 0; i < TCP_MAX_CONNS_PER_SLOT; i++) {
-        tcp_conn_t* conn = &slot->conns[i];
-        if (conn->state == TCP_STATE_ESTABLISHED && !conn->accepted) {
+    if (!s_conns) return TCP_SOCKET_CONN_NONE;
+    for (unsigned int i = 0; i < TCP_MAX_CONNECTIONS; i++) {
+        tcp_conn_t* conn = &s_conns[i];
+        if (conn->state == TCP_STATE_ESTABLISHED &&
+            conn->local_ip == TCP_LOCAL_IP &&
+            conn->local_port == slot->local_port &&
+            !conn->accepted) {
             conn->accepted = 1;
             s_active_conn = i;
             return i;
@@ -1057,7 +1106,7 @@ int tcp_socket_recv(void* buf, unsigned int len) {
     if (to_copy > 0u &&
         (conn->state == TCP_STATE_ESTABLISHED ||
          conn->state == TCP_STATE_FIN_WAIT)) {
-        tcp_send_segment(TCP_LOCAL_IP,
+        tcp_send_segment(conn->local_ip,
                          conn->remote_ip,
                          conn->remote_mac,
                          conn->local_port,
@@ -1180,7 +1229,14 @@ unsigned int tcp_socket_peer_port(void) {
 }
 
 unsigned int tcp_socket_local_port(void) {
-    return s_socket_listener_port;
+    tcp_conn_t* conn = tcp_active_conn();
+    tcp_slot_t* slot;
+
+    if (conn) {
+        return conn->local_port;
+    }
+    slot = tcp_active_slot();
+    return slot ? slot->local_port : 0u;
 }
 
 static int tcp_send_segment(u32 src_ip,
@@ -1241,7 +1297,7 @@ static void tcp_accept_syn(const u8* frame,
         return;
     }
 
-    conn = tcp_find_conn(slot, src_ip, src_port, 0);
+    conn = tcp_find_conn(TCP_LOCAL_IP, dst_port, src_ip, src_port, 0);
     if (conn) {
         return;
     }
@@ -1249,15 +1305,17 @@ static void tcp_accept_syn(const u8* frame,
         tcp_slot_pending_count(slot) >= slot->listen_backlog) {
         return;
     }
-    conn = tcp_alloc_conn(slot, &conn_id);
+    conn = tcp_alloc_conn(&conn_id);
     if (!conn) {
         return;
     }
     s_active_conn = conn_id;
 
+    k_memset(conn, 0, sizeof(*conn));
     for (unsigned int i = 0; i < 6; i++) {
         conn->remote_mac[i] = frame[6 + i];
     }
+    conn->local_ip = TCP_LOCAL_IP;
     conn->local_port = dst_port;
     conn->conn_id = conn_id;
     conn->remote_ip = src_ip;
@@ -1287,8 +1345,9 @@ static void tcp_accept_syn(const u8* frame,
     conn->peer_closed = 0;
     conn->local_read_closed = 0;
     conn->local_write_closed = 0;
+    conn->local_fin_acked = 0;
 
-    tcp_send_segment(TCP_LOCAL_IP,
+    tcp_send_segment(conn->local_ip,
                      conn->remote_ip,
                      conn->remote_mac,
                      conn->local_port,
@@ -1325,13 +1384,13 @@ static void tcp_process_rx_payload(tcp_slot_t* slot,
         } else {
             accepted = tcp_conn_rx_push(conn, payload, payload_len);
             if (accepted > 0u) {
-                socket_wake_tcp_connection(slot->local_port, conn_id, POLLIN);
+                socket_wake_tcp_connection(conn->local_port, conn_id, POLLIN);
             }
         }
 
         conn->remote_seq_next += accepted;
         if (accepted < payload_len) {
-            tcp_send_segment(TCP_LOCAL_IP,
+            tcp_send_segment(conn->local_ip,
                              conn->remote_ip,
                              conn->remote_mac,
                              conn->local_port,
@@ -1350,7 +1409,7 @@ static void tcp_process_rx_payload(tcp_slot_t* slot,
         conn->remote_seq_next += 1u;
     }
 
-    tcp_send_segment(TCP_LOCAL_IP,
+    tcp_send_segment(conn->local_ip,
                      conn->remote_ip,
                      conn->remote_mac,
                      conn->local_port,
@@ -1364,9 +1423,12 @@ static void tcp_process_rx_payload(tcp_slot_t* slot,
 
     if (flags & TCP_FIN) {
         conn->peer_closed = 1;
-        socket_wake_tcp_connection(slot->local_port,
+        socket_wake_tcp_connection(conn->local_port,
                                    conn_id,
                                    (short)(POLLIN | POLLHUP));
+        if (conn->state == TCP_STATE_FIN_WAIT && conn->local_fin_acked) {
+            tcp_reset_connection(conn);
+        }
     }
 }
 
@@ -1404,7 +1466,7 @@ static void tcp_echo_payload(const u8* frame,
     }
     tcp_socket_use_port(dst_port);
 
-    conn = tcp_find_conn(slot, src_ip, src_port, &conn_id);
+    conn = tcp_find_conn(TCP_LOCAL_IP, dst_port, src_ip, src_port, &conn_id);
     if (!conn) {
         tcp_accept_syn(frame, ip_header_len, total_len);
         return;
@@ -1423,6 +1485,10 @@ static void tcp_echo_payload(const u8* frame,
     conn->remote_window = tcp_read_u16_be(frame, tcp_off + 14u);
     if ((flags & TCP_ACK) != 0u) {
         tcp_conn_tx_ack(conn, ack);
+        tcp_conn_fin_ack(conn, ack);
+        if (conn->state == TCP_STATE_CLOSED) {
+            return;
+        }
     }
 
     if (conn->state == TCP_STATE_FIN_WAIT) {
@@ -1478,23 +1544,63 @@ static void tcp_echo_payload(const u8* frame,
 static void tcp_maybe_retransmit(void) {
     u32 now = timer_get_ticks();
 
-    for (unsigned int i = 0; i < TCP_MAX_SLOTS; i++) {
-        tcp_slot_t* slot = &s_slots[i];
+    if (!s_conns) {
+        return;
+    }
 
-        if (slot->local_port == 0u) {
+    for (unsigned int c = 0; c < TCP_MAX_CONNECTIONS; c++) {
+        tcp_conn_t* conn = &s_conns[c];
+        s_active_conn = c;
+
+        if (conn->state == TCP_STATE_CLOSED) {
+            continue;
+        }
+        tcp_socket_use_connection(conn->local_port, c);
+
+        if (conn->state == TCP_STATE_SYN_RCVD) {
+            if (now < conn->retransmit_at) {
+                continue;
+            }
+            if (conn->retries >= TCP_MAX_RETRIES) {
+                tcp_reset_connection(conn);
+                continue;
+            }
+
+            conn->retries++;
+            conn->retransmit_at = now + TCP_RETRY_TICKS;
+            tcp_send_segment(conn->local_ip,
+                             conn->remote_ip,
+                             conn->remote_mac,
+                             conn->local_port,
+                             conn->remote_port,
+                             conn->local_seq_next,
+                             conn->remote_seq_next,
+                             (u8)(TCP_SYN | TCP_ACK),
+                             tcp_conn_rx_window(conn),
+                             0,
+                             0);
             continue;
         }
 
-        tcp_socket_use_port(slot->local_port);
-
-        for (unsigned int c = 0; c < TCP_MAX_CONNS_PER_SLOT; c++) {
-            tcp_conn_t* conn = &slot->conns[c];
-            s_active_conn = c;
-
-            if (conn->state == TCP_STATE_SYN_RCVD) {
-                if (now < conn->retransmit_at) {
-                    continue;
-                }
+        if (conn->state == TCP_STATE_ESTABLISHED) {
+            tcp_conn_tx_flush(conn);
+            if (conn->tx_len > 0u &&
+                conn->tx_retransmit_at != 0u &&
+                now >= conn->tx_retransmit_at) {
+                tcp_conn_tx_retransmit(conn);
+            }
+            if (conn->local_port != TCP_CONTROL_PORT &&
+                now - conn->last_activity > TCP_IDLE_TICKS) {
+                tcp_begin_close(conn);
+            }
+        } else if (conn->state == TCP_STATE_FIN_WAIT) {
+            if (conn->local_fin_acked && conn->peer_closed) {
+                tcp_reset_connection(conn);
+                continue;
+            }
+            if (!conn->local_fin_acked &&
+                conn->retransmit_at != 0u &&
+                now >= conn->retransmit_at) {
                 if (conn->retries >= TCP_MAX_RETRIES) {
                     tcp_reset_connection(conn);
                     continue;
@@ -1502,35 +1608,20 @@ static void tcp_maybe_retransmit(void) {
 
                 conn->retries++;
                 conn->retransmit_at = now + TCP_RETRY_TICKS;
-                tcp_send_segment(TCP_LOCAL_IP,
+                tcp_send_segment(conn->local_ip,
                                  conn->remote_ip,
                                  conn->remote_mac,
                                  conn->local_port,
                                  conn->remote_port,
-                                 conn->local_seq_next,
+                                 conn->local_seq_next - 1u,
                                  conn->remote_seq_next,
-                                 (u8)(TCP_SYN | TCP_ACK),
+                                 (u8)(TCP_FIN | TCP_ACK),
                                  tcp_conn_rx_window(conn),
                                  0,
                                  0);
-                continue;
             }
-
-            if (conn->state == TCP_STATE_ESTABLISHED) {
-                tcp_conn_tx_flush(conn);
-                if (conn->tx_len > 0u &&
-                    conn->tx_retransmit_at != 0u &&
-                    now >= conn->tx_retransmit_at) {
-                    tcp_conn_tx_retransmit(conn);
-                }
-                if (slot->local_port != TCP_CONTROL_PORT &&
-                    now - conn->last_activity > TCP_IDLE_TICKS) {
-                    tcp_begin_close(conn);
-                }
-            } else if (conn->state == TCP_STATE_FIN_WAIT) {
-                if (now - conn->last_activity > TCP_IDLE_TICKS) {
-                    tcp_reset_connection(conn);
-                }
+            if (now - conn->last_activity > TCP_IDLE_TICKS) {
+                tcp_reset_connection(conn);
             }
         }
     }
@@ -1554,16 +1645,18 @@ void tcp_get_stats(tcp_stats_t* out) {
     }
 
     k_memset(out, 0, sizeof(*out));
-    out->max_listeners = TCP_MAX_SLOTS;
-    out->max_connections_per_listener = TCP_MAX_CONNS_PER_SLOT;
-    out->max_connections = TCP_MAX_SLOTS * TCP_MAX_CONNS_PER_SLOT;
+    out->max_listeners = TCP_MAX_LISTENERS;
+    out->max_connections_per_listener = TCP_MAX_CONNECTIONS;
+    out->max_connections = TCP_MAX_CONNECTIONS;
     out->max_backlog = TCP_MAX_BACKLOG;
+    out->max_rx_buffer_bytes = TCP_MAX_CONNECTIONS * TCP_RX_BUFFER_SIZE;
+    out->max_tx_buffer_bytes = TCP_MAX_CONNECTIONS * TCP_TX_BUFFER_SIZE;
 
-    if (!s_slots) {
+    if (!s_slots || !s_conns) {
         return;
     }
 
-    for (unsigned int i = 0; i < TCP_MAX_SLOTS; i++) {
+    for (unsigned int i = 0; i < TCP_MAX_LISTENERS; i++) {
         tcp_slot_t* slot = &s_slots[i];
         if (slot->local_port == 0u) {
             continue;
@@ -1572,39 +1665,39 @@ void tcp_get_stats(tcp_stats_t* out) {
         if (slot->listener_active) {
             out->listeners++;
         }
+    }
 
-        for (unsigned int c = 0; c < TCP_MAX_CONNS_PER_SLOT; c++) {
-            tcp_conn_t* conn = &slot->conns[c];
-            if (conn->state == TCP_STATE_CLOSED) {
-                continue;
-            }
-
-            out->connections++;
-            if (conn->accepted) {
-                out->accepted_connections++;
-            } else {
-                out->pending_connections++;
-            }
-
-            if (conn->state == TCP_STATE_SYN_RCVD) {
-                out->syn_recv_connections++;
-            } else if (conn->state == TCP_STATE_ESTABLISHED) {
-                out->established_connections++;
-            } else if (conn->state == TCP_STATE_FIN_WAIT) {
-                out->fin_wait_connections++;
-            }
-
-            if (conn->rx_frame != 0u) {
-                out->rx_rings++;
-                out->rx_buffer_bytes += TCP_RX_BUFFER_SIZE;
-            }
-            if (conn->tx_frame != 0u) {
-                out->tx_rings++;
-                out->tx_buffer_bytes += TCP_TX_BUFFER_SIZE;
-            }
-            out->rx_bytes += conn->rx_len;
-            out->tx_bytes += conn->tx_len;
+    for (unsigned int c = 0; c < TCP_MAX_CONNECTIONS; c++) {
+        tcp_conn_t* conn = &s_conns[c];
+        if (conn->state == TCP_STATE_CLOSED) {
+            continue;
         }
+
+        out->connections++;
+        if (conn->accepted) {
+            out->accepted_connections++;
+        } else {
+            out->pending_connections++;
+        }
+
+        if (conn->state == TCP_STATE_SYN_RCVD) {
+            out->syn_recv_connections++;
+        } else if (conn->state == TCP_STATE_ESTABLISHED) {
+            out->established_connections++;
+        } else if (conn->state == TCP_STATE_FIN_WAIT) {
+            out->fin_wait_connections++;
+        }
+
+        if (conn->rx_frame != 0u) {
+            out->rx_rings++;
+            out->rx_buffer_bytes += TCP_RX_BUFFER_SIZE;
+        }
+        if (conn->tx_frame != 0u) {
+            out->tx_rings++;
+            out->tx_buffer_bytes += TCP_TX_BUFFER_SIZE;
+        }
+        out->rx_bytes += conn->rx_len;
+        out->tx_bytes += conn->tx_len;
     }
 }
 
@@ -1618,32 +1711,36 @@ static void tcp_service_main(void) {
 
 int tcp_init(void) {
     process_t* proc = process_create_kernel_task("tcp", tcp_service_main);
-    unsigned int slot_bytes = sizeof(tcp_slot_t) * TCP_MAX_SLOTS;
+    unsigned int table_bytes = sizeof(tcp_tables_t);
 
     if (!proc) {
         return 0;
     }
 
-    if (!s_slots) {
-        s_slots_frames = PAGE_ALIGN(slot_bytes) / PAGE_SIZE;
-        s_slots_frame = pmm_alloc_contiguous_frames(s_slots_frames);
-        if (!s_slots_frame) {
+    if (!s_tables) {
+        s_tables_frames = PAGE_ALIGN(table_bytes) / PAGE_SIZE;
+        s_tables_frame = pmm_alloc_contiguous_frames(s_tables_frames);
+        if (!s_tables_frame) {
             process_destroy(proc);
             return 0;
         }
-        s_slots = (tcp_slot_t*)paging_phys_to_kernel_virt(s_slots_frame);
+        s_tables = (tcp_tables_t*)paging_phys_to_kernel_virt(s_tables_frame);
+        s_slots = s_tables->slots;
+        s_conns = s_tables->conns;
     }
-    k_memset(s_slots, 0, s_slots_frames * PAGE_SIZE);
+    k_memset(s_tables, 0, s_tables_frames * PAGE_SIZE);
     if (!tcp_slot_for_port_create(TCP_LISTEN_PORT)) {
-        pmm_free_contiguous_frames(s_slots_frame, s_slots_frames);
+        pmm_free_contiguous_frames(s_tables_frame, s_tables_frames);
+        s_tables = 0;
         s_slots = 0;
-        s_slots_frame = 0;
-        s_slots_frames = 0;
+        s_conns = 0;
+        s_tables_frame = 0;
+        s_tables_frames = 0;
         process_destroy(proc);
         return 0;
     }
     tcp_socket_use_port(TCP_LISTEN_PORT);
-    tcp_reset_slot(tcp_active_slot());
+    tcp_reset_slot_connections(tcp_active_slot(), 1);
 
     if (!sched_enqueue(proc)) {
         process_destroy(proc);

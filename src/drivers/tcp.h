@@ -5,9 +5,10 @@
  * Minimal kernel TCP service.
  *
  * A background kernel task drains NIC receive work, dispatches TCP frames,
- * manages a tiny set of passive stream slots, handles retransmit/idle timers,
- * and wakes user-space socket waiters.  It is intentionally narrow but now
- * backs normal guest services such as tcpecho, sockeof, and ftpd.
+ * manages passive listeners plus a global 4-tuple connection table, handles
+ * retransmit/idle timers, and wakes user-space socket waiters.  It is
+ * intentionally narrow but now backs normal guest services such as tcpecho,
+ * sockeof, and ftpd.
  */
 
 typedef struct {
@@ -28,6 +29,8 @@ typedef struct {
     unsigned int tx_bytes;
     unsigned int rx_buffer_bytes;
     unsigned int tx_buffer_bytes;
+    unsigned int max_rx_buffer_bytes;
+    unsigned int max_tx_buffer_bytes;
 } tcp_stats_t;
 
 int  tcp_init(void);

@@ -142,7 +142,8 @@ cleanup cycles. Override `FTP_LOOP_ITERATIONS` to change the loop count.
 `apps/services/cserve.elf --config cserve.ini`, fetches the large static
 fixture with browser-shaped requests, holds keep-alive clients open, runs one
 slow reader, checks a 404, and captures guest `netinfo` socket/TCP counters.
-Override `CSERVE_SMOKE_CLIENTS` or `CSERVE_SMOKE_PORT` when needed.
+It holds 32 clients by default. Override `CSERVE_SMOKE_CLIENTS` or
+`CSERVE_SMOKE_PORT` when needed.
 
 For networking, the default `run` and `test` targets keep using QEMU's
 user-network NAT so CI stays simple. `make run-tap` and

@@ -74,7 +74,7 @@ struct fd_entry {
     u32  flags;                            /* SYS_FD_FLAG_* descriptor status flags */
     u32  socket_state;                     /* PROCESS_SOCKET_STATE_* */
     u32  socket_port;                      /* listener or peer port */
-    u32  socket_conn;                      /* accepted TCP stream id for this port */
+    u32  socket_conn;                      /* global accepted TCP stream id */
     socket_t* socket;                      /* kernel socket object for socket fds */
     u32  aux_frame;                        /* kind-specific PMM frame */
     u32  timer_deadline;                   /* timerfd next expiry tick, 0 if disarmed */

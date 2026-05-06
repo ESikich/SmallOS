@@ -16,12 +16,14 @@
 
 * **Socket object layer** (`src/kernel/socket.*`, `src/kernel/wait.*`, `src/kernel/syscall.c`, `src/drivers/tcp.*`)
   * Socket fds now point at `socket_t` objects that own TCP listener/connection state instead of relying on fd-local `socket_port/socket_conn` fields for active behavior.
-  * Raised TCP per-listener stream slots, moved the enlarged TCP slot table into PMM-backed memory instead of low `.bss`, and wired `listen(backlog)` through a capped backlog value.
+  * Replaced the per-listener stream arrays with PMM-backed TCP tables: passive listeners live separately from a global connection table keyed by local IP, local port, remote IP, and remote port.
+  * Wired `listen(backlog)` through a capped backlog value while keeping connection ids stable as global TCP table indexes.
   * Added a fixed-pool wait queue primitive and socket-level accept/read/write queues; blocking `accept`, `recv`, socket `read`, `poll`, and `epoll_wait` now register on the relevant socket object instead of a single TCP waiter.
   * Added lazy PMM-backed 4 KiB TCP receive rings per active connection and advertised the remaining RX window instead of ACKing bytes that were not queued.
   * Added lazy PMM-backed 4 KiB TCP transmit rings per active writing connection; sent bytes are retained until ACKed, payloads are retried from the ring, `POLLOUT` reflects remaining TX capacity, and blocking socket writes wait for TX space while nonblocking writes can short-write or return `EAGAIN`.
-  * Added basic TCP half-close behavior for `shutdown()`: `SHUT_RD` reports local EOF, `SHUT_WR` drains queued TX before sending FIN, and later writes fail with `EPIPE`.
-  * Raised the sample cserve config to `max_conn = 32`.
+  * Added basic TCP half-close behavior for `shutdown()`: `SHUT_RD` reports local EOF, `SHUT_WR` drains queued TX before sending FIN, passive FINs are retransmitted until ACKed or cleaned up, and later writes fail with `EPIPE`.
+  * Updated `netinfo` so TCP buffers report currently allocated RX/TX ring capacity separately from global RX/TX caps.
+  * Raised the sample cserve config and default `make cserve-smoke` gate to `max_conn = 32`.
   * Expanded the socket EOF smoke to send a multi-segment payload before the host half-close and to verify guest-side write shutdown.
 
 ## [Current] — Full-screen userland text editor

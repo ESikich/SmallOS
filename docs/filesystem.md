@@ -202,7 +202,7 @@ The current FAT16 driver is intentionally narrow.
 - VFS-backed writable file handles with streaming FAT16 writes via `SYS_OPEN_WRITE`, `SYS_WRITEFD`, `SYS_LSEEK`, and `SYS_FSYNC`
 - file removal and rename/move through `SYS_UNLINK` and `SYS_RENAME`
 - fd-backed console handles for stdin/stdout/stderr
-- socket-backed handles for the current passive TCP stream path via `SYS_SOCKET`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_SEND`, `SYS_RECV`, `SYS_POLL`, `SYS_SETSOCKOPT`, and `SYS_GETSOCKNAME`
+- socket-backed handles for the current passive TCP stream path via `SYS_SOCKET`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_ACCEPT4`, `SYS_SEND`, `SYS_RECV`, `SYS_POLL`, `SYS_SETSOCKOPT`, `SYS_SHUTDOWN`, `SYS_GETSOCKNAME`, and `SYS_GETPEERNAME`
 - case-insensitive 8.3 filename matching
 - FAT chain following for file reads
 - loading one file at a time into a shared static buffer

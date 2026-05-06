@@ -47,8 +47,8 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * **`SYS_WRITEFILE_PATH`** — user process creates or overwrites a FAT16 file at any nested path
 * **ATA PIO driver** — polls the primary IDE channel (`0x1F0`) to read 512-byte sectors from disk in 32-bit protected mode; no DMA or IRQ required
 * **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing `/bin`, `apps/`, `tools/`, and sample sources; built by `tools/mkfat16.c` with no external dependencies; readable via ATA PIO with nested directory paths, writable at runtime through the kernel VFS shim for root-directory files and nested paths
-* **TCP service task** — kernel task that drains e1000 RX, dispatches ARP/IPv4/TCP frames, manages lazy PMM-backed RX/TX rings for accepted streams, handles control and buffered-payload retransmit/idle timers, and wakes socket wait queues
-* **Guest TCP apps** — `apps/services/tcpecho.elf` handles parallel echo clients for socket stress, `apps/services/sockeof.elf` pins down peer-close/read EOF semantics, and `apps/services/ftpd.elf` runs the vendored FTP session logic as a normal user-space ELF
+* **TCP service task** — kernel task that drains e1000 RX, dispatches ARP/IPv4/TCP frames, owns passive listeners plus a PMM-backed global 4-tuple connection table, manages lazy PMM-backed RX/TX rings for accepted streams, handles control, buffered-payload, and passive-FIN retransmit/idle timers, and wakes socket wait queues
+* **Guest TCP apps** — `apps/services/tcpecho.elf` handles parallel echo clients for socket stress, `apps/services/sockeof.elf` pins down peer-close/read EOF semantics, `apps/services/ftpd.elf` runs the vendored FTP session logic, and `apps/services/cserve.elf` runs the vendored cserver HTTP service as normal user-space ELFs
 
 ---
 
@@ -185,6 +185,11 @@ readback, `DELE`, nested directory cleanup, and `RMD`.
 
 `make ftp-loop-smoke` keeps `ftpd` running and repeats fresh FTP control
 sessions through passive `LIST`, `RETR`, and `STOR` cycles.
+
+`make cserve-smoke` boots QEMU with host forwarding for
+`apps/services/cserve.elf`, fetches the static fixture with browser-shaped
+HTTP requests, holds 32 keep-alive clients by default, exercises one slow
+reader, checks a 404, and captures `netinfo`.
 
 `make test` boots the image headlessly, verifies the boot diagnostics
 splash markers, runs the shell `selftest` command, feeds the interactive
