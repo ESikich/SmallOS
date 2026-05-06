@@ -40,13 +40,14 @@ kernel_main()
   paging_init()     ← identity-maps first 8 MB, enables CR0.PG
   memory_init()     ← bump allocator base at 0x100000
   pmm_init()        ← bitmap allocator at 0x200000–0x7FFFFF
-  startup check     ← verifies TSS, stack, heap, and PMM baselines
+  boot diagnostics  ← splash PASS/WARN/FAIL checks for startup invariants
   keyboard/timer/idt
   #PF handler      ← logs CR2 / error code, kills user faults, panics on kernel faults
   sched_init()      ← initialise runnable task table
   ata_init()        ← software reset ATA primary channel, verify ready
   pci_init()        ← scan PCI config space and log network controllers
   e1000_init()      ← bind the Intel 82540EM NIC and set up DMA rings
+  tcp_init()        ← start TCP/network service task
   fat16_init()      ← read BPB, validate FAT16 volume geometry
   create shell task ← explicit kernel task with dedicated stack
   process_start_reaper() ← create and enqueue zombie reaper task
@@ -108,18 +109,19 @@ Inside `kernel_main()`:
 3. `paging_init()` — enable paging, identity-map 8 MB
 4. `memory_init(0x100000)` — bump allocator starts at 1 MB
 5. `pmm_init()` — bitmap allocator covers 0x200000–0x7FFFFF; all frames start free
-6. `kernel_selfcheck()` — confirm the TSS selector, boot stack, heap base, and PMM baseline are intact
+6. `kernel_selfcheck()` — report splash checks for TSS selector, boot stack, heap base, and PMM baseline
 7. `keyboard_init()`, `timer_init(SMALLOS_TIMER_HZ)`, `idt_init()` — drivers and interrupt table
 8. `sched_init()` — initialise the scheduler data structures
 9. `ata_init()` — software reset ATA primary channel (`0x1F0`), poll until ready
 10. `pci_init()` — scan PCI config space and log discovered network controllers
 11. `e1000_init()` — bind the Intel 82540EM NIC and set up DMA rings
-12. `fat16_init()` — read ATA sector 0, extract the FAT16 start LBA from partition entry 1 in the MBR partition table, then read and validate the FAT16 BPB at that runtime-discovered location
-13. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
-14. `sched_enqueue(shell_proc)` — make the shell runnable
-15. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
-16. `sti` — enable interrupts
-17. `sched_start(shell_proc)` — switch from the boot stack into the shell task
+12. `tcp_init()` — create and enqueue the TCP/network service kernel task
+13. `fat16_init()` — read ATA sector 0, extract the FAT16 start LBA from partition entry 1 in the MBR partition table, then read and validate the FAT16 BPB at that runtime-discovered location
+14. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
+15. `sched_enqueue(shell_proc)` — make the shell runnable
+16. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
+17. `sti` — enable interrupts
+18. `sched_start(shell_proc)` — switch from the boot stack into the shell task
 
 `sched_init()` must still be called before `sti`, and `sched_start()` must happen only after the first runnable task has been created.
 

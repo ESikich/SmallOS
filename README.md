@@ -178,10 +178,11 @@ passive-data host forwarding, starts `apps/services/ftpd`, logs in as
 `ftp`/`ftp`, checks negative replies, and verifies `LIST`, `RETR`, `STOR`
 readback, `DELE`, nested directory cleanup, and `RMD`.
 
-`make test` boots the image headlessly, runs the shell `selftest`
-command, feeds the interactive `readline` prompt, and checks every
-shipped ELF in one pass.  The built-in shell command expectations live
-under `tests/shell/` and the ELF expectations live under `tests/elfs/`.
+`make test` boots the image headlessly, verifies the boot diagnostics
+splash markers, runs the shell `selftest` command, feeds the interactive
+`readline` prompt, and checks every shipped ELF in one pass.  The built-in
+shell command expectations live under `tests/shell/` and the ELF
+expectations live under `tests/elfs/`.
 
 `make smoke` runs the dedicated reboot and halt smoke checks.  Use
 `make smoke-reboot` or `make smoke-halt` if you want to exercise one
@@ -284,11 +285,12 @@ BIOS
 
 kernel_main()
  → terminal_init()       VGA text mode / terminal output
+ → boot splash           PASS/WARN/FAIL startup diagnostics
  → gdt_init()            GDT: null, k-code, k-data, u-code, u-data, TSS
  → paging_init()         enable paging, identity-map 8 MB
  → memory_init()         bump allocator at 0x100000
  → pmm_init()            bitmap allocator at 0x200000
- → kernel_selfcheck()    verify TSS, stack, heap, and PMM baselines
+ → kernel_selfcheck()    report TSS, stack, heap, and PMM baseline checks
  → keyboard/timer/idt    drivers and interrupt table
  → sched_init()          initialise runnable task table
  → ata_init()            initialise ATA primary channel

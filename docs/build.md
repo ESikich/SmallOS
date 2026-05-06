@@ -90,10 +90,11 @@ use that CRT path; there is no TinyCC-specific startup wrapper.
 
 ## Automated Guest Test
 
-`make test` boots the finished image headlessly, launches the shell
-`selftest` command, feeds the interactive `readline` prompt, and
-verifies the built-in shell command suite in `tests/shell/` plus every
-shipped ELF against the per-program expectation files in `tests/elfs/`.
+`make test` boots the finished image headlessly, verifies the boot
+diagnostics splash markers, launches the shell `selftest` command, feeds
+the interactive `readline` prompt, and verifies the built-in shell command
+suite in `tests/shell/` plus every shipped ELF against the per-program
+expectation files in `tests/elfs/`.
 
 The scripted shell/selftest command tables are stored statically in the
 kernel because the shell task's kernel stack is only 4 KB wide. That keeps

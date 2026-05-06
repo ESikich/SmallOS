@@ -1,5 +1,19 @@
 # Changelog
 
+## [Current] — Boot splash diagnostics
+
+### Added
+
+* **Boot splash and startup checks** (`src/kernel/kernel.c`, `tools/qemu_selftest.py`)
+  * Added a visible `SmallOS boot diagnostics` splash during kernel startup with PASS/WARN/FAIL rows for terminal, paging, GDT/TSS, heap, PMM, boot stack, keyboard, timer, IDT, scheduler, ATA, PCI, e1000, TCP, FAT16, shell, and reaper bring-up.
+  * Critical startup failures now print a splash `FAIL` row with context before halting instead of falling through to later boot work.
+  * The QEMU selftest now verifies the splash markers before running the shell and ELF regression suite.
+
+### Changed
+
+* **Init result plumbing** (`src/drivers/ata.*`, `src/drivers/tcp.*`, `src/kernel/process.*`)
+  * `ata_init()`, `tcp_init()`, and `process_start_reaper()` now return success/failure so the boot splash can report real status instead of assuming success.
+
 ## [Current] — Documentation and comment refresh
 
 ### Changed

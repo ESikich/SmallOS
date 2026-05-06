@@ -875,16 +875,16 @@ static void tcp_service_main(void) {
     }
 }
 
-void tcp_init(void) {
+int tcp_init(void) {
     process_t* proc = process_create_kernel_task("tcp", tcp_service_main);
     if (!proc) {
-        return;
+        return 0;
     }
 
     k_memset(s_slots, 0, sizeof(s_slots));
     if (!tcp_slot_for_port_create(TCP_LISTEN_PORT)) {
         process_destroy(proc);
-        return;
+        return 0;
     }
     tcp_socket_use_port(TCP_LISTEN_PORT);
     s_socket_waiter = 0;
@@ -892,5 +892,8 @@ void tcp_init(void) {
 
     if (!sched_enqueue(proc)) {
         process_destroy(proc);
+        return 0;
     }
+
+    return 1;
 }

@@ -615,14 +615,16 @@ static void reaper_task_main(void) {
     }
 }
 
-void process_start_reaper(void) {
+int process_start_reaper(void) {
     process_t* reaper = process_create_kernel_task("reaper", reaper_task_main);
     if (!reaper) {
         terminal_puts("process: failed to create reaper task\n");
-        return;
+        return 0;
     }
     if (!sched_enqueue(reaper)) {
         terminal_puts("process: failed to enqueue reaper task\n");
         process_destroy(reaper);
+        return 0;
     }
+    return 1;
 }

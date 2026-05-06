@@ -23,8 +23,9 @@ typedef unsigned short u16;
  *
  * Issue a software reset and wait for the drive to become ready.
  * Must be called once before any read.
+ * Returns 1 when the drive becomes ready, 0 on timeout.
  */
-void ata_init(void);
+int ata_init(void);
 
 /*
  * ata_read_sectors(lba, count, buf)

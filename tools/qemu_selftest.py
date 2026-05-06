@@ -15,6 +15,17 @@ TEST_PACKAGES = ("tests.shell", "tests.elfs")
 TRANSCRIPT_LIMIT = 262144
 TRANSCRIPT_TRIM = 131072
 STATUS_WIDTH = 38
+BOOT_SPLASH_MARKERS = (
+    "SmallOS boot diagnostics",
+    "boot: PASS terminal: VGA text and serial console",
+    "boot: PASS gdt: TSS selector loaded",
+    "boot: PASS pmm: all frames initially free",
+    "boot: PASS ata: primary channel ready",
+    "boot: PASS tcp: service task queued",
+    "boot: PASS fat16: volume mounted",
+    "boot: PASS shell: task queued",
+    "SmallOS ready",
+)
 
 
 sys.path.insert(0, str(REPO_ROOT))
@@ -230,6 +241,17 @@ def report_cases(cases, failures):
         status_line(f"{case['suite']}: {case['name']}", case_key not in failed)
 
 
+def verify_boot_splash(transcript, report=True):
+    missing = [marker for marker in BOOT_SPLASH_MARKERS if marker not in transcript]
+    ok = not missing
+    if report:
+        detail = f"{len(BOOT_SPLASH_MARKERS) - len(missing)}/{len(BOOT_SPLASH_MARKERS)} markers"
+        status_line("boot: diagnostics", ok, detail)
+        for marker in missing:
+            print(f"  missing: {marker}")
+    return ok, missing
+
+
 def run_interactive_regressions(sock, log, start_offset, deadline, echo=True, report=True):
     buf = ""
     log_offset = start_offset
@@ -389,6 +411,16 @@ def main():
                 status_end(False)
                 print_transcript_tail("boot", buf)
             print("timed out waiting for shell prompt", file=sys.stderr)
+            return shutdown_qemu(sock, args.pidfile, False)
+
+        boot_pass, boot_missing = verify_boot_splash(buf, report=not args.summary)
+        if args.summary:
+            detail = f"{len(BOOT_SPLASH_MARKERS) - len(boot_missing)}/{len(BOOT_SPLASH_MARKERS)} markers"
+            status_line("boot: diagnostics", boot_pass, detail)
+            for marker in boot_missing:
+                print(f"  missing: {marker}")
+        if not boot_pass:
+            print_transcript_tail("boot", buf)
             return shutdown_qemu(sock, args.pidfile, False)
 
         if args.summary:

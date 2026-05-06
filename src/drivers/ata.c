@@ -108,7 +108,7 @@ static void ata_400ns_delay(void) {
 /* Public API                                                           */
 /* ------------------------------------------------------------------ */
 
-void ata_init(void) {
+int ata_init(void) {
     /*
      * Software reset: set SRST bit in device control, then clear it.
      * nIEN (bit 1) stays 0, so device interrupts are not disabled at
@@ -122,10 +122,11 @@ void ata_init(void) {
 
     if (!ata_poll_bsy()) {
         terminal_puts("ata: reset timeout\n");
-        return;
+        return 0;
     }
 
     terminal_puts("ata: ready\n");
+    return 1;
 }
 
 int ata_read_sectors(u32 lba, unsigned char count, void* buf) {

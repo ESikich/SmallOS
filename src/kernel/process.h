@@ -165,7 +165,8 @@ int        process_wait_detachable(process_t* proc, int* detached);
  * timer tick, calls sched_reap_zombies() to free any unclaimed ZOMBIE
  * processes (e.g. runelf_nowait / SYS_EXEC children), then halts until
  * the next interrupt.  Call once from kernel_main() before sched_start().
+ * Returns 1 on success, 0 if the task could not be created or queued.
  */
-void       process_start_reaper(void);
+int        process_start_reaper(void);
 
 #endif /* PROCESS_H */

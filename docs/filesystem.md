@@ -155,7 +155,8 @@ The ATA driver is:
 - 28-bit LBA only
 - blocking
 
-It performs a software reset and waits for the drive to become ready.
+It performs a software reset, waits for the drive to become ready, and returns
+failure if the ready poll times out.
 
 ## `fat16_init()`
 

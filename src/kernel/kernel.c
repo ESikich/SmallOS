@@ -27,111 +27,174 @@ static unsigned int kernel_read_esp(void) {
     return esp;
 }
 
-static void kernel_selfcheck_fail(const char* msg) {
-    terminal_puts("kernel: selfcheck FAIL: ");
-    terminal_puts(msg);
-    terminal_putc('\n');
-
+static void boot_halt(void) {
     for (;;) {
         __asm__ __volatile__("cli; hlt");
     }
 }
 
-static void kernel_selfcheck_expect(int cond, const char* msg) {
-    if (!cond) {
-        kernel_selfcheck_fail(msg);
+static void boot_splash_begin(void) {
+    terminal_clear();
+    terminal_puts("============================================================\n");
+    terminal_puts(" SmallOS boot diagnostics\n");
+    terminal_puts(" protected-mode kernel startup\n");
+    terminal_puts("============================================================\n");
+}
+
+static void boot_splash_status(const char* status, const char* name) {
+    terminal_puts("boot: ");
+    terminal_puts(status);
+    terminal_putc(' ');
+    terminal_puts(name);
+    terminal_putc('\n');
+}
+
+static void boot_splash_pass(const char* name) {
+    boot_splash_status("PASS", name);
+}
+
+static void boot_splash_warn(const char* name) {
+    boot_splash_status("WARN", name);
+}
+
+static void boot_splash_fail(const char* name, const char* detail) {
+    boot_splash_status("FAIL", name);
+    if (detail) {
+        terminal_puts("boot: ");
+        terminal_puts(detail);
+        terminal_putc('\n');
     }
+    boot_halt();
+}
+
+static void boot_splash_expect(int cond, const char* name, const char* detail) {
+    if (!cond) {
+        boot_splash_fail(name, detail);
+    }
+
+    boot_splash_pass(name);
 }
 
 static void kernel_selfcheck(void) {
     unsigned int esp = kernel_read_esp();
 
-    terminal_puts("kernel: selfcheck\n");
-
     /*
      * These are the startup invariants the hand-rolled boot path must
      * already have established before we let the shell come up.
      */
-    kernel_selfcheck_expect(kernel_read_tr() == SEG_TSS,
-                            "task register not loaded with the TSS selector");
-    kernel_selfcheck_expect(tss_get_kernel_stack() == KERNEL_BOOT_STACK_TOP,
-                            "TSS kernel stack top mismatch");
-    kernel_selfcheck_expect(memory_get_heap_top() == 0x100000u,
-                            "heap top moved before startup allocations");
-    kernel_selfcheck_expect(pmm_free_count() == PMM_NUM_FRAMES,
-                            "PMM free frame count mismatch");
-    kernel_selfcheck_expect(esp <= KERNEL_BOOT_STACK_TOP,
-                            "kernel stack pointer above boot stack top");
-    kernel_selfcheck_expect(esp > KERNEL_BOOT_STACK_TOP - 0x1000u,
-                            "kernel stack pointer left the boot stack page");
-
-    terminal_puts("kernel: selfcheck PASS\n");
+    boot_splash_expect(kernel_read_tr() == SEG_TSS,
+                       "gdt: TSS selector loaded",
+                       "task register does not contain the TSS selector");
+    boot_splash_expect(tss_get_kernel_stack() == KERNEL_BOOT_STACK_TOP,
+                       "tss: ESP0 uses boot stack top",
+                       "TSS ESP0 does not match KERNEL_BOOT_STACK_TOP");
+    boot_splash_expect(memory_get_heap_top() == 0x100000u,
+                       "memory: heap starts at 1 MiB",
+                       "heap top moved before startup allocations");
+    boot_splash_expect(pmm_free_count() == PMM_NUM_FRAMES,
+                       "pmm: all frames initially free",
+                       "PMM free frame count does not match the bitmap size");
+    boot_splash_expect(esp <= KERNEL_BOOT_STACK_TOP &&
+                       esp > KERNEL_BOOT_STACK_TOP - 0x1000u,
+                       "stack: ESP inside boot stack page",
+                       "kernel stack pointer is outside the boot stack page");
 }
 
 void kernel_main(void) {
     terminal_init();
-    terminal_puts("SmallOS\n");
+    boot_splash_begin();
+    boot_splash_pass("terminal: VGA text and serial console");
 
     gdt_init();
     paging_init();
+    boot_splash_expect(paging_get_kernel_pd() != 0,
+                       "paging: kernel directory installed",
+                       "kernel page directory was not initialized");
 
     memory_init(0x100000);
     pmm_init();
     kernel_selfcheck();
 
     keyboard_init();
+    boot_splash_expect(keyboard_buf_available() == 0 &&
+                       keyboard_get_waiting_process() == 0,
+                       "keyboard: input state reset",
+                       "keyboard buffer or waiter slot was not reset");
+
     timer_init(SMALLOS_TIMER_HZ);
+    boot_splash_expect(timer_get_hz() == SMALLOS_TIMER_HZ &&
+                       timer_get_ticks() == 0,
+                       "timer: PIT frequency configured",
+                       "timer frequency or tick counter did not initialize");
+
     idt_init();
+    boot_splash_pass("idt: IRQ and syscall gates installed");
 
     sched_init();
+    boot_splash_expect(sched_current() == 0,
+                       "scheduler: run queue reset",
+                       "scheduler selected a current task before start");
 
     /*
      * ATA PIO driver — software reset + wait ready.
      * Must be called before fat16_init() and before sti.
      */
-    ata_init();
+    boot_splash_expect(ata_init(),
+                       "ata: primary channel ready",
+                       "ATA primary channel failed to become ready");
 
     /*
      * PCI bus scan — discover devices now so NIC work can bind to the
      * real hardware/QEMU enumeration path later.
      */
     pci_init();
+    boot_splash_pass("pci: config-space scan complete");
 
     /*
      * e1000 NIC — bind to the Intel 82540EM QEMU exposes and set up
      * basic DMA rings so networking can grow from a known-good device.
      */
-    e1000_init();
+    if (e1000_init()) {
+        boot_splash_pass("e1000: Intel 82540EM ready");
+    } else {
+        boot_splash_warn("e1000: Intel 82540EM not present");
+    }
 
     /*
      * TCP service — drain NIC RX, maintain the tiny TCP state machine,
      * and wake socket waiters used by guest TCP services.
      */
-    tcp_init();
+    boot_splash_expect(tcp_init(),
+                       "tcp: service task queued",
+                       "TCP service task could not be created");
 
     /*
      * FAT16 filesystem — reads FAT16_LBA from sector 0 offset 504
      * (patched by Makefile), validates BPB geometry.
      */
-    fat16_init();
+    boot_splash_expect(fat16_init(),
+                       "fat16: volume mounted",
+                       "FAT16 volume failed BPB or partition validation");
 
     process_t* shell_proc = process_create_kernel_task("shell", shell_task_main);
 
     if (!shell_proc) {
-        terminal_puts("kernel: failed to create shell task\n");
-        for (;;) {
-            __asm__ __volatile__("cli; hlt");
-        }
+        boot_splash_fail("shell: task created",
+                         "kernel could not allocate the shell process");
     }
+    boot_splash_pass("shell: task created");
 
     if (!sched_enqueue(shell_proc)) {
-        terminal_puts("kernel: failed to enqueue shell task\n");
-        for (;;) {
-            __asm__ __volatile__("cli; hlt");
-        }
+        boot_splash_fail("shell: task queued",
+                         "kernel could not enqueue the shell process");
     }
+    boot_splash_pass("shell: task queued");
 
-    process_start_reaper();
+    boot_splash_expect(process_start_reaper(),
+                       "reaper: task queued",
+                       "zombie reaper task could not be started");
+
+    terminal_puts("SmallOS ready\n");
 
     __asm__ __volatile__("sti");
     sched_start(shell_proc);
