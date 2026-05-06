@@ -17,43 +17,11 @@ static void fail(int fd, const char* msg) {
     sys_exit(1);
 }
 
-void _start(int argc, char** argv) {
-    int server_fd;
-    int client_fd;
-    struct sockaddr_in addr;
+static void verify_payload_before_eof(int server_fd, int client_fd) {
     char buf[128];
     struct pollfd pfd;
     unsigned int total;
     int n;
-
-    (void)argc;
-    (void)argv;
-
-    server_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (server_fd < 0) {
-        fail(-1, "socket failed");
-    }
-
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(SOCKEOF_PORT);
-    addr.sin_addr.s_addr = htonl(0);
-
-    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        fail(server_fd, "bind failed");
-    }
-    if (listen(server_fd, 1) < 0) {
-        fail(server_fd, "listen failed");
-    }
-
-    u_puts("sockeof: listening on 0.0.0.0:");
-    u_put_uint(SOCKEOF_PORT);
-    u_puts("\n");
-
-    client_fd = accept(server_fd, 0, 0);
-    if (client_fd < 0) {
-        fail(server_fd, "accept failed");
-    }
 
     pfd.fd = client_fd;
     pfd.events = POLLIN | POLLHUP;
@@ -107,8 +75,58 @@ void _start(int argc, char** argv) {
         close(client_fd);
         fail(server_fd, "post-shutdown write succeeded");
     }
+}
 
+static void verify_close_sends_fin(int server_fd, int client_fd) {
+    if (write(client_fd, "BYE\n", 4) != 4) {
+        close(client_fd);
+        fail(server_fd, "close-fin write failed");
+    }
     close(client_fd);
+}
+
+void _start(int argc, char** argv) {
+    int server_fd;
+    int client_fd;
+    struct sockaddr_in addr;
+
+    (void)argc;
+    (void)argv;
+
+    server_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (server_fd < 0) {
+        fail(-1, "socket failed");
+    }
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(SOCKEOF_PORT);
+    addr.sin_addr.s_addr = htonl(0);
+
+    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        fail(server_fd, "bind failed");
+    }
+    if (listen(server_fd, 2) < 0) {
+        fail(server_fd, "listen failed");
+    }
+
+    u_puts("sockeof: listening on 0.0.0.0:");
+    u_put_uint(SOCKEOF_PORT);
+    u_puts("\n");
+
+    client_fd = accept(server_fd, 0, 0);
+    if (client_fd < 0) {
+        fail(server_fd, "accept failed");
+    }
+    verify_payload_before_eof(server_fd, client_fd);
+    close(client_fd);
+
+    client_fd = accept(server_fd, 0, 0);
+    if (client_fd < 0) {
+        fail(server_fd, "second accept failed");
+    }
+    verify_close_sends_fin(server_fd, client_fd);
+
     close(server_fd);
     u_puts("sockeof PASS\n");
     sys_exit(0);

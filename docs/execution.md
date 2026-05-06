@@ -197,7 +197,9 @@ each client, and records `netinfo` before, during, and after the run.
 3072-byte patterned payload followed by a host TCP half-close, and verifies that
 the guest drains the complete payload, observes EOF through `poll()`/`read()`,
 can still send a final response, and then uses `shutdown(SHUT_WR)` to reject
-later writes and deliver EOF to the host.
+later writes and deliver EOF to the host. It then opens a second connection
+where a final guest write is delivered before guest `close()` sends FIN and the
+host observes EOF.
 
 `make cserve-smoke` forwards guest port `8080`, launches cserve with the seeded
 `cserve.ini`, checks the large `/www/index.html` static fixture, holds
@@ -327,12 +329,13 @@ handles own read wait queues too, with expired timerfds woken from the timer IRQ
 path. Accepted TCP streams now live in a global 4-tuple TCP table, allocate a
 lazy 4 KiB PMM-backed RX ring on
 first payload, and advertise the remaining receive window; socket writes use a
-matching lazy 4 KiB TX ring, ACK-driven space reclamation, release-on-drain
-behavior, and write-waiter wakeups for basic send-side backpressure. Basic
-`shutdown()` half-close behavior is implemented for passive streams: `SHUT_RD`
-reports local EOF, and `SHUT_WR` drains queued TX before sending FIN and
-rejecting later writes. The passive FIN path retransmits and cleans up once the
-peer close/ACK sequence completes or idles out.
+lazy 16 KiB TX ring, ACK-driven space reclamation, release-on-drain behavior,
+and write-waiter wakeups for basic send-side backpressure.
+`shutdown()` half-close behavior is implemented for passive and active close
+paths: `SHUT_RD` reports local EOF, and `SHUT_WR` drains queued TX before
+sending FIN and rejecting later writes. FIN paths retransmit, ACK duplicate peer
+FINs, preserve final writes before close-driven FIN, and clean up once the peer
+close/ACK sequence completes or idles out.
 Each process also carries cwd state, so user path syscalls resolve relative
 paths before entering VFS or ELF loading.
 FAT16-backed file behavior and path operations sit behind `vfs.c`, so

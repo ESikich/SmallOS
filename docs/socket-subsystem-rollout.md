@@ -53,13 +53,11 @@ Current implementation status:
 
 ## Remaining Implementation Work
 
-The cserve/FTP server-side milestone and the basic active-open client path are
-in a useful, tested state. The remaining implementation work is mostly about
-making less common TCP close paths less provisional before SSH depends on them:
-
-- Expand TCP half-close behavior beyond the current passive FIN
-  retransmission/cleanup support, especially around less common close-state
-  transitions.
+The cserve/FTP server-side milestone, the basic active-open client path, and the
+first half-close/close-state hardening pass are implemented and covered by the
+default smoke matrix. Future work is now beyond this rollout's first milestone:
+production TCP polish, broader network-mode coverage, TLS/SSH protocol work,
+and POSIX-perfect edge semantics.
 
 ## Goals
 
@@ -120,7 +118,8 @@ The current implementation has moved beyond that baseline: sockets own wait
 queues, fd entries point at `socket_t` objects, listeners and global
 4-tuple-keyed connection state live in PMM-backed TCP tables, and connected
 streams allocate lazy 4 KiB RX rings plus 16 KiB TX rings on first use.
-Remaining TCP limits are now fixed ring sizes and further close-state coverage.
+Remaining TCP limits are now fixed ring sizes and broader production hardening
+beyond this first rollout.
 
 ### Process allocation
 
@@ -398,6 +397,8 @@ Implemented so far:
   sequence past bytes that were not queued.
 - `make socket-eof-smoke` now sends a 3072-byte multi-segment payload before
   the host half-close, so payload-before-EOF coverage exercises the RX ring.
+  It also opens a guest-close-first connection where a final guest write is
+  delivered before `close()` sends FIN and the host observes EOF.
 - Connected TCP streams allocate a 16 KiB PMM-backed TX ring lazily on first
   write, keep queued bytes until ACKed, release the ring once drained, retry
   buffered payloads, wake socket writers when ACKs free space, make `POLLOUT`
@@ -406,9 +407,10 @@ Implemented so far:
 - Nonblocking `send()` / socket `write()` now return short writes or `-EAGAIN`
   when the TX ring is full; blocking socket writes wait on the socket write
   queue until space returns.
-- `shutdown()` has initial half-close behavior: `SHUT_RD` reports local EOF,
-  `SHUT_WR` drains queued TX before sending FIN, and later writes fail with
-  `EPIPE`.
+- `shutdown()` has half-close behavior: `SHUT_RD` reports local EOF, `SHUT_WR`
+  drains queued TX before sending FIN, later writes fail with `EPIPE`, duplicate
+  peer FINs are ACKed, and `close()` after a final write sends FIN without
+  losing the final bytes.
 
 Target:
 
@@ -534,15 +536,15 @@ Before starting SSH:
 - per-connection RX ring exists
 - per-connection TX/retransmit buffer exists
 - `poll()`/`epoll_wait()` are object-driven for sockets and timerfd
-- `shutdown()` has basic half-close semantics plus passive FIN retransmission
-  and late cleanup
+- `shutdown()` has half-close semantics plus passive/active FIN retransmission,
+  duplicate FIN ACKs, close-after-final-write coverage, and late cleanup
 - idle long-lived TCP connections do not consume large kernel buffers
 
 SSH is interactive and long-lived. The old single socket waiter and tiny
 fixed-fd table are gone, receive buffering has started, timerfd event-loop wakes
-are object-driven, outbound `connect()` has a QEMU user-network smoke, and basic
-signalfd signal production is wired. SSH should still wait for additional
-shutdown-state coverage.
+are object-driven, outbound `connect()` has a QEMU user-network smoke, basic
+signalfd signal production is wired, and the close-state smoke now covers both
+host-first half-close and guest-close-first EOF.
 
 ## Implementation Rules For The Next LLM
 

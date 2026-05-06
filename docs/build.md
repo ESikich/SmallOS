@@ -121,7 +121,8 @@ guest port `2463`, starts `apps/services/sockeof`, then verifies that
 a 3072-byte multi-segment payload plus host half-close wakes guest `poll()`,
 leaves the full payload readable, returns `0` on the next `read()`, and still
 allows the guest to write back before `shutdown(SHUT_WR)` rejects later writes
-and sends EOF to the host.
+and sends EOF to the host. The same smoke also verifies a guest-first half-close
+through `close()` after a final guest write.
 
 `make socket-parallel-smoke` forwards host port `2323` to guest `tcpecho`,
 opens 8 parallel clients by default, sends small echo payloads over each
@@ -689,6 +690,6 @@ Replaces CHS `AH=0x02`. Removes the 18-sector-per-track limit. Required because 
 
 * TAP-mode coverage for outbound TCP `connect()` in addition to the default
   QEMU user-network smoke
-* Fuller TCP close-state coverage
+* Broader TCP close-state fuzzing beyond the focused EOF smoke
 * Richer filesystem metadata such as long filenames or permission bits
 * Environment-variable support for the hosted `main(argc, argv)` runtime path

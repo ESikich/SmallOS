@@ -166,6 +166,17 @@ def run_socket_eof_smoke(args):
             finally:
                 data.close()
 
+            data = connect_tcp("127.0.0.1", args.port, args.timeout)
+            try:
+                response = data.recv(32)
+                if response != b"BYE\n":
+                    raise RuntimeError(f"expected BYE response, got {response!r}")
+                eof = data.recv(1)
+                if eof != b"":
+                    raise RuntimeError(f"expected guest close EOF, got {eof!r}")
+            finally:
+                data.close()
+
             wait_for_log(log, offset, "sockeof PASS", args.timeout)
             print("socket EOF smoke PASS")
     finally:

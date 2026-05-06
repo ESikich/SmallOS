@@ -1567,6 +1567,21 @@ static void tcp_process_rx_payload(tcp_conn_t* conn,
         return;
     }
     if (seq != conn->remote_seq_next) {
+        if ((flags & TCP_FIN) != 0u &&
+            payload_len == 0u &&
+            seq + 1u == conn->remote_seq_next) {
+            tcp_send_segment(conn->local_ip,
+                             conn->remote_ip,
+                             conn->remote_mac,
+                             conn->local_port,
+                             conn->remote_port,
+                             conn->local_seq_next,
+                             conn->remote_seq_next,
+                             TCP_ACK,
+                             tcp_conn_rx_window(conn),
+                             0,
+                             0);
+        }
         return;
     }
 

@@ -24,10 +24,10 @@
   * Added lazy PMM-backed 4 KiB TCP receive rings per active connection and advertised the remaining RX window instead of ACKing bytes that were not queued.
   * Added lazy PMM-backed 16 KiB TCP transmit rings per active writing connection; sent bytes are retained until ACKed, payloads are retried from the ring, zero-window probes cover queued unsent data, `POLLOUT` reflects remaining TX capacity, and blocking socket writes wait for TX space while nonblocking writes can short-write or return `EAGAIN`.
   * Implemented outbound TCP active opens for `connect()`, including ephemeral local ports, SYN retransmission, nonblocking `EINPROGRESS`, and `POLLOUT` / `POLLERR` connect readiness.
-  * Added basic TCP half-close behavior for `shutdown()`: `SHUT_RD` reports local EOF, `SHUT_WR` drains queued TX before sending FIN, passive FINs are retransmitted until ACKed or cleaned up, and later writes fail with `EPIPE`.
+  * Added TCP half-close behavior for `shutdown()`: `SHUT_RD` reports local EOF, `SHUT_WR` drains queued TX before sending FIN, passive and active FIN paths retransmit/ACK/clean up, duplicate peer FINs are ACKed, and later writes fail with `EPIPE`.
   * Updated `netinfo` so TCP buffers report currently allocated RX/TX ring capacity separately from global RX/TX caps.
   * Raised the sample cserve config to `max_conn = 40`; the default `make cserve-smoke` gate still holds 32 keep-alive clients and adds a slow-reader connection.
-  * Expanded the socket EOF smoke to send a multi-segment payload before the host half-close and to verify guest-side write shutdown.
+  * Expanded the socket EOF smoke to cover host-first half-close, guest response shutdown, and guest `close()` sending FIN after a final write.
 
 ## [Current] — Full-screen userland text editor
 
