@@ -41,7 +41,7 @@ kernel_main()
   gdt_init()        ← null, k-code, k-data, u-code, u-data, TSS + ltr
   paging_init()     ← identity-maps first 8 MB, enables CR0.PG
   memory_init()     ← bump allocator base at 0x100000
-  pmm_init()        ← bitmap allocator at 0x200000–0x1FFFFFF
+  pmm_init()        ← E820-filtered bitmap allocator at 0x200000–0x1FFFFFF
   boot diagnostics  ← splash PASS/WARN/FAIL checks for startup invariants
   fb_console_init() ← switch to framebuffer terminal when VBE boot info is valid
   keyboard/timer/idt
@@ -111,7 +111,7 @@ Inside `kernel_main()`:
 2. `gdt_init()` — install GDT with ring-3 segments and TSS; load task register with `ltr`
 3. `paging_init()` — enable paging, identity-map 8 MB
 4. `memory_init(0x100000)` — bump allocator starts at 1 MB
-5. `pmm_init()` — bitmap allocator covers 0x200000–0x1FFFFFF; all frames start free
+5. `pmm_init()` — bitmap allocator covers 0x200000–0x1FFFFFF; E820 usable ranges are freed, then boot/runtime reservations are marked used again
 6. `kernel_selfcheck()` — report splash checks for TSS selector, boot stack, heap base, and PMM baseline
 7. `fb_console_init()` — map and select the framebuffer backend when VBE boot info is valid
 8. `keyboard_init()`, `timer_init(SMALLOS_TIMER_HZ)`, `idt_init()` — drivers and interrupt table
@@ -394,7 +394,7 @@ Normal syscalls return through this saved interrupt frame. `SYS_EXIT` is the exc
 
 `terminal.c` owns terminal semantics and dispatches through an active backend. It provides `terminal_putc`, `terminal_puts`, `terminal_put_uint`, `terminal_put_hex`, cursor control, scrolling behavior, ANSI cursor/clear handling, and runtime `terminal_rows()` / `terminal_cols()` queries. Serial mirrors all terminal bytes and remains the headless test truth.
 
-The default backend is VGA text mode (`0xB8000`) for early/fallback/debug output. When `DISPLAY_BACKEND=auto` and loader2 provides valid VBE boot info, `fb_console.c` maps the linear framebuffer at `0xD0000000` and switches to a white-on-black 8x16-font framebuffer backend. At 1024x768 this exposes a 128x48 terminal while keeping VGA text available for panic/double-fault markers. With `DISPLAY_BACKEND=vga`, loader2 stays in BIOS/VGA text mode, clears framebuffer boot info, and the kernel leaves the VGA backend active.
+The default backend is VGA text mode (`0xB8000`) for early/fallback/debug output. When `DISPLAY_BACKEND=auto` and loader2 provides valid VBE boot info, `fb_console.c` maps the linear framebuffer at `0xD0000000` and switches to a white-on-black 8x16-font framebuffer backend. At 1024x768 this exposes a 128x48 terminal while keeping VGA text available for panic/double-fault markers. With `DISPLAY_BACKEND=vga`, loader2 stays in BIOS/VGA text mode, leaves framebuffer boot info invalid, still collects E820, and the kernel leaves the VGA backend active.
 
 ## Shell
 
@@ -465,6 +465,8 @@ Programs are linked at fixed virtual address `0x400000`, loaded into private use
 0x00100000   bump allocator base — permanent kernel structures
                kmalloc()      — long-lived kernel-owned data only
 0x00200000   PMM base — reclaimable frames
+               initialized from E820 usable RAM, with SmallOS reservations
+               marked used again
                pmm_alloc_frame() — process_t structs, process PDs,
                                    ELF segment frames, user stack frames,
                                    all process-private page tables,

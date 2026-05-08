@@ -28,7 +28,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Shell input processing decoupled from IRQ1 via a small event queue
 * Bump allocator (`kmalloc`) for permanent kernel structures
 * Physical memory manager (`pmm`) — bitmap allocator for reclaimable frames
-  * Manages `0x200000`–`0x7FFFFF` (6 MB, 1536 frames)
+  * Manages `0x200000`–`0x1FFFFFF` (30 MB, 7680-frame bitmap), filtered through BIOS E820 when available
   * All process frames reclaimed on exit — no leak after `runelf`
 * ELF loader — validates, loads segments, zeroes BSS, launches in ring 3
 * `process_t` abstraction — per-process struct (PD, kernel stack, scheduler state, argv storage, name); fully PMM-allocated and reclaimed on exit
@@ -330,7 +330,7 @@ kernel_main()
  → gdt_init()            GDT: null, k-code, k-data, u-code, u-data, TSS
  → paging_init()         enable paging, identity-map 8 MB
  → memory_init()         bump allocator at 0x100000
- → pmm_init()            bitmap allocator at 0x200000
+ → pmm_init()            E820-filtered bitmap allocator at 0x200000
  → kernel_selfcheck()    report TSS, stack, heap, and PMM baseline checks
  → fb_console_init()     switch terminal to 1024x768x32 framebuffer when VBE boot info is valid
  → keyboard/timer/idt    drivers and interrupt table

@@ -9,6 +9,7 @@ CASES = [
             "heap:",
             "frames:",
             "used:",
+            "e820:",
             "shelltest: meminfo end",
         ],
         timeout=60.0,

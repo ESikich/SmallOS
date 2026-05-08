@@ -3,6 +3,7 @@
 #include "terminal.h"
 #include "elf_loader.h"
 #include "memory.h"
+#include "boot_info.h"
 #include "pmm.h"
 #include "ata.h"
 #include "e1000.h"
@@ -371,6 +372,14 @@ static void cmd_meminfo(command_t* cmd) {
     terminal_puts(" frames (");
     terminal_put_uint(used_frames * 4);
     terminal_puts(" KB)\n");
+
+    terminal_puts("e820:   ");
+    if (boot_info_e820_valid()) {
+        terminal_put_uint(boot_info_e820_count());
+        terminal_puts(" entries\n");
+    } else {
+        terminal_puts("unavailable\n");
+    }
 }
 
 static void cmd_netinfo(command_t* cmd) {

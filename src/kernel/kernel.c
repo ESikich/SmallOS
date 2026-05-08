@@ -5,6 +5,7 @@
 #include "idt.h"
 #include "shell.h"
 #include "memory.h"
+#include "boot_info.h"
 #include "pmm.h"
 #include "paging.h"
 #include "scheduler.h"
@@ -76,6 +77,18 @@ static void boot_splash_expect(int cond, const char* name, const char* detail) {
     boot_splash_pass(name);
 }
 
+static void boot_splash_boot_info(void) {
+    boot_splash_expect(boot_info_validate(),
+                       "boot info: SMOS v2 contract",
+                       "boot info header or memory-map bounds are invalid");
+
+    if (boot_info_e820_valid()) {
+        boot_splash_pass("memory map: E820 available");
+    } else {
+        boot_splash_warn("memory map: using fixed PMM range");
+    }
+}
+
 static void kernel_selfcheck(void) {
     unsigned int esp = kernel_read_esp();
 
@@ -92,9 +105,10 @@ static void kernel_selfcheck(void) {
     boot_splash_expect(memory_get_heap_top() == 0x100000u,
                        "memory: heap starts at 1 MiB",
                        "heap top moved before startup allocations");
-    boot_splash_expect(pmm_free_count() == PMM_NUM_FRAMES,
-                       "pmm: all frames initially free",
-                       "PMM free frame count does not match the bitmap size");
+    boot_splash_expect(pmm_free_count() > 0 &&
+                       pmm_free_count() <= PMM_NUM_FRAMES,
+                       "pmm: free frame baseline sane",
+                       "PMM free frame count is outside the managed bitmap");
     boot_splash_expect(esp <= KERNEL_BOOT_STACK_TOP &&
                        esp > KERNEL_BOOT_STACK_TOP - 0x1000u,
                        "stack: ESP inside boot stack page",
@@ -105,6 +119,7 @@ void kernel_main(void) {
     terminal_init();
     boot_splash_begin();
     boot_splash_pass("terminal: VGA text and serial console");
+    boot_splash_boot_info();
 
     gdt_init();
     paging_init();
@@ -120,6 +135,7 @@ void kernel_main(void) {
         boot_splash_begin();
         boot_splash_pass("terminal: VGA text and serial console");
         boot_splash_pass("terminal: framebuffer console");
+        boot_splash_boot_info();
     } else {
 #ifndef SMALLOS_FORCE_VGA_BACKEND
         boot_splash_warn("terminal: framebuffer unavailable, VGA text active");

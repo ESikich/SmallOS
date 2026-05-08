@@ -88,6 +88,7 @@ KERNEL_C_SRCS=\
 	$(KERNEL_DIR)/timer.c \
 	$(KERNEL_DIR)/klib.c \
 	$(KERNEL_DIR)/memory.c \
+	$(KERNEL_DIR)/boot_info.c \
 	$(KERNEL_DIR)/pmm.c \
 	$(KERNEL_DIR)/vfs.c \
 	$(KERNEL_DIR)/socket.c \

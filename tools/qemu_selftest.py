@@ -19,8 +19,9 @@ STATUS_WIDTH = 38
 BOOT_SPLASH_MARKERS = (
     "SmallOS boot diagnostics",
     "boot: PASS terminal: VGA text and serial console",
+    "boot: PASS memory map: E820 available",
     "boot: PASS gdt: TSS selector loaded",
-    "boot: PASS pmm: all frames initially free",
+    "boot: PASS pmm: free frame baseline sane",
     "boot: PASS ata: primary channel ready",
     "boot: PASS tcp: service task queued",
     "boot: PASS fat16: volume mounted",

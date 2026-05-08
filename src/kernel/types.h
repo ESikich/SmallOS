@@ -2,6 +2,7 @@
 #define TYPES_H
 
 typedef unsigned int u32;
+typedef unsigned long long u64;
 typedef unsigned char u8;
 
 #endif /* TYPES_H */

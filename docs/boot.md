@@ -255,9 +255,20 @@ The loader2 GDT is temporary. Early in `kernel_main()`, the kernel installs its 
 
 Loader2 must be exactly `LOADER2_SIZE_BYTES` bytes. The source enforces a fixed-size binary layout, stage 1 loads `LOADER2_SECTORS`, and the Makefile/verifiers ensure those values agree.
 
-## Framebuffer Boot Info
+## Boot Info
 
-Before entering protected mode, loader2 normally queries VBE, scans for a 1024x768x32 graphics mode with a linear framebuffer, copies the BIOS 8x16 font to `0x91000`, and writes framebuffer boot info to `0x90000`. If any VBE step fails, `framebuffer_valid` remains zero and the kernel keeps the VGA text backend. With `DISPLAY_BACKEND=vga`, loader2 clears framebuffer boot info and keeps BIOS/VGA text mode so the forced VGA path remains visible.
+Before entering protected mode, loader2 clears and writes the versioned boot
+info block at `0x90000` with magic `SMOS`, version 2, framebuffer fields, and
+up to 32 BIOS E820 memory-map entries. E820 is best-effort: if INT 15h E820
+fails, `e820_valid` remains zero and the kernel boots with the fixed PMM
+fallback.
+
+Loader2 also normally queries VBE, scans for a 1024x768x32 graphics mode with
+a linear framebuffer, copies the BIOS 8x16 font to `0x91000`, and publishes
+framebuffer fields in the boot info block. If any VBE step fails,
+`framebuffer_valid` remains zero and the kernel keeps the VGA text backend.
+With `DISPLAY_BACKEND=vga`, loader2 keeps BIOS/VGA text mode while still
+collecting E820.
 
 ---
 
@@ -457,6 +468,7 @@ Stage 2  →  LBA extension check
          →  read partition table metadata at 0x7C00
          →  derive kernel_lba from partition entry 0
          →  load kernel to 0x1000
+         →  collect boot info and BIOS E820 memory map at 0x90000
          →  protected mode entry
 Kernel   →  zero BSS
          →  terminal_init, gdt_init, paging_init, memory_init, pmm_init

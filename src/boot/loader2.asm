@@ -5,7 +5,7 @@
 ;   - occupies exactly 8 sectors (4096 bytes)
 ;   - kernel and FAT16 partitions are described by the MBR partition table
 ;   - kernel is loaded to physical 0x1000
-;   - VBE framebuffer boot info is written at physical 0x90000
+;   - versioned boot info is written at physical 0x90000
 ;   - after loading, stage 2 enters 32-bit protected mode
 ;   - then jumps to kernel entry at 0x1000
 
@@ -22,7 +22,22 @@ FORCE_VGA_BACKEND    equ __FORCE_VGA_BACKEND__
 BOOT_SECTOR_ADDR     equ 0x7C00
 BOOT_INFO_SEG        equ 0x9000
 BOOT_FONT_SEG        equ 0x9100
-BOOT_INFO_DWORDS     equ 7
+BOOT_INFO_MAGIC      equ 0x534D4F53
+BOOT_INFO_VERSION    equ 2
+BOOT_E820_MAX        equ 32
+BOOT_INFO_SIZE_BYTES equ 816
+BOOT_INFO_DWORDS     equ BOOT_INFO_SIZE_BYTES / 4
+BOOT_FB_PHYS_OFF     equ 12
+BOOT_FB_WIDTH_OFF    equ 16
+BOOT_FB_HEIGHT_OFF   equ 20
+BOOT_FB_PITCH_OFF    equ 24
+BOOT_FB_BPP_OFF      equ 28
+BOOT_FB_FORMAT_OFF   equ 32
+BOOT_FB_VALID_OFF    equ 36
+BOOT_E820_COUNT_OFF  equ 40
+BOOT_E820_VALID_OFF  equ 44
+BOOT_E820_TABLE_OFF  equ 48
+BOOT_E820_ENTRY_SIZE equ 24
 BOOT_FB_FORMAT_XRGB8888 equ 1
 MBR_PARTITION_TABLE_OFFSET equ 446
 MBR_PARTITION_ENTRY_SIZE   equ 16
@@ -144,7 +159,7 @@ disk_error:
     jmp $
 
 ; ---------------------------
-clear_boot_info:
+init_boot_info:
     pusha
     push es
     mov ax, BOOT_INFO_SEG
@@ -154,6 +169,62 @@ clear_boot_info:
     mov cx, BOOT_INFO_DWORDS
     cld
     rep stosd
+    mov dword [es:0], BOOT_INFO_MAGIC
+    mov dword [es:4], BOOT_INFO_VERSION
+    mov dword [es:8], BOOT_INFO_SIZE_BYTES
+    pop es
+    popa
+    ret
+
+collect_e820:
+    pusha
+    push es
+
+    mov ax, BOOT_INFO_SEG
+    mov es, ax
+    xor ebx, ebx
+    xor bp, bp
+    mov di, BOOT_E820_TABLE_OFF
+
+.next:
+    cmp bp, BOOT_E820_MAX
+    jae .done
+
+    mov eax, 0x0000E820
+    mov edx, 0x534D4150     ; 'SMAP'
+    mov ecx, BOOT_E820_ENTRY_SIZE
+    mov dword [es:di + 20], 1
+    int 0x15
+    jc .done
+    cmp eax, 0x534D4150
+    jne .done
+    cmp ecx, 20
+    jb .done
+    cmp ecx, BOOT_E820_ENTRY_SIZE
+    jae .length_check
+    mov dword [es:di + 20], 0
+
+.length_check:
+    mov eax, [es:di + 8]
+    or eax, [es:di + 12]
+    jz .skip_entry
+
+    inc bp
+    add di, BOOT_E820_ENTRY_SIZE
+
+.skip_entry:
+    test ebx, ebx
+    jnz .next
+
+.done:
+    xor eax, eax
+    mov ax, bp
+    mov [es:BOOT_E820_COUNT_OFF], eax
+    test bp, bp
+    jz .no_entries
+    mov dword [es:BOOT_E820_VALID_OFF], 1
+
+.no_entries:
     pop es
     popa
     ret
@@ -184,7 +255,8 @@ copy_vga_font:
 
 vga_setup:
     pusha
-    call clear_boot_info
+    call init_boot_info
+    call collect_e820
     mov ax, 0x0003
     int 0x10
     call copy_vga_font
@@ -196,7 +268,8 @@ vbe_setup:
     push ds
     push es
 
-    call clear_boot_info
+    call init_boot_info
+    call collect_e820
     call copy_vga_font
 
     mov ax, LOADER2_SEGMENT
@@ -268,21 +341,21 @@ vbe_setup:
     mov es, ax
 
     mov eax, [vbe_mode_info + 0x28]
-    mov [es:0], eax
+    mov [es:BOOT_FB_PHYS_OFF], eax
     xor eax, eax
     mov ax, [vbe_mode_info + 0x12]
-    mov [es:4], eax
+    mov [es:BOOT_FB_WIDTH_OFF], eax
     xor eax, eax
     mov ax, [vbe_mode_info + 0x14]
-    mov [es:8], eax
+    mov [es:BOOT_FB_HEIGHT_OFF], eax
     xor eax, eax
     mov ax, [vbe_mode_info + 0x10]
-    mov [es:12], eax
+    mov [es:BOOT_FB_PITCH_OFF], eax
     xor eax, eax
     mov al, [vbe_mode_info + 0x19]
-    mov [es:16], eax
-    mov dword [es:20], BOOT_FB_FORMAT_XRGB8888
-    mov dword [es:24], 1
+    mov [es:BOOT_FB_BPP_OFF], eax
+    mov dword [es:BOOT_FB_FORMAT_OFF], BOOT_FB_FORMAT_XRGB8888
+    mov dword [es:BOOT_FB_VALID_OFF], 1
 
 .done:
     pop es
