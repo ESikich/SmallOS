@@ -9,7 +9,7 @@ This document explains how SmallOS boots from BIOS to kernel, including disk lay
 ```text
 BIOS
  → boot.asm        (stage 1, 512 bytes, CHS read of loader2)
- → loader2.asm     (stage 2, 2048 bytes, LBA read of kernel only)
+ → loader2.asm     (stage 2, 4096 bytes, LBA read of kernel, VBE setup)
  → kernel.bin      (loaded to 0x1000)
  → protected mode
  → kernel_entry.asm  (zeros BSS, calls kernel_main)
@@ -24,9 +24,9 @@ The OS image (`os-image.bin`) is structured as:
 
 ```text
 LBA 0           → boot.bin              (512 bytes, exactly)
-LBA 1–4         → loader2.bin           (currently 2048 bytes, exactly)
-LBA 5+          → padded kernel region  (sector-aligned)
-LBA 5+ks
+LBA 1–8         → loader2.bin           (currently 4096 bytes, exactly)
+LBA 9+          → padded kernel region  (sector-aligned)
+LBA 9+ks
                → FAT16 partition        (16 MB volume inside the image)
 ```
 
@@ -35,7 +35,7 @@ where `ks = ceil(kernel.bin / BOOT_SECTOR_SIZE)` and `kernel_lba = 1 + loader2_s
 Constraints:
 
 * `boot.bin` must be **exactly `BOOT_SECTOR_SIZE` bytes**
-* `loader2.bin` must be **exactly `LOADER2_SIZE_BYTES` bytes** (currently 2048 bytes / 4 sectors)
+* `loader2.bin` must be **exactly `LOADER2_SIZE_BYTES` bytes** (currently 4096 bytes / 8 sectors)
 * `kernel.bin` must be **padded to a sector boundary during final image assembly** so the FAT16 partition starts at a clean LBA
 * FAT16 partition starts at `kernel_lba + kernel_sectors`
 * partition entry 0 records the kernel LBA range and boot flag
@@ -58,7 +58,7 @@ Loaded by BIOS at `0x0000:0x7C00`.
 
 ## BIOS Disk Read
 
-Stage 1 uses the CHS interface for loader2 only. Loader2 is 4 sectors and fits within the first track.
+Stage 1 uses the CHS interface for loader2 only. Loader2 is `LOADER2_SECTORS` sectors and fits within the first track.
 
 ```asm
 int 0x13
@@ -86,6 +86,8 @@ Loaded to `0x4000:0x0000` (physical `0x40000`).
 
 * Check INT 0x13 LBA extension support — halt with message if unsupported
 * Load kernel from disk immediately before the FAT16 partition to physical `0x1000`
+* Query VBE and request a 1024x768x32 linear framebuffer when available
+* Copy the BIOS 8x16 font and publish framebuffer boot info for the kernel
 * Setup temporary GDT
 * Switch to 32-bit protected mode
 * Jump to kernel entry at `0x1000`
@@ -105,6 +107,7 @@ That is still the practical envelope for the current layout, but the build no lo
 The boot stages own the disk-layout constants they depend on:
 
 * `boot.asm` declares `BOOT_SECTOR_SIZE`
+* `boot.asm` declares `LOADER2_SECTORS`
 * `boot.asm` declares `MBR_PARTITION_TABLE_OFFSET`
 * `boot.asm` declares `MBR_PARTITION_ENTRY_SIZE`
 * `loader2.asm` declares `LOADER2_SIZE_BYTES`
@@ -116,12 +119,11 @@ The Makefile reads these declarations during image construction rather than rede
 `make boot-layout-check` verifies the built boot artifacts and the generated loader template before the final image is assembled. It checks:
 
 * `boot.bin` is exactly 512 bytes
-* `loader2.bin` is exactly 2048 bytes
+* `loader2.bin` is exactly `LOADER2_SIZE_BYTES` bytes
 * loader2 still loads at `0x40000`
 * the generated stage-2 stack and the kernel boot stack match the current contract
-* the kernel still fits below both the loader body and the stage-2 stack
 
-This keeps the hand-rolled boot path explicit: the build fails before QEMU starts if the layout drifts.
+This keeps the hand-rolled boot path explicit: the build fails before QEMU starts if the fixed boot-stage layout drifts.
 
 `make image-layout-check` goes one step further and validates the finished `os-image.bin` itself. It checks the partition table entries, the loader and kernel placement, the FAT16 start LBA, and the zero padding between the kernel and FAT16 region.
 
@@ -251,7 +253,11 @@ The loader2 GDT is temporary. Early in `kernel_main()`, the kernel installs its 
 
 ## Loader2 Size Constraint
 
-Loader2 must be exactly `LOADER2_SIZE_BYTES` bytes. The source enforces a fixed-size binary layout, and the Makefile verifies the final assembled size.
+Loader2 must be exactly `LOADER2_SIZE_BYTES` bytes. The source enforces a fixed-size binary layout, stage 1 loads `LOADER2_SECTORS`, and the Makefile/verifiers ensure those values agree.
+
+## Framebuffer Boot Info
+
+Before entering protected mode, loader2 queries VBE, scans for a 1024x768x32 graphics mode with a linear framebuffer, copies the BIOS 8x16 font to `0x91000`, and writes framebuffer boot info to `0x90000`. If any VBE step fails, `framebuffer_valid` remains zero and the kernel keeps the VGA text backend.
 
 ---
 
@@ -300,10 +306,10 @@ BSS zeroing is the first thing that happens in protected mode. The kernel's thre
 
 Stage 1 cannot fit LBA logic, protected mode setup, or disk reads in 512 bytes. Stage 2 carries all of that complexity.
 
-| Stage   | Purpose                                          |
-| ------- | ------------------------------------------------ |
-| Stage 1 | load stage 2 via CHS (4 sectors, simple)         |
-| Stage 2 | LBA extension check, kernel load, protected mode |
+| Stage   | Purpose                                                      |
+| ------- | ------------------------------------------------------------ |
+| Stage 1 | load fixed-size stage 2 via CHS                              |
+| Stage 2 | LBA extension check, kernel load, VBE setup, protected mode   |
 
 ---
 
@@ -382,7 +388,7 @@ Typical causes: invalid kernel GDT (must call `gdt_init()` before `sti`), invali
 
 ## Loader2 assembly error: binary too large
 
-NASM rejects `times 2048-($-$$) db 0` because the code exceeds 2048 bytes. Shorten message strings or remove debug code.
+NASM rejects the `times LOADER2_SIZE_BYTES-($-$$) db 0` padding because the code exceeds the declared fixed size. Shorten message strings, remove debug code, or intentionally raise both `LOADER2_SIZE_BYTES` and `LOADER2_SECTORS`.
 
 ---
 

@@ -1682,6 +1682,16 @@ static int sys_fstat_impl(int fd, unsigned int* out_size, int* out_is_dir) {
     return 0;
 }
 
+static int sys_terminal_size_impl(unsigned int* out_rows, unsigned int* out_cols) {
+    if (!out_rows || !out_cols) return -EFAULT;
+    if (!user_buf_ok((unsigned int)out_rows, sizeof(unsigned int))) return -EFAULT;
+    if (!user_buf_ok((unsigned int)out_cols, sizeof(unsigned int))) return -EFAULT;
+
+    *out_rows = (unsigned int)terminal_rows();
+    *out_cols = (unsigned int)terminal_cols();
+    return 0;
+}
+
 static int sys_getcwd_impl(char* buf, unsigned int size) {
     process_t* proc = (process_t*)sched_current();
     unsigned int pos = 0;
@@ -2031,6 +2041,12 @@ void syscall_handler_main(syscall_regs_t* regs) {
             regs->eax = (unsigned int)sys_fstat_impl((int)regs->ebx,
                                                      (unsigned int*)regs->ecx,
                                                      (int*)regs->edx);
+            break;
+
+        case SYS_TERMINAL_SIZE:
+            regs->eax = (unsigned int)sys_terminal_size_impl(
+                            (unsigned int*)regs->ebx,
+                            (unsigned int*)regs->ecx);
             break;
 
         default:

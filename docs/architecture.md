@@ -3,6 +3,7 @@
 Boot-image layout facts are owned by the files that define them, not by the Makefile:
 
 * `src/boot/boot.asm` owns `BOOT_SECTOR_SIZE`
+* `src/boot/boot.asm` owns `LOADER2_SECTORS`
 * `src/boot/boot.asm` owns `MBR_PARTITION_TABLE_OFFSET`
 * `src/boot/boot.asm` owns `MBR_PARTITION_ENTRY_SIZE`
 * `src/boot/loader2.asm` owns `LOADER2_SIZE_BYTES`
@@ -35,12 +36,13 @@ kernel_entry.asm (32-bit)
   zeros BSS
   ↓
 kernel_main()
-  terminal_init()   ← VGA text mode, cursor control
+  terminal_init()   ← VGA fallback backend + serial output
   gdt_init()        ← null, k-code, k-data, u-code, u-data, TSS + ltr
   paging_init()     ← identity-maps first 8 MB, enables CR0.PG
   memory_init()     ← bump allocator base at 0x100000
   pmm_init()        ← bitmap allocator at 0x200000–0x1FFFFFF
   boot diagnostics  ← splash PASS/WARN/FAIL checks for startup invariants
+  fb_console_init() ← switch to framebuffer terminal when VBE boot info is valid
   keyboard/timer/idt
   #PF handler      ← logs CR2 / error code, kills user faults, panics on kernel faults
   sched_init()      ← initialise runnable task table
@@ -60,7 +62,7 @@ kernel_main()
 ## Stage 1 – boot.asm
 
 * Loaded by BIOS at `0x7C00`
-* Loads stage 2 via CHS `INT 0x13 AH=0x02` (4 sectors, fits within one track) to `0x40000`
+* Loads stage 2 via CHS `INT 0x13 AH=0x02` (`LOADER2_SECTORS`, fits within one track) to `0x40000`
 * Must be exactly **512 bytes**, ending with `dw 0xAA55`
 
 ---
@@ -104,24 +106,25 @@ BSS zeroing is mandatory. The three paging structures and the PMM bitmap live in
 
 Inside `kernel_main()`:
 
-1. `terminal_init()` — VGA text mode, cursor control
+1. `terminal_init()` — VGA fallback backend and serial output
 2. `gdt_init()` — install GDT with ring-3 segments and TSS; load task register with `ltr`
 3. `paging_init()` — enable paging, identity-map 8 MB
 4. `memory_init(0x100000)` — bump allocator starts at 1 MB
 5. `pmm_init()` — bitmap allocator covers 0x200000–0x1FFFFFF; all frames start free
 6. `kernel_selfcheck()` — report splash checks for TSS selector, boot stack, heap base, and PMM baseline
-7. `keyboard_init()`, `timer_init(SMALLOS_TIMER_HZ)`, `idt_init()` — drivers and interrupt table
-8. `sched_init()` — initialise the scheduler data structures
-9. `ata_init()` — software reset ATA primary channel (`0x1F0`), poll until ready
-10. `pci_init()` — scan PCI config space and log discovered network controllers
-11. `e1000_init()` — bind the Intel 82540EM NIC and set up DMA rings
-12. `tcp_init()` — create and enqueue the TCP/network service kernel task
-13. `fat16_init()` — read ATA sector 0, extract the FAT16 start LBA from partition entry 1 in the MBR partition table, then read and validate the FAT16 BPB at that runtime-discovered location
-14. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
-15. `sched_enqueue(shell_proc)` — make the shell runnable
-16. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
-17. `sti` — enable interrupts
-18. `sched_start(shell_proc)` — switch from the boot stack into the shell task
+7. `fb_console_init()` — map and select the framebuffer backend when VBE boot info is valid
+8. `keyboard_init()`, `timer_init(SMALLOS_TIMER_HZ)`, `idt_init()` — drivers and interrupt table
+9. `sched_init()` — initialise the scheduler data structures
+10. `ata_init()` — software reset ATA primary channel (`0x1F0`), poll until ready
+11. `pci_init()` — scan PCI config space and log discovered network controllers
+12. `e1000_init()` — bind the Intel 82540EM NIC and set up DMA rings
+13. `tcp_init()` — create and enqueue the TCP/network service kernel task
+14. `fat16_init()` — read ATA sector 0, extract the FAT16 start LBA from partition entry 1 in the MBR partition table, then read and validate the FAT16 BPB at that runtime-discovered location
+15. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
+16. `sched_enqueue(shell_proc)` — make the shell runnable
+17. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
+18. `sti` — enable interrupts
+19. `sched_start(shell_proc)` — switch from the boot stack into the shell task
 
 `sched_init()` must still be called before `sti`, and `sched_start()` must happen only after the first runnable task has been created.
 
@@ -388,7 +391,9 @@ Normal syscalls return through this saved interrupt frame. `SYS_EXIT` is the exc
 
 ## Terminal
 
-VGA text mode (`0xB8000`). Provides `terminal_putc`, `terminal_puts`, `terminal_put_uint`, `terminal_put_hex`, cursor control, scrolling. The VGA renderer treats `\n` as newline, `\r` as carriage return, and `\b` as destructive backspace; printable bytes are written directly into text memory.
+`terminal.c` owns terminal semantics and dispatches through an active backend. It provides `terminal_putc`, `terminal_puts`, `terminal_put_uint`, `terminal_put_hex`, cursor control, scrolling behavior, ANSI cursor/clear handling, and runtime `terminal_rows()` / `terminal_cols()` queries. Serial mirrors all terminal bytes and remains the headless test truth.
+
+The default backend is VGA text mode (`0xB8000`) for early/fallback/debug output. When loader2 provides valid VBE boot info, `fb_console.c` maps the linear framebuffer at `0xD0000000` and switches to a white-on-black 8x16-font framebuffer backend. At 1024x768 this exposes a 128x48 terminal while keeping VGA text available for panic/double-fault markers.
 
 ## Shell
 
@@ -621,8 +626,8 @@ This is async spawn, not blocking foreground execution.
 
 ```text
 LBA 0                     boot.bin
-LBA 1–4                   loader2.bin
-LBA 5 ... N               padded kernel region
+LBA 1 ... loader2_sectors loader2.bin
+LBA kernel_lba ... N      padded kernel region
 LBA N+1 ...               fat16.img
 ```
 
@@ -655,7 +660,7 @@ build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
 | ------------------ | ------------------------------------------------------- |
 | boot (real mode)   | BIOS print (int 0x10)                                   |
 | early kernel       | VGA direct (0xB8000)                                    |
-| kernel             | terminal_puts                                           |
+| kernel             | terminal_puts (serial plus active backend)              |
 | user process       | sys_write / sys_putc / sys_read                         |
 | memory accounting  | meminfo command                                         |
 | disk reads         | ataread <lba> command                                   |

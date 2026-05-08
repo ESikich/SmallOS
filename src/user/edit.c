@@ -1,8 +1,8 @@
 #include "user_lib.h"
 
 #define EDIT_LINE_MAX 256u
-#define EDIT_ROWS 23u
-#define SCREEN_COLS 79u
+#define EDIT_DEFAULT_ROWS 25u
+#define EDIT_DEFAULT_COLS 80u
 
 enum {
     KEY_NONE = 0,
@@ -40,6 +40,10 @@ typedef struct {
     uint32_t cx;
     uint32_t top;
     uint32_t hscroll;
+    uint32_t rows;
+    uint32_t cols;
+    uint32_t text_rows;
+    uint32_t text_cols;
     int status_ticks;
     char status[80];
 } edit_view_t;
@@ -224,16 +228,36 @@ static void term_clear_line(void) {
     term_write("\x1b[K");
 }
 
-static void draw_padded(const char* s, uint32_t max) {
+static uint32_t draw_limited(const char* s, uint32_t max) {
     uint32_t i = 0;
     while (s && s[i] && i < max) {
         sys_putc(s[i]);
         i++;
     }
+    return i;
+}
+
+static void draw_padded(const char* s, uint32_t max) {
+    uint32_t i = draw_limited(s, max);
     while (i < max) {
         sys_putc(' ');
         i++;
     }
+}
+
+static void init_view_dimensions(edit_view_t* view) {
+    uint32_t rows = EDIT_DEFAULT_ROWS;
+    uint32_t cols = EDIT_DEFAULT_COLS;
+
+    if (sys_terminal_size(&rows, &cols) < 0 || rows < 3u || cols < 2u) {
+        rows = EDIT_DEFAULT_ROWS;
+        cols = EDIT_DEFAULT_COLS;
+    }
+
+    view->rows = rows;
+    view->cols = cols;
+    view->text_rows = rows - 2u;
+    view->text_cols = cols - 1u;
 }
 
 static int update_view(edit_buffer_t* buf, edit_view_t* view) {
@@ -243,18 +267,36 @@ static int update_view(edit_buffer_t* buf, edit_view_t* view) {
 
     if (view->cx > len) view->cx = len;
     if (view->cy < view->top) view->top = view->cy;
-    if (view->cy >= view->top + EDIT_ROWS) view->top = view->cy - EDIT_ROWS + 1u;
+    if (view->cy >= view->top + view->text_rows) {
+        view->top = view->cy - view->text_rows + 1u;
+    }
     if (view->cx < view->hscroll) view->hscroll = view->cx;
-    if (view->cx >= view->hscroll + SCREEN_COLS) view->hscroll = view->cx - SCREEN_COLS + 1u;
+    if (view->cx >= view->hscroll + view->text_cols) {
+        view->hscroll = view->cx - view->text_cols + 1u;
+    }
 
     return old_top != view->top || old_hscroll != view->hscroll;
 }
 
-static void render_title(edit_buffer_t* buf) {
+static void render_title(edit_buffer_t* buf, edit_view_t* view) {
+    const char* title = " SmallOS EDIT  ";
+    const char* suffix = " F2 Save  F3 Exit";
+    uint32_t max = view->text_cols;
+    uint32_t suffix_len = str_len(suffix);
+    uint32_t used = 0;
+    uint32_t path_max = 0;
+
     term_move(0, 0);
-    term_write(" SmallOS EDIT  ");
-    draw_padded(buf->path, 40);
-    term_write(" F2 Save  F3 Exit");
+    used += draw_limited(title, max - used);
+    if (max > used + suffix_len) {
+        path_max = max - used - suffix_len;
+    }
+    used += draw_limited(buf->path, path_max);
+    while (used < max && used + suffix_len < max) {
+        sys_putc(' ');
+        used++;
+    }
+    draw_limited(suffix, max - used);
     term_clear_line();
 }
 
@@ -266,7 +308,7 @@ static void render_text_line(edit_buffer_t* buf, edit_view_t* view, uint32_t row
         char* line = buf->lines[y];
         uint32_t x = view->hscroll;
         uint32_t printed = 0;
-        while (line[x] && printed < SCREEN_COLS) {
+        while (line[x] && printed < view->text_cols) {
             char c = line[x++];
             sys_putc(c == '\t' ? ' ' : c);
             printed++;
@@ -276,9 +318,9 @@ static void render_text_line(edit_buffer_t* buf, edit_view_t* view, uint32_t row
 }
 
 static void render_status(edit_buffer_t* buf, edit_view_t* view) {
-    term_move(24, 0);
+    term_move(view->rows - 1u, 0);
     if (view->status_ticks > 0) {
-        draw_padded(view->status, SCREEN_COLS);
+        draw_padded(view->status, view->text_cols);
         term_clear_line();
         view->status_ticks--;
     } else {
@@ -301,11 +343,12 @@ static void render(edit_buffer_t* buf, edit_view_t* view, int full, int line_dir
     term_write("\x1b[?25l");
 
     if (full) {
-        render_title(buf);
-        for (uint32_t row = 0; row < EDIT_ROWS; row++) {
+        render_title(buf, view);
+        for (uint32_t row = 0; row < view->text_rows; row++) {
             render_text_line(buf, view, row);
         }
-    } else if (line_dirty && view->cy >= view->top && view->cy < view->top + EDIT_ROWS) {
+    } else if (line_dirty && view->cy >= view->top &&
+               view->cy < view->top + view->text_rows) {
         render_text_line(buf, view, view->cy - view->top);
     }
 
@@ -617,6 +660,7 @@ static int interactive(edit_buffer_t* buf) {
     view.cx = 0;
     view.top = 0;
     view.hscroll = 0;
+    init_view_dimensions(&view);
     view.status_ticks = 0;
     view.status[0] = '\0';
 
@@ -658,9 +702,9 @@ static int interactive(edit_buffer_t* buf) {
         } else if (key.type == KEY_END) {
             view.cx = line_len(buf, view.cy);
         } else if (key.type == KEY_PAGEUP) {
-            move_vertical(buf, &view, -(int)EDIT_ROWS);
+            move_vertical(buf, &view, -(int)view.text_rows);
         } else if (key.type == KEY_PAGEDOWN) {
-            move_vertical(buf, &view, (int)EDIT_ROWS);
+            move_vertical(buf, &view, (int)view.text_rows);
         } else if (key.type == KEY_DELETE) {
             uint32_t old_count = buf->count;
             delete_key(buf, &view);

@@ -1,5 +1,30 @@
 # Changelog
 
+## [Current] — Framebuffer terminal backend
+
+### Added
+
+* **Framebuffer console** (`src/drivers/fb_console.c`, `src/kernel/paging.c`, `src/kernel/kernel.c`)
+  * Added a 1024x768x32 linear-framebuffer terminal backend with an 8x16 BIOS font, white-on-black text, software cursor, destructive backspace, wrapping, and framebuffer-row scrolling.
+  * Mapped framebuffer device memory into a stable kernel virtual window at `0xD0000000` without handing the physical framebuffer to PMM.
+  * Kept VGA text mode as the default early/fallback/debug backend and preserved serial mirroring as the headless test truth.
+
+* **VBE boot info plumbing** (`src/boot/boot.asm`, `src/boot/loader2.asm`, `src/kernel/boot_info.h`)
+  * Increased stage 2 to 8 sectors / 4096 bytes and made stage 1 load the declared `LOADER2_SECTORS`.
+  * Loader2 now queries VBE, selects a 1024x768x32 linear framebuffer when available, copies the BIOS 8x16 font to `0x91000`, and writes framebuffer boot info to `0x90000`.
+  * If VBE setup fails, boot continues normally with the VGA text backend.
+
+* **Runtime terminal sizing** (`src/kernel/syscall.c`, `src/user/edit.c`, `src/shell/shell.c`, `docs/`)
+  * Added `SYS_TERMINAL_SIZE` so full-screen user programs can query active terminal rows/columns.
+  * Updated the shell and `edit` to use runtime dimensions instead of classic VGA layout constants.
+  * Updated boot/build/architecture/filesystem/syscall docs and layout verifiers for the 4096-byte loader and framebuffer terminal path.
+
+### Changed
+
+* **Terminal backend split** (`src/drivers/terminal.c`, `src/drivers/screen.c`, `src/drivers/terminal.h`)
+  * Introduced `terminal_backend_t` and moved ANSI cursor/clear handling into `terminal.c`, so VGA text and framebuffer output share terminal semantics.
+  * Converted `screen.c` into the VGA text backend implementation rather than the owner of terminal behavior.
+
 ## [Current] — Socket subsystem foundation
 
 ### Changed
@@ -40,12 +65,12 @@
   * Added `edit` to app-backed shell help, the seeded FAT16 `/bin` layout, and shell selftest coverage that writes and reads back a file.
   * Reduced full-screen redraw flicker by repainting the viewport only when scrolling or line layout changes, and otherwise redrawing the active line/status/cursor.
   * Fixed an Enter-triggered heap corruption crash by allocating editable line buffers at the editor's maximum line size instead of sizing them to their initial text.
-  * Shortened the footer to `F2 Save  F3 Exit` and avoids painting into the final VGA column so the cursor does not wrap to the next row.
+  * Shortened the footer to `F2 Save  F3 Exit` and avoids painting into the final terminal column so the cursor does not wrap to the next row.
 
-* **Raw terminal input and ANSI screen control** (`src/kernel/process.c`, `src/kernel/syscall.c`, `src/drivers/screen.c`)
+* **Raw terminal input and ANSI screen control** (`src/kernel/process.c`, `src/kernel/syscall.c`, `src/drivers/terminal.c`)
   * Added `SYS_READ_RAW` so full-screen user ELFs can read keyboard input without kernel echo.
   * Foreground ELF keyboard input now receives arrow/Home/End/Delete/Page/F-key events as ANSI-style escape sequences.
-  * The VGA terminal now understands the ANSI cursor/clear subset used by text-mode apps.
+  * The terminal layer now understands the ANSI cursor/clear subset used by text-mode apps, independent of the active display backend.
 
 ## [Current] — Boot splash diagnostics
 
@@ -613,16 +638,16 @@ Current SmallOS uses PMM-backed dynamic fd tables as described above.
 
 * **`Makefile` `loader2.gen.asm` rule** — simplified; only injects `__KERNEL_SECTORS__`.
 
-* **`Makefile` `os-image.bin` rule** — disk image is now `boot + loader2 + kernel_padded + fat16.img`. FAT16 LBA = `5 + kernel_sectors` (no ramdisk term).
+* **`Makefile` `os-image.bin` rule** — disk image is now `boot + loader2 + kernel_padded + fat16.img`. FAT16 LBA is derived from the loader span plus `kernel_sectors` (no ramdisk term).
 
-* **Disk image layout** (final):
+* **Disk image layout** (then-current, now still source-owned by boot layout constants):
   ```text
-  LBA 0         boot.bin              (512 bytes)
-  LBA 1–4       loader2.bin           (2048 bytes)
-  LBA 5+        kernel_padded.bin     (sector-aligned)
-  LBA 5+ks      fat16.img             (16 MB FAT16 partition)
+  LBA 0                     boot.bin              (512 bytes)
+  LBA 1 ... loader2_sectors loader2.bin
+  LBA kernel_lba ... N      kernel_padded.bin     (sector-aligned)
+  LBA N+1 ...               fat16.img             (16 MB FAT16 partition)
   ```
-  where `ks = ceil(kernel.bin / 512)`.
+  where `kernel_lba = 1 + loader2_sectors`.
 
 ### Key design note
 
@@ -707,13 +732,13 @@ The ramdisk served as a temporary program store while the FAT16 driver was being
   * Added `-I$(GEN_DIR)` to `CFLAGS` so generated headers are findable
   * Added `exec_test` to `USER_PROGS`
 
-* **Disk image layout** — now includes FAT16 partition after the ramdisk:
+* **Disk image layout** — then included a FAT16 partition after the ramdisk:
   ```text
-  LBA 0         boot.bin              (512 bytes)
-  LBA 1–4       loader2.bin           (2048 bytes)
-  LBA 5+        kernel_padded.bin     (sector-aligned)
-  after kernel  ramdisk_padded.rd     (sector-aligned, temporary)
-  after ramdisk fat16.img             (16 MB FAT16 volume)
+  LBA 0                     boot.bin              (512 bytes)
+  LBA 1 ... loader2_sectors loader2.bin
+  after loader              kernel_padded.bin     (sector-aligned)
+  after kernel              ramdisk_padded.rd     (sector-aligned, temporary)
+  after ramdisk             fat16.img             (16 MB FAT16 volume)
   ```
 
 ### Key design notes

@@ -247,11 +247,13 @@ static void shell_put_prompt(void) {
 
 static void shell_render_current_line(void) {
     int start = prompt_col + prompt_len;
-    for (int i = 0; start + i < 80; i++) {
+    int cols = terminal_cols();
+
+    for (int i = 0; start + i < cols; i++) {
         terminal_write_at(prompt_row, start + i, ' ');
     }
 
-    for (int i = 0; i < editor.len && (start + i) < 80; i++) {
+    for (int i = 0; i < editor.len && (start + i) < cols; i++) {
         terminal_write_at(prompt_row, start + i, editor.buf[i]);
     }
 
@@ -260,7 +262,9 @@ static void shell_render_current_line(void) {
 
 static int shell_can_fast_echo_append(void) {
     int cursor_col = prompt_col + prompt_len + editor.cursor;
-    return editor.cursor == editor.len && cursor_col >= 0 && cursor_col < 79;
+    return editor.cursor == editor.len &&
+           cursor_col >= 0 &&
+           cursor_col < terminal_cols() - 1;
 }
 
 static void shell_start_prompt(void) {

@@ -258,6 +258,10 @@ static inline int sys_fstat(int fd, uint32_t* out_size, int* out_is_dir) {
     return syscall3(SYS_FSTAT, (uint32_t)fd, (uint32_t)out_size, (uint32_t)out_is_dir);
 }
 
+static inline int sys_terminal_size(uint32_t* out_rows, uint32_t* out_cols) {
+    return syscall2(SYS_TERMINAL_SIZE, (uint32_t)out_rows, (uint32_t)out_cols);
+}
+
 static inline int sys_socket(int domain, int type, int protocol) {
     return syscall3(SYS_SOCKET, (uint32_t)domain, (uint32_t)type, (uint32_t)protocol);
 }

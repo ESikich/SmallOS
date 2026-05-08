@@ -19,10 +19,10 @@ toolchain-style programs.
 The final disk image is:
 
 ```text
-LBA 0         boot sector + MBR partition table
-LBA 1–4       stage 2 loader
-LBA 5+        kernel_padded.bin
-LBA 5+ks      FAT16 partition   (raw FAT16 volume data)
+LBA 0                     boot sector + MBR partition table
+LBA 1 ... loader2_sectors stage 2 loader
+LBA kernel_lba ... N      padded kernel
+LBA N+1 ...               FAT16 partition   (raw FAT16 volume data)
 ```
 
 where:

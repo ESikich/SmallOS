@@ -395,17 +395,21 @@ void keyboard_handle_irq(void) {
     }
 }
 
-void keyboard_init(void) {
+void keyboard_reset_modifiers(void) {
     shift_down = 0;
     ctrl_down = 0;
     alt_down = 0;
-    caps_lock_on = 0;
-    num_lock_on = 0;
-    scroll_lock_on = 0;
     e0_prefix = 0;
     e1_prefix = 0;
     pause_idx = 0;
     ps_state = PS_NONE;
+}
+
+void keyboard_init(void) {
+    keyboard_reset_modifiers();
+    caps_lock_on = 0;
+    num_lock_on = 0;
+    scroll_lock_on = 0;
     s_waiting_proc = 0;
     keyboard_buf_clear();
 }

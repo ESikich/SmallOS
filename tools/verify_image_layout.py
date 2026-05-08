@@ -52,6 +52,7 @@ def main() -> int:
     parser.add_argument("--kernel", type=Path, required=True)
     parser.add_argument("--fat16", type=Path, required=True)
     parser.add_argument("--sector-size", type=int, required=True)
+    parser.add_argument("--loader-size", type=int, required=True)
     parser.add_argument("--boot-partition-table-offset", type=int, required=True)
     parser.add_argument("--boot-partition-entry-size", type=int, required=True)
     args = parser.parse_args()
@@ -63,7 +64,8 @@ def main() -> int:
     fat16 = read_bytes(args.fat16)
 
     expect(len(boot) == args.sector_size, f"boot.bin must be {args.sector_size} bytes")
-    expect(len(loader2) == 2048, "loader2.bin must be 2048 bytes")
+    expect(len(loader2) == args.loader_size,
+           f"loader2.bin must be {args.loader_size} bytes")
     expect(len(loader2) % args.sector_size == 0, "loader2.bin must be sector-aligned")
     expect(args.boot_partition_table_offset + 2 * args.boot_partition_entry_size <= args.sector_size,
            "boot partition table must fit inside the boot sector")

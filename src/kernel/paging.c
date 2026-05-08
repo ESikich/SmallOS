@@ -189,6 +189,22 @@ void paging_map_page(u32* pd, u32 virt, u32 phys, u32 flags) {
     __asm__ __volatile__("invlpg (%0)" : : "r"(virt) : "memory");
 }
 
+void paging_map_kernel_range(u32 virt, u32 phys, u32 size, u32 flags) {
+    if (size == 0) return;
+
+    u32 virt_start = virt & ~(PAGE_SIZE - 1u);
+    u32 phys_start = phys & ~(PAGE_SIZE - 1u);
+    u32 offset = virt - virt_start;
+    u32 total = PAGE_ALIGN(size + offset);
+
+    for (u32 mapped = 0; mapped < total; mapped += PAGE_SIZE) {
+        paging_map_page(kernel_page_directory,
+                        virt_start + mapped,
+                        phys_start + mapped,
+                        flags);
+    }
+}
+
 u32* paging_get_kernel_pd(void) {
     return kernel_page_directory;
 }

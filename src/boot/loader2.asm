@@ -2,9 +2,10 @@
 ;
 ; Stage 2 loader contract:
 ;   - loaded by boot sector to physical 0x40000
-;   - occupies exactly 4 sectors (2048 bytes)
+;   - occupies exactly 8 sectors (4096 bytes)
 ;   - kernel and FAT16 partitions are described by the MBR partition table
 ;   - kernel is loaded to physical 0x1000
+;   - VBE framebuffer boot info is written at physical 0x90000
 ;   - after loading, stage 2 enters 32-bit protected mode
 ;   - then jumps to kernel entry at 0x1000
 
@@ -18,6 +19,10 @@ KERNEL_READ_CHUNK    equ 120        ; 120 sectors = 61440 bytes, fits below 64 K
 STAGE2_STACK_TOP     equ __STAGE2_STACK_TOP__
 STAGE2_STACK_TOP_32  equ __STAGE2_STACK_TOP_32__
 BOOT_SECTOR_ADDR     equ 0x7C00
+BOOT_INFO_SEG        equ 0x9000
+BOOT_FONT_SEG        equ 0x9100
+BOOT_INFO_DWORDS     equ 7
+BOOT_FB_FORMAT_XRGB8888 equ 1
 MBR_PARTITION_TABLE_OFFSET equ 446
 MBR_PARTITION_ENTRY_SIZE   equ 16
 MBR_PARTITION_LBA_OFFSET   equ 8
@@ -59,6 +64,7 @@ start:
     mov si, kernel_loaded_msg
     call print_string
 
+    call vbe_setup
     call switch_to_pm
 
 hang:
@@ -133,6 +139,144 @@ disk_error:
     jmp $
 
 ; ---------------------------
+clear_boot_info:
+    pusha
+    push es
+    mov ax, BOOT_INFO_SEG
+    mov es, ax
+    xor di, di
+    xor eax, eax
+    mov cx, BOOT_INFO_DWORDS
+    cld
+    rep stosd
+    pop es
+    popa
+    ret
+
+copy_vga_font:
+    pusha
+    push ds
+    push es
+
+    mov ax, 0x1130
+    mov bh, 0x06            ; 8x16 ROM font
+    int 0x10
+
+    push es
+    pop ds
+    mov si, bp
+    mov ax, BOOT_FONT_SEG
+    mov es, ax
+    xor di, di
+    mov cx, 4096            ; 256 glyphs * 16 bytes each
+    cld
+    rep movsb
+
+    pop es
+    pop ds
+    popa
+    ret
+
+vbe_setup:
+    pusha
+    push ds
+    push es
+
+    call clear_boot_info
+    call copy_vga_font
+
+    mov ax, LOADER2_SEGMENT
+    mov ds, ax
+    mov es, ax
+    mov di, vbe_info
+    mov byte [vbe_info + 0], 'V'
+    mov byte [vbe_info + 1], 'B'
+    mov byte [vbe_info + 2], 'E'
+    mov byte [vbe_info + 3], '2'
+    mov ax, 0x4F00
+    int 0x10
+    cmp ax, 0x004F
+    jne .done
+
+    mov si, [vbe_info + 0x0E]
+    mov ax, [vbe_info + 0x10]
+    mov es, ax
+
+.next_mode:
+    mov bx, [es:si]
+    cmp bx, 0xFFFF
+    je .done
+    add si, 2
+
+    mov [vbe_candidate_mode], bx
+    push es
+    push si
+    mov ax, LOADER2_SEGMENT
+    mov es, ax
+    mov di, vbe_mode_info
+    mov cx, bx
+    mov ax, 0x4F01
+    int 0x10
+    pop si
+    pop es
+
+    mov bx, LOADER2_SEGMENT
+    mov ds, bx
+    cmp ax, 0x004F
+    jne .next_mode
+
+    mov ax, [vbe_mode_info + 0x00]
+    test ax, 0x0001         ; supported
+    jz .next_mode
+    test ax, 0x0010         ; graphics mode
+    jz .next_mode
+    test ax, 0x0080         ; linear framebuffer
+    jz .next_mode
+    cmp word [vbe_mode_info + 0x12], 1024
+    jne .next_mode
+    cmp word [vbe_mode_info + 0x14], 768
+    jne .next_mode
+    cmp byte [vbe_mode_info + 0x19], 32
+    jne .next_mode
+    cmp dword [vbe_mode_info + 0x28], 0
+    je .next_mode
+
+    mov bx, [vbe_candidate_mode]
+    or bx, 0x4000           ; request linear framebuffer
+    mov ax, 0x4F02
+    int 0x10
+    cmp ax, 0x004F
+    jne .done
+
+    mov ax, LOADER2_SEGMENT
+    mov ds, ax
+    mov ax, BOOT_INFO_SEG
+    mov es, ax
+
+    mov eax, [vbe_mode_info + 0x28]
+    mov [es:0], eax
+    xor eax, eax
+    mov ax, [vbe_mode_info + 0x12]
+    mov [es:4], eax
+    xor eax, eax
+    mov ax, [vbe_mode_info + 0x14]
+    mov [es:8], eax
+    xor eax, eax
+    mov ax, [vbe_mode_info + 0x10]
+    mov [es:12], eax
+    xor eax, eax
+    mov al, [vbe_mode_info + 0x19]
+    mov [es:16], eax
+    mov dword [es:20], BOOT_FB_FORMAT_XRGB8888
+    mov dword [es:24], 1
+
+.done:
+    pop es
+    pop ds
+    popa
+    ret
+
+; ---------------------------
 ; Disk Address Packet
 dap:
     db 0x10
@@ -196,11 +340,15 @@ init_pm:
 
 [bits 16]
 BOOT_DRIVE           db 0
+vbe_candidate_mode   dw 0
 ext_ok_msg           db "LBA ok ", 0
 no_ext_msg           db "NO LBA!", 0
 loader_msg           db "Loading...", 0
 kernel_loaded_msg    db "K", 13, 10, 0
 disk_msg             db "Disk err!", 0
+align 4
+vbe_info             times 512 db 0
+vbe_mode_info        times 256 db 0
 
-LOADER2_SIZE_BYTES equ 2048
+LOADER2_SIZE_BYTES equ 4096
 times LOADER2_SIZE_BYTES-($-$$) db 0

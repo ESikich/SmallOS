@@ -70,7 +70,7 @@ If you see `implicit declaration of function` — you forgot a header.
 
 `terminal_put_uint` and `terminal_put_hex` are declared in `terminal.h` and defined in `terminal.c`. Do not add private copies in any other file.
 
-Terminal output is mirrored to both VGA and COM1 serial. Keep control-character handling in `screen_putc()` so shell commands, `cat`, and user syscalls share the same behavior; in particular, CRLF text files rely on `\r` resetting the VGA column instead of being drawn as a glyph.
+Terminal output is mirrored to COM1 serial and the active display backend. Keep ANSI/control-character handling in `terminal.c` so VGA text and framebuffer output share behavior; backend `putc` implementations should only handle raw newline, carriage return, backspace, wrapping, scrolling, and drawing.
 
 `src/kernel/klib.h` / `src/kernel/klib.c` are now the canonical home for shared freestanding string and memory helpers such as `k_memcpy`, `k_memset`, `k_strlen`, `k_strcmp`, `k_strncpy`, and `k_starts_with`. If a helper is generally useful across more than one file, it belongs in `klib` rather than as a file-local static copy.
 
@@ -113,6 +113,7 @@ Do not add imports of `process.h`, `scheduler.h`, or `shell.h` to `keyboard.c` o
 Examples:
 
 * `boot.asm` owns `BOOT_SECTOR_SIZE`, `MBR_PARTITION_TABLE_OFFSET`, and `MBR_PARTITION_ENTRY_SIZE`
+* `boot.asm` owns `LOADER2_SECTORS`
 * `loader2.asm` owns `LOADER2_SIZE_BYTES`
 * `mkfat16.c` owns FAT image size constants
 
@@ -120,7 +121,7 @@ The Makefile should read those declarations and pass them into host tools such a
 
 ---
 * `boot.asm` must be **exactly 512 bytes**, ending with `dw 0xAA55`
-* `loader2.asm` must be **exactly 2048 bytes**
+* `loader2.asm` must be **exactly `LOADER2_SIZE_BYTES` bytes** (currently 4096 bytes / 8 sectors)
 * `kernel.bin` must be padded to a 512-byte sector boundary during final image assembly (`mkimage` handles this)
 * `kernel_lba` is derived as `1 + loader2_sectors`
 * `FAT16_LBA` is computed as `kernel_lba + kernel_sectors` and written into the FAT16 partition entry — if padding is skipped, FAT16 reads will return incorrect data
@@ -134,11 +135,11 @@ safe kernel size = (0x40000 - 0x1000) / 512 sectors
                  = 504 sectors = 252 KiB
 ```
 
-The required invariant is that `0x1000 + kernel_sectors * BOOT_SECTOR_SIZE` must stay below both the loader2 load address and the generated stage-2 stack top. If the kernel exceeds 504 sectors, the build fails before image assembly. To raise the ceiling further, move stage 2 higher and update the matching constants in `Makefile` and `loader2.asm`.
+The required invariant is that `0x1000 + kernel_sectors * BOOT_SECTOR_SIZE` must stay below both the loader2 load address and the generated stage-2 stack top. This is a practical layout ceiling rather than a currently enforced build limit; if the kernel grows past it, stage 2 can overwrite itself while reading from disk. To raise the ceiling, move stage 2 higher and update the matching constants in `Makefile` and `loader2.asm`.
 
 **Symptom of violation**: BIOS INT 0x13 hangs silently mid-transfer at `Loading...` with no error message printed.
 
-`make boot-layout-check` is the host-side guard for this contract. It verifies the built loader and kernel artifacts, the generated stage-2 stack values, and the current ceiling before the disk image is assembled.
+`make boot-layout-check` is the host-side guard for the fixed boot-stage layout. It verifies the built boot artifacts, the loader size/sector contract, and the generated stage-2 stack values before the disk image is assembled.
 
 `make image-layout-check` then validates the finished `os-image.bin`, including the patched FAT16 LBA and the sector placement of each component.
 

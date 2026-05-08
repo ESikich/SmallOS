@@ -72,6 +72,7 @@ KERNEL_C_SRCS=\
 	$(SHELL_DIR)/line_editor.c \
 	$(DRIVERS_DIR)/terminal.c \
 	$(DRIVERS_DIR)/screen.c \
+	$(DRIVERS_DIR)/fb_console.c \
 	$(KERNEL_DIR)/system.c \
 	$(KERNEL_DIR)/timer.c \
 	$(KERNEL_DIR)/klib.c \
@@ -301,6 +302,7 @@ image-layout-check: $(IMG_DIR)/os-image.bin
 		--kernel $(BIN_DIR)/kernel.bin \
 		--fat16 $(STATE_DIR)/fat16.img \
 		--sector-size $(BOOT_SECTOR_SIZE) \
+		--loader-size $(LOADER2_SIZE_BYTES) \
 		--boot-partition-table-offset $(BOOT_PARTITION_TABLE_OFFSET) \
 		--boot-partition-entry-size $(BOOT_PARTITION_ENTRY_SIZE)
 

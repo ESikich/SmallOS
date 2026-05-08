@@ -21,7 +21,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * IDT with PIT timer (IRQ0), keyboard (IRQ1), and syscalls (INT 0x80)
 * Page-fault handler that logs `CR2`, the error code, and user-vs-kernel context; user faults terminate only the offending process
 * COM1 serial driver — mirrors all terminal output to QEMU's serial backend for headless testing
-* VGA text-mode display and terminal abstraction
+* Framebuffer-backed terminal with VGA text-mode fallback/debug output
 * PCI bus scan at boot — discovery layer for the e1000 NIC path
 * e1000 NIC bring-up — PCI discovery, MMIO mapping, and DMA ring setup
 * Shell with line editing, history, and command parsing
@@ -312,18 +312,19 @@ probe.
 
 ```text
 BIOS
- → boot.asm              load loader2 (CHS, 4 sectors) to `0x40000`
- → loader2.asm           load kernel (LBA) → protected mode
+ → boot.asm              load loader2 (CHS, 8 sectors) to `0x40000`
+ → loader2.asm           load kernel (LBA), select VBE framebuffer if available → protected mode
  → kernel_entry.asm      zero BSS → kernel_main()
 
 kernel_main()
- → terminal_init()       VGA text mode / terminal output
+ → terminal_init()       VGA fallback + serial terminal output
  → boot splash           PASS/WARN/FAIL startup diagnostics
  → gdt_init()            GDT: null, k-code, k-data, u-code, u-data, TSS
  → paging_init()         enable paging, identity-map 8 MB
  → memory_init()         bump allocator at 0x100000
  → pmm_init()            bitmap allocator at 0x200000
  → kernel_selfcheck()    report TSS, stack, heap, and PMM baseline checks
+ → fb_console_init()     switch terminal to 1024x768x32 framebuffer when VBE boot info is valid
  → keyboard/timer/idt    drivers and interrupt table
  → sched_init()          initialise runnable task table
  → ata_init()            initialise ATA primary channel
@@ -356,9 +357,9 @@ runelf apps/demo/hello
 
 ```text
 LBA 0           boot.bin              (512 bytes)
-LBA 1–4         loader2.bin           (currently 2048 bytes)
-LBA 5+          padded kernel region  (sector-aligned)
-LBA 5+ks
+LBA 1–8         loader2.bin           (currently 4096 bytes)
+LBA 9+          padded kernel region  (sector-aligned)
+LBA 9+ks
                FAT16 partition        (16 MB volume inside the image)
 ```
 

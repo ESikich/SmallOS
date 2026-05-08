@@ -16,7 +16,7 @@ This image contains:
 
 ```text
 boot.bin         stage 1 bootloader   (size declared by boot.asm; currently 512 bytes)
-loader2.bin      stage 2 loader       (size declared by loader2.asm; currently 2048 bytes)
+loader2.bin      stage 2 loader       (size declared by loader2.asm; currently 4096 bytes)
 kernel.bin       kernel               (padded to sector boundary during final image assembly)
 .state/fat16.img FAT16 partition     (mutable fixed-size FAT volume, stored after the padded kernel)
 ```
@@ -518,7 +518,7 @@ build/tools/mkimage \
     --fat16 .state/fat16.img \
     --out build/img/os-image.bin \
     --sector-size 512 \
-    --loader-size 2048 \
+    --loader-size 4096 \
     --boot-partition-table-offset 446 \
     --boot-partition-entry-size 16
 ```
@@ -550,8 +550,8 @@ It then writes the kernel and FAT16 spans into the MBR partition table entries d
 
 ```text
 LBA 0                     boot.bin
-LBA 1 ... 4               loader2.bin
-LBA 5 ... N               padded kernel region
+LBA 1 ... loader2_sectors loader2.bin
+LBA kernel_lba ... N      padded kernel region
 LBA N+1 ...               fat16.img
 ```
 
@@ -603,7 +603,7 @@ nasm: error: binary too large for `times' command
 or
 
 ```text
-ERROR: loader2.bin must be 2048 bytes, got N
+ERROR: loader2.bin must be LOADER2_SIZE_BYTES bytes, got N
 ```
 
 Cause: code + strings in loader2 exceed `LOADER2_SIZE_BYTES`. Remove or shorten debug message strings.

@@ -131,6 +131,12 @@ def send_text(sock, text):
         time.sleep(0.05)
 
 
+def clear_prompt_line(sock, count=16):
+    for _ in range(count):
+        send_key(sock, "backspace")
+        time.sleep(0.01)
+
+
 def read_new(log, offset):
     log.seek(offset)
     chunk = log.read()
@@ -387,6 +393,8 @@ def run_signalfd_regression(sock, log, start_offset, deadline, echo=True, report
     send_key(sock, "ret")
 
     sent_interrupt = False
+    sent_retry = False
+    retry_at = 0.0
     while time.time() < deadline:
         chunk, log_offset = read_new(log, log_offset)
         if chunk:
@@ -397,6 +405,7 @@ def run_signalfd_regression(sock, log, start_offset, deadline, echo=True, report
             if "signalfdprobe waiting" in buf and not sent_interrupt:
                 send_key(sock, "ctrl-c")
                 sent_interrupt = True
+                retry_at = time.time() + 2.0
 
             if "signalfdprobe PASS" in buf and saw_prompt_after(buf, "signalfdprobe PASS"):
                 if report:
@@ -414,6 +423,11 @@ def run_signalfd_regression(sock, log, start_offset, deadline, echo=True, report
             if len(buf) > TRANSCRIPT_LIMIT:
                 buf = buf[-TRANSCRIPT_TRIM:]
         else:
+            if (sent_interrupt and not sent_retry and time.time() >= retry_at and
+                "signalfdprobe PASS" not in buf and
+                "signalfdprobe FAIL" not in buf):
+                send_key(sock, "ctrl-c")
+                sent_retry = True
             time.sleep(0.05)
 
     if report:
@@ -435,6 +449,7 @@ def run_connect_regression(sock, log, start_offset, deadline, echo=True, report=
 
     if echo:
         tee_stdout("\n[connect-regression] ")
+    clear_prompt_line(sock)
     send_text(sock, "runelf apps/tests/connectprobe")
     send_key(sock, "ret")
 

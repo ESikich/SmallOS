@@ -2,17 +2,185 @@
 #include "screen.h"
 #include "serial.h"
 
+static const terminal_backend_t* active_backend = &vga_text_backend;
+static int esc_state = 0;
+static int csi_args[4];
+static int csi_arg_count = 0;
+static int csi_value = 0;
+static int csi_has_value = 0;
+static int csi_private = 0;
+
+static int clamp_int(int value, int min, int max) {
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
+}
+
+static int backend_rows(void) {
+    return active_backend && active_backend->rows ? active_backend->rows() : 25;
+}
+
+static int backend_cols(void) {
+    return active_backend && active_backend->cols ? active_backend->cols() : 80;
+}
+
+static int backend_row(void) {
+    return active_backend && active_backend->row ? active_backend->row() : 0;
+}
+
+static int backend_col(void) {
+    return active_backend && active_backend->col ? active_backend->col() : 0;
+}
+
+static void backend_set_cursor(int row, int col) {
+    if (active_backend && active_backend->set_cursor) {
+        active_backend->set_cursor(row, col);
+    }
+}
+
+static void clear_line_from_cursor(void) {
+    int row = backend_row();
+    int col = backend_col();
+    int cols = backend_cols();
+
+    for (int x = col; x < cols; x++) {
+        terminal_write_at(row, x, ' ');
+    }
+    backend_set_cursor(row, col);
+}
+
+static void csi_push_arg(void) {
+    if (csi_arg_count >= 4) return;
+    csi_args[csi_arg_count++] = csi_has_value ? csi_value : 0;
+    csi_value = 0;
+    csi_has_value = 0;
+}
+
+static int csi_arg_or(int index, int fallback) {
+    if (index >= csi_arg_count || csi_args[index] == 0) {
+        return fallback;
+    }
+    return csi_args[index];
+}
+
+static void csi_dispatch(char cmd) {
+    int row = backend_row();
+    int col = backend_col();
+    int rows = backend_rows();
+    int cols = backend_cols();
+
+    csi_push_arg();
+
+    switch (cmd) {
+        case 'A':
+            row -= csi_arg_or(0, 1);
+            break;
+        case 'B':
+            row += csi_arg_or(0, 1);
+            break;
+        case 'C':
+            col += csi_arg_or(0, 1);
+            break;
+        case 'D':
+            col -= csi_arg_or(0, 1);
+            break;
+        case 'H':
+        case 'f':
+            row = csi_arg_or(0, 1) - 1;
+            col = csi_arg_or(1, 1) - 1;
+            break;
+        case 'J':
+            if (csi_arg_or(0, 0) == 2) {
+                terminal_clear();
+                return;
+            }
+            break;
+        case 'K':
+            clear_line_from_cursor();
+            return;
+        case 'l':
+        case 'h':
+            /* Cursor visibility and private modes are backend-local for now. */
+            (void)csi_private;
+            return;
+        default:
+            return;
+    }
+
+    backend_set_cursor(clamp_int(row, 0, rows - 1),
+                       clamp_int(col, 0, cols - 1));
+}
+
+static int terminal_handle_escape(char c) {
+    if (esc_state == 0) {
+        if ((unsigned char)c == 27) {
+            esc_state = 1;
+            return 1;
+        }
+        return 0;
+    }
+
+    if (esc_state == 1) {
+        if (c == '[') {
+            esc_state = 2;
+            csi_arg_count = 0;
+            csi_value = 0;
+            csi_has_value = 0;
+            csi_private = 0;
+            for (int i = 0; i < 4; i++) csi_args[i] = 0;
+            return 1;
+        }
+        esc_state = 0;
+        return 1;
+    }
+
+    if (esc_state == 2) {
+        if (c == '?') {
+            csi_private = 1;
+            return 1;
+        }
+        if (c >= '0' && c <= '9') {
+            csi_value = csi_value * 10 + (c - '0');
+            csi_has_value = 1;
+            return 1;
+        }
+        if (c == ';') {
+            csi_push_arg();
+            return 1;
+        }
+        csi_dispatch(c);
+        esc_state = 0;
+        return 1;
+    }
+
+    esc_state = 0;
+    return 0;
+}
+
 void terminal_init(void) {
     serial_init();
     terminal_clear();
 }
 
+void terminal_set_backend(const terminal_backend_t* backend) {
+    if (!backend) {
+        return;
+    }
+
+    active_backend = backend;
+    esc_state = 0;
+}
+
 void terminal_clear(void) {
-    screen_clear();
+    if (active_backend && active_backend->clear) {
+        active_backend->clear();
+    }
 }
 
 void terminal_putc(char c) {
-    screen_putc(c);
+    if (!terminal_handle_escape(c) && active_backend && active_backend->putc) {
+        active_backend->putc(c);
+    }
     serial_putc(c);
 }
 
@@ -73,17 +241,27 @@ void terminal_put_hex(unsigned int value) {
 }
 
 int terminal_get_row(void) {
-    return screen_get_row();
+    return backend_row();
 }
 
 int terminal_get_col(void) {
-    return screen_get_col();
+    return backend_col();
+}
+
+int terminal_rows(void) {
+    return backend_rows();
+}
+
+int terminal_cols(void) {
+    return backend_cols();
 }
 
 void terminal_set_cursor(int row, int col) {
-    screen_set_cursor(row, col);
+    backend_set_cursor(row, col);
 }
 
 void terminal_write_at(int row, int col, char c) {
-    screen_write_at(row, col, c);
+    if (active_backend && active_backend->write_at) {
+        active_backend->write_at(row, col, c);
+    }
 }

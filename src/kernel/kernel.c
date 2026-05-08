@@ -13,6 +13,7 @@
 #include "fat16.h"
 #include "pci.h"
 #include "e1000.h"
+#include "fb_console.h"
 #include "../drivers/tcp.h"
 
 static unsigned short kernel_read_tr(void) {
@@ -114,6 +115,14 @@ void kernel_main(void) {
     memory_init(0x100000);
     pmm_init();
     kernel_selfcheck();
+
+    if (fb_console_init()) {
+        boot_splash_begin();
+        boot_splash_pass("terminal: VGA text and serial console");
+        boot_splash_pass("terminal: framebuffer console");
+    } else {
+        boot_splash_warn("terminal: framebuffer unavailable, VGA text active");
+    }
 
     keyboard_init();
     boot_splash_expect(keyboard_buf_available() == 0 &&

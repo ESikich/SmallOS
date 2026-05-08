@@ -1095,6 +1095,14 @@ static void shelltest_exec(const char* name, command_t* cmd) {
     shelltest_end(name);
 }
 
+static void shelltest_call_nowait(const char* name, command_fn_t fn, command_t* cmd) {
+    shelltest_begin(name);
+    __asm__ __volatile__("cli");
+    fn(cmd);
+    shelltest_end(name);
+    __asm__ __volatile__("sti");
+}
+
 static void cmd_shelltest(command_t* cmd) {
     (void)cmd;
 
@@ -1251,7 +1259,7 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_exec("rm_dir", &rm_dir_cmd);
     shelltest_exec("fsread_dir_removed", &fsread_dir_removed_cmd);
     shelltest_exec("mv_dir", &mv_dir_cmd);
-    shelltest_call("runelf_nowait", cmd_runelf_nowait, &runelf_nowait_cmd);
+    shelltest_call_nowait("runelf_nowait", cmd_runelf_nowait, &runelf_nowait_cmd);
 
     terminal_puts("shelltest: PASS\n");
 }

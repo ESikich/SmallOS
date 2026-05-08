@@ -23,6 +23,7 @@ typedef char process_t_must_fit_in_one_frame[(sizeof(process_t) <= 4096u) ? 1 : 
 
 static process_t* s_foreground = 0;
 static volatile int s_terminal_interrupt_pending = 0;
+static process_t* s_terminal_interrupt_target = 0;
 static volatile process_t* s_detach_requested = 0;
 
 #define PROCESS_TERMINATED_BY_CTRL_C 130
@@ -78,7 +79,6 @@ static void process_key_consumer(key_event_t ev) {
         process_t* proc = s_foreground;
         if (!proc) return;
 
-        terminal_puts("^C\n");
         keyboard_buf_clear();
         if (keyboard_get_waiting_process() == (void*)proc) {
             keyboard_set_waiting_process(0);
@@ -91,8 +91,13 @@ static void process_key_consumer(key_event_t ev) {
 
         proc->exit_status = PROCESS_TERMINATED_BY_CTRL_C;
         if (proc == sched_current()) {
+            s_terminal_interrupt_target = proc;
             s_terminal_interrupt_pending = 1;
+            process_set_foreground(0);
+            terminal_puts("^C\n");
         } else {
+            process_set_foreground(0);
+            terminal_puts("^C\n");
             sched_kill(proc, 0);
         }
         return;
@@ -1211,6 +1216,7 @@ process_t* process_get_current(void) {
 void process_set_foreground(process_t* proc) {
     s_foreground = proc;
     s_detach_requested = 0;
+    keyboard_reset_modifiers();
     if (proc) {
         keyboard_buf_clear();           /* discard any input that arrived before
                                            the process was ready to read it,
@@ -1257,13 +1263,11 @@ void process_deliver_pending_terminal_interrupt(unsigned int esp) {
 
     if (!s_terminal_interrupt_pending) return;
 
-    proc = sched_current();
-    if (!proc || proc != s_foreground) {
-        s_terminal_interrupt_pending = 0;
-        return;
-    }
-
+    proc = s_terminal_interrupt_target ? s_terminal_interrupt_target : sched_current();
     s_terminal_interrupt_pending = 0;
+    s_terminal_interrupt_target = 0;
+    if (!proc || proc != sched_current()) return;
+
     proc->exit_status = PROCESS_TERMINATED_BY_CTRL_C;
     if (keyboard_get_waiting_process() == (void*)proc) {
         keyboard_set_waiting_process(0);

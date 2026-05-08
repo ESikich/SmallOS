@@ -4,6 +4,7 @@ bits 16
 
 LOADER2_SEGMENT  equ 0x4000
 LOADER2_OFFSET   equ 0x0000
+LOADER2_SECTORS  equ 8
 BOOT_SECTOR_SIZE equ 512
 MBR_PARTITION_TABLE_OFFSET equ 446
 MBR_PARTITION_ENTRY_SIZE   equ 16
@@ -59,7 +60,7 @@ load_loader2:
     int 0x13
     jc disk_error
 
-    mov al, 4
+    mov al, LOADER2_SECTORS
     mov ah, 0x02
     mov ch, 0
     mov cl, 2

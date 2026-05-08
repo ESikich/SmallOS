@@ -74,6 +74,15 @@ int paging_phys_is_pmm_frame(u32 phys);
 void paging_map_page(u32* pd, u32 virt, u32 phys, u32 flags);
 
 /*
+ * paging_map_kernel_range(virt, phys, size, flags)
+ *
+ * Permanently map a physical range into the master kernel page directory.
+ * The range is rounded outward to 4 KB pages.  Flags should include
+ * PAGE_WRITE for writable device memory; PAGE_PRESENT is added internally.
+ */
+void paging_map_kernel_range(u32 virt, u32 phys, u32 size, u32 flags);
+
+/*
  * paging_get_kernel_pd()
  *
  * Returns a pointer to the kernel page directory.

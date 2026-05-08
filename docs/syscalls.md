@@ -633,6 +633,15 @@ Reports descriptor metadata from the open handle. File descriptors report the
 cached file size and directory flag; non-file handles report their current
 handle metadata.
 
+### SYS_TERMINAL_SIZE (52)
+
+```c
+int sys_terminal_size(uint32_t* out_rows, uint32_t* out_cols);
+```
+
+Writes the active terminal backend dimensions. Full-screen user programs such
+as `edit` use this instead of assuming a legacy fixed-size text layout.
+
 ---
 
 ### SYS_WRITEFILE (12)

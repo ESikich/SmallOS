@@ -99,7 +99,8 @@ enum {
     SYS_ACCEPT4        = 48,
     SYS_SHUTDOWN       = 49,
     SYS_GETPEERNAME    = 50,
-    SYS_FSTAT          = 51
+    SYS_FSTAT          = 51,
+    SYS_TERMINAL_SIZE  = 52   /* write active terminal rows/cols */
 };
 
 #endif

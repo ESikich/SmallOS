@@ -101,6 +101,7 @@ struct process_t_tag;
 
 void keyboard_init(void);
 void keyboard_handle_irq(void);
+void keyboard_reset_modifiers(void);
 
 /*
  * keyboard_set_consumer(fn)

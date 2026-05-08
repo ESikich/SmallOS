@@ -10,6 +10,51 @@
  * invalid argument counts.
  */
 
+static void append_char(char* buf, uint32_t* pos, char ch) {
+    buf[*pos] = ch;
+    *pos = *pos + 1u;
+}
+
+static void append_cstr(char* buf, uint32_t* pos, const char* s) {
+    while (*s) {
+        append_char(buf, pos, *s++);
+    }
+}
+
+static void append_uint(char* buf, uint32_t* pos, uint32_t value) {
+    char tmp[16];
+    uint32_t n = 0;
+
+    if (value == 0u) {
+        append_char(buf, pos, '0');
+        return;
+    }
+
+    while (value > 0u) {
+        tmp[n++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    }
+
+    while (n > 0u) {
+        append_char(buf, pos, tmp[--n]);
+    }
+}
+
+static void write_result_line(const char* prefix, int value) {
+    char buf[96];
+    uint32_t pos = 0;
+
+    append_cstr(buf, &pos, prefix);
+    if (value < 0) {
+        append_char(buf, &pos, '-');
+        append_uint(buf, &pos, (uint32_t)(-value));
+    } else {
+        append_uint(buf, &pos, (uint32_t)value);
+    }
+    append_char(buf, &pos, '\n');
+    sys_write(buf, pos);
+}
+
 void _start(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -21,42 +66,21 @@ void _start(int argc, char** argv) {
     u_puts("[2] calling sys_exec apps/demo/hello\n");
     char* av[] = { "apps/demo/hello", 0 };
     int r = sys_exec("apps/demo/hello", 1, av);
-    u_puts("[3] sys_exec returned ");
-    if (r < 0) {
-        u_putc('-');
-        u_put_uint((uint32_t)(-r));
-    } else {
-        u_put_uint((uint32_t)r);
-    }
-    u_putc('\n');
+    write_result_line("[3] sys_exec returned ", r);
     if (r != 0) {
         ok = 0;
     }
 
     u_puts("[4] calling sys_exec with bad name\n");
     int r2 = sys_exec("no_such_prog", 0, 0);
-    u_puts("[5] bad name returned ");
-    if (r2 < 0) {
-        u_putc('-');
-        u_put_uint((uint32_t)(-r2));
-    } else {
-        u_put_uint((uint32_t)r2);
-    }
-    u_putc('\n');
+    write_result_line("[5] bad name returned ", r2);
     if (r2 != -ENOENT) {
         ok = 0;
     }
 
     u_puts("[6] calling sys_exec with too many args\n");
     int r3 = sys_exec("apps/demo/hello", 17, av);
-    u_puts("[7] too many args returned ");
-    if (r3 < 0) {
-        u_putc('-');
-        u_put_uint((uint32_t)(-r3));
-    } else {
-        u_put_uint((uint32_t)r3);
-    }
-    u_putc('\n');
+    write_result_line("[7] too many args returned ", r3);
     if (r3 != -EINVAL) {
         ok = 0;
     }

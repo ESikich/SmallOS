@@ -51,9 +51,11 @@ def main() -> int:
     boot_sector_size = parse_equ(boot_asm, "BOOT_SECTOR_SIZE")
     loader2_segment = parse_equ(boot_asm, "LOADER2_SEGMENT")
     loader2_offset = parse_equ(boot_asm, "LOADER2_OFFSET")
+    loader2_sectors = parse_equ(boot_asm, "LOADER2_SECTORS")
     partition_table_offset = parse_equ(boot_asm, "MBR_PARTITION_TABLE_OFFSET")
     partition_entry_size = parse_equ(boot_asm, "MBR_PARTITION_ENTRY_SIZE")
     kernel_offset = parse_equ(loader2_asm, "KERNEL_OFFSET")
+    loader2_size_bytes = parse_equ(loader2_asm, "LOADER2_SIZE_BYTES")
     stage2_stack_top = parse_equ(loader2_gen, "STAGE2_STACK_TOP")
     stage2_stack_top_32 = parse_equ(loader2_gen, "STAGE2_STACK_TOP_32")
     kernel_boot_stack_top = parse_equ(memory_h, "KERNEL_BOOT_STACK_TOP")
@@ -78,7 +80,10 @@ def main() -> int:
     loader2_bin_size = args.loader2_bin.stat().st_size
 
     expect(boot_bin_size == 512, f"boot.bin must be 512 bytes, got {boot_bin_size}")
-    expect(loader2_bin_size == 2048, f"loader2.bin must be 2048 bytes, got {loader2_bin_size}")
+    expect(loader2_bin_size == loader2_size_bytes,
+           f"loader2.bin must be {loader2_size_bytes} bytes, got {loader2_bin_size}")
+    expect(loader2_sectors * boot_sector_size == loader2_size_bytes,
+           "boot sector LOADER2_SECTORS must match LOADER2_SIZE_BYTES")
     expect("jmp dword CODE_SEG:init_pm" in loader2_asm,
            "loader2.asm must use a 32-bit far jump into init_pm")
     expect(f"[org 0x{loader2_load_addr:x}]" in loader2_asm,
@@ -87,6 +92,8 @@ def main() -> int:
     print("boot layout ok")
     print(f"  boot sector size    = {boot_sector_size}")
     print(f"  loader2 load addr   = 0x{loader2_load_addr:x}")
+    print(f"  loader2 size        = {loader2_size_bytes} bytes")
+    print(f"  loader2 sectors     = {loader2_sectors}")
     print(f"  kernel offset       = 0x{kernel_offset:x}")
     print(f"  stage2 stack top    = 0x{stage2_stack_top:x} (phys 0x{stage2_stack_top_phys:x})")
     print(f"  kernel boot stack   = 0x{kernel_boot_stack_top:x}")
