@@ -25,5 +25,4 @@ Thumbs.db
 *.patch
 
 # Local/vendor experiments
-third_party/ftp_server/
-third_party/ftp_client/
+third_party/
