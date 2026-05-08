@@ -1,5 +1,24 @@
 # Changelog
 
+## [Current] — E820 memory map and expanded PMM
+
+### Added
+
+* **Boot Info 2.0** (`src/boot/loader2.asm`, `src/kernel/boot_info.*`)
+  * Added a versioned `SMOS` boot info contract at `0x90000` with magic, version, size, framebuffer fields, and up to 32 BIOS E820 memory-map entries.
+  * Loader2 now collects E820 data in both VBE framebuffer and forced-VGA boot paths. If E820 is unavailable, boot continues with the fixed PMM fallback.
+  * Kernel boot diagnostics now report whether the BIOS memory map is available, and `meminfo` reports E820 availability/count.
+
+* **Memory-map visibility** (`src/shell/commands.c`, `tests/shell/memmap.py`)
+  * Added `memmap` to print the collected E820 entries from the shell.
+
+### Changed
+
+* **E820-backed PMM** (`src/kernel/pmm.*`, `src/kernel/paging.*`)
+  * PMM now initializes all frames as used, frees only E820 usable RAM inside the managed window, then re-marks SmallOS-owned boot/runtime regions as used.
+  * Expanded the E820-backed PMM cap to `0x200000`–`0x7FFFFFF` with a 128 MB ceiling. The no-E820 fallback remains conservative at the old 30 MB window.
+  * Added `QEMU_MEMORY_MB` so tests can boot larger guests, for example `make test QEMU_MEMORY_MB=128`.
+
 ## [Current] — Framebuffer terminal backend
 
 ### Added
@@ -12,7 +31,7 @@
 
 * **VBE boot info plumbing** (`src/boot/boot.asm`, `src/boot/loader2.asm`, `src/kernel/boot_info.h`)
   * Increased stage 2 to 8 sectors / 4096 bytes and made stage 1 load the declared `LOADER2_SECTORS`.
-  * Loader2 now queries VBE in auto mode, selects a 1024x768x32 linear framebuffer when available, copies the BIOS 8x16 font to `0x91000`, and writes framebuffer boot info to `0x90000`.
+  * Loader2 now queries VBE in auto mode, selects a 1024x768x32 linear framebuffer when available, copies the BIOS 8x16 font to `0x91000`, and writes framebuffer fields to boot info at `0x90000`.
   * If VBE setup fails, boot continues normally with the VGA text backend.
 
 * **Runtime terminal sizing** (`src/kernel/syscall.c`, `src/user/edit.c`, `src/shell/shell.c`, `docs/`)
@@ -1079,7 +1098,7 @@ repurposed or supplemented by a full register save area at that point.
 
 * `pmm.h` / `pmm.c` — bitmap-based physical page frame allocator
   * Manages physical frames in the range `0x200000`–`0x7FFFFF` (6 MB, 1536 frames)
-  * `pmm_init()` — initialises the bitmap; all frames start free (BSS is pre-zeroed)
+  * `pmm_init()` — initially zeroed the bitmap so all frames started free; current PMM initialization is E820-filtered instead
   * `pmm_alloc_frame()` — returns a 4 KB-aligned physical address; linear scan from a
     search hint for O(n) worst case; returns 0 and prints a message on exhaustion
   * `pmm_free_frame(addr)` — returns a frame to the pool; detects and warns on double-free

@@ -87,7 +87,7 @@ Loaded to `0x4000:0x0000` (physical `0x40000`).
 * Check INT 0x13 LBA extension support — halt with message if unsupported
 * Load kernel from disk immediately before the FAT16 partition to physical `0x1000`
 * Apply the build-time display policy: VBE framebuffer in auto mode, BIOS/VGA text in forced VGA mode
-* Copy the BIOS 8x16 font and publish framebuffer boot info for the kernel when VBE is selected
+* Copy the BIOS 8x16 font, publish framebuffer fields when VBE is selected, and collect BIOS E820 memory-map entries in boot info
 * Setup temporary GDT
 * Switch to 32-bit protected mode
 * Jump to kernel entry at `0x1000`

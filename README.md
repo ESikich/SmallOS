@@ -333,7 +333,7 @@ kernel_main()
  → gdt_init()            GDT: null, k-code, k-data, u-code, u-data, TSS
  → paging_init()         enable paging, identity-map 8 MB
  → memory_init()         bump allocator at 0x100000
- → pmm_init()            E820-filtered bitmap allocator at 0x200000
+ → pmm_init()            E820-filtered bitmap allocator at 0x200000–0x7FFFFFF
  → kernel_selfcheck()    report TSS, stack, heap, and PMM baseline checks
  → fb_console_init()     switch terminal to 1024x768x32 framebuffer when VBE boot info is valid
  → keyboard/timer/idt    drivers and interrupt table
