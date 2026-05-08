@@ -28,4 +28,6 @@ Thumbs.db
 third_party/*
 !third_party/
 !third_party/cserver
+!third_party/ftp_client
+!third_party/ftp_server
 !third_party/tinycc

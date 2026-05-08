@@ -33,8 +33,9 @@ i686-elf-objcopy → strip ELF metadata → flat binary
 gcc              → host tool compilation (mkfat16, mkimage)
 ```
 
-The `third_party/cserver` and `third_party/tinycc` directories are git
-submodules. A fresh clone should include them with:
+The `third_party/cserver`, `third_party/ftp_client`, `third_party/ftp_server`,
+and `third_party/tinycc` directories are git submodules. A fresh clone should
+include them with:
 
 ```bash
 git clone --recurse-submodules <repo-url>
@@ -314,8 +315,8 @@ src/user/user_posix.c
 
 All use `user_lib.h` and `user_syscall.h`. No libc, no hosted runtime, and no dynamic linking.
 
-The guest compiler toolchain ships as `tools/tcc.elf`, built from the vendored
-TinyCC sources with the generic SmallOS CRT adapter. The guest entry point
+The guest compiler toolchain ships as `tools/tcc.elf`, built from the TinyCC
+submodule sources with the generic SmallOS CRT adapter. The guest entry point
 bridges the kernel `_start(argc, argv)` launch ABI to TinyCC's normal
 `main(argc, argv)` path. The shell selftests compile `samples/tccmath.c`,
 `samples/tccagg.c`, `samples/tcctree.c`, and `samples/tccmini.c` inside the

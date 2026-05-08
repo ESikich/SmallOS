@@ -181,7 +181,7 @@
 * **Socket ABI + user-space TCP services** (`src/kernel/syscall.c`, `src/drivers/tcp.c`, `src/user/user_posix.c`, `src/user/tcpecho.c`, `src/user/ftpd.c`)
   * The passive socket ABI now reaches a real user-space echo server through QEMU host forwarding
   * `apps/services/tcpecho.elf` now serves as the end-to-end smoke test for the TCP path
-  * `apps/services/ftpd.elf` runs the vendored FTP session logic as a normal guest ELF
+  * `apps/services/ftpd.elf` runs the FTP server package session logic as a normal guest ELF
 
 ### Changed
 

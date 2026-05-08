@@ -4,3 +4,9 @@
 [submodule "third_party/tinycc"]
 	path = third_party/tinycc
 	url = https://github.com/TinyCC/tinycc.git
+[submodule "third_party/ftp_client"]
+	path = third_party/ftp_client
+	url = https://github.com/ESikich/ftp_client.git
+[submodule "third_party/ftp_server"]
+	path = third_party/ftp_server
+	url = https://github.com/ESikich/ftp_server.git

@@ -31,6 +31,8 @@ CSERVER_OBJ_DIR=$(OBJ_DIR)/cserver
 CSERVER_BIN=$(BIN_DIR)/cserve.elf
 THIRD_PARTY_TINYCC_SENTINEL=$(CURDIR)/third_party/tinycc/tcc.c
 THIRD_PARTY_CSERVER_SENTINEL=$(CSERVER_DIR)/src/main.c
+THIRD_PARTY_FTP_CLIENT_SENTINEL=$(CURDIR)/third_party/ftp_client/include/ftp_client.h
+THIRD_PARTY_FTP_SERVER_SENTINEL=$(CURDIR)/third_party/ftp_server/include/ftp_server.h
 STATE_DIR=.state
 
 BOOT_SECTOR_SIZE := $(shell awk '/^BOOT_SECTOR_SIZE[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
@@ -147,7 +149,10 @@ deps:
 	git submodule update --init --recursive
 
 check-third-party:
-	@if [ ! -f "$(THIRD_PARTY_TINYCC_SENTINEL)" ] || [ ! -f "$(THIRD_PARTY_CSERVER_SENTINEL)" ]; then \
+	@if [ ! -f "$(THIRD_PARTY_TINYCC_SENTINEL)" ] || \
+	    [ ! -f "$(THIRD_PARTY_CSERVER_SENTINEL)" ] || \
+	    [ ! -f "$(THIRD_PARTY_FTP_CLIENT_SENTINEL)" ] || \
+	    [ ! -f "$(THIRD_PARTY_FTP_SERVER_SENTINEL)" ]; then \
 		echo "Missing third-party dependencies."; \
 		echo "Run: git submodule update --init --recursive"; \
 		echo "Or clone with: git clone --recurse-submodules <repo-url>"; \
