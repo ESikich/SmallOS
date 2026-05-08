@@ -274,6 +274,24 @@ process_t* sched_current(void) {
     return s_table[s_current_idx];
 }
 
+int sched_snapshot_process_group(unsigned int pgid, process_t** out, int max) {
+    int copied = 0;
+
+    if (pgid == 0 || !out || max <= 0) {
+        return 0;
+    }
+
+    for (int i = 0; i < s_count && copied < max; i++) {
+        process_t* proc = s_table[i];
+        if (!proc || proc->pgid != pgid) {
+            continue;
+        }
+        out[copied++] = proc;
+    }
+
+    return copied;
+}
+
 int sched_reap_zombies(void) {
     int reaped = 0;
 

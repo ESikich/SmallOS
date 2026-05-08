@@ -436,6 +436,67 @@ def run_signalfd_regression(sock, log, start_offset, deadline, echo=True, report
     return False, log_offset
 
 
+def run_process_group_ctrl_c_regression(sock, log, start_offset, deadline, echo=True, report=True):
+    buf = ""
+    log_offset = start_offset
+    no_child_pass_until = 0.0
+    saw_interrupt = False
+    sent_interrupt = False
+    sent_probe = False
+
+    if echo:
+        tee_stdout("\n[pgrp-ctrl-c-regression] ")
+    clear_prompt_line(sock)
+    send_text(sock, "runelf apps/tests/pgrpprobe")
+    send_key(sock, "ret")
+
+    while time.time() < deadline:
+        chunk, log_offset = read_new(log, log_offset)
+        if chunk:
+            if echo:
+                tee_stdout(chunk)
+            buf += chunk
+
+            if "pgrpprobe waiting" in buf and not sent_interrupt:
+                send_key(sock, "ctrl-c")
+                sent_interrupt = True
+
+            if "^C" in buf and not saw_interrupt:
+                saw_interrupt = True
+                no_child_pass_until = time.time() + 2.0
+
+            if saw_interrupt and not sent_probe:
+                send_text(sock, "pwd")
+                send_key(sock, "ret")
+                sent_probe = True
+
+            if "spinwkr late PASS" in buf:
+                if report:
+                    print("[process_group_ctrl_c] FAIL")
+                return False, log_offset
+
+            if (saw_interrupt and sent_probe and saw_prompt_after(buf, "pwd: /") and
+                time.time() >= no_child_pass_until):
+                if report:
+                    print("[process_group_ctrl_c] PASS")
+                return True, log_offset
+
+            if len(buf) > TRANSCRIPT_LIMIT:
+                buf = buf[-TRANSCRIPT_TRIM:]
+        else:
+            if (saw_interrupt and sent_probe and
+                saw_prompt_after(buf, "pwd: /") and
+                time.time() >= no_child_pass_until):
+                if report:
+                    print("[process_group_ctrl_c] PASS")
+                return True, log_offset
+            time.sleep(0.05)
+
+    if report:
+        print("[process_group_ctrl_c] FAIL")
+    return False, log_offset
+
+
 def run_connect_regression(sock, log, start_offset, deadline, echo=True, report=True):
     buf = ""
     log_offset = start_offset
@@ -631,6 +692,15 @@ def main():
         if args.summary:
             status_end(signalfd_pass)
         overall_pass = overall_pass and signalfd_pass
+
+        if args.summary:
+            status_begin("interactive: process group ctrl-c")
+        pgrp_pass, log_offset = run_process_group_ctrl_c_regression(
+            sock, log, log_offset, deadline, echo=echo, report=not args.summary
+        )
+        if args.summary:
+            status_end(pgrp_pass)
+        overall_pass = overall_pass and pgrp_pass
 
         if args.summary:
             status_begin("interactive: outbound connect")

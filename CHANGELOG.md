@@ -1,5 +1,17 @@
 # Changelog
 
+## [Current] — Process group foreground cleanup
+
+### Added
+
+* **Lightweight process groups** (`src/kernel/process.*`, `src/kernel/scheduler.*`, `src/exec/elf_loader.c`)
+  * Added `pid`/`pgid` fields to `process_t`; user ELFs launched by another user process inherit the parent's process group, while shell-launched ELFs start a new group.
+  * Terminal Ctrl+C now targets the foreground group: matching signalfds receive `SIGINT`, otherwise all scheduled group members are terminated with status `130`.
+  * Shell `kill <jobid>` now signals or terminates the job's process group instead of only the job's root process.
+
+* **Foreground group regression** (`src/user/pgrpprobe.c`, `tools/qemu_selftest.py`)
+  * Added a guest probe that spawns a child with `SYS_EXEC`; the QEMU selftest now proves Ctrl+C kills the foreground parent and child together.
+
 ## [Current] — E820 memory map and expanded PMM
 
 ### Added
@@ -137,8 +149,8 @@
   * `shelltest` now exercises app-backed commands through the normal command resolver so they stay honest userland apps.
 
 * **Foreground Ctrl+C termination** (`src/kernel/process.c`, `src/kernel/scheduler.c`, `src/kernel/idt.c`, `src/kernel/interrupts.asm`, `src/drivers/tcp.c`, `docs/`)
-  * Ctrl+C is now treated as a terminal interrupt for the foreground process instead of ordinary input.
-  * The foreground process exits with status `130`; `runelf` waits observe the zombie and restore the shell prompt, while a currently running foreground process is switched away directly from the IRQ1 frame.
+  * Ctrl+C is now treated as a terminal interrupt for foreground execution instead of ordinary input.
+  * Foreground execution exits with status `130`; `runelf` waits observe the zombie and restore the shell prompt, while a currently running foreground task is switched away directly from the IRQ1 frame.
   * Keyboard waiter pointers and socket wait-queue registrations are cleared on interrupt/destruction so blocked reads, accepts, polls, and receives cannot wake a freed process.
   * `irq1_stub` now passes its saved ESP to C so pending terminal interrupts can use the same safe scheduler exit path as `SYS_EXIT` and user faults.
   * The QEMU selftest now injects `ctrl-c` into a CPU-bound foreground ELF and verifies the shell can accept input afterward.
@@ -467,7 +479,7 @@ Current SmallOS uses PMM-backed dynamic fd tables as described above.
  
 * **`PROCESS_STATE_WAITING` is skipped by `sched_find_next_runnable_from()`** — no change to the scheduler was needed; it already checks `state == PROCESS_STATE_RUNNING`.
 * **Wake-up happens in IRQ1 context** — `process_key_consumer` runs with IF=0. The only work it does is a state-flag write and a pointer clear — safe and non-blocking.
-* **Single waiter slot** — matches the single-foreground-process model. Only the foreground process can be in `PROCESS_STATE_WAITING` at any time.
+* **Single waiter slot** — matches the single active terminal-reader model. Only the foreground reader should be in `PROCESS_STATE_WAITING` on console input at any time.
  
 ---
  

@@ -21,10 +21,13 @@ typedef char process_t_must_fit_in_one_frame[(sizeof(process_t) <= 4096u) ? 1 : 
 /* Internal helpers                                                   */
 /* ------------------------------------------------------------------ */
 
-static process_t* s_foreground = 0;
+static process_t* s_foreground_reader = 0;
+static u32 s_foreground_pgid = 0;
+static u32 s_next_pid = 1;
 static volatile int s_terminal_interrupt_pending = 0;
 static process_t* s_terminal_interrupt_target = 0;
 static volatile process_t* s_detach_requested = 0;
+static volatile int s_detach_allowed = 0;
 
 #define PROCESS_TERMINATED_BY_CTRL_C 130
 #define PROCESS_SIGINT  2
@@ -58,10 +61,15 @@ typedef struct kernel_signalfd_siginfo {
     u8 pad[46];
 } kernel_signalfd_siginfo_t;
 
+static int process_group_force_exit(u32 pgid,
+                                    int status,
+                                    process_t* defer_current,
+                                    int mark_terminal_interrupt);
+
 /*
  * process_key_consumer — keyboard consumer active while a user process
  * holds the foreground.  Ctrl+C is handled as a terminal interrupt for
- * the foreground process; ordinary ASCII is buffered for SYS_READ.
+ * the foreground process group; ordinary ASCII is buffered for SYS_READ.
  *
  * True-blocking SYS_READ wake-up:
  *   After pushing the character into kb_buf, check whether a process is
@@ -76,41 +84,36 @@ typedef struct kernel_signalfd_siginfo {
  */
 static void process_key_consumer(key_event_t ev) {
     if (ev.ctrl && ev.key == KEY_C) {
-        process_t* proc = s_foreground;
-        if (!proc) return;
+        u32 pgid = s_foreground_pgid;
+        int defaulted;
+        if (pgid == 0) return;
 
         keyboard_buf_clear();
-        if (keyboard_get_waiting_process() == (void*)proc) {
-            keyboard_set_waiting_process(0);
-        }
-
-        if (process_signal_deliver(proc, PROCESS_SIGINT)) {
+        if (process_group_signal_deliver(pgid, PROCESS_SIGINT)) {
             return;
         }
-        socket_wait_clear_process(proc);
 
-        proc->exit_status = PROCESS_TERMINATED_BY_CTRL_C;
-        if (proc == sched_current()) {
-            s_terminal_interrupt_target = proc;
-            s_terminal_interrupt_pending = 1;
+        defaulted = process_group_force_exit(pgid,
+                                             PROCESS_TERMINATED_BY_CTRL_C,
+                                             sched_current(),
+                                             1);
+        if (defaulted) {
             process_set_foreground(0);
             terminal_puts("^C\n");
-        } else {
-            process_set_foreground(0);
-            terminal_puts("^C\n");
-            sched_kill(proc, 0);
         }
         return;
     }
 
     if (ev.ctrl && ev.key == KEY_Z) {
-        process_t* proc = s_foreground;
+        process_t* proc = s_foreground_reader;
         if (!proc) return;
+        if (!s_detach_allowed) return;
 
         terminal_puts("^Z\n");
         keyboard_buf_clear();
         s_detach_requested = proc;
-        s_foreground = 0;
+        s_foreground_reader = 0;
+        s_foreground_pgid = 0;
         shell_register_consumer();
         return;
     }
@@ -1127,6 +1130,10 @@ process_t* process_create(const char* name) {
     process_t* proc = (process_t*)paging_phys_to_kernel_virt(frame);
     proc_zero(proc);
 
+    proc->pid = s_next_pid++;
+    if (s_next_pid == 0) {
+        s_next_pid = 1;
+    }
     proc->state = PROCESS_STATE_UNUSED;
     proc->heap_base = USER_HEAP_BASE;
     proc->heap_brk = USER_HEAP_BASE;
@@ -1201,8 +1208,13 @@ void process_destroy(process_t* proc) {
         proc->kernel_stack_frame = 0;
     }
 
-    if (s_foreground == proc) {
-        s_foreground = 0;
+    if (s_foreground_reader == proc) {
+        s_foreground_reader = 0;
+        s_foreground_pgid = 0;
+    }
+    if (s_terminal_interrupt_target == proc) {
+        s_terminal_interrupt_target = 0;
+        s_terminal_interrupt_pending = 0;
     }
 
     proc->state = PROCESS_STATE_EXITED;
@@ -1213,8 +1225,22 @@ process_t* process_get_current(void) {
     return sched_current();
 }
 
+void process_init_user_group(process_t* proc) {
+    process_t* parent;
+
+    if (!proc) return;
+
+    parent = sched_current();
+    if (parent && parent->pgid != 0) {
+        proc->pgid = parent->pgid;
+    } else {
+        proc->pgid = proc->pid;
+    }
+}
+
 void process_set_foreground(process_t* proc) {
-    s_foreground = proc;
+    s_foreground_reader = proc;
+    s_foreground_pgid = proc ? proc->pgid : 0;
     s_detach_requested = 0;
     keyboard_reset_modifiers();
     if (proc) {
@@ -1228,7 +1254,11 @@ void process_set_foreground(process_t* proc) {
 }
 
 process_t* process_get_foreground(void) {
-    return s_foreground;
+    return s_foreground_reader;
+}
+
+u32 process_get_foreground_group(void) {
+    return s_foreground_pgid;
 }
 
 int process_signal_deliver(process_t* proc, int signum) {
@@ -1258,6 +1288,62 @@ int process_signal_deliver(process_t* proc, int signum) {
     return delivered;
 }
 
+int process_group_signal_deliver(u32 pgid, int signum) {
+    process_t* targets[SCHED_MAX_PROCS];
+    int count;
+    int delivered = 0;
+
+    if (pgid == 0) return 0;
+
+    count = sched_snapshot_process_group(pgid, targets, SCHED_MAX_PROCS);
+    for (int i = 0; i < count; i++) {
+        if (process_signal_deliver(targets[i], signum)) {
+            delivered = 1;
+        }
+    }
+
+    return delivered;
+}
+
+static int process_group_force_exit(u32 pgid,
+                                    int status,
+                                    process_t* defer_current,
+                                    int mark_terminal_interrupt) {
+    process_t* targets[SCHED_MAX_PROCS];
+    int count;
+    int killed = 0;
+
+    if (pgid == 0) return 0;
+
+    count = sched_snapshot_process_group(pgid, targets, SCHED_MAX_PROCS);
+    for (int i = 0; i < count; i++) {
+        process_t* proc = targets[i];
+        if (!proc || proc->state == PROCESS_STATE_ZOMBIE) {
+            continue;
+        }
+
+        proc->exit_status = status;
+        if (keyboard_get_waiting_process() == (void*)proc) {
+            keyboard_set_waiting_process(0);
+        }
+        socket_wait_clear_process(proc);
+
+        if (proc == defer_current && mark_terminal_interrupt) {
+            s_terminal_interrupt_target = proc;
+            s_terminal_interrupt_pending = 1;
+        } else {
+            sched_kill(proc, 0);
+        }
+        killed = 1;
+    }
+
+    return killed;
+}
+
+int process_group_kill(u32 pgid, int status) {
+    return process_group_force_exit(pgid, status, 0, 0);
+}
+
 void process_deliver_pending_terminal_interrupt(unsigned int esp) {
     process_t* proc;
 
@@ -1283,6 +1369,7 @@ static int process_wait_impl(process_t* proc, int allow_detach, int* detached) {
     if (detached) {
         *detached = 0;
     }
+    s_detach_allowed = allow_detach ? 1 : 0;
     process_set_foreground(proc);
     process_claim_for_wait(proc);
 
@@ -1290,6 +1377,7 @@ static int process_wait_impl(process_t* proc, int allow_detach, int* detached) {
         if (allow_detach && s_detach_requested == proc) {
             s_detach_requested = 0;
             process_set_foreground(0);
+            s_detach_allowed = 0;
             if (detached) {
                 *detached = 1;
             }
@@ -1299,6 +1387,7 @@ static int process_wait_impl(process_t* proc, int allow_detach, int* detached) {
     }
 
     process_set_foreground(0);
+    s_detach_allowed = 0;
     int status = proc->exit_status;
     process_destroy(proc);
     return status;

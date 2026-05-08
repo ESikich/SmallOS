@@ -110,7 +110,7 @@ Use it for basic string and memory primitives that would normally come from libc
 
 Routing decisions — whether input goes to the shell or a user process — belong to the consumer, not the driver. The consumer is registered via `keyboard_set_consumer()`:
 - `shell_init()` registers `shell_key_consumer`
-- `process_set_foreground(proc)` registers `process_key_consumer`
+- `process_set_foreground(proc)` registers `process_key_consumer` and records the foreground process group for terminal signals
 - `process_set_foreground(0)` restores the shell consumer via `shell_register_consumer()`
 
 Do not add imports of `process.h`, `scheduler.h`, or `shell.h` to `keyboard.c` or `keyboard.h`. Do not add routing logic to `keyboard_handle_irq()`. If a new input consumer is needed, register it — do not modify the driver.

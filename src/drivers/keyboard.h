@@ -137,8 +137,8 @@ void keyboard_buf_clear(void);       /* discard any pending input */
  * process_destroy() must call keyboard_set_waiting_process(0) if the
  * dying process is the current waiter, to prevent a dangling pointer.
  *
- * Only one waiter is supported at a time (matches the single-foreground-
- * process model).  The pointer is written from syscall context and read
+ * Only one waiter is supported at a time (matches the single active
+ * terminal-reader model).  The pointer is written from syscall context and read
  * from IRQ1 context; both run with IF=0 at the relevant moments so no
  * additional locking is required.
  */

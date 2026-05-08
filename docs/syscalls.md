@@ -578,9 +578,10 @@ int sys_signalfd(int fd, const sigset_t* mask, int flags);
 
 Creates or reconfigures a signalfd handle. `SFD_NONBLOCK` is persisted as
 descriptor nonblocking state and `SFD_CLOEXEC` is accepted for compatibility.
-Kernel terminal interrupts now queue `SIGINT` to matching foreground
-signalfds before falling back to Ctrl+C termination, and shell job `kill`
-queues `SIGTERM` to matching job signalfds before force-killing the job.
+Kernel terminal interrupts now queue `SIGINT` to matching signalfds in the
+foreground process group before falling back to Ctrl+C group termination, and
+shell job `kill` queues `SIGTERM` to matching job-group signalfds before
+force-killing the group.
 Reads return one `struct signalfd_siginfo` for a pending masked signal, or
 `-EAGAIN` for nonblocking reads when none is queued.
 

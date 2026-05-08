@@ -116,6 +116,15 @@ void sched_kill(process_t* proc, unsigned int esp);
 process_t* sched_current(void);
 
 /*
+ * sched_snapshot_process_group(pgid, out, max)
+ *
+ * Copy currently scheduled members of a process group into caller-provided
+ * storage.  This lets process/terminal code decide what to signal or kill
+ * without mutating the scheduler table while walking it.
+ */
+int sched_snapshot_process_group(unsigned int pgid, process_t** out, int max);
+
+/*
  * sched_start(first_proc)
  *
  * Enter the scheduler for the first time by switching away from the

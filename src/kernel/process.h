@@ -99,6 +99,8 @@ struct fd_entry {
 typedef struct process {
     u32*            pd;                 /* PMM physical page-directory frame */
     u32             kernel_stack_frame; /* PMM physical kernel-stack frame */
+    u32             pid;                /* kernel process id, unique until wrap */
+    u32             pgid;               /* lightweight process group id */
     unsigned int    sched_esp;
     volatile process_state_t state;
     int             exit_status;
@@ -159,22 +161,28 @@ process_t* process_get_current(void);
 /*
  * Foreground terminal/input owner.
  *
- * When non-null, keyboard input should be routed to this process even if
- * the scheduler happens to be running some other task (for example the
- * shell blocked in process_wait()).
+ * Keyboard bytes are routed to one foreground reader, but terminal-generated
+ * signals such as Ctrl+C target the reader's process group.  Children spawned
+ * by a foreground user process inherit that group, so terminal interrupts can
+ * cover the small async process trees SmallOS supports today.
  */
+void       process_init_user_group(process_t* proc);
 void       process_set_foreground(process_t* proc);
 process_t* process_get_foreground(void);
+u32        process_get_foreground_group(void);
 int        process_signal_deliver(process_t* proc, int signum);
+int        process_group_signal_deliver(u32 pgid, int signum);
+int        process_group_kill(u32 pgid, int status);
 
 /*
  * Terminal interrupt delivery.
  *
- * Ctrl+C is interpreted by the foreground process input consumer as a request
- * to terminate the current foreground process with the conventional status
- * 130.  IRQ1 calls process_deliver_pending_terminal_interrupt() after the
- * keyboard consumer returns so a currently running foreground process can be
- * switched away using the IRQ frame ESP.
+ * Ctrl+C is interpreted by the foreground input consumer as a request
+ * to signal or terminate the current foreground process group with the
+ * conventional status 130.  IRQ1 calls
+ * process_deliver_pending_terminal_interrupt() after the keyboard consumer
+ * returns so a currently running foreground member can be switched away using
+ * the IRQ frame ESP.
  */
 void       process_deliver_pending_terminal_interrupt(unsigned int esp);
 

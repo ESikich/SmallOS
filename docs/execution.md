@@ -56,8 +56,8 @@ Important current-state facts:
 - the **shell** is a scheduler-owned kernel task created at boot
 - **keyboard IRQ1** decodes scancodes and calls a registered `keyboard_consumer_fn` — it makes no routing decisions itself
 - the **shell consumer** (`shell_key_consumer` in `shell.c`) enqueues `shell_event_t` entries; the shell task drains them in `shell_poll()` outside IRQ context
-- the **process consumer** (`process_key_consumer` in `process.c`) pushes ASCII into `kb_buf`; non-ASCII key events are ignored
-- consumer ownership transfers via `process_set_foreground()` — shell consumer at boot, process consumer while a user process holds the foreground, shell consumer restored on exit
+- the **process consumer** (`process_key_consumer` in `process.c`) pushes ASCII into `kb_buf`; terminal signals such as Ctrl+C target the foreground process group
+- consumer ownership transfers via `process_set_foreground()` — shell consumer at boot, process consumer while a user process holds the foreground reader/group, shell consumer restored on exit
 - **ELF user programs** are loaded into their own page directory and do execute in ring 3
 - ELF launch and exit are now scheduler-owned: `elf_run_image()` seeds a bootstrap context, enqueues the task, and returns `process_t*`
 - the scheduler supports kernel tasks, ELF tasks, voluntary yielding, timer-driven sleeping, and timer-driven switching; `runelf` blocks with `process_wait()`, `runelf_nowait` returns immediately, and `bg` / `runelf_bg` return while keeping a reattachable shell job
@@ -301,8 +301,8 @@ The old explicit parent-tracking statics are gone. The current design relies on 
 - `bg` / `runelf_bg` launch the child and return immediately, but shell job control owns cleanup until `fg <jobid>` reaps it or `kill <jobid>` stops it
 - Ctrl+Z while a shell-owned job is foregrounded detaches it back to the shell job table without killing it
 - `SYS_EXEC` children are also unclaimed — freed by the reaper
-- interactive foreground input is tracked with `process_set_foreground(proc)` / `process_get_foreground()`
-- Ctrl+C is delivered to the current foreground process as a terminal interrupt. It exits that process with status `130` and restores the waiting shell path; it is not delivered as a byte from `SYS_READ`.
+- interactive foreground input is tracked with `process_set_foreground(proc)` / `process_get_foreground()`, while terminal signals target `process_get_foreground_group()`
+- Ctrl+C is delivered to the current foreground process group as a terminal interrupt. Matching signalfds receive `SIGINT`; otherwise group members exit with status `130` and the waiting shell path is restored. Ctrl+C is not delivered as a byte from `SYS_READ`.
 - process destruction is either explicit via `process_wait()` or automatic via `sched_reap_zombies()`
 
 ---
@@ -438,12 +438,12 @@ The active execution path is:
 
 There are currently two related ownership concepts.
 
-`process_get_current()` follows the scheduler-owned current task. Interactive input routing uses foreground ownership via `process_set_foreground()` / `process_get_foreground()`.
+`process_get_current()` follows the scheduler-owned current task. Interactive input routing uses foreground ownership via `process_set_foreground()` / `process_get_foreground()`, with terminal signals scoped to the foreground process group.
 
 That means:
 
 - during normal shell execution, the current process is the scheduler-owned shell task
-- while the shell is waiting on a foreground ELF, keyboard routing still follows the foreground owner first
+- while the shell is waiting on a foreground ELF, keyboard routing still follows the foreground reader first
 - otherwise keyboard routing falls back to `sched_current()`
 
 ---
@@ -550,7 +550,7 @@ Likely causes:
 
 Likely causes:
 
-- foreground owner not set/cleared correctly around interactive runs
+- foreground reader/group not set/cleared correctly around interactive runs
 - keyboard routing not falling back from foreground owner to `sched_current()` correctly
 
 ---

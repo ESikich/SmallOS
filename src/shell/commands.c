@@ -1117,14 +1117,14 @@ static void cmd_kill(command_t* cmd) {
         return;
     }
 
-    if (process_signal_deliver(job->proc, SHELL_SIGTERM)) {
+    if (process_group_signal_deliver(job->proc->pgid, SHELL_SIGTERM)) {
         terminal_puts("kill: signaled ");
         terminal_puts(job->command);
         terminal_putc('\n');
         return;
     }
 
-    sched_kill(job->proc, 0);
+    process_group_kill(job->proc->pgid, 128 + SHELL_SIGTERM);
     process_destroy(job->proc);
     terminal_puts("kill: ");
     terminal_puts(job->command);

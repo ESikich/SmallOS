@@ -28,8 +28,8 @@ POSIX edge-semantics work.
   of a single global TCP waiter.
 - Timerfd and signalfd-style handles own read wait queues. Timer IRQs wake
   expired timerfd waiters directly, Ctrl+C queues `SIGINT` to matching
-  foreground signalfds, and shell job `kill` queues `SIGTERM` to matching job
-  signalfds before falling back to force-kill behavior.
+  foreground process-group signalfds, and shell job `kill` queues `SIGTERM`
+  to matching job-group signalfds before falling back to force-kill behavior.
 - Connected TCP streams allocate lazy PMM-backed 4 KiB RX rings, advertise the
   remaining RX window, and stop ACKing bytes that cannot be queued.
 - Connected TCP streams allocate lazy PMM-backed 16 KiB TX rings, retain sent

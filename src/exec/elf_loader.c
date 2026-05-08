@@ -131,6 +131,7 @@ process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
 
     process_t* proc = process_create("elf");
     if (!proc) return 0;
+    process_init_user_group(proc);
 
     proc->pd = process_pd_create();
     if (!proc->pd) {
