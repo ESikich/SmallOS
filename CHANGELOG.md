@@ -8,10 +8,11 @@
   * Added a 1024x768x32 linear-framebuffer terminal backend with an 8x16 BIOS font, white-on-black text, software cursor, destructive backspace, wrapping, and framebuffer-row scrolling.
   * Mapped framebuffer device memory into a stable kernel virtual window at `0xD0000000` without handing the physical framebuffer to PMM.
   * Kept VGA text mode as the default early/fallback/debug backend and preserved serial mirroring as the headless test truth.
+  * Added `DISPLAY_BACKEND=auto|vga`, `make framebuffer-smoke`, `make vga-smoke`, and `make display-smoke` so the framebuffer path gets a nonblank 1024x768 QEMU screenshot check while forced VGA stays in BIOS text mode and gets its own nonblank screenshot check.
 
 * **VBE boot info plumbing** (`src/boot/boot.asm`, `src/boot/loader2.asm`, `src/kernel/boot_info.h`)
   * Increased stage 2 to 8 sectors / 4096 bytes and made stage 1 load the declared `LOADER2_SECTORS`.
-  * Loader2 now queries VBE, selects a 1024x768x32 linear framebuffer when available, copies the BIOS 8x16 font to `0x91000`, and writes framebuffer boot info to `0x90000`.
+  * Loader2 now queries VBE in auto mode, selects a 1024x768x32 linear framebuffer when available, copies the BIOS 8x16 font to `0x91000`, and writes framebuffer boot info to `0x90000`.
   * If VBE setup fails, boot continues normally with the VGA text backend.
 
 * **Runtime terminal sizing** (`src/kernel/syscall.c`, `src/user/edit.c`, `src/shell/shell.c`, `docs/`)

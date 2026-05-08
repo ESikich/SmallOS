@@ -18,6 +18,7 @@ KERNEL_SEGMENT       equ KERNEL_OFFSET / 16
 KERNEL_READ_CHUNK    equ 120        ; 120 sectors = 61440 bytes, fits below 64 KiB
 STAGE2_STACK_TOP     equ __STAGE2_STACK_TOP__
 STAGE2_STACK_TOP_32  equ __STAGE2_STACK_TOP_32__
+FORCE_VGA_BACKEND    equ __FORCE_VGA_BACKEND__
 BOOT_SECTOR_ADDR     equ 0x7C00
 BOOT_INFO_SEG        equ 0x9000
 BOOT_FONT_SEG        equ 0x9100
@@ -64,7 +65,11 @@ start:
     mov si, kernel_loaded_msg
     call print_string
 
+%if FORCE_VGA_BACKEND
+    call vga_setup
+%else
     call vbe_setup
+%endif
     call switch_to_pm
 
 hang:
@@ -174,6 +179,15 @@ copy_vga_font:
 
     pop es
     pop ds
+    popa
+    ret
+
+vga_setup:
+    pusha
+    call clear_boot_info
+    mov ax, 0x0003
+    int 0x10
+    call copy_vga_font
     popa
     ret
 

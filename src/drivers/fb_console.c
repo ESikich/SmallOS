@@ -227,6 +227,11 @@ int fb_console_init(void) {
     const boot_info_t* info = boot_info_get();
     u32 bytes;
 
+#ifdef SMALLOS_FORCE_VGA_BACKEND
+    terminal_puts("boot: PASS terminal: VGA text forced\n");
+    return 0;
+#endif
+
     if (!info->framebuffer_valid ||
         info->framebuffer_phys == 0u ||
         info->framebuffer_width < FB_FONT_WIDTH ||

@@ -117,6 +117,7 @@ WSL, Windows Terminal, or another terminal bridge, try `make run-gtk` or
 **Headless (background, serial log):**
 ```bash
 make run-headless           # starts QEMU as a daemon
+make run-headless DISPLAY_BACKEND=vga  # force VGA text mode
 tail -f /tmp/smallos-serial.log   # read all kernel output
 ```
 
@@ -155,6 +156,13 @@ mirrors all terminal output to `/tmp/smallos-serial.log` via the COM1
 serial driver.  Use the QEMU monitor socket at
 `/tmp/smallos-monitor.sock` to send keystrokes (`sendkey`) or take
 screenshots (`screendump`).
+
+`make display-smoke` runs the display-only visual smoke checks. It boots the
+default framebuffer path, captures `build/smoke/framebuffer.ppm`, verifies a
+nonblank 1024x768 screenshot, then repeats with `DISPLAY_BACKEND=vga` to prove
+the forced VGA text fallback boots visibly without switching to the framebuffer.
+The smoke target uses QEMU's VNC display backend so screenshots are rendered
+while the VM still runs daemonized.
 
 The mutable FAT16 disk state now lives in `.state/fat16.img`, so normal
 rebuilds keep your files.  Use `make reset-disk` if you want to restore
@@ -313,7 +321,7 @@ probe.
 ```text
 BIOS
  → boot.asm              load loader2 (CHS, 8 sectors) to `0x40000`
- → loader2.asm           load kernel (LBA), select VBE framebuffer if available → protected mode
+ → loader2.asm           load kernel (LBA), apply display policy → protected mode
  → kernel_entry.asm      zero BSS → kernel_main()
 
 kernel_main()

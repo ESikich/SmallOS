@@ -138,6 +138,17 @@ wrappers, stdio, directory traversal, and TinyCC expectations.
 `make smoke-reboot` or `make smoke-halt` to exercise those shell
 commands on their own.
 
+`make framebuffer-smoke` boots the default display policy, waits for the
+serial framebuffer boot marker and shell prompt, asks the QEMU monitor for a
+PPM screenshot, and verifies that the image is a nonblank 1024x768 framebuffer.
+`make vga-smoke` rebuilds with `DISPLAY_BACKEND=vga`, waits for the forced-VGA
+serial marker, asks the QEMU monitor for a PPM screenshot, verifies that VGA
+text output is visible, and fails if the framebuffer backend is selected
+anyway. `make display-smoke` runs both. These visual checks use QEMU's VNC
+display backend by default so the VM can stay daemonized while still rendering
+screenshots. They are intentionally separate from plain `make test` because
+screenshots depend more on the host QEMU display environment.
+
 `make socket-eof-smoke` boots QEMU with user-network host forwarding for
 guest port `2463`, starts `apps/services/sockeof`, then verifies that
 a 3072-byte multi-segment payload plus host half-close wakes guest `poll()`,
@@ -188,6 +199,20 @@ make run-gtk
 make run-sdl
 make run QEMU_DISPLAY=gtk
 ```
+
+The guest terminal backend policy is controlled at build time:
+
+```bash
+make run-headless DISPLAY_BACKEND=auto  # default: VBE framebuffer, VGA fallback
+make run-headless DISPLAY_BACKEND=vga   # force BIOS/VGA text mode
+```
+
+`DISPLAY_BACKEND=auto` keeps the normal VBE path: loader2 asks for
+1024x768x32 and the kernel falls back to VGA text if VBE setup fails.
+`DISPLAY_BACKEND=vga` keeps loader2 in BIOS/VGA text mode and defines
+`SMALLOS_FORCE_VGA_BACKEND=1` for the kernel, so `fb_console_init()` returns
+before mapping or selecting the framebuffer. The VGA panic and double-fault
+paths remain available either way.
 
 On Windows, TAP networking requires an additional TAP driver. The QEMU
 documentation notes that the TAP-Win32 driver is not bundled with standard

@@ -31,6 +31,15 @@ during the full regression run.
 `make smoke-reboot` or `make smoke-halt` when you want to verify those
 commands without running the full guest suite.
 
+`make display-smoke` runs the framebuffer and forced-VGA visual smoke checks.
+The host harness still treats serial as truth: it waits for the shell prompt
+plus the expected boot marker before asking QEMU's monitor for `screendump`.
+For the framebuffer path it verifies that the PPM is present, 1024x768, and
+not blank; for `DISPLAY_BACKEND=vga` it verifies the forced-VGA marker, fails
+if the framebuffer backend is selected, and also requires a nonblank VGA text
+screenshot. Keep these checks out of the regular `make test` loop until they
+have proven stable across host QEMU setups.
+
 `kernel_main()` now runs a small startup selfcheck right after `pmm_init()`.
 It prints `kernel: selfcheck PASS` when the live TSS selector, boot stack,
 heap base, and PMM free-frame baseline all match the boot contract. If any of

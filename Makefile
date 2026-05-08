@@ -13,9 +13,14 @@ EXEC_DIR=$(SRC_DIR)/exec
 USER_DIR=$(SRC_DIR)/user
 
 BUILD_DIR=build
-OBJ_DIR=$(BUILD_DIR)/obj
-BIN_DIR=$(BUILD_DIR)/bin
-GEN_DIR=$(BUILD_DIR)/gen
+DISPLAY_BACKEND ?= auto
+ifneq ($(filter $(DISPLAY_BACKEND),auto vga),$(DISPLAY_BACKEND))
+$(error DISPLAY_BACKEND must be one of: auto vga)
+endif
+OBJ_DIR=$(BUILD_DIR)/obj/$(DISPLAY_BACKEND)
+BIN_ROOT=$(BUILD_DIR)/bin
+BIN_DIR=$(BIN_ROOT)/$(DISPLAY_BACKEND)
+GEN_DIR=$(BUILD_DIR)/gen/$(DISPLAY_BACKEND)
 IMG_DIR=$(BUILD_DIR)/img
 TOOLS_DIR=$(BUILD_DIR)/tools
 TINYCC_DIR=$(BUILD_DIR)/tinycc-host
@@ -50,7 +55,13 @@ BOOT_PARTITION_TABLE_OFFSET := $(shell awk '/^MBR_PARTITION_TABLE_OFFSET[[:space
 BOOT_PARTITION_ENTRY_SIZE := $(shell awk '/^MBR_PARTITION_ENTRY_SIZE[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 LOADER2_SIZE_BYTES := $(shell awk '/^LOADER2_SIZE_BYTES[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/loader2.asm)
 
-CPPFLAGS=-I$(KERNEL_DIR) -I$(DRIVERS_DIR) -I$(SHELL_DIR) -I$(EXEC_DIR) -I$(USER_DIR) -I$(CURDIR)/third_party/ftp_server/include
+CPPFLAGS=-I$(GEN_DIR) -I$(KERNEL_DIR) -I$(DRIVERS_DIR) -I$(SHELL_DIR) -I$(EXEC_DIR) -I$(USER_DIR) -I$(CURDIR)/third_party/ftp_server/include
+ifeq ($(DISPLAY_BACKEND),vga)
+CPPFLAGS+=-DSMALLOS_FORCE_VGA_BACKEND=1
+LOADER2_FORCE_VGA_BACKEND=1
+else
+LOADER2_FORCE_VGA_BACKEND=0
+endif
 CFLAGS=-ffreestanding -m32 -fno-pie -fno-stack-protector -nostdlib -nostartfiles -Wa,--noexecstack
 DEPFLAGS=-MMD -MP
 HOST_CC=gcc
@@ -247,6 +258,7 @@ $(GEN_DIR)/loader2.gen.asm: $(BOOT_DIR)/loader2.asm | dirs
 	sed \
 		-e "s/__STAGE2_STACK_TOP__/$(STAGE2_STACK_TOP)/" \
 		-e "s/__STAGE2_STACK_TOP_32__/$(STAGE2_STACK_TOP_32)/" \
+		-e "s/__FORCE_VGA_BACKEND__/$(LOADER2_FORCE_VGA_BACKEND)/" \
 		$< > $@
 
 $(BIN_DIR)/loader2.bin: $(GEN_DIR)/loader2.gen.asm | dirs
@@ -327,6 +339,12 @@ QEMU_NET_MODE?=user
 QEMU_NET_IFACE?=tap0
 QEMU_NET_MAC?=52:54:00:12:34:56
 QEMU_DISPLAY?=curses
+QEMU_HEADLESS_DISPLAY?=none
+SMOKE_DIR=$(BUILD_DIR)/smoke
+FRAMEBUFFER_SMOKE_PPM=$(SMOKE_DIR)/framebuffer.ppm
+VGA_SMOKE_PPM=$(SMOKE_DIR)/vga.ppm
+DISPLAY_SMOKE_QEMU_DISPLAY?=vnc=unix:/tmp/smallos-vnc.sock
+DISPLAY_SMOKE_VNC_SOCK=/tmp/smallos-vnc.sock
 QEMU_NET_HOSTFWD?=
 QEMU_NET_GUESTFWD?=
 QEMU_NETFLAGS_USER=-nic user,model=e1000,mac=$(QEMU_NET_MAC)$(QEMU_NET_HOSTFWD)$(QEMU_NET_GUESTFWD)
@@ -336,7 +354,7 @@ QEMUFLAGS=-drive format=raw,file=$(IMG_DIR)/os-image.bin -boot c -m 32 \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all dirs deps check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap test socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify reset-disk tinycc-host tinycc-host-clean
+.PHONY: all dirs deps check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap test framebuffer-smoke vga-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify reset-disk tinycc-host tinycc-host-clean
 
 run: image-layout-check
 	$(QEMU) $(QEMUFLAGS) -display $(QEMU_DISPLAY)
@@ -351,7 +369,7 @@ run-tap: image-layout-check
 	$(MAKE) run QEMU_NET_MODE=tap
 
 run-headless: image-layout-check
-	$(QEMU) $(QEMUFLAGS) -display none \
+	$(QEMU) $(QEMUFLAGS) -display $(QEMU_HEADLESS_DISPLAY) \
 	    -monitor unix:/tmp/smallos-monitor.sock,server,nowait \
 	    -daemonize -pidfile /tmp/smallos.pid
 
@@ -440,6 +458,27 @@ cserve-smoke: reset-disk image-layout-check
 		--port $(CSERVE_SMOKE_PORT) \
 		--clients $(CSERVE_SMOKE_CLIENTS) \
 		--timeout 120
+
+framebuffer-smoke:
+	$(MAKE) display-smoke-one DISPLAY_BACKEND=auto DISPLAY_SMOKE_MODE=framebuffer DISPLAY_SMOKE_PPM=$(FRAMEBUFFER_SMOKE_PPM)
+
+vga-smoke:
+	$(MAKE) display-smoke-one DISPLAY_BACKEND=vga DISPLAY_SMOKE_MODE=vga DISPLAY_SMOKE_PPM=$(VGA_SMOKE_PPM)
+
+display-smoke-one: reset-disk image-layout-check
+	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
+	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE) $(DISPLAY_SMOKE_VNC_SOCK) $(DISPLAY_SMOKE_PPM)
+	mkdir -p $(SMOKE_DIR)
+	$(MAKE) run-headless DISPLAY_BACKEND=$(DISPLAY_BACKEND) QEMU_HEADLESS_DISPLAY=$(DISPLAY_SMOKE_QEMU_DISPLAY)
+	$(PYTHON3) tools/display_smoke.py \
+		--mode $(DISPLAY_SMOKE_MODE) \
+		--monitor $(MONITOR_SOCK) \
+		--serial $(SERIAL_LOG) \
+		--pidfile $(PIDFILE) \
+		--screenshot $(DISPLAY_SMOKE_PPM) \
+		--timeout $(SMOKE_TIMEOUT)
+
+display-smoke: framebuffer-smoke vga-smoke
 
 smoke: reset-disk image-layout-check
 	$(MAKE) smoke-reboot

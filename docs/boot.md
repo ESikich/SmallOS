@@ -9,7 +9,7 @@ This document explains how SmallOS boots from BIOS to kernel, including disk lay
 ```text
 BIOS
  → boot.asm        (stage 1, 512 bytes, CHS read of loader2)
- → loader2.asm     (stage 2, 4096 bytes, LBA read of kernel, VBE setup)
+ → loader2.asm     (stage 2, 4096 bytes, LBA read of kernel, display policy)
  → kernel.bin      (loaded to 0x1000)
  → protected mode
  → kernel_entry.asm  (zeros BSS, calls kernel_main)
@@ -86,8 +86,8 @@ Loaded to `0x4000:0x0000` (physical `0x40000`).
 
 * Check INT 0x13 LBA extension support — halt with message if unsupported
 * Load kernel from disk immediately before the FAT16 partition to physical `0x1000`
-* Query VBE and request a 1024x768x32 linear framebuffer when available
-* Copy the BIOS 8x16 font and publish framebuffer boot info for the kernel
+* Apply the build-time display policy: VBE framebuffer in auto mode, BIOS/VGA text in forced VGA mode
+* Copy the BIOS 8x16 font and publish framebuffer boot info for the kernel when VBE is selected
 * Setup temporary GDT
 * Switch to 32-bit protected mode
 * Jump to kernel entry at `0x1000`
@@ -257,7 +257,7 @@ Loader2 must be exactly `LOADER2_SIZE_BYTES` bytes. The source enforces a fixed-
 
 ## Framebuffer Boot Info
 
-Before entering protected mode, loader2 queries VBE, scans for a 1024x768x32 graphics mode with a linear framebuffer, copies the BIOS 8x16 font to `0x91000`, and writes framebuffer boot info to `0x90000`. If any VBE step fails, `framebuffer_valid` remains zero and the kernel keeps the VGA text backend.
+Before entering protected mode, loader2 normally queries VBE, scans for a 1024x768x32 graphics mode with a linear framebuffer, copies the BIOS 8x16 font to `0x91000`, and writes framebuffer boot info to `0x90000`. If any VBE step fails, `framebuffer_valid` remains zero and the kernel keeps the VGA text backend. With `DISPLAY_BACKEND=vga`, loader2 clears framebuffer boot info and keeps BIOS/VGA text mode so the forced VGA path remains visible.
 
 ---
 
@@ -309,7 +309,7 @@ Stage 1 cannot fit LBA logic, protected mode setup, or disk reads in 512 bytes. 
 | Stage   | Purpose                                                      |
 | ------- | ------------------------------------------------------------ |
 | Stage 1 | load fixed-size stage 2 via CHS                              |
-| Stage 2 | LBA extension check, kernel load, VBE setup, protected mode   |
+| Stage 2 | LBA extension check, kernel load, display policy, protected mode |
 
 ---
 

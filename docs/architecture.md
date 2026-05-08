@@ -31,6 +31,7 @@ boot.asm (stage 1, 16-bit)
   ↓
 loader2.asm (stage 2, 16-bit → 32-bit)
   reads boot-sector metadata, derives kernel LBA, loads kernel → 0x1000
+  applies display policy: VBE framebuffer in auto mode, BIOS/VGA text in forced VGA mode
   ↓
 kernel_entry.asm (32-bit)
   zeros BSS
@@ -393,7 +394,7 @@ Normal syscalls return through this saved interrupt frame. `SYS_EXIT` is the exc
 
 `terminal.c` owns terminal semantics and dispatches through an active backend. It provides `terminal_putc`, `terminal_puts`, `terminal_put_uint`, `terminal_put_hex`, cursor control, scrolling behavior, ANSI cursor/clear handling, and runtime `terminal_rows()` / `terminal_cols()` queries. Serial mirrors all terminal bytes and remains the headless test truth.
 
-The default backend is VGA text mode (`0xB8000`) for early/fallback/debug output. When loader2 provides valid VBE boot info, `fb_console.c` maps the linear framebuffer at `0xD0000000` and switches to a white-on-black 8x16-font framebuffer backend. At 1024x768 this exposes a 128x48 terminal while keeping VGA text available for panic/double-fault markers.
+The default backend is VGA text mode (`0xB8000`) for early/fallback/debug output. When `DISPLAY_BACKEND=auto` and loader2 provides valid VBE boot info, `fb_console.c` maps the linear framebuffer at `0xD0000000` and switches to a white-on-black 8x16-font framebuffer backend. At 1024x768 this exposes a 128x48 terminal while keeping VGA text available for panic/double-fault markers. With `DISPLAY_BACKEND=vga`, loader2 stays in BIOS/VGA text mode, clears framebuffer boot info, and the kernel leaves the VGA backend active.
 
 ## Shell
 

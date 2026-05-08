@@ -121,7 +121,9 @@ void kernel_main(void) {
         boot_splash_pass("terminal: VGA text and serial console");
         boot_splash_pass("terminal: framebuffer console");
     } else {
+#ifndef SMALLOS_FORCE_VGA_BACKEND
         boot_splash_warn("terminal: framebuffer unavailable, VGA text active");
+#endif
     }
 
     keyboard_init();
