@@ -73,6 +73,7 @@
 
 * **Project documentation** (`README.md`, `docs/`)
   * Refreshed the README, build, architecture, filesystem, execution, and syscall docs to match the current FAT16 seed/mutable image split, path-aware file layout, full syscall surface, and TCP service model.
+  * Documented the third-party submodule workflow and added a build-time dependency hint for plain clones.
   * Updated the shipped FAT16 program lists to include the current stdio, dirent, errno, preemption-helper, and CRT probes.
 
 * **Source comments and help text** (`src/`, `tools/`)

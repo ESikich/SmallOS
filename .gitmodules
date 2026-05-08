@@ -1,0 +1,6 @@
+[submodule "third_party/cserver"]
+	path = third_party/cserver
+	url = https://github.com/ESikich/cserver.git
+[submodule "third_party/tinycc"]
+	path = third_party/tinycc
+	url = https://github.com/TinyCC/tinycc.git

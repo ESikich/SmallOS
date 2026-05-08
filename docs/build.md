@@ -33,6 +33,27 @@ i686-elf-objcopy → strip ELF metadata → flat binary
 gcc              → host tool compilation (mkfat16, mkimage)
 ```
 
+The `third_party/cserver` and `third_party/tinycc` directories are git
+submodules. A fresh clone should include them with:
+
+```bash
+git clone --recurse-submodules <repo-url>
+```
+
+For an existing clone, run:
+
+```bash
+make deps
+```
+
+That target runs `git submodule update --init --recursive`. The normal build
+checks for the key third-party source files and prints that command if they are
+missing.
+
+The TinyCC sources stay clean in `third_party/tinycc`. SmallOS applies
+`patches/tinycc/smallos.patch` to a build-local copy under
+`build/tinycc-smalos-src/` before compiling the guest `tools/tcc.elf` variant.
+
 ---
 
 # Build Output Structure

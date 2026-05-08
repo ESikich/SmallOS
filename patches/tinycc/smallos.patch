@@ -1,0 +1,39 @@
+diff --git a/libtcc.c b/libtcc.c
+index 10e65fb..602f849 100644
+--- a/libtcc.c
++++ b/libtcc.c
+@@ -725,6 +725,7 @@ PUB_FUNC void _tcc_error(const char *fmt, ...)
+     va_start(ap, fmt);
+     error1(ERROR_ERROR, fmt, ap);
+     exit(1);
++    __builtin_unreachable();
+ }
+ #define _tcc_error use_tcc_error_noabort
+ 
+diff --git a/tcc.h b/tcc.h
+index 2884259..d92dbf4 100644
+--- a/tcc.h
++++ b/tcc.h
+@@ -45,6 +45,12 @@
+ # ifndef CONFIG_TCC_STATIC
+ #  include <dlfcn.h>
+ # endif
++/*
++ * Some build configurations end up without a visible prototype for open()
++ * even though the TinyCC sources use it in the ELF output path.
++ * Declare it explicitly here so SmallOS guest builds stay warning-free.
++ */
++extern int open(const char *pathname, int flags, ...);
+ /* XXX: need to define this to use them in non ISOC99 context */
+ extern float strtof (const char *__nptr, char **__endptr);
+ extern long double strtold (const char *__nptr, char **__endptr);
+@@ -183,7 +189,8 @@
+ #endif
+ 
+ /* only native compiler supports -run */
+-#if defined _WIN32 == defined TCC_TARGET_PE \
++#if !defined(TCC_TARGET_SMALLOS) \
++    && defined _WIN32 == defined TCC_TARGET_PE \
+     && defined __APPLE__ == defined TCC_TARGET_MACHO
+ # if defined __i386__ && defined TCC_TARGET_I386
+ #  define TCC_IS_NATIVE

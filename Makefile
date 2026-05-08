@@ -23,9 +23,14 @@ TINYCC_CONFIG_STAMP=$(TINYCC_DIR)/.configured
 TINYCC_SMALOS_OBJ_DIR=$(OBJ_DIR)/tinycc-smalos
 TINYCC_SMALOS_OBJ=$(TINYCC_SMALOS_OBJ_DIR)/tcc.o
 TINYCC_SMALOS_BIN=$(BIN_DIR)/tcc-smalos.elf
+TINYCC_SMALOS_SRC_DIR=$(BUILD_DIR)/tinycc-smalos-src
+TINYCC_SMALOS_PATCH_STAMP=$(TINYCC_SMALOS_SRC_DIR)/.smallos-patched
+TINYCC_SMALOS_SRC=$(TINYCC_SMALOS_SRC_DIR)/tcc.c
 CSERVER_DIR=$(CURDIR)/third_party/cserver
 CSERVER_OBJ_DIR=$(OBJ_DIR)/cserver
 CSERVER_BIN=$(BIN_DIR)/cserve.elf
+THIRD_PARTY_TINYCC_SENTINEL=$(CURDIR)/third_party/tinycc/tcc.c
+THIRD_PARTY_CSERVER_SENTINEL=$(CSERVER_DIR)/src/main.c
 STATE_DIR=.state
 
 BOOT_SECTOR_SIZE := $(shell awk '/^BOOT_SECTOR_SIZE[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
@@ -133,10 +138,21 @@ OBJ_SUBDIRS=$(sort \
 BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
 BUILD_SUBDIRS+=$(TINYCC_SMALOS_OBJ_DIR) $(CSERVER_OBJ_DIR)
 
-all: $(IMG_DIR)/os-image.bin
+all: check-third-party $(IMG_DIR)/os-image.bin
 
 dirs:
 	mkdir -p $(BUILD_SUBDIRS)
+
+deps:
+	git submodule update --init --recursive
+
+check-third-party:
+	@if [ ! -f "$(THIRD_PARTY_TINYCC_SENTINEL)" ] || [ ! -f "$(THIRD_PARTY_CSERVER_SENTINEL)" ]; then \
+		echo "Missing third-party dependencies."; \
+		echo "Run: git submodule update --init --recursive"; \
+		echo "Or clone with: git clone --recurse-submodules <repo-url>"; \
+		exit 1; \
+	fi
 
 $(OBJ_DIR)/boot/%.o: $(BOOT_DIR)/%.asm | dirs
 	$(ASM) -f elf32 $< -o $@
@@ -162,13 +178,20 @@ $(OBJ_DIR)/user/%.o: $(USER_DIR)/%.c | dirs
 $(OBJ_DIR)/user/%.o: $(USER_DIR)/%.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
-$(TINYCC_SMALOS_OBJ): $(CURDIR)/third_party/tinycc/tcc.c $(TINYCC_CONFIG_STAMP) | dirs
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Os -ffunction-sections -fdata-sections -I$(TINYCC_DIR) -I$(CURDIR)/third_party/tinycc -DTCC_TARGET_I386 -DTCC_TARGET_SMALLOS -c $< -o $@
+$(TINYCC_SMALOS_PATCH_STAMP): check-third-party patches/tinycc/smallos.patch | dirs
+	rm -rf $(TINYCC_SMALOS_SRC_DIR)
+	mkdir -p $(TINYCC_SMALOS_SRC_DIR)
+	(cd $(CURDIR)/third_party/tinycc && tar cf - --exclude=.git .) | (cd $(TINYCC_SMALOS_SRC_DIR) && tar xf -)
+	patch -d $(TINYCC_SMALOS_SRC_DIR) -p1 < patches/tinycc/smallos.patch
+	touch $@
+
+$(TINYCC_SMALOS_OBJ): $(TINYCC_SMALOS_PATCH_STAMP) $(TINYCC_CONFIG_STAMP) | dirs
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Os -ffunction-sections -fdata-sections -I$(TINYCC_DIR) -I$(TINYCC_SMALOS_SRC_DIR) -DTCC_TARGET_I386 -DTCC_TARGET_SMALLOS -c $(TINYCC_SMALOS_SRC) -o $@
 
 $(TINYCC_SMALOS_BIN): $(TINYCC_SMALOS_OBJ) $(USER_CRT0_OBJ) $(USER_RUNTIME_OBJS) | dirs
 	$(LD) $(USER_LDFLAGS) -s --gc-sections $^ $(LIBGCC_FILE) -o $@
 
-$(CSERVER_OBJ_DIR)/%.o: $(CSERVER_DIR)/src/%.c | dirs
+$(CSERVER_OBJ_DIR)/%.o: $(CSERVER_DIR)/src/%.c check-third-party | dirs
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -std=c2x -D_GNU_SOURCE -I$(CSERVER_DIR)/include -c $< -o $@
 
 $(CSERVER_BIN): $(CSERVER_OBJS) $(USER_CRT0_OBJ) $(USER_RUNTIME_OBJS) | dirs
@@ -200,7 +223,7 @@ $(BIN_DIR)/fat16.seed.img: $(USER_ELFS) $(CSERVER_BIN) $(TOOLS_DIR)/mkfat16 $(FA
 $(STATE_DIR)/fat16.img: $(BIN_DIR)/fat16.seed.img | dirs
 	cp $< $@
 
-$(TINYCC_CONFIG_STAMP): tools/build_tinycc.sh | dirs
+$(TINYCC_CONFIG_STAMP): check-third-party tools/build_tinycc.sh | dirs
 	./tools/build_tinycc.sh $(CURDIR) $(TINYCC_DIR) $(CURDIR)/third_party/tinycc
 	touch $@
 
@@ -306,7 +329,7 @@ QEMUFLAGS=-drive format=raw,file=$(IMG_DIR)/os-image.bin -boot c -m 32 \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all dirs run run-gtk run-sdl run-tap run-headless run-headless-tap test socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify reset-disk tinycc-host tinycc-host-clean
+.PHONY: all dirs deps check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap test socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify reset-disk tinycc-host tinycc-host-clean
 
 run: image-layout-check
 	$(QEMU) $(QEMUFLAGS) -display $(QEMU_DISPLAY)

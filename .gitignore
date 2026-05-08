@@ -25,4 +25,7 @@ Thumbs.db
 *.patch
 
 # Local/vendor experiments
-third_party/
+third_party/*
+!third_party/
+!third_party/cserver
+!third_party/tinycc

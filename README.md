@@ -69,6 +69,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 ├── tools/
 │   ├── mkfat16.c
 │   └── mkimage.c
+├── third_party/    git submodules for external package sources
 ├── build/
 ├── Makefile
 ├── linker.ld
@@ -76,7 +77,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 
 The seeded FAT16 image keeps shipped programs under `apps/demo/` and
 `apps/tests/`, with TinyCC under `tools/`. `tools/tcc.elf` is built from the
-vendored TinyCC sources, links the generic SmallOS CRT adapter, and runs
+TinyCC submodule sources, links the generic SmallOS CRT adapter, and runs
 TinyCC's normal `main(argc, argv)` path inside the freestanding guest runtime.
 Its sample sources live at the image root for the shell demo that moves them
 into `samples/`.
@@ -84,6 +85,19 @@ into `samples/`.
 ---
 
 ## Build & Run
+
+Clone with third-party package submodules:
+
+```bash
+git clone --recurse-submodules <repo-url>
+cd SmallOS
+```
+
+If you already cloned without submodules, fetch them with:
+
+```bash
+make deps
+```
 
 ```bash
 make clean && make
