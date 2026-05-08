@@ -214,6 +214,13 @@ make run-headless DISPLAY_BACKEND=vga   # force BIOS/VGA text mode
 before mapping or selecting the framebuffer. The VGA panic and double-fault
 paths remain available either way.
 
+QEMU guest RAM defaults to 32 MB. To exercise the expanded E820-backed PMM
+window, override the memory size:
+
+```bash
+make test QEMU_MEMORY_MB=128
+```
+
 On Windows, TAP networking requires an additional TAP driver. The QEMU
 documentation notes that the TAP-Win32 driver is not bundled with standard
 QEMU for Windows and must be installed separately. If you are not setting

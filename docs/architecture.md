@@ -41,7 +41,7 @@ kernel_main()
   gdt_init()        ← null, k-code, k-data, u-code, u-data, TSS + ltr
   paging_init()     ← identity-maps first 8 MB, enables CR0.PG
   memory_init()     ← bump allocator base at 0x100000
-  pmm_init()        ← E820-filtered bitmap allocator at 0x200000–0x1FFFFFF
+  pmm_init()        ← E820-filtered bitmap allocator at 0x200000–0x7FFFFFF
   boot diagnostics  ← splash PASS/WARN/FAIL checks for startup invariants
   fb_console_init() ← switch to framebuffer terminal when VBE boot info is valid
   keyboard/timer/idt
@@ -111,7 +111,7 @@ Inside `kernel_main()`:
 2. `gdt_init()` — install GDT with ring-3 segments and TSS; load task register with `ltr`
 3. `paging_init()` — enable paging, identity-map 8 MB
 4. `memory_init(0x100000)` — bump allocator starts at 1 MB
-5. `pmm_init()` — bitmap allocator covers 0x200000–0x1FFFFFF; E820 usable ranges are freed, then boot/runtime reservations are marked used again
+5. `pmm_init()` — bitmap allocator covers 0x200000–0x7FFFFFF; E820 usable ranges are freed, then boot/runtime reservations are marked used again
 6. `kernel_selfcheck()` — report splash checks for TSS selector, boot stack, heap base, and PMM baseline
 7. `fb_console_init()` — map and select the framebuffer backend when VBE boot info is valid
 8. `keyboard_init()`, `timer_init(SMALLOS_TIMER_HZ)`, `idt_init()` — drivers and interrupt table
@@ -471,7 +471,7 @@ Programs are linked at fixed virtual address `0x400000`, loaded into private use
                                    ELF segment frames, user stack frames,
                                    all process-private page tables,
                                    per-process kernel stack frames
-0x02000000   PMM ceiling for the default 32 MB guest memory
+0x08000000   PMM ceiling (128 MB cap; default 32 MB guests expose less via E820)
 0x00400000   USER_CODE_BASE — user ELF virtual address (per-process mapping)
 0xBFFFF000   user stack virtual address (per-process mapping)
 ```
@@ -485,8 +485,8 @@ Programs are linked at fixed virtual address `0x400000`, loaded into private use
 0x00400000 – 0x007FFFFF   user ELF segments (private, PAGE_USER | PAGE_WRITE)
 0xBFFFF000                user stack page (private, PAGE_USER | PAGE_WRITE)
 0xC0000000 – 0xFFFFFFFF   shared kernel mappings (supervisor-only)
-0xE0000000 – 0xE1DFFFFF   shared kernel PMM alias, mapping physical
-                          0x00200000 – 0x01FFFFFF
+0xE0000000 – 0xE7DFFFFF   shared kernel PMM alias, mapping physical
+                          0x00200000 – 0x07FFFFFF
 ```
 
 ## Process Paging Ownership
@@ -666,6 +666,7 @@ build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
 | kernel             | terminal_puts (serial plus active backend)              |
 | user process       | sys_write / sys_putc / sys_read                         |
 | memory accounting  | meminfo command                                         |
+| BIOS memory map    | memmap command                                          |
 | disk reads         | ataread <lba> command                                   |
 | crash analysis     | QEMU -d int,cpu_reset,guest_errors -D qemu.log          |
 
@@ -704,7 +705,7 @@ preemptive round-robin scheduler — timer IRQ context switch, `SCHED_QUANTUM_MS
 ATA PIO driver — 28-bit LBA polling reads from primary IDE channel (0x1F0)
 FAT16 filesystem — ELF programs loaded from 16 MB FAT16 partition on disk
 run/runimg infrastructure removed — `runelf` is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
-interactive shell with meminfo / ataread / fsls / fsread / mkdir / rmdir / runelf commands
+interactive shell with meminfo / memmap / ataread / fsls / fsread / mkdir / rmdir / runelf commands
 guest TinyCC compiler path — `tools/tcc.elf` runs inside SmallOS through `user_crt0` and TinyCC's normal `main`, then compiles guest C samples during `make test`
 ```
 

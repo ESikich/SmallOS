@@ -198,7 +198,7 @@ Do not allocate process-owned paging structures with `kmalloc_page()`. The bump 
 
 ```text
 kmalloc / kmalloc_page   0x100000 – 0x1FFFFF   permanent (no free)
-pmm_alloc_frame          0x200000 – 0x1FFFFFF  reclaimable on process exit
+pmm_alloc_frame          0x200000 – 0x7FFFFFF  reclaimable on process exit; E820-filtered
 ```
 
 `kmalloc` / `kmalloc_page` are for permanent kernel structures only. Do not use them for transient buffers — the bump allocator has no free path and heap used will grow permanently with each call.

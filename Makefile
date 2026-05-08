@@ -339,6 +339,7 @@ QEMU_SELFTEST_FLAGS?=--summary
 QEMU_NET_MODE?=user
 QEMU_NET_IFACE?=tap0
 QEMU_NET_MAC?=52:54:00:12:34:56
+QEMU_MEMORY_MB?=32
 QEMU_DISPLAY?=curses
 QEMU_HEADLESS_DISPLAY?=none
 SMOKE_DIR=$(BUILD_DIR)/smoke
@@ -351,7 +352,7 @@ QEMU_NET_GUESTFWD?=
 QEMU_NETFLAGS_USER=-nic user,model=e1000,mac=$(QEMU_NET_MAC)$(QEMU_NET_HOSTFWD)$(QEMU_NET_GUESTFWD)
 QEMU_NETFLAGS_TAP=-netdev tap,id=net0,ifname=$(QEMU_NET_IFACE),script=no,downscript=no -device e1000,netdev=net0,mac=$(QEMU_NET_MAC)
 QEMU_NETFLAGS=$(if $(filter tap,$(QEMU_NET_MODE)),$(QEMU_NETFLAGS_TAP),$(QEMU_NETFLAGS_USER))
-QEMUFLAGS=-drive format=raw,file=$(IMG_DIR)/os-image.bin -boot c -m 32 \
+QEMUFLAGS=-drive format=raw,file=$(IMG_DIR)/os-image.bin -boot c -m $(QEMU_MEMORY_MB) \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 

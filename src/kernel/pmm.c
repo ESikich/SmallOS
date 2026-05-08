@@ -6,16 +6,16 @@
 /*
  * pmm.c — Physical Memory Manager
  *
- * Bitmap allocator covering PMM_BASE (0x200000) .. 0x1FFFFFF.
+ * Bitmap allocator covering PMM_BASE (0x200000) .. 0x7FFFFFF.
  *
  * The bump allocator (kmalloc / kmalloc_page) owns 0x100000–0x1FFFFF
  * for kernel-owned permanent allocations.  The PMM owns
- * 0x200000–0x1FFFFFF for reclaimable page-frame allocations such as
+ * 0x200000–0x7FFFFFF for reclaimable page-frame allocations such as
  * per-process page directories, private page tables, user ELF pages,
  * and user stacks.  The ranges never overlap, so there is no ordering
  * constraint between the two allocators.
  *
- * Bitmap: 7680 bits = 960 bytes, static in BSS (zeroed before kernel_main).
+ * Bitmap: 32256 bits = 4032 bytes, static in BSS (zeroed before kernel_main).
  * E820 initialization starts with all frames used, frees only BIOS-reported
  * usable RAM inside this fixed window, then re-marks SmallOS-owned ranges.
  */
@@ -142,7 +142,7 @@ static void pmm_free_e820_usable_ranges(const boot_info_t* info) {
 }
 
 static void pmm_free_fixed_range(void) {
-    pmm_mark_range_free(PMM_BASE, PMM_BASE + PMM_SIZE);
+    pmm_mark_range_free(PMM_BASE, PMM_BASE + PMM_FALLBACK_SIZE);
 }
 
 static void pmm_reserve_boot_ranges(void) {

@@ -10,7 +10,7 @@ SmallOS currently uses three distinct memory pools:
 
 ```text
 0x100000 – 0x1FFFFF   kernel bump heap (kmalloc / kmalloc_page)
-0x200000 – 0x1FFFFFF  reclaimable PMM frame pool
+0x200000 – 0x7FFFFFF  reclaimable PMM frame pool, capped at 128 MB
 0x10000000+           per-process user heap (SYS_BRK)
 ```
 
@@ -44,11 +44,11 @@ The reported heap top should remain unchanged across user ELF runs when no kerne
 
 # PMM Frame Pool
 
-`pmm_init()` still manages the fixed reclaimable window from `0x200000`
-through `0x1FFFFFF`, but the bitmap is now initialized from BIOS E820 data.
+`pmm_init()` manages the fixed reclaimable window from `0x200000`
+through `0x7FFFFFF`, but the bitmap is initialized from BIOS E820 data.
 All frames start used, usable E820 RAM ranges inside the fixed window are
 marked free, and SmallOS-owned boot/runtime reservations are marked used again.
-If E820 is unavailable, PMM falls back to the old fixed-window assumption.
+If E820 is unavailable, PMM falls back to the old 30 MB fixed-window assumption.
 
 The protected ranges that are never handed to PMM include low BIOS memory,
 the boot sector, loader2, boot info at `0x90000`, the copied boot font at

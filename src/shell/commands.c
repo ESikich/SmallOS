@@ -382,6 +382,58 @@ static void cmd_meminfo(command_t* cmd) {
     }
 }
 
+static void terminal_put_u64_hex(u64 value) {
+    u32 high = (u32)(value >> 32);
+    u32 low = (u32)value;
+
+    if (high) {
+        terminal_put_hex(high);
+        terminal_putc('_');
+        terminal_put_hex(low);
+    } else {
+        terminal_put_hex(low);
+    }
+}
+
+static const char* e820_type_name(u32 type) {
+    switch (type) {
+    case 1: return "usable";
+    case 2: return "reserved";
+    case 3: return "acpi";
+    case 4: return "nvs";
+    case 5: return "bad";
+    default: return "other";
+    }
+}
+
+static void cmd_memmap(command_t* cmd) {
+    (void)cmd;
+
+    if (!boot_info_e820_valid()) {
+        terminal_puts("memmap: E820 unavailable\n");
+        return;
+    }
+
+    const boot_info_t* info = boot_info_get();
+    terminal_puts("memmap: ");
+    terminal_put_uint(info->e820_count);
+    terminal_puts(" E820 entries\n");
+
+    for (u32 i = 0; i < info->e820_count; i++) {
+        const boot_e820_entry_t* ent = &info->e820[i];
+        terminal_put_uint(i);
+        terminal_puts(": base ");
+        terminal_put_u64_hex(ent->base);
+        terminal_puts("  length ");
+        terminal_put_u64_hex(ent->length);
+        terminal_puts("  type ");
+        terminal_put_uint(ent->type);
+        terminal_puts(" ");
+        terminal_puts(e820_type_name(ent->type));
+        terminal_putc('\n');
+    }
+}
+
 static void cmd_netinfo(command_t* cmd) {
     socket_stats_t socket_stats;
     tcp_stats_t tcp_stats;
@@ -1125,6 +1177,7 @@ static void cmd_shelltest(command_t* cmd) {
     command_t about_cmd = { 1, { "about" } };
     command_t uptime_cmd = { 1, { "uptime" } };
     command_t meminfo_cmd = { 1, { "meminfo" } };
+    command_t memmap_cmd = { 1, { "memmap" } };
     command_t netinfo_cmd = { 1, { "netinfo" } };
     command_t netsend_cmd = { 1, { "netsend" } };
     command_t netrecv_cmd = { 1, { "netrecv" } };
@@ -1200,6 +1253,7 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_exec("about", &about_cmd);
     shelltest_exec("uptime", &uptime_cmd);
     shelltest_call("meminfo", cmd_meminfo, &meminfo_cmd);
+    shelltest_call("memmap", cmd_memmap, &memmap_cmd);
     shelltest_call("netinfo", cmd_netinfo, &netinfo_cmd);
     shelltest_call("netsend", cmd_netsend, &netsend_cmd);
     shelltest_call("netrecv", cmd_netrecv, &netrecv_cmd);
@@ -1408,6 +1462,7 @@ static command_entry_t commands[] = {
     { "help",          "show shell commands",           cmd_help },
     { "clear",         "clear the screen",              cmd_clear },
     { "meminfo",       "show heap and frame usage",     cmd_meminfo },
+    { "memmap",        "show BIOS E820 memory map",     cmd_memmap },
     { "netinfo",       "show PCI NIC status",          cmd_netinfo },
     { "netsend",       "queue a test Ethernet frame",  cmd_netsend },
     { "netrecv",       "poll and dispatch one Ethernet frame", cmd_netrecv },

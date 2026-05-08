@@ -116,7 +116,7 @@ The shell task itself is created in `kernel_main()` with `process_create_kernel_
 
 ## 1. Shell commands and app commands
 
-Commands like `help`, `clear`, `meminfo`, `cd`, `ataread`, `runelf`, `runelf_nowait`, and the low-level network diagnostics are normal kernel C functions dispatched by `commands_execute()`.
+Commands like `help`, `clear`, `meminfo`, `memmap`, `cd`, `ataread`, `runelf`, `runelf_nowait`, and the low-level network diagnostics are normal kernel C functions dispatched by `commands_execute()`.
 
 They:
 

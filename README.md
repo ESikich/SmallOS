@@ -28,7 +28,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Shell input processing decoupled from IRQ1 via a small event queue
 * Bump allocator (`kmalloc`) for permanent kernel structures
 * Physical memory manager (`pmm`) — bitmap allocator for reclaimable frames
-  * Manages `0x200000`–`0x1FFFFFF` (30 MB, 7680-frame bitmap), filtered through BIOS E820 when available
+  * Manages usable E820 RAM in `0x200000`–`0x7FFFFFF` (126 MB, 32256-frame bitmap)
   * All process frames reclaimed on exit — no leak after `runelf`
 * ELF loader — validates, loads segments, zeroes BSS, launches in ring 3
 * `process_t` abstraction — per-process struct (PD, kernel stack, scheduler state, argv storage, name); fully PMM-allocated and reclaimed on exit
@@ -156,6 +156,9 @@ mirrors all terminal output to `/tmp/smallos-serial.log` via the COM1
 serial driver.  Use the QEMU monitor socket at
 `/tmp/smallos-monitor.sock` to send keystrokes (`sendkey`) or take
 screenshots (`screendump`).
+
+The Makefile defaults QEMU to 32 MB. Use `QEMU_MEMORY_MB=128` when you want
+to exercise the expanded E820-backed PMM cap.
 
 `make display-smoke` runs the display-only visual smoke checks. It boots the
 default framebuffer path, captures `build/smoke/framebuffer.ppm`, verifies a
@@ -408,7 +411,7 @@ mkimage   assembles the final bootable disk image
 0x00200000   PMM — reclaimable frames
                process_t structs, process PDs, ELF frames,
                user stack frames, all process-private PTs, kernel stack frames
-0x00800000   PMM ceiling (= identity-map limit)
+0x08000000   PMM ceiling (128 MB cap; E820 decides usable frames)
 0x00400000   USER_CODE_BASE (per-process ELF mapping)
 0xBFFFF000   user stack (per-process mapping)
 ```

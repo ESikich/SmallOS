@@ -14,11 +14,12 @@
  *                          kernel-owned permanent allocations such as
  *                          heap objects and kernel page tables.
  *
- *   0x200000 – 0x1FFFFFF   PMM (this file)
+ *   0x200000 – 0x7FFFFFF   PMM (this file)
  *                          reclaimable per-process allocations such as
  *                          user ELF frames, user stack frames, process
  *                          page directories, and private page tables.
- *                          30 MB = 7680 frames = 960 bytes of bitmap.
+ *                          126 MB = 32256 frames = 4032 bytes of bitmap.
+ *                          E820 limits which frames are actually free.
  *                          pmm_alloc_frame() returns physical addresses;
  *                          kernel code must use paging_phys_to_kernel_virt()
  *                          before dereferencing PMM-backed memory.
@@ -28,9 +29,11 @@
  */
 
 #define PMM_BASE        0x200000u           /* 2 MB  */
-#define PMM_SIZE        0x1E00000u          /* 30 MB */
+#define PMM_LIMIT       0x08000000u         /* 128 MB */
+#define PMM_SIZE        (PMM_LIMIT - PMM_BASE)
+#define PMM_FALLBACK_SIZE 0x1E00000u        /* 30 MB when E820 is unavailable */
 #define PMM_FRAME_SIZE  4096u
-#define PMM_NUM_FRAMES  (PMM_SIZE / PMM_FRAME_SIZE)   /* 7680 */
+#define PMM_NUM_FRAMES  (PMM_SIZE / PMM_FRAME_SIZE)   /* 32256 */
 
 void pmm_init(void);
 u32  pmm_alloc_frame(void);
