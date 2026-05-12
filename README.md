@@ -312,6 +312,7 @@ Seeded FAT16 layout:
 - `apps/tests/stdioprobe` - exercise stdio EOF/error state and fflush
 - `apps/tests/dirprobe` - exercise opendir/readdir/closedir
 - `apps/tests/errnoprobe` - exercise raw syscall errors and POSIX errno wrappers
+- `apps/tests/badptrprobe` - exercise unmapped user pointers and wrapped syscall byte counts
 - `apps/tests/sleep_test` - exercise SYS_SLEEP semantics
 - `apps/tests/ptrguard` - exercise syscall pointer validation
 - `apps/tests/spinwkr` - helper used by the preemption regression

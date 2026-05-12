@@ -47,9 +47,9 @@ errno = positive errno value
 For example, `open("missing", O_RDONLY)` returns `-1` and sets
 `errno = ENOENT`.
 
-This split is intentional. Low-level probes such as `ptrguard` and `fileread`
-exercise raw syscall results, while hosted-ish code such as TinyCC relies on
-the wrapper convention.
+This split is intentional. Low-level probes such as `ptrguard`, `badptrprobe`,
+and `fileread` exercise raw syscall results, while hosted-ish code such as
+TinyCC relies on the wrapper convention.
 
 ---
 

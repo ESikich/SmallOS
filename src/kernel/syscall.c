@@ -27,6 +27,7 @@
 #define SYSCALL_MAX_WRITE_LEN 4096u
 #define EXEC_NAME_MAX         PROCESS_FD_NAME_MAX
 #define EPOLL_MAX_WATCHES     64u
+#define POLL_MAX_FDS          PROCESS_FD_LIMIT_HARD
 
 typedef struct epoll_watch {
     int used;
@@ -205,6 +206,43 @@ static int user_buf_ok(unsigned int ptr, unsigned int len) {
     }
 
     return 1;
+}
+
+static int user_count_bytes_ok(unsigned int ptr,
+                               unsigned int count,
+                               unsigned int elem_size,
+                               unsigned int* out_bytes) {
+    unsigned int bytes;
+
+    if (elem_size == 0u) return 0;
+    if (count > 0xFFFFFFFFu / elem_size) return 0;
+    bytes = count * elem_size;
+    if (out_bytes) *out_bytes = bytes;
+    return user_buf_ok(ptr, bytes);
+}
+
+static int copy_from_user(void* dst, const void* src, unsigned int len) {
+    if (len == 0u) return 0;
+    if (!dst || !src) return -EFAULT;
+    if (!user_buf_ok((unsigned int)src, len)) return -EFAULT;
+    k_memcpy(dst, src, len);
+    return 0;
+}
+
+static int copy_to_user(void* dst, const void* src, unsigned int len) {
+    if (len == 0u) return 0;
+    if (!dst || !src) return -EFAULT;
+    if (!user_buf_ok((unsigned int)dst, len)) return -EFAULT;
+    k_memcpy(dst, src, len);
+    return 0;
+}
+
+static int read_user_u32(unsigned int* out, const unsigned int* src) {
+    return copy_from_user(out, src, sizeof(*out));
+}
+
+static int write_user_u32(unsigned int* dst, unsigned int value) {
+    return copy_to_user(dst, &value, sizeof(value));
 }
 
 /*
@@ -437,8 +475,10 @@ static int sys_exec_impl(const char* name, int argc, char** argv) {
     if (argc < 0 || argc > PROCESS_MAX_ARGS) return -EINVAL;
 
     /* Validate the argv pointer array itself */
-    if (argc > 0 && !user_buf_ok((unsigned int)argv,
-                                  (unsigned int)argc * sizeof(char*))) {
+    if (argc > 0 && !user_count_bytes_ok((unsigned int)argv,
+                                         (unsigned int)argc,
+                                         sizeof(char*),
+                                         0)) {
         return -EFAULT;
     }
 
@@ -732,7 +772,9 @@ static int copy_user_sockaddr_in(struct sockaddr_in* dst,
         return -EFAULT;
     }
 
-    k_memcpy(dst, src, sizeof(struct sockaddr_in));
+    if (copy_from_user(dst, src, sizeof(struct sockaddr_in)) < 0) {
+        return -EFAULT;
+    }
     if (dst->sin_family != AF_INET) {
         return -EINVAL;
     }
@@ -879,11 +921,12 @@ static int sys_accept_impl(syscall_regs_t* regs,
     peer_port = socket_peer_port(new_ent->socket);
     if (addr && addrlen) {
         struct sockaddr_in sa;
-        if (!user_buf_ok((unsigned int)addrlen, sizeof(unsigned int))) {
+        unsigned int user_addrlen = 0;
+        if (read_user_u32(&user_addrlen, addrlen) < 0) {
             process_fd_close(process_fd_get(proc, new_fd));
             return -EFAULT;
         }
-        if (*addrlen < sizeof(struct sockaddr_in)) {
+        if (user_addrlen < sizeof(struct sockaddr_in)) {
             process_fd_close(process_fd_get(proc, new_fd));
             return -EINVAL;
         }
@@ -895,8 +938,11 @@ static int sys_accept_impl(syscall_regs_t* regs,
         sa.sin_family = AF_INET;
         sa.sin_port = swap_u16((unsigned short)peer_port);
         sa.sin_addr.s_addr = swap_u32(peer_ip);
-        k_memcpy(addr, &sa, sizeof(sa));
-        *addrlen = sizeof(sa);
+        if (copy_to_user(addr, &sa, sizeof(sa)) < 0 ||
+            write_user_u32(addrlen, sizeof(sa)) < 0) {
+            process_fd_close(process_fd_get(proc, new_fd));
+            return -EFAULT;
+        }
     }
 
     return new_fd;
@@ -1094,7 +1140,10 @@ static int sys_poll_impl(syscall_regs_t* regs, struct pollfd* fds,
 
     if (!proc) return -EINVAL;
     if (nfds == 0u) return 0;
-    if (!user_buf_ok((unsigned int)fds, nfds * sizeof(struct pollfd))) return -EFAULT;
+    if (nfds > POLL_MAX_FDS) return -EINVAL;
+    if (!user_count_bytes_ok((unsigned int)fds, nfds, sizeof(struct pollfd), 0)) {
+        return -EFAULT;
+    }
 
     infinite_wait = (timeout < 0);
     timeout_ticks = infinite_wait ? 0u : sys_poll_timeout_ticks(timeout);
@@ -1212,7 +1261,9 @@ static int sys_epoll_ctl_impl(int epfd, int op, int fd,
             !user_buf_ok((unsigned int)user_event, sizeof(*user_event))) {
             return -EFAULT;
         }
-        k_memcpy(&event, user_event, sizeof(event));
+        if (copy_from_user(&event, user_event, sizeof(event)) < 0) {
+            return -EFAULT;
+        }
     } else {
         k_memset(&event, 0, sizeof(event));
     }
@@ -1321,9 +1372,12 @@ static int sys_epoll_wait_impl(syscall_regs_t* regs,
 
     if (!proc) return -EINVAL;
     if (maxevents <= 0) return -EINVAL;
-    if (!events ||
-        !user_buf_ok((unsigned int)events,
-                     (unsigned int)maxevents * sizeof(struct epoll_event))) {
+    if (!events) return -EFAULT;
+    if (maxevents > (int)EPOLL_MAX_WATCHES) return -EINVAL;
+    if (!user_count_bytes_ok((unsigned int)events,
+                             (unsigned int)maxevents,
+                             sizeof(struct epoll_event),
+                             0)) {
         return -EFAULT;
     }
 
@@ -1450,10 +1504,16 @@ static int sys_timerfd_settime_impl(int fd,
     }
 
     if (old_value) {
-        k_memset(old_value, 0, sizeof(*old_value));
+        struct user_itimerspec zero;
+        k_memset(&zero, 0, sizeof(zero));
+        if (copy_to_user(old_value, &zero, sizeof(zero)) < 0) {
+            return -EFAULT;
+        }
     }
 
-    k_memcpy(&spec, new_value, sizeof(spec));
+    if (copy_from_user(&spec, new_value, sizeof(spec)) < 0) {
+        return -EFAULT;
+    }
     first_ticks = timerfd_timespec_to_ticks(spec.it_value.tv_sec,
                                             spec.it_value.tv_nsec);
     interval_ticks = timerfd_timespec_to_ticks(spec.it_interval.tv_sec,
@@ -1488,7 +1548,9 @@ static int sys_signalfd_impl(int fd, const void* mask, int flags) {
     ent = process_fd_get(proc, out_fd);
     if (!ent || ent->kind != PROCESS_HANDLE_KIND_SIGNALFD) return -EBADF;
     if (mask) {
-        k_memcpy(&kernel_mask, mask, sizeof(kernel_mask));
+        if (copy_from_user(&kernel_mask, mask, sizeof(kernel_mask)) < 0) {
+            return -EFAULT;
+        }
         rc = process_fd_set_signalfd_mask(ent, kernel_mask);
         if (rc < 0) return rc;
     } else if (fd < 0) {
@@ -1519,16 +1581,21 @@ static int sys_getpeername_impl(int fd, struct sockaddr* addr, unsigned int* add
     if (!socket_fd_is_socket(ent)) return -EBADF;
     if (socket_state(ent->socket) != SOCKET_STATE_CONNECTED) return -EINVAL;
     if (!addr || !addrlen) return -EFAULT;
-    if (!user_buf_ok((unsigned int)addrlen, sizeof(unsigned int))) return -EFAULT;
-    if (*addrlen < sizeof(struct sockaddr_in)) return -EINVAL;
+    {
+        unsigned int user_addrlen = 0;
+        if (read_user_u32(&user_addrlen, addrlen) < 0) return -EFAULT;
+        if (user_addrlen < sizeof(struct sockaddr_in)) return -EINVAL;
+    }
     if (!user_buf_ok((unsigned int)addr, sizeof(struct sockaddr_in))) return -EFAULT;
 
     k_memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET;
     sa.sin_port = swap_u16((unsigned short)socket_peer_port(ent->socket));
     sa.sin_addr.s_addr = swap_u32(socket_peer_ip(ent->socket));
-    k_memcpy(addr, &sa, sizeof(sa));
-    *addrlen = sizeof(sa);
+    if (copy_to_user(addr, &sa, sizeof(sa)) < 0 ||
+        write_user_u32(addrlen, sizeof(sa)) < 0) {
+        return -EFAULT;
+    }
     return 0;
 }
 
@@ -1559,10 +1626,14 @@ static int sys_dirlist_impl(const char* path, unsigned int index, uapi_dirent_t*
     if (!vfs_dirent_at(kpath, index, name, sizeof(name), &size, &is_dir)) {
         return 0;
     }
-    k_memset(out, 0, sizeof(*out));
-    k_memcpy(out->d_name, name, k_strlen(name) + 1u);
-    out->d_size = size;
-    out->d_is_dir = is_dir;
+    {
+        uapi_dirent_t kout;
+        k_memset(&kout, 0, sizeof(kout));
+        k_memcpy(kout.d_name, name, k_strlen(name) + 1u);
+        kout.d_size = size;
+        kout.d_is_dir = is_dir;
+        if (copy_to_user(out, &kout, sizeof(kout)) < 0) return -EFAULT;
+    }
     return 1;
 }
 
@@ -1587,16 +1658,21 @@ static int sys_getsockname_impl(int fd, struct sockaddr* addr, unsigned int* add
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
     if (!addr || !addrlen) return -EFAULT;
-    if (!user_buf_ok((unsigned int)addrlen, sizeof(unsigned int))) return -EFAULT;
-    if (*addrlen < sizeof(struct sockaddr_in)) return -EINVAL;
+    {
+        unsigned int user_addrlen = 0;
+        if (read_user_u32(&user_addrlen, addrlen) < 0) return -EFAULT;
+        if (user_addrlen < sizeof(struct sockaddr_in)) return -EINVAL;
+    }
     if (!user_buf_ok((unsigned int)addr, sizeof(struct sockaddr_in))) return -EFAULT;
 
     k_memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET;
     sa.sin_port = swap_u16((unsigned short)socket_local_port(ent->socket));
     sa.sin_addr.s_addr = swap_u32(socket_local_ip(ent->socket));
-    k_memcpy(addr, &sa, sizeof(sa));
-    *addrlen = sizeof(sa);
+    if (copy_to_user(addr, &sa, sizeof(sa)) < 0 ||
+        write_user_u32(addrlen, sizeof(sa)) < 0) {
+        return -EFAULT;
+    }
     return 0;
 }
 
@@ -1659,12 +1735,10 @@ static int sys_stat_impl(const char* path, unsigned int* out_size, int* out_is_d
     if (!vfs_stat(kpath, &size, &is_dir)) return path_lookup_errno(kpath);
 
     if (out_size) {
-        if (!user_buf_ok((unsigned int)out_size, sizeof(unsigned int))) return -EFAULT;
-        *out_size = size;
+        if (write_user_u32(out_size, size) < 0) return -EFAULT;
     }
     if (out_is_dir) {
-        if (!user_buf_ok((unsigned int)out_is_dir, sizeof(int))) return -EFAULT;
-        *out_is_dir = is_dir;
+        if (copy_to_user(out_is_dir, &is_dir, sizeof(is_dir)) < 0) return -EFAULT;
     }
     return 0;
 }
@@ -1678,23 +1752,19 @@ static int sys_fstat_impl(int fd, unsigned int* out_size, int* out_is_dir) {
     if (!ent) return -EBADF;
 
     if (out_size) {
-        if (!user_buf_ok((unsigned int)out_size, sizeof(unsigned int))) return -EFAULT;
-        *out_size = ent->is_dir ? 0u : ent->size;
+        if (write_user_u32(out_size, ent->is_dir ? 0u : ent->size) < 0) return -EFAULT;
     }
     if (out_is_dir) {
-        if (!user_buf_ok((unsigned int)out_is_dir, sizeof(int))) return -EFAULT;
-        *out_is_dir = ent->is_dir ? 1 : 0;
+        int is_dir = ent->is_dir ? 1 : 0;
+        if (copy_to_user(out_is_dir, &is_dir, sizeof(is_dir)) < 0) return -EFAULT;
     }
     return 0;
 }
 
 static int sys_terminal_size_impl(unsigned int* out_rows, unsigned int* out_cols) {
     if (!out_rows || !out_cols) return -EFAULT;
-    if (!user_buf_ok((unsigned int)out_rows, sizeof(unsigned int))) return -EFAULT;
-    if (!user_buf_ok((unsigned int)out_cols, sizeof(unsigned int))) return -EFAULT;
-
-    *out_rows = (unsigned int)terminal_rows();
-    *out_cols = (unsigned int)terminal_cols();
+    if (write_user_u32(out_rows, (unsigned int)terminal_rows()) < 0) return -EFAULT;
+    if (write_user_u32(out_cols, (unsigned int)terminal_cols()) < 0) return -EFAULT;
     return 0;
 }
 
@@ -1705,11 +1775,15 @@ static int sys_display_info_impl(sys_display_info_t* out_info) {
     if (!user_buf_ok((unsigned int)out_info, sizeof(*out_info))) return -EFAULT;
     if (!display_get_info(&info)) return -EIO;
 
-    out_info->width = info.width;
-    out_info->height = info.height;
-    out_info->pitch = info.pitch;
-    out_info->bpp = info.bpp;
-    out_info->format = info.format;
+    {
+        sys_display_info_t user_info;
+        user_info.width = info.width;
+        user_info.height = info.height;
+        user_info.pitch = info.pitch;
+        user_info.bpp = info.bpp;
+        user_info.format = info.format;
+        if (copy_to_user(out_info, &user_info, sizeof(user_info)) < 0) return -EFAULT;
+    }
     return 0;
 }
 
@@ -1728,8 +1802,7 @@ static int sys_display_fill_impl(const sys_display_fill_rect_t* user_req) {
     sys_display_fill_rect_t req;
 
     if (!user_req) return -EFAULT;
-    if (!user_buf_ok((unsigned int)user_req, sizeof(req))) return -EFAULT;
-    k_memcpy(&req, user_req, sizeof(req));
+    if (copy_from_user(&req, user_req, sizeof(req)) < 0) return -EFAULT;
     if (req.w == 0 || req.h == 0) return 0;
     if (!display_fill((process_t*)sched_current(), req.x, req.y, req.w, req.h, req.color)) return -EIO;
     return 0;
@@ -1740,8 +1813,7 @@ static int sys_display_blit_impl(const sys_display_blit_rect_t* user_req) {
     unsigned int bytes;
 
     if (!user_req) return -EFAULT;
-    if (!user_buf_ok((unsigned int)user_req, sizeof(req))) return -EFAULT;
-    k_memcpy(&req, user_req, sizeof(req));
+    if (copy_from_user(&req, user_req, sizeof(req)) < 0) return -EFAULT;
     if (req.w == 0 || req.h == 0) return 0;
     if (!req.pixels) return -EFAULT;
     if (req.h > 0xFFFFFFFFu / req.w) return -EOVERFLOW;
@@ -1756,9 +1828,8 @@ static int sys_mouse_read_impl(sys_mouse_state_t* out_state) {
     sys_mouse_state_t state;
 
     if (!out_state) return -EFAULT;
-    if (!user_buf_ok((unsigned int)out_state, sizeof(*out_state))) return -EFAULT;
     if (!mouse_read_state(&state)) return -EIO;
-    k_memcpy(out_state, &state, sizeof(state));
+    if (copy_to_user(out_state, &state, sizeof(state)) < 0) return -EFAULT;
     return 0;
 }
 
@@ -1767,7 +1838,6 @@ static int sys_fsinfo_impl(sys_fsinfo_t* out_info) {
     sys_fsinfo_t user_info;
 
     if (!out_info) return -EFAULT;
-    if (!user_buf_ok((unsigned int)out_info, sizeof(*out_info))) return -EFAULT;
     if (!fat16_fsinfo(&info)) return -EIO;
 
     user_info.total_bytes = info.total_bytes;
@@ -1776,7 +1846,7 @@ static int sys_fsinfo_impl(sys_fsinfo_t* out_info) {
     user_info.cluster_bytes = info.cluster_bytes;
     user_info.total_clusters = info.total_clusters;
     user_info.free_clusters = info.free_clusters;
-    k_memcpy(out_info, &user_info, sizeof(user_info));
+    if (copy_to_user(out_info, &user_info, sizeof(user_info)) < 0) return -EFAULT;
     return 0;
 }
 
@@ -1785,12 +1855,11 @@ static int sys_fsmap_impl(sys_fsmap_request_t* user_req) {
     u32 out_clusters = 0;
 
     if (!user_req) return -EFAULT;
-    if (!user_buf_ok((unsigned int)user_req, sizeof(req))) return -EFAULT;
-    k_memcpy(&req, user_req, sizeof(req));
+    if (copy_from_user(&req, user_req, sizeof(req)) < 0) return -EFAULT;
 
     if (req.max_clusters == 0) {
         req.out_clusters = 0;
-        k_memcpy(user_req, &req, sizeof(req));
+        if (copy_to_user(user_req, &req, sizeof(req)) < 0) return -EFAULT;
         return 0;
     }
     if (!req.states) return -EFAULT;
@@ -1798,7 +1867,7 @@ static int sys_fsmap_impl(sys_fsmap_request_t* user_req) {
     if (!fat16_fsmap(req.start_cluster, req.max_clusters, req.states, &out_clusters)) return -EIO;
 
     req.out_clusters = out_clusters;
-    k_memcpy(user_req, &req, sizeof(req));
+    if (copy_to_user(user_req, &req, sizeof(req)) < 0) return -EFAULT;
     return 0;
 }
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## [Current] — Syscall user-pointer hardening
+
+### Changed
+
+* **Page-table-aware syscall validation** (`src/kernel/syscall.c`)
+  * Added checked user byte-count validation for variable-length syscall arrays so wrapped sizes cannot make `poll()` or `epoll_wait()` walk past the validated user range.
+  * Routed socket address out-parameters, stat outputs, terminal/display/fs outputs, timerfd/signalfd structs, and directory entries through bounded copy helpers instead of open-coded user writes.
+
+### Added
+
+* **Bad pointer regression probe** (`src/user/badptrprobe.c`, `tests/elfs/badptrprobe.py`, `Makefile`)
+  * Added `apps/tests/badptrprobe.elf` to verify unmapped user pointers return `-EFAULT`, oversized poll/epoll requests return `-EINVAL`, and the shell remains alive after rejected syscall inputs.
+
 ## [Current] — Disk usage graphics utility
 
 ### Added
@@ -475,7 +488,7 @@ Current SmallOS uses PMM-backed dynamic fd tables as described above.
 * **Original handle table ownership** — this milestone kept the handle table inside `process_t`; that has since been superseded by dynamic PMM-backed fd tables.
 * **`SYS_FREAD` cache pages** — per-fd reads now populate PMM-backed cache pages on first use and reuse them until `sys_close()` or process teardown.
 * **`fat16_stat` does not disturb `s_load_buf`** — `SYS_OPEN` validation and ELF loading can interleave safely.
-* **Copy-from-user is address-range only** — it does not walk page tables. A user pointer in the valid range but backed by a missing PTE would still fault in the kernel; full fault handling is future work.
+* **Copy-from-user is page-table-aware** — syscall validation now checks that every touched user page is present and user-accessible before dereferencing it. Kernel-side fault recovery is still intentionally small; syscall code should validate or copy user memory before use.
  
 ---
  

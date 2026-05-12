@@ -451,7 +451,7 @@ and poll relative mouse movement with `SYS_MOUSE_READ`.
 
 ## Current Next Steps
 
-* Broaden the syscall pointer regression coverage with page-boundary cases
+* Broaden the syscall pointer regression coverage with more page-boundary and output-buffer cases
 * Consider smaller quality-of-life shell commands for debugging the new runtime contracts
 
 ---
