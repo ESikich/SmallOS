@@ -40,6 +40,10 @@ if the framebuffer backend is selected, and also requires a nonblank VGA text
 screenshot. Keep these checks out of the regular `make test` loop until they
 have proven stable across host QEMU setups.
 
+The default framebuffer image is `build/img/os-image.bin`. Forced-VGA visual
+checks write `build/img/vga/os-image.bin`, so a VGA smoke run does not replace
+the image used by plain `make run`.
+
 `kernel_main()` runs startup diagnostics right after `pmm_init()`. They report
 the live TSS selector, boot stack, page-aligned heap start after high kernel
 BSS, and PMM free-frame baseline. If any of those invariants drift, the kernel
@@ -150,7 +154,9 @@ The required invariant is that `0x1000 + kernel_sectors * BOOT_SECTOR_SIZE` must
 
 `make boot-layout-check` is the host-side guard for the fixed boot-stage layout. It verifies the built boot artifacts, the loader size/sector contract, and the generated stage-2 stack values before the disk image is assembled.
 
-`make image-layout-check` then validates the finished `os-image.bin`, including the patched FAT16 LBA and the sector placement of each component.
+`make image-layout-check` then validates the finished image for the active
+`DISPLAY_BACKEND`, including the patched FAT16 LBA and the sector placement of
+each component.
 
 ---
 
@@ -413,11 +419,16 @@ Useful signals:
 1. Prefer `int main(int argc, char** argv)` for hosted-ish programs, and link `src/user/user_crt0.c`
 2. Use direct `void _start(int argc, char** argv)` plus `sys_exit(status)` only for low-level probes
 3. Add `myprog` to `USER_PROGS` in Makefile - automatically included in the FAT16 image
-4. `make clean && make`
-5. `runelf myprog`
+4. If the program needs extra user objects, add a custom link rule like `bmpview.elf` or `plasma.elf`
+5. `make clean && make`
+6. `runelf myprog`
 
 The launch ABI guarantees `argv[argc] == NULL`. SmallOS does not provide
 `envp` yet.
+
+Framebuffer apps should use `src/user/gfx.c` instead of calling the display
+syscalls directly. The helper owns acquire/release, full-screen backbuffer
+allocation, simple drawing primitives, and one-shot full-screen present.
 
 ---
 

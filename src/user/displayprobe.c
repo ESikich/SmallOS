@@ -17,6 +17,18 @@ void _start(int argc, char** argv) {
         sys_exit(0);
     }
 
+    u_puts("displayprobe info width=");
+    u_put_uint(info.width);
+    u_puts(" height=");
+    u_put_uint(info.height);
+    u_puts(" pitch=");
+    u_put_uint(info.pitch);
+    u_puts(" bpp=");
+    u_put_uint(info.bpp);
+    u_puts(" format=");
+    u_put_uint(info.format);
+    u_putc('\n');
+
     if (sys_display_fill(0, 0, 1, 1, 0x00FF0000u) >= 0) {
         u_puts("displayprobe FAIL draw without acquire\n");
         sys_exit(1);

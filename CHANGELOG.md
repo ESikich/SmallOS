@@ -1,5 +1,25 @@
 # Changelog
 
+## [Current] — Userland graphics helper and demo
+
+### Added
+
+* **Userland graphics helper** (`src/user/gfx.c`, `src/user/gfx.h`)
+  * Added a small XRGB8888 graphics layer over the display syscalls with display acquire/release, a full-screen backbuffer, clear/pixel/rect/blit helpers, and one-shot present.
+
+* **Framebuffer demo app** (`src/user/plasma.c`, `Makefile`)
+  * Added `apps/demo/plasma.elf`, an animated framebuffer demo that uses the graphics helper and exits after a fixed frame count or a keypress.
+
+### Changed
+
+* **BMP viewer graphics path** (`src/user/bmpview.c`)
+  * Refactored `bmpview` to render scaled/centered BMPs into the shared `gfx` backbuffer and present the image with one full-screen blit.
+
+* **Build and display docs** (`Makefile`, `README.md`, `docs/`)
+  * `USER_CFLAGS` now defaults to `-O2`, and the framebuffer-facing display driver objects use `DISPLAY_DRIVER_CFLAGS=-O2` while the broader kernel stays unoptimized by default.
+  * Forced-VGA builds now write `build/img/vga/os-image.bin`, leaving the normal auto/framebuffer image at `build/img/os-image.bin`.
+  * Documented the display syscalls, `gfx` helper, `bmpview`, `plasma`, and backend-specific image paths.
+
 ## [Current] — Process group foreground cleanup
 
 ### Added

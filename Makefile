@@ -22,6 +22,11 @@ BIN_ROOT=$(BUILD_DIR)/bin
 BIN_DIR=$(BIN_ROOT)/$(DISPLAY_BACKEND)
 GEN_DIR=$(BUILD_DIR)/gen/$(DISPLAY_BACKEND)
 IMG_DIR=$(BUILD_DIR)/img
+ifeq ($(DISPLAY_BACKEND),auto)
+IMG_FILE=$(IMG_DIR)/os-image.bin
+else
+IMG_FILE=$(IMG_DIR)/$(DISPLAY_BACKEND)/os-image.bin
+endif
 TOOLS_DIR=$(BUILD_DIR)/tools
 TINYCC_DIR=$(BUILD_DIR)/tinycc-host
 TINYCC_CONFIG_STAMP=$(TINYCC_DIR)/.configured
@@ -63,6 +68,10 @@ else
 LOADER2_FORCE_VGA_BACKEND=0
 endif
 CFLAGS=-ffreestanding -m32 -fno-pie -fno-stack-protector -nostdlib -nostartfiles -Wa,--noexecstack
+KERNEL_CFLAGS ?=
+DRIVER_CFLAGS ?=
+DISPLAY_DRIVER_CFLAGS ?= -O2
+USER_CFLAGS ?= -O2
 DEPFLAGS=-MMD -MP
 HOST_CC=gcc
 HOST_32_LIBGCC := $(firstword $(wildcard /usr/lib/gcc/*/*/32/libgcc.a))
@@ -113,7 +122,7 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/fat16.c \
 	$(DRIVERS_DIR)/serial.c
 
-USER_PROGS=echo about uptime halt reboot pwd cat fsread ls fsls touch rm mkdir rmdir cp mv edit bmpview hello ticks args runelf_test readline exec_test fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe tcpecho sockeof ftpd
+USER_PROGS=echo about uptime halt reboot pwd cat fsread ls fsls touch rm mkdir rmdir cp mv edit bmpview hello ticks args runelf_test readline exec_test fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe plasma tcpecho sockeof ftpd
 USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
 USER_RUNTIME_SRCS=$(USER_DIR)/user_alloc.c $(USER_DIR)/user_stdio.c $(USER_DIR)/user_posix.c $(USER_DIR)/user_time.c $(USER_DIR)/user_dirent.c $(USER_DIR)/user_crypt.c $(USER_DIR)/setjmp.asm
 CSERVER_SRCS=\
@@ -129,7 +138,7 @@ CSERVER_SRCS=\
 	$(CSERVER_DIR)/src/util.c
 CSERVER_OBJS=$(patsubst $(CSERVER_DIR)/src/%.c,$(CSERVER_OBJ_DIR)/%.o,$(CSERVER_SRCS))
 FAT16_BIN_ENTRIES=bin/echo.elf=$(BIN_DIR)/echo.elf bin/about.elf=$(BIN_DIR)/about.elf bin/uptime.elf=$(BIN_DIR)/uptime.elf bin/halt.elf=$(BIN_DIR)/halt.elf bin/reboot.elf=$(BIN_DIR)/reboot.elf bin/pwd.elf=$(BIN_DIR)/pwd.elf bin/cat.elf=$(BIN_DIR)/cat.elf bin/fsread.elf=$(BIN_DIR)/fsread.elf bin/ls.elf=$(BIN_DIR)/ls.elf bin/fsls.elf=$(BIN_DIR)/fsls.elf bin/touch.elf=$(BIN_DIR)/touch.elf bin/rm.elf=$(BIN_DIR)/rm.elf bin/mkdir.elf=$(BIN_DIR)/mkdir.elf bin/rmdir.elf=$(BIN_DIR)/rmdir.elf bin/cp.elf=$(BIN_DIR)/cp.elf bin/mv.elf=$(BIN_DIR)/mv.elf bin/edit.elf=$(BIN_DIR)/edit.elf bin/bmpview.elf=$(BIN_DIR)/bmpview.elf
-FAT16_DEMO_ENTRIES=apps/demo/hello.elf=$(BIN_DIR)/hello.elf
+FAT16_DEMO_ENTRIES=apps/demo/hello.elf=$(BIN_DIR)/hello.elf apps/demo/plasma.elf=$(BIN_DIR)/plasma.elf
 FAT16_TEST_ENTRIES=apps/tests/ticks.elf=$(BIN_DIR)/ticks.elf apps/tests/args.elf=$(BIN_DIR)/args.elf apps/tests/runelf_test.elf=$(BIN_DIR)/runelf_test.elf apps/tests/readline.elf=$(BIN_DIR)/readline.elf apps/tests/exec_test.elf=$(BIN_DIR)/exec_test.elf apps/tests/fileread.elf=$(BIN_DIR)/fileread.elf apps/tests/compiler_demo.elf=$(BIN_DIR)/compiler_demo.elf apps/tests/heapprobe.elf=$(BIN_DIR)/heapprobe.elf apps/tests/statprobe.elf=$(BIN_DIR)/statprobe.elf apps/tests/fileprobe.elf=$(BIN_DIR)/fileprobe.elf apps/tests/cwdprobe.elf=$(BIN_DIR)/cwdprobe.elf apps/tests/stdioprobe.elf=$(BIN_DIR)/stdioprobe.elf apps/tests/dirprobe.elf=$(BIN_DIR)/dirprobe.elf apps/tests/errnoprobe.elf=$(BIN_DIR)/errnoprobe.elf apps/tests/fault.elf=$(BIN_DIR)/fault.elf apps/tests/sleep_test.elf=$(BIN_DIR)/sleep_test.elf apps/tests/timerfdprobe.elf=$(BIN_DIR)/timerfdprobe.elf apps/tests/signalfdprobe.elf=$(BIN_DIR)/signalfdprobe.elf apps/tests/connectprobe.elf=$(BIN_DIR)/connectprobe.elf apps/tests/ptrguard.elf=$(BIN_DIR)/ptrguard.elf apps/tests/spinwkr.elf=$(BIN_DIR)/spinwkr.elf apps/tests/pgrpprobe.elf=$(BIN_DIR)/pgrpprobe.elf apps/tests/preempt_test.elf=$(BIN_DIR)/preempt_test.elf apps/tests/crtprobe.elf=$(BIN_DIR)/crtprobe.elf apps/tests/displayprobe.elf=$(BIN_DIR)/displayprobe.elf
 FAT16_APP_ENTRIES=$(FAT16_BIN_ENTRIES) $(FAT16_DEMO_ENTRIES) $(FAT16_TEST_ENTRIES)
 FAT16_APP_ENTRIES+= apps/services/tcpecho.elf=$(BIN_DIR)/tcpecho.elf apps/services/sockeof.elf=$(BIN_DIR)/sockeof.elf apps/services/ftpd.elf=$(BIN_DIR)/ftpd.elf
@@ -152,10 +161,10 @@ OBJ_SUBDIRS=$(sort \
 	$(dir $(USER_OBJS)) \
 )
 
-BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
+BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(dir $(IMG_FILE)) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
 BUILD_SUBDIRS+=$(TINYCC_SMALOS_OBJ_DIR) $(CSERVER_OBJ_DIR)
 
-all: check-third-party $(IMG_DIR)/os-image.bin
+all: check-third-party $(IMG_FILE)
 
 dirs:
 	mkdir -p $(BUILD_SUBDIRS)
@@ -181,19 +190,24 @@ $(OBJ_DIR)/kernel/%.o: $(KERNEL_DIR)/%.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
 $(OBJ_DIR)/kernel/%.o: $(KERNEL_DIR)/%.c | dirs
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(KERNEL_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
 $(OBJ_DIR)/drivers/%.o: $(DRIVERS_DIR)/%.c | dirs
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(KERNEL_CFLAGS) $(DRIVER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(OBJ_DIR)/drivers/display.o \
+$(OBJ_DIR)/drivers/fb_console.o \
+$(OBJ_DIR)/drivers/screen.o \
+$(OBJ_DIR)/drivers/terminal.o: DRIVER_CFLAGS += $(DISPLAY_DRIVER_CFLAGS)
 
 $(OBJ_DIR)/shell/%.o: $(SHELL_DIR)/%.c | dirs
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(KERNEL_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
 $(OBJ_DIR)/exec/%.o: $(EXEC_DIR)/%.c | dirs
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(KERNEL_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
 $(OBJ_DIR)/user/%.o: $(USER_DIR)/%.c | dirs
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
 $(OBJ_DIR)/user/%.o: $(USER_DIR)/%.asm | dirs
 	$(ASM) -f elf32 $< -o $@
@@ -220,7 +234,10 @@ $(CSERVER_BIN): $(CSERVER_OBJS) $(USER_CRT0_OBJ) $(USER_RUNTIME_OBJS) | dirs
 $(BIN_DIR)/crtprobe.elf: $(OBJ_DIR)/user/crtprobe.o $(USER_CRT0_OBJ) $(USER_RUNTIME_OBJS) | dirs
 	$(LD) $(USER_LDFLAGS) $^ -o $@
 
-$(BIN_DIR)/bmpview.elf: $(OBJ_DIR)/user/bmpview.o $(OBJ_DIR)/user/image_bmp.o $(USER_RUNTIME_OBJS) | dirs
+$(BIN_DIR)/bmpview.elf: $(OBJ_DIR)/user/bmpview.o $(OBJ_DIR)/user/image_bmp.o $(OBJ_DIR)/user/gfx.o $(USER_RUNTIME_OBJS) | dirs
+	$(LD) $(USER_LDFLAGS) $^ -o $@
+
+$(BIN_DIR)/plasma.elf: $(OBJ_DIR)/user/plasma.o $(OBJ_DIR)/user/gfx.o $(USER_RUNTIME_OBJS) | dirs
 	$(LD) $(USER_LDFLAGS) $^ -o $@
 
 $(BIN_DIR)/kernel.elf: $(KERNEL_OBJS) linker.ld | dirs
@@ -300,7 +317,7 @@ boot-layout-check: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(GEN_DIR)/loader2
 # the kernel image and FAT16 partition, so stage 2 and the kernel can
 # discover disk locations directly from the image itself.
 #
-$(IMG_DIR)/os-image.bin: boot-layout-check $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(STATE_DIR)/fat16.img $(TOOLS_DIR)/mkimage | dirs
+$(IMG_FILE): boot-layout-check $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(STATE_DIR)/fat16.img $(TOOLS_DIR)/mkimage | dirs
 	$(TOOLS_DIR)/mkimage \
 		--boot $(BIN_DIR)/boot.bin \
 		--loader $(BIN_DIR)/loader2.bin \
@@ -312,9 +329,9 @@ $(IMG_DIR)/os-image.bin: boot-layout-check $(BIN_DIR)/boot.bin $(BIN_DIR)/loader
 		--boot-partition-table-offset $(BOOT_PARTITION_TABLE_OFFSET) \
 		--boot-partition-entry-size $(BOOT_PARTITION_ENTRY_SIZE)
 
-image-layout-check: $(IMG_DIR)/os-image.bin
+image-layout-check: $(IMG_FILE)
 	$(PYTHON3) tools/verify_image_layout.py \
-		--image $(IMG_DIR)/os-image.bin \
+		--image $(IMG_FILE) \
 		--boot $(BIN_DIR)/boot.bin \
 		--loader2 $(BIN_DIR)/loader2.bin \
 		--kernel $(BIN_DIR)/kernel.bin \
@@ -357,7 +374,7 @@ QEMU_NET_GUESTFWD?=
 QEMU_NETFLAGS_USER=-nic user,model=e1000,mac=$(QEMU_NET_MAC)$(QEMU_NET_HOSTFWD)$(QEMU_NET_GUESTFWD)
 QEMU_NETFLAGS_TAP=-netdev tap,id=net0,ifname=$(QEMU_NET_IFACE),script=no,downscript=no -device e1000,netdev=net0,mac=$(QEMU_NET_MAC)
 QEMU_NETFLAGS=$(if $(filter tap,$(QEMU_NET_MODE)),$(QEMU_NETFLAGS_TAP),$(QEMU_NETFLAGS_USER))
-QEMUFLAGS=-drive format=raw,file=$(IMG_DIR)/os-image.bin -boot c -m $(QEMU_MEMORY_MB) \
+QEMUFLAGS=-drive format=raw,file=$(IMG_FILE) -boot c -m $(QEMU_MEMORY_MB) \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 

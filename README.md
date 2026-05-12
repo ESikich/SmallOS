@@ -65,7 +65,8 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 │   ├── shell/      shell, line_editor, parse, commands
 │   ├── exec/       elf_loader
 │   └── user/       hello.c, ticks.c, args.c, readline.c, exec_test.c,
-│                   compiler_demo.c, fault.c, sleep_test.c, user_lib.h, user_syscall.h
+│                   bmpview.c, plasma.c, gfx.c, compiler_demo.c, fault.c,
+│                   sleep_test.c, user_lib.h, user_syscall.h
 ├── tools/
 │   ├── mkfat16.c
 │   └── mkimage.c
@@ -166,6 +167,10 @@ nonblank 1024x768 screenshot, then repeats with `DISPLAY_BACKEND=vga` to prove
 the forced VGA text fallback boots visibly without switching to the framebuffer.
 The smoke target uses QEMU's VNC display backend so screenshots are rendered
 while the VM still runs daemonized.
+
+The normal auto/framebuffer disk image is `build/img/os-image.bin`. Forced-VGA
+builds use their own image at `build/img/vga/os-image.bin`, so running
+`make vga-smoke` no longer leaves the default image in VGA mode.
 
 The mutable FAT16 disk state now lives in `.state/fat16.img`, so normal
 rebuilds keep your files.  Use `make reset-disk` if you want to restore
@@ -285,7 +290,9 @@ and exits, F3 discards, and Esc cancels the quit prompt.
 
 Seeded FAT16 layout:
 - command-style apps live under `/bin/` (`echo`, `about`, `uptime`, `halt`, `reboot`, `pwd`, `cat`, `fsread`, `ls`, `fsls`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, `edit`)
+- `bin/bmpview` - load a BMP, render it through the userland graphics backbuffer, and present it to the framebuffer
 - `apps/demo/hello` - print argc/argv and tick count
+- `apps/demo/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
 - `apps/tests/ticks` - print the current tick count
 - `apps/tests/args` - print argc and argv
 - `apps/tests/runelf_test` - verify ELF loading, syscalls, and stack setup

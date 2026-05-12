@@ -1,8 +1,6 @@
 #include "user_lib.h"
 #include "image_bmp.h"
-
-#define BMPVIEW_BAND_TARGET_BYTES (512u * 1024u)
-#define BMPVIEW_SCREEN_TARGET_BYTES (8u * 1024u * 1024u)
+#include "gfx.h"
 
 static void usage(void) {
     u_puts("usage: bmpview <file.bmp>\n");
@@ -92,126 +90,48 @@ static void scale_row_nearest(const unsigned int* src,
     }
 }
 
-static unsigned int choose_band_rows(unsigned int dest_w, unsigned int dest_h) {
-    unsigned int row_bytes;
-    unsigned int rows;
-
-    if (dest_w == 0 || dest_h == 0 ||
-        dest_w > 0xFFFFFFFFu / sizeof(unsigned int)) {
-        return 1u;
-    }
-
-    row_bytes = dest_w * sizeof(unsigned int);
-    rows = BMPVIEW_BAND_TARGET_BYTES / row_bytes;
-    if (rows == 0) rows = 1u;
-    if (rows > dest_h) rows = dest_h;
-    return rows;
-}
-
-static int render_bmp(const bmp_image_t* bmp, const sys_display_info_t* info) {
+static int render_bmp(const bmp_image_t* bmp, gfx_surface_t* dst) {
     unsigned int dest_w = 0;
     unsigned int dest_h = 0;
     unsigned int x0;
     unsigned int y0;
-    unsigned int band_rows;
-    unsigned int band_pixels;
     unsigned int* src_row;
-    unsigned int* band;
     unsigned int last_src_y = 0xFFFFFFFFu;
 
-    fit_to_display(bmp->width, bmp->height, info->width, info->height,
+    fit_to_display(bmp->width, bmp->height, dst->width, dst->height,
                    &dest_w, &dest_h);
 
-    x0 = (info->width - dest_w) / 2u;
-    y0 = (info->height - dest_h) / 2u;
-
-    if (info->width != 0 && info->height != 0 &&
-        info->width <= 0xFFFFFFFFu / info->height &&
-        info->width * info->height <= BMPVIEW_SCREEN_TARGET_BYTES / sizeof(unsigned int)) {
-        unsigned int screen_pixels = info->width * info->height;
-        unsigned int* screen = (unsigned int*)malloc(screen_pixels * sizeof(unsigned int));
-
-        src_row = (unsigned int*)malloc(bmp->width * sizeof(unsigned int));
-        if (screen && src_row) {
-            memset(screen, 0, screen_pixels * sizeof(unsigned int));
-
-            for (unsigned int y = 0; y < dest_h; y++) {
-                unsigned int src_y = (y * bmp->height) / dest_h;
-                if (src_y != last_src_y) {
-                    int rc = bmp_decode_row_xrgb8888(bmp, src_y, src_row, bmp->width);
-                    if (rc != BMP_OK) {
-                        free(src_row);
-                        free(screen);
-                        u_puts("bmpview: ");
-                        u_puts(bmp_error_string(rc));
-                        u_puts("\n");
-                        return 0;
-                    }
-                    last_src_y = src_y;
-                }
-
-                scale_row_nearest(src_row, bmp->width,
-                                  screen + (y0 + y) * info->width + x0,
-                                  dest_w);
-            }
-
-            sys_display_blit(0, 0, info->width, info->height, screen);
-            free(src_row);
-            free(screen);
-            return 1;
-        }
-
-        free(src_row);
-        free(screen);
-    }
-
-    last_src_y = 0xFFFFFFFFu;
-    band_rows = choose_band_rows(dest_w, dest_h);
-    if (dest_w > 0xFFFFFFFFu / band_rows) {
-        u_puts("bmpview: image is too large\n");
-        return 0;
-    }
-    band_pixels = dest_w * band_rows;
+    x0 = (dst->width - dest_w) / 2u;
+    y0 = (dst->height - dest_h) / 2u;
 
     src_row = (unsigned int*)malloc(bmp->width * sizeof(unsigned int));
-    band = (unsigned int*)malloc(band_pixels * sizeof(unsigned int));
-    if (!src_row || !band) {
+    if (!src_row) {
         free(src_row);
-        free(band);
         u_puts("bmpview: out of memory\n");
         return 0;
     }
 
-    sys_display_fill(0, 0, info->width, info->height, 0);
-
-    for (unsigned int y = 0; y < dest_h; y += band_rows) {
-        unsigned int rows_this = dest_h - y;
-        if (rows_this > band_rows) rows_this = band_rows;
-
-        for (unsigned int by = 0; by < rows_this; by++) {
-            unsigned int src_y = ((y + by) * bmp->height) / dest_h;
-            if (src_y != last_src_y) {
-                int rc = bmp_decode_row_xrgb8888(bmp, src_y, src_row, bmp->width);
-                if (rc != BMP_OK) {
-                    free(src_row);
-                    free(band);
-                    u_puts("bmpview: ");
-                    u_puts(bmp_error_string(rc));
-                    u_puts("\n");
-                    return 0;
-                }
-                last_src_y = src_y;
+    gfx_clear(dst, 0);
+    for (unsigned int y = 0; y < dest_h; y++) {
+        unsigned int src_y = (y * bmp->height) / dest_h;
+        if (src_y != last_src_y) {
+            int rc = bmp_decode_row_xrgb8888(bmp, src_y, src_row, bmp->width);
+            if (rc != BMP_OK) {
+                free(src_row);
+                u_puts("bmpview: ");
+                u_puts(bmp_error_string(rc));
+                u_puts("\n");
+                return 0;
             }
-
-            scale_row_nearest(src_row, bmp->width,
-                              band + by * dest_w, dest_w);
+            last_src_y = src_y;
         }
 
-        sys_display_blit(x0, y0 + y, dest_w, rows_this, band);
+        scale_row_nearest(src_row, bmp->width,
+                          dst->pixels + (y0 + y) * dst->pitch_pixels + x0,
+                          dest_w);
     }
 
     free(src_row);
-    free(band);
     return 1;
 }
 
@@ -219,15 +139,9 @@ static int view_bmp(const char* path) {
     unsigned char* data = 0;
     unsigned int size = 0;
     bmp_image_t bmp;
-    sys_display_info_t info;
+    gfx_context_t gfx;
     int rc;
 
-    if (sys_display_info(&info) < 0 ||
-        info.format != SYS_DISPLAY_FORMAT_XRGB8888 ||
-        info.bpp != 32u) {
-        u_puts("bmpview: framebuffer display is not available\n");
-        return 1;
-    }
     if (!read_file(path, &data, &size)) {
         return 1;
     }
@@ -241,21 +155,38 @@ static int view_bmp(const char* path) {
         return 1;
     }
 
-    if (sys_display_acquire() < 0) {
+    rc = gfx_open(&gfx);
+    if (rc == -1) {
+        free(data);
+        u_puts("bmpview: framebuffer display is not available\n");
+        return 1;
+    }
+    if (rc == -4) {
+        free(data);
+        u_puts("bmpview: out of memory\n");
+        return 1;
+    }
+    if (rc < 0) {
         free(data);
         u_puts("bmpview: could not acquire display\n");
         return 1;
     }
 
-    if (!render_bmp(&bmp, &info)) {
-        sys_display_release();
+    if (!render_bmp(&bmp, &gfx.backbuffer)) {
+        gfx_close(&gfx);
         free(data);
+        return 1;
+    }
+    if (gfx_present(&gfx) < 0) {
+        gfx_close(&gfx);
+        free(data);
+        u_puts("bmpview: present failed\n");
         return 1;
     }
 
     char ch;
     sys_read_raw(&ch, 1u);
-    sys_display_release();
+    gfx_close(&gfx);
 
     free(data);
     return 0;

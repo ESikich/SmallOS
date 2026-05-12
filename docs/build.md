@@ -61,18 +61,18 @@ The TinyCC sources stay clean in `third_party/tinycc`. SmallOS applies
 
 ```text
 build/
-├── bin/   → final binaries (kernel.elf, kernel.bin,
-│             apps/demo/hello.elf, apps/tests/*.elf,
-│             fat16.seed.img, boot.bin, loader2.bin, tcc-smalos.elf)
-├── obj/   → object files and depfiles (.o, .d), mirrored by source subtree
-├── gen/   → generated source (loader2.gen.asm)
-├── img/   → final disk image (os-image.bin)
-└── tools/ → host tools (mkfat16, mkimage)
+├── bin/<backend>/ → final binaries (kernel.elf, kernel.bin,
+│                    apps/demo/*.elf, apps/tests/*.elf,
+│                    fat16.seed.img, boot.bin, loader2.bin, tcc-smalos.elf)
+├── obj/<backend>/ → object files and depfiles (.o, .d), mirrored by source subtree
+├── gen/<backend>/ → generated source (loader2.gen.asm)
+├── img/           → final disk images (os-image.bin, vga/os-image.bin)
+└── tools/         → host tools (mkfat16, mkimage)
 ```
 
-The generated seed image lives at `build/bin/fat16.seed.img`; normal runs use
-the mutable copy at `.state/fat16.img` so guest writes survive rebuilds until
-`make reset-disk`.
+The generated seed image lives at `build/bin/<backend>/fat16.seed.img`; normal
+runs use the mutable copy at `.state/fat16.img` so guest writes survive rebuilds
+until `make reset-disk`.
 
 ---
 
@@ -100,7 +100,11 @@ loader2.bin          boot.bin
 
 `mkimage` performs the final disk-image assembly step. It pads `kernel.bin` to a whole number of sectors, computes the FAT16 start LBA, concatenates the component binaries, and patches the FAT16 start LBA into the boot-sector field declared by `boot.asm`.
 
-`make boot-layout-check` verifies the generated boot-chain inputs before that step runs, and `make image-layout-check` verifies the finished `os-image.bin` afterwards.
+`make boot-layout-check` verifies the generated boot-chain inputs before that step runs, and `make image-layout-check` verifies the finished image afterwards.
+
+The default `DISPLAY_BACKEND=auto` image remains `build/img/os-image.bin`.
+Backend-specific forced-VGA builds write `build/img/vga/os-image.bin`, while
+their objects and binaries stay under `build/obj/vga` and `build/bin/vga`.
 
 `make verify` is the one-shot preflight target: it runs both layout checks, then `make test`, then `make smoke`.
 
@@ -148,6 +152,11 @@ anyway. `make display-smoke` runs both. These visual checks use QEMU's VNC
 display backend by default so the VM can stay daemonized while still rendering
 screenshots. They are intentionally separate from plain `make test` because
 screenshots depend more on the host QEMU display environment.
+
+The display stack and user programs have separate optimization knobs:
+`USER_CFLAGS` defaults to `-O2`, `DISPLAY_DRIVER_CFLAGS` defaults to `-O2` for
+`display.o`, `fb_console.o`, `screen.o`, and `terminal.o`, while the broader
+kernel remains controlled by `KERNEL_CFLAGS`.
 
 `make socket-eof-smoke` boots QEMU with user-network host forwarding for
 guest port `2463`, starts `apps/services/sockeof`, then verifies that
@@ -214,6 +223,11 @@ make run-headless DISPLAY_BACKEND=vga   # force BIOS/VGA text mode
 before mapping or selecting the framebuffer. The VGA panic and double-fault
 paths remain available either way.
 
+Userland framebuffer programs should use the small graphics helper in
+`src/user/gfx.c`. It validates the display mode, acquires exclusive graphics
+access, allocates a full-screen XRGB8888 backbuffer, and presents it with one
+`SYS_DISPLAY_BLIT`.
+
 QEMU guest RAM defaults to 32 MB. To exercise the expanded E820-backed PMM
 window, override the memory size:
 
@@ -238,23 +252,23 @@ Each C source file is compiled with the freestanding cross toolchain:
 i686-elf-gcc -I<dirs> \
     -ffreestanding -m32 -fno-pie -fno-stack-protector \
     -nostdlib -nostartfiles -MMD -MP -MF <depfile> \
-    -c file.c -o build/obj/<subdir>/file.o
+    -c file.c -o build/obj/<backend>/<subdir>/file.o
 ```
 
 Each assembly file is assembled to ELF object form:
 
 ```bash
-nasm -f elf32 file.asm -o build/obj/<subdir>/file.o
+nasm -f elf32 file.asm -o build/obj/<backend>/<subdir>/file.o
 ```
 
 C depfiles (`.d`) are emitted alongside object files so header changes rebuild the right targets automatically.
 
 ## Linking
 
-All kernel objects are linked into `build/bin/kernel.elf`:
+All kernel objects are linked into `build/bin/<backend>/kernel.elf`:
 
 ```bash
-i686-elf-ld -T linker.ld -m elf_i386 <objects> -o build/bin/kernel.elf
+i686-elf-ld -T linker.ld -m elf_i386 <objects> -o build/bin/<backend>/kernel.elf
 ```
 
 ## Linker Script
@@ -367,8 +381,8 @@ guest with that compiler.
 ```bash
 i686-elf-gcc -I<dirs> \
     -ffreestanding -m32 -fno-pie -fno-stack-protector \
-    -nostdlib -nostartfiles -MMD -MP -MF build/obj/user/hello.d \
-    -c hello.c -o build/obj/user/hello.o
+    -nostdlib -nostartfiles -MMD -MP -MF build/obj/auto/user/hello.d \
+    -c hello.c -o build/obj/auto/user/hello.o
 ```
 
 ## Link
@@ -377,7 +391,7 @@ All user programs are linked at `USER_CODE_BASE` (0x400000):
 
 ```bash
 i686-elf-ld -m elf_i386 -Ttext-segment 0x400000 -e _start \
-    build/obj/user/hello.o -o build/bin/hello.elf
+    build/obj/auto/user/hello.o -o build/bin/auto/hello.elf
 ```
 
 Key link options:
@@ -413,12 +427,13 @@ $(TOOLS_DIR)/mkfat16: tools/mkfat16.c | dirs
 ## Building
 
 ```bash
-build/tools/mkfat16 build/bin/fat16.seed.img \
-    bin/echo.elf=build/bin/echo.elf \
-    apps/demo/hello.elf=build/bin/hello.elf \
-    apps/tests/runelf_test.elf=build/bin/runelf_test.elf \
-    apps/services/ftpd.elf=build/bin/ftpd.elf \
-    tools/tcc.elf=build/bin/tcc-smalos.elf \
+build/tools/mkfat16 build/bin/auto/fat16.seed.img \
+    bin/echo.elf=build/bin/auto/echo.elf \
+    apps/demo/hello.elf=build/bin/auto/hello.elf \
+    apps/demo/plasma.elf=build/bin/auto/plasma.elf \
+    apps/tests/runelf_test.elf=build/bin/auto/runelf_test.elf \
+    apps/services/ftpd.elf=build/bin/auto/ftpd.elf \
+    tools/tcc.elf=build/bin/auto/tcc-smalos.elf \
     tccmath.c=samples/tccmath.c
 ```
 
@@ -444,7 +459,9 @@ Shipped FAT16 programs:
 - `bin/rm` - remove a FAT16 file
 - `bin/mkdir` / `bin/rmdir` - create or remove FAT16 directories
 - `bin/cp` / `bin/mv` - copy or move FAT16 entries
+- `bin/bmpview` - load a BMP, render it into the `gfx` backbuffer, and present it to the framebuffer
 - `apps/demo/hello` - print argc/argv and tick count
+- `apps/demo/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
 - `apps/tests/ticks` - print the current tick count
 - `apps/tests/args` - print argc and argv
 - `apps/tests/runelf_test` - verify ELF loading, syscalls, and stack setup
@@ -474,7 +491,7 @@ Shipped FAT16 programs:
 * fixed-size volume defined by `tools/mkfat16.c`
 * root directory contains sample C sources and runtime compiler demo artifacts
 * `bin/` contains command-style app ELFs found by bare shell command lookup
-* `apps/demo/` contains the hello demo ELF
+* `apps/demo/` contains the hello and plasma demo ELFs
 * `apps/tests/` contains the remaining shipped test ELFs
 * `apps/services/` contains guest service ELFs
 * `tools/` contains the guest TinyCC binary
@@ -493,7 +510,7 @@ STAGE2_STACK_TOP    equ __STAGE2_STACK_TOP__
 STAGE2_STACK_TOP_32 equ __STAGE2_STACK_TOP_32__
 ```
 
-The Makefile injects those values from the generated stage-2 stack contract and writes `build/gen/loader2.gen.asm` via `sed`:
+The Makefile injects those values from the generated stage-2 stack contract and writes `build/gen/<backend>/loader2.gen.asm` via `sed`:
 
 ```makefile
 sed -e "s/__STAGE2_STACK_TOP__/0xFF00/" \
@@ -552,9 +569,9 @@ The final image builder is invoked with already-built component binaries and sou
 
 ```bash
 build/tools/mkimage \
-    --boot build/bin/boot.bin \
-    --loader build/bin/loader2.bin \
-    --kernel build/bin/kernel.bin \
+    --boot build/bin/auto/boot.bin \
+    --loader build/bin/auto/loader2.bin \
+    --kernel build/bin/auto/kernel.bin \
     --fat16 .state/fat16.img \
     --out build/img/os-image.bin \
     --sector-size 512 \
@@ -602,7 +619,7 @@ The exact kernel span depends on `kernel.bin` size rounded up to a whole number 
 # Stage 1 Bootloader
 
 ```text
-boot.asm → build/bin/boot.bin
+boot.asm → build/bin/<backend>/boot.bin
 ```
 
 Constraints:
@@ -745,7 +762,7 @@ The Makefile generates `loader2.gen.asm` by text substitution into `loader2.asm`
 
 `mkimage` owns final disk-image assembly. This keeps Make focused on dependency orchestration while moving disk-layout mechanics (padding, LBA calculation, partition-table writing) into ordinary host-side code.
 
-`make image-layout-check` is the companion verifier for the finished `os-image.bin`. It checks that the assembled image still matches the intended sector map and partition-table layout.
+`make image-layout-check` is the companion verifier for the finished image. It checks that the assembled image still matches the intended sector map and partition-table layout.
 
 ## LBA Extended Reads
 

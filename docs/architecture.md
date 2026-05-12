@@ -401,6 +401,13 @@ Normal syscalls return through this saved interrupt frame. `SYS_EXIT` is the exc
 
 The default backend is VGA text mode (`0xB8000`) for early/fallback/debug output. When `DISPLAY_BACKEND=auto` and loader2 provides valid VBE boot info, `fb_console.c` maps the linear framebuffer at `0xD0000000` and switches to a white-on-black 8x16-font framebuffer backend. At 1024x768 this exposes a 128x48 terminal while keeping VGA text available for panic/double-fault markers. With `DISPLAY_BACKEND=vga`, loader2 stays in BIOS/VGA text mode, leaves framebuffer boot info invalid, still collects E820, and the kernel leaves the VGA backend active.
 
+User graphics programs sit above the framebuffer display syscalls. The shared
+helper in `src/user/gfx.c` queries display geometry, requires XRGB8888/32 bpp,
+acquires exclusive graphics mode, allocates a full-screen user backbuffer, and
+presents that buffer with one `SYS_DISPLAY_BLIT`. `bmpview` uses this path for
+scaled/centered BMP presentation, and `apps/demo/plasma` uses it as a simple
+animated graphics smoke demo.
+
 ## Shell
 
 ```text
@@ -646,13 +653,17 @@ LBA N+1 ...               fat16.img
 ## Key generated artifacts
 
 ```text
-build/gen/loader2.gen.asm    stack-top values injected
-build/bin/fat16.seed.img     16 MB seeded FAT16 image built by build/tools/mkfat16
+build/gen/<backend>/loader2.gen.asm
+                                stack-top values injected
+build/bin/<backend>/fat16.seed.img
+                                16 MB seeded FAT16 image built by build/tools/mkfat16
 .state/fat16.img             mutable FAT16 working copy used by normal runs
 build/tools/mkfat16          host tool for FAT volume construction
 build/tools/mkimage          host tool for final disk image assembly
-build/obj/setjmp.o           assembled from src/kernel/setjmp.asm
-build/obj/sched_switch.o     assembled from src/kernel/sched_switch.asm
+build/obj/<backend>/kernel/setjmp.o
+                                assembled from src/kernel/setjmp.asm
+build/obj/<backend>/kernel/sched_switch.o
+                                assembled from src/kernel/sched_switch.asm
 ```
 
 ---

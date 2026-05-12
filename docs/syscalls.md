@@ -645,6 +645,66 @@ as `edit` use this instead of assuming a legacy fixed-size text layout.
 
 ---
 
+### SYS_DISPLAY_INFO (53)
+
+```c
+int sys_display_info(sys_display_info_t* out_info);
+```
+
+Writes framebuffer geometry and format. The current graphics path expects
+`SYS_DISPLAY_FORMAT_XRGB8888` with `bpp == 32`; if the system is booted with
+`DISPLAY_BACKEND=vga`, framebuffer graphics are reported as unavailable.
+
+---
+
+### SYS_DISPLAY_FILL (54)
+
+```c
+int sys_display_fill(uint32_t x, uint32_t y, uint32_t w,
+                     uint32_t h, uint32_t color);
+```
+
+Fills a rectangle with an XRGB8888 color. The caller must hold the display via
+`SYS_DISPLAY_ACQUIRE`.
+
+---
+
+### SYS_DISPLAY_BLIT (55)
+
+```c
+int sys_display_blit(uint32_t x, uint32_t y, uint32_t w,
+                     uint32_t h, const uint32_t* pixels);
+```
+
+Copies XRGB8888 pixels from user memory into the framebuffer. User graphics
+programs normally draw into `src/user/gfx.c`'s backbuffer and present the whole
+screen with one blit.
+
+---
+
+### SYS_DISPLAY_ACQUIRE (56)
+
+```c
+int sys_display_acquire(void);
+```
+
+Enters exclusive graphics drawing mode for the calling process. Returns a
+negative errno if no framebuffer is available or another process owns the
+display.
+
+---
+
+### SYS_DISPLAY_RELEASE (57)
+
+```c
+int sys_display_release(void);
+```
+
+Leaves graphics drawing mode. The kernel also releases display ownership when
+the owning process exits.
+
+---
+
 ### SYS_WRITEFILE (12)
 
 ```c
