@@ -1,5 +1,6 @@
 #include "terminal.h"
 #include "keyboard.h"
+#include "mouse.h"
 #include "timer.h"
 #include "gdt.h"
 #include "idt.h"
@@ -151,6 +152,11 @@ void kernel_main(void) {
                        keyboard_get_waiting_process() == 0,
                        "keyboard: input state reset",
                        "keyboard buffer or waiter slot was not reset");
+    if (mouse_init()) {
+        boot_splash_pass("mouse: PS/2 packet stream enabled");
+    } else {
+        boot_splash_warn("mouse: PS/2 unavailable");
+    }
 
     timer_init(SMALLOS_TIMER_HZ);
     boot_splash_expect(timer_get_hz() == SMALLOS_TIMER_HZ &&

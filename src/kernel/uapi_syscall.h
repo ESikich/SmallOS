@@ -105,7 +105,8 @@ enum {
     SYS_DISPLAY_FILL   = 54,  /* fill x,y,w,h with XRGB8888 color */
     SYS_DISPLAY_BLIT   = 55,  /* blit XRGB8888 pixels into framebuffer */
     SYS_DISPLAY_ACQUIRE = 56, /* enter exclusive graphics drawing mode */
-    SYS_DISPLAY_RELEASE = 57  /* leave graphics drawing mode */
+    SYS_DISPLAY_RELEASE = 57, /* leave graphics drawing mode */
+    SYS_MOUSE_READ      = 58  /* read PS/2 mouse deltas/buttons */
 };
 
 #endif

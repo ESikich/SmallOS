@@ -9,12 +9,14 @@
 #include "system.h"
 #include "klib.h"
 #include "../drivers/tcp.h"
+#include "../drivers/mouse.h"
 #include "uapi_poll.h"
 #include "uapi_errno.h"
 #include "uapi_dirent.h"
 #include "uapi_socket.h"
 #include "uapi_epoll.h"
 #include "uapi_display.h"
+#include "uapi_input.h"
 #include "../exec/elf_loader.h"
 #include "vfs.h"
 #include "socket.h"
@@ -1748,6 +1750,16 @@ static int sys_display_blit_impl(const sys_display_blit_rect_t* user_req) {
     return 0;
 }
 
+static int sys_mouse_read_impl(sys_mouse_state_t* out_state) {
+    sys_mouse_state_t state;
+
+    if (!out_state) return -EFAULT;
+    if (!user_buf_ok((unsigned int)out_state, sizeof(*out_state))) return -EFAULT;
+    if (!mouse_read_state(&state)) return -EIO;
+    k_memcpy(out_state, &state, sizeof(state));
+    return 0;
+}
+
 static int sys_getcwd_impl(char* buf, unsigned int size) {
     process_t* proc = (process_t*)sched_current();
     unsigned int pos = 0;
@@ -2126,6 +2138,11 @@ void syscall_handler_main(syscall_regs_t* regs) {
 
         case SYS_DISPLAY_RELEASE:
             regs->eax = (unsigned int)sys_display_release_impl();
+            break;
+
+        case SYS_MOUSE_READ:
+            regs->eax = (unsigned int)sys_mouse_read_impl(
+                            (sys_mouse_state_t*)regs->ebx);
             break;
 
         default:

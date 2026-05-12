@@ -18,7 +18,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Kernel-owned GDT with ring-3 user segments and TSS
 * x86 paging — identity-mapped first 8 MB
 * BSS zeroing in kernel entry before paging is enabled
-* IDT with PIT timer (IRQ0), keyboard (IRQ1), and syscalls (INT 0x80)
+* IDT with PIT timer (IRQ0), keyboard (IRQ1), PS/2 mouse (IRQ12), and syscalls (INT 0x80)
 * Page-fault handler that logs `CR2`, the error code, and user-vs-kernel context; user faults terminate only the offending process
 * COM1 serial driver — mirrors all terminal output to QEMU's serial backend for headless testing
 * Framebuffer-backed terminal with VGA text-mode fallback/debug output
@@ -26,6 +26,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * e1000 NIC bring-up — PCI discovery, MMIO mapping, and DMA ring setup
 * Shell with line editing, history, and command parsing
 * Shell input processing decoupled from IRQ1 via a small event queue
+* PS/2 mouse packet decoding with a small user syscall for relative deltas/buttons
 * Bump allocator (`kmalloc`) for permanent kernel structures
 * Physical memory manager (`pmm`) — bitmap allocator for reclaimable frames
   * Manages usable E820 RAM in `0x200000`–`0x7FFFFFF` (126 MB, 32256-frame bitmap)
@@ -61,11 +62,11 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 │   ├── boot/       boot.asm, loader2.asm, kernel_entry.asm
 │   ├── kernel/     kernel.c, gdt, idt, paging, memory, pmm, process,
 │   │               scheduler, sched_switch.asm, syscall, timer, system, setjmp, vfs
-│   ├── drivers/    keyboard, screen, terminal, ata, fat16
+│   ├── drivers/    keyboard, mouse, screen, terminal, ata, fat16
 │   ├── shell/      shell, line_editor, parse, commands
 │   ├── exec/       elf_loader
 │   └── user/       hello.c, ticks.c, args.c, readline.c, exec_test.c,
-│                   bmpview.c, plasma.c, gfx.c, compiler_demo.c, fault.c,
+│                   bmpview.c, plasma.c, mandel.c, gfx.c, compiler_demo.c, fault.c,
 │                   sleep_test.c, user_lib.h, user_syscall.h
 ├── tools/
 │   ├── mkfat16.c
@@ -113,7 +114,8 @@ make run-sdl      # use QEMU's SDL display backend
 
 `make run` defaults to `QEMU_DISPLAY=curses`. If typing feels sluggish through
 WSL, Windows Terminal, or another terminal bridge, try `make run-gtk` or
-`make run QEMU_DISPLAY=gtk` to bypass the curses display path.
+`make run QEMU_DISPLAY=gtk` to bypass the curses display path. Mouse-driven
+graphics demos also need a graphical backend and a grabbed QEMU window.
 
 **Headless (background, serial log):**
 ```bash
@@ -293,6 +295,7 @@ Seeded FAT16 layout:
 - `bin/bmpview` - load a BMP, render it through the userland graphics backbuffer, and present it to the framebuffer
 - `apps/demo/hello` - print argc/argv and tick count
 - `apps/demo/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
+- `apps/demo/mandel` - interactive framebuffer Mandelbrot demo with keyboard pan/zoom and PS/2 mouse cursor movement
 - `apps/tests/ticks` - print the current tick count
 - `apps/tests/args` - print argc and argv
 - `apps/tests/runelf_test` - verify ELF loading, syscalls, and stack setup
@@ -343,7 +346,7 @@ kernel_main()
  → pmm_init()            E820-filtered bitmap allocator at 0x200000–0x7FFFFFF
  → kernel_selfcheck()    report TSS, stack, heap, and PMM baseline checks
  → fb_console_init()     switch terminal to 1024x768x32 framebuffer when VBE boot info is valid
- → keyboard/timer/idt    drivers and interrupt table
+ → keyboard/mouse/timer/idt drivers and interrupt table
  → sched_init()          initialise runnable task table
  → ata_init()            initialise ATA primary channel
  → pci_init()            scan PCI devices and log discovered network controllers

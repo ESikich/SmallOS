@@ -10,6 +10,10 @@
 * **Framebuffer demo app** (`src/user/plasma.c`, `Makefile`)
   * Added `apps/demo/plasma.elf`, an animated framebuffer demo that uses the graphics helper and exits after a fixed frame count or a keypress.
 
+* **Interactive Mandelbrot demo and mouse input** (`src/user/mandel.c`, `src/drivers/mouse.c`, `src/kernel/uapi_input.h`)
+  * Added `apps/demo/mandel.elf` with keyboard pan/zoom/reset/quit controls and a software cursor.
+  * Added a minimal PS/2 mouse path: IRQ12 packet decoding, accumulated relative deltas/buttons, and `SYS_MOUSE_READ` for user graphics demos.
+
 ### Changed
 
 * **BMP viewer graphics path** (`src/user/bmpview.c`)
@@ -18,7 +22,7 @@
 * **Build and display docs** (`Makefile`, `README.md`, `docs/`)
   * `USER_CFLAGS` now defaults to `-O2`, and the framebuffer-facing display driver objects use `DISPLAY_DRIVER_CFLAGS=-O2` while the broader kernel stays unoptimized by default.
   * Forced-VGA builds now write `build/img/vga/os-image.bin`, leaving the normal auto/framebuffer image at `build/img/os-image.bin`.
-  * Documented the display syscalls, `gfx` helper, `bmpview`, `plasma`, and backend-specific image paths.
+  * Documented the display syscalls, `gfx` helper, `bmpview`, `plasma`, `mandel`, PS/2 mouse polling, IRQ12 handling, and backend-specific image paths.
 
 ## [Current] — Process group foreground cleanup
 

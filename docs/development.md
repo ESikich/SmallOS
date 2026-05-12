@@ -119,6 +119,12 @@ Routing decisions — whether input goes to the shell or a user process — belo
 
 Do not add imports of `process.h`, `scheduler.h`, or `shell.h` to `keyboard.c` or `keyboard.h`. Do not add routing logic to `keyboard_handle_irq()`. If a new input consumer is needed, register it — do not modify the driver.
 
+Mouse input follows the same driver-boundary rule at a smaller scale:
+`mouse.c` owns PS/2 auxiliary-port setup and 3-byte packet decoding only. It
+does not know about shells, processes, windows, cursors, or graphics ownership.
+For now userland polls accumulated relative motion through `SYS_MOUSE_READ`;
+any future keyboard/mouse event queue should live above the raw drivers.
+
 ---
 
 ### 7. Build scripts must discover layout facts from the files that own them
@@ -317,7 +323,7 @@ Failure → `#GP → #DF → triple fault → reboot`.
 
 ### IRQ EOI should be sent before IRQ-side work that must not leave the PIC masked
 
-Both `irq0_handler_main` and `irq1_handler_main` send EOI as their first meaningful action. Do not move EOI below `sched_tick`; for IRQ1, keep it before `keyboard_handle_irq()` as the current handler ordering rule.
+`irq0_handler_main`, `irq1_handler_main`, and `irq12_handler_main` send EOI as their first meaningful action. Do not move EOI below `sched_tick`; for IRQ1, keep it before `keyboard_handle_irq()` as the current handler ordering rule. IRQ12 is on the slave PIC, so it must acknowledge both PIC2 and PIC1 before packet decoding.
 
 ---
 
@@ -429,6 +435,8 @@ The launch ABI guarantees `argv[argc] == NULL`. SmallOS does not provide
 Framebuffer apps should use `src/user/gfx.c` instead of calling the display
 syscalls directly. The helper owns acquire/release, full-screen backbuffer
 allocation, simple drawing primitives, and one-shot full-screen present.
+Interactive graphics can poll keyboard availability with `SYS_POLL` on fd `0`
+and poll relative mouse movement with `SYS_MOUSE_READ`.
 
 ---
 

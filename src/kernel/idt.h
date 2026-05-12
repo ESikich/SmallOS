@@ -29,5 +29,6 @@ void general_protection_handler_main(unsigned int esp);
 void page_fault_handler_main(unsigned int esp);
 void irq0_handler_main(unsigned int esp);
 void irq1_handler_main(unsigned int esp);
+void irq12_handler_main(unsigned int esp);
 
 #endif /* IDT_H */

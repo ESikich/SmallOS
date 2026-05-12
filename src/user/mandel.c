@@ -10,6 +10,10 @@
 #define MANDEL_BLOCK 2u
 #define MANDEL_MIN_VIEW_W 8
 #define MANDEL_MAX_VIEW_W (16 * MANDEL_SCALE)
+#define MANDEL_CURSOR_W 11u
+#define MANDEL_CURSOR_H 17u
+#define MANDEL_CURSOR_FILL 0x00FFFFFFu
+#define MANDEL_CURSOR_SHADOW 0x00000000u
 
 typedef enum mandel_key {
     MANDEL_KEY_NONE = 0,
@@ -29,6 +33,11 @@ typedef struct mandel_view {
     int view_w;
 } mandel_view_t;
 
+typedef struct mandel_cursor {
+    unsigned int x;
+    unsigned int y;
+} mandel_cursor_t;
+
 static int input_available(void) {
     struct pollfd pfd;
 
@@ -41,6 +50,9 @@ static int input_available(void) {
 static mandel_key_t read_key(void) {
     char c = 0;
 
+    if (!input_available()) {
+        return MANDEL_KEY_NONE;
+    }
     if (sys_read_raw(&c, 1u) != 1) {
         return MANDEL_KEY_NONE;
     }
@@ -143,10 +155,84 @@ static void draw_mandel(gfx_surface_t* s, const mandel_view_t* view) {
     }
 }
 
+static void draw_cursor_pixel(gfx_surface_t* s, int x, int y, unsigned int color) {
+    if (x < 0 || y < 0) {
+        return;
+    }
+    gfx_put_pixel(s, (unsigned int)x, (unsigned int)y, color);
+}
+
+static void draw_cursor(gfx_surface_t* s, const mandel_cursor_t* cursor) {
+    static const char* shape[MANDEL_CURSOR_H] = {
+        "X          ",
+        "XX         ",
+        "XWX        ",
+        "XWWX       ",
+        "XWWWX      ",
+        "XWWWWX     ",
+        "XWWWWWX    ",
+        "XWWWWWWX   ",
+        "XWWWWWWWX  ",
+        "XWWWWX     ",
+        "XWWXWX     ",
+        "XWX XWX    ",
+        "XX  XWX    ",
+        "X    XWX   ",
+        "     XWX   ",
+        "      XWX  ",
+        "      XXX  "
+    };
+    int left = (int)cursor->x;
+    int top = (int)cursor->y;
+
+    for (unsigned int y = 0; y < MANDEL_CURSOR_H; y++) {
+        for (unsigned int x = 0; x < MANDEL_CURSOR_W; x++) {
+            char pixel = shape[y][x];
+            if (pixel == 'W') {
+                draw_cursor_pixel(s, left + (int)x, top + (int)y,
+                                  MANDEL_CURSOR_FILL);
+            } else if (pixel == 'X') {
+                draw_cursor_pixel(s, left + (int)x, top + (int)y,
+                                  MANDEL_CURSOR_SHADOW);
+            }
+        }
+    }
+}
+
 static void reset_view(mandel_view_t* view) {
     view->center_x = MANDEL_CENTER_X;
     view->center_y = MANDEL_CENTER_Y;
     view->view_w = MANDEL_VIEW_W;
+}
+
+static void reset_cursor(mandel_cursor_t* cursor, const gfx_surface_t* s) {
+    cursor->x = s->width / 2u;
+    cursor->y = s->height / 2u;
+}
+
+static int apply_mouse(mandel_cursor_t* cursor, const gfx_surface_t* s,
+                       const sys_mouse_state_t* mouse) {
+    int x;
+    int y;
+
+    if (mouse->dx == 0 && mouse->dy == 0) {
+        return 0;
+    }
+
+    x = (int)cursor->x + mouse->dx;
+    y = (int)cursor->y + mouse->dy;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (x >= (int)s->width) x = (int)s->width - 1;
+    if (y >= (int)s->height) y = (int)s->height - 1;
+
+    if ((unsigned int)x == cursor->x && (unsigned int)y == cursor->y) {
+        return 0;
+    }
+
+    cursor->x = (unsigned int)x;
+    cursor->y = (unsigned int)y;
+    return 1;
 }
 
 static int apply_key(mandel_view_t* view, mandel_key_t key) {
@@ -190,6 +276,7 @@ static int apply_key(mandel_view_t* view, mandel_key_t key) {
 void _start(int argc, char** argv) {
     gfx_context_t gfx;
     mandel_view_t view;
+    mandel_cursor_t cursor;
     int rc;
 
     (void)argc;
@@ -207,22 +294,42 @@ void _start(int argc, char** argv) {
     }
 
     reset_view(&view);
+    reset_cursor(&cursor, &gfx.backbuffer);
+    {
+        sys_mouse_state_t mouse;
+        (void)sys_mouse_read(&mouse);
+    }
 
+    int dirty = 1;
     for (;;) {
         mandel_key_t key;
+        sys_mouse_state_t mouse;
 
-        draw_mandel(&gfx.backbuffer, &view);
-        if (gfx_present(&gfx) < 0) {
-            gfx_close(&gfx);
-            u_puts("mandel: present failed\n");
-            sys_exit(1);
+        if (dirty) {
+            dirty = 0;
+            draw_mandel(&gfx.backbuffer, &view);
+            draw_cursor(&gfx.backbuffer, &cursor);
+            if (gfx_present(&gfx) < 0) {
+                gfx_close(&gfx);
+                u_puts("mandel: present failed\n");
+                sys_exit(1);
+            }
         }
 
         key = read_key();
         if (key == MANDEL_KEY_QUIT) {
             break;
         }
-        apply_key(&view, key);
+        if (apply_key(&view, key)) {
+            dirty = 1;
+        }
+        if (sys_mouse_read(&mouse) == 0 &&
+            apply_mouse(&cursor, &gfx.backbuffer, &mouse)) {
+            dirty = 1;
+        }
+        if (!dirty) {
+            sys_sleep(1);
+        }
     }
 
     gfx_close(&gfx);

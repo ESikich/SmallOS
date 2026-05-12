@@ -44,7 +44,7 @@ kernel_main()
   pmm_init()        ← E820-filtered bitmap allocator at 0x200000–0x7FFFFFF
   boot diagnostics  ← splash PASS/WARN/FAIL checks for startup invariants
   fb_console_init() ← switch to framebuffer terminal when VBE boot info is valid
-  keyboard/timer/idt
+  keyboard/mouse/timer/idt
   #PF handler      ← logs CR2 / error code, kills user faults, panics on kernel faults
   sched_init()      ← initialise runnable task table
   ata_init()        ← software reset ATA primary channel, verify ready
@@ -119,7 +119,7 @@ Inside `kernel_main()`:
 5. `pmm_init()` — bitmap allocator covers 0x200000–0x7FFFFFF; E820 usable ranges are freed, then boot/runtime reservations are marked used again
 6. `kernel_selfcheck()` — report splash checks for TSS selector, boot stack, heap base after BSS, and PMM baseline
 7. `fb_console_init()` — map and select the framebuffer backend when VBE boot info is valid
-8. `keyboard_init()`, `timer_init(SMALLOS_TIMER_HZ)`, `idt_init()` — drivers and interrupt table
+8. `keyboard_init()`, `mouse_init()`, `timer_init(SMALLOS_TIMER_HZ)`, `idt_init()` — input/timer drivers and interrupt table
 9. `sched_init()` — initialise the scheduler data structures
 10. `ata_init()` — software reset ATA primary channel (`0x1F0`), poll until ready
 11. `pci_init()` — scan PCI config space and log discovered network controllers
@@ -339,6 +339,7 @@ reaper task (permanent kernel task):
 8    → ISR8 (double fault — VGA marker '8' white-on-red at row 1 col 12 + halt)
 32   → IRQ0 (timer, DPL=0)
 33   → IRQ1 (keyboard, DPL=0)
+44   → IRQ12 (PS/2 mouse, DPL=0)
 128  → syscall int 0x80 (DPL=3 — callable from ring 3)
 ```
 
@@ -361,13 +362,26 @@ irq0_stub: add esp 4, pop segments, popa, iretd
 ## IRQ1 flow
 
 ```text
-irq1_stub: pusha, push segments
+irq1_stub: pusha, push segments, push esp
   ↓
 irq1_handler_main:
   EOI (outb 0x20, 0x20)        ← sent before handler (consistent with IRQ0 pattern)
   keyboard_handle_irq()
   ↓
 irq1_stub: pop segments, popa, iretd
+```
+
+## IRQ12 flow
+
+```text
+irq12_stub: pusha, push segments, push esp
+  ↓
+irq12_handler_main:
+  EOI slave PIC (outb 0xA0, 0x20)
+  EOI master PIC (outb 0x20, 0x20)
+  mouse_handle_irq()
+  ↓
+irq12_stub: pop segments, popa, iretd
 ```
 
 ## Syscall flow (ring 3 → ring 0 → ring 3)
@@ -406,7 +420,8 @@ helper in `src/user/gfx.c` queries display geometry, requires XRGB8888/32 bpp,
 acquires exclusive graphics mode, allocates a full-screen user backbuffer, and
 presents that buffer with one `SYS_DISPLAY_BLIT`. `bmpview` uses this path for
 scaled/centered BMP presentation, and `apps/demo/plasma` uses it as a simple
-animated graphics smoke demo.
+animated graphics smoke demo. `apps/demo/mandel` uses the same helper for an
+interactive Mandelbrot view and polls `SYS_MOUSE_READ` for cursor deltas.
 
 ## Shell
 
@@ -440,6 +455,12 @@ The active consumer is managed by `keyboard_set_consumer()`:
 - `process_set_foreground(0)` calls `shell_register_consumer()` to restore the shell consumer on exit
 
 The keyboard driver makes no routing decisions. It decodes scancodes and calls whoever is registered.
+
+Mouse input is intentionally lower-level today. `mouse.c` initializes the PS/2
+auxiliary port, decodes 3-byte relative-motion packets on IRQ12, and stores
+accumulated `dx`/`dy` plus button bits. User programs call `SYS_MOUSE_READ` to
+copy and clear the accumulated movement. There is no unified keyboard/mouse
+event queue yet.
 
 ---
 
@@ -708,6 +729,7 @@ clean process exit via `PROCESS_STATE_ZOMBIE` transition and later reap from a s
 physical memory manager (bitmap, all frames reclaimed on exit — no leak)
 per-process kernel stacks (PMM frame per process, freed on exit)
 SYS_READ / fd 0 — true blocking keyboard input through the console handle: parks process in PROCESS_STATE_WAITING, woken by keyboard IRQ via process_key_consumer()
+SYS_MOUSE_READ — polling PS/2 mouse state for graphics demos: returns accumulated relative deltas/buttons and clears the movement counters
 SYS_YIELD — voluntary preemption via sched_yield_now()
 SYS_SLEEP — timed sleep: parks process in PROCESS_STATE_SLEEPING and wakes via the timer IRQ once the deadline is reached
 SYS_EXEC — async ELF spawn from the current foreground context; the child runs independently and the parent returns immediately in `runelf_nowait` / `sys_exec`

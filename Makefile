@@ -89,6 +89,7 @@ KERNEL_C_SRCS=\
 	$(KERNEL_DIR)/kernel.c \
 	$(KERNEL_DIR)/idt.c \
 	$(DRIVERS_DIR)/keyboard.c \
+	$(DRIVERS_DIR)/mouse.c \
 	$(SHELL_DIR)/shell.c \
 	$(SHELL_DIR)/line_editor.c \
 	$(DRIVERS_DIR)/terminal.c \

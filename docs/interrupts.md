@@ -15,7 +15,7 @@ assembly stub (interrupts.asm)
   ↓
 C handler
   ↓
-subsystem (timer / keyboard / syscall)
+subsystem (timer / keyboard / mouse / syscall)
 ```
 
 ---
@@ -39,6 +39,7 @@ idt_set_gate(vector, handler, 0x08, flags);
 8    → ISR8 (double fault)
 32   → IRQ0 (timer)
 33   → IRQ1 (keyboard)
+44   → IRQ12 (PS/2 mouse)
 128  → syscall (int 0x80)
 ```
 
@@ -53,20 +54,43 @@ IRQs 0–15 are remapped away from CPU exception vectors 0–15.
 ```text
 IRQ0 → vector 32
 IRQ1 → vector 33
+IRQ12 → vector 44
 ```
 
 ---
 
 # Interrupt Stubs (interrupts.asm)
 
-## IRQ1 stub (keyboard) — standard pattern
+## IRQ1 stub (keyboard) — ESP-passing pattern
 
 ```asm
 pusha
 push ds / es / fs / gs
 mov ax, 0x10          ; load kernel data segment
 mov ds/es/fs/gs, ax
+push esp
 call irq1_handler_main
+add esp, 4
+pop gs / fs / es / ds
+popa
+iretd
+```
+
+## IRQ12 stub (PS/2 mouse) — same ESP-passing pattern
+
+`irq12_stub` mirrors the timer/syscall ESP-passing shape so the C handler can
+share the same interrupt-frame convention if it needs it later. The current
+mouse handler does not schedule; it acknowledges the PICs and decodes one PS/2
+packet byte.
+
+```asm
+pusha
+push ds / es / fs / gs
+mov ax, 0x10
+mov ds/es/fs/gs, ax
+push esp
+call irq12_handler_main
+add esp, 4
 pop gs / fs / es / ds
 popa
 iretd
@@ -166,6 +190,31 @@ The active consumer is set via `keyboard_set_consumer()`:
 - `process_key_consumer` (registered by `process_set_foreground`) — pushes ASCII into `kb_buf` for `SYS_READ`; Ctrl+C signals or terminates the foreground process group instead of entering the input buffer
 
 EOI is sent before `keyboard_handle_irq()` so the PIC is unmasked before any consumer logic runs.
+
+## PS/2 Mouse (IRQ12)
+
+```text
+vector 44 → irq12_stub → irq12_handler_main(esp)
+```
+
+```c
+void irq12_handler_main(unsigned int esp) {
+    (void)esp;
+    outb(0xA0, 0x20);
+    outb(0x20, 0x20);
+    mouse_handle_irq();
+}
+```
+
+The mouse IRQ arrives through the slave PIC, so the handler sends EOI to both
+PIC2 and PIC1 before decoding. `mouse_handle_irq()` consumes PS/2 auxiliary
+bytes from port `0x60`, syncs on standard 3-byte packets, accumulates signed
+relative movement, tracks the low three button bits, and increments a sequence
+counter for complete packets.
+
+Userland reads this state through `SYS_MOUSE_READ`, which returns accumulated
+`dx`/`dy` and clears those movement counters. There is no mouse event queue
+yet; graphics demos poll the syscall when they are ready to redraw.
 
 ---
 
@@ -283,6 +332,7 @@ Any gap in this list causes `#GP → #DF → triple fault → reboot`.
 | Red '8' on screen | Double fault — corrupt kernel stack or bad IDT entry |
 | Timer not advancing | IRQ0 not firing; missing EOI |
 | No keyboard input | IRQ1 masked or missing EOI |
+| Mouse cursor does not move | IRQ12 masked, PS/2 aux port unavailable, QEMU window not grabbed, or missing slave/master EOI |
 | Syscalls silently broken | `syscall_regs_t` mismatch with `isr128_stub` push order |
 | Timer fires but process never preempted | `sched_tick` not called; EOI sent after `sched_switch` |
 | Crash on first context switch | `sched_esp == 0` guard missing; switching to process with no saved stack |

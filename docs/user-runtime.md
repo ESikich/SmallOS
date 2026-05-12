@@ -104,6 +104,11 @@ characters plus ANSI-style special-key sequences for arrows, Home/End,
 Delete, PageUp/PageDown, and function keys; `edit` uses this path together
 with normal fd-backed writes to edit FAT16 text files.
 
+Graphics programs that need mouse motion can call `sys_mouse_read()` from
+`user_syscall.h`. It returns accumulated PS/2 relative movement and button
+bits, then clears the movement counters. This is a raw polling helper, not a
+descriptor-backed event stream.
+
 The kernel dispatches descriptors through per-handle ops:
 
 ```text

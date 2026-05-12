@@ -2,6 +2,7 @@
 #include "ports.h"
 #include "terminal.h"
 #include "keyboard.h"
+#include "mouse.h"
 #include "timer.h"
 #include "paging.h"
 #include "process.h"
@@ -10,6 +11,7 @@
 extern void idt_flush(unsigned int);
 extern void irq0_stub(void);
 extern void irq1_stub(void);
+extern void irq12_stub(void);
 extern void isr0_stub(void);
 extern void isr5_stub(void);
 extern void isr6_stub(void);
@@ -72,6 +74,7 @@ void idt_init(void) {
     idt_set_gate(8,   (unsigned int)isr8_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
     idt_set_gate(32,  (unsigned int)irq0_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
     idt_set_gate(33,  (unsigned int)irq1_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
+    idt_set_gate(44,  (unsigned int)irq12_stub,  KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
 
     /*
      * int 0x80 syscall gate — DPL=3 so ring-3 code can invoke it.
@@ -92,8 +95,8 @@ void idt_init(void) {
 
     idt_flush((unsigned int)&idtp);
 
-    outb(0x21, 0xFC);
-    outb(0xA1, 0xFF);
+    outb(0x21, 0xF8);
+    outb(0xA1, 0xEF);
 }
 
 static unsigned int fault_frame_word(unsigned int esp, unsigned int index) {
@@ -202,4 +205,11 @@ void irq1_handler_main(unsigned int esp) {
     outb(0x20, 0x20);   /* EOI first — keep PIC unmasked before IRQ-side work */
     keyboard_handle_irq();
     process_deliver_pending_terminal_interrupt(esp - SCHED_RESUME_RETADDR_OFFSET);
+}
+
+void irq12_handler_main(unsigned int esp) {
+    (void)esp;
+    outb(0xA0, 0x20);
+    outb(0x20, 0x20);
+    mouse_handle_irq();
 }

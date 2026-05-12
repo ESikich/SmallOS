@@ -58,6 +58,7 @@ Important current-state facts:
 - the **shell consumer** (`shell_key_consumer` in `shell.c`) enqueues `shell_event_t` entries; the shell task drains them in `shell_poll()` outside IRQ context
 - the **process consumer** (`process_key_consumer` in `process.c`) pushes ASCII into `kb_buf`; terminal signals such as Ctrl+C target the foreground process group
 - consumer ownership transfers via `process_set_foreground()` — shell consumer at boot, process consumer while a user process holds the foreground reader/group, shell consumer restored on exit
+- **PS/2 mouse IRQ12** decodes relative-motion packets into accumulated `dx`/`dy` and button state; user graphics code polls that state with `SYS_MOUSE_READ`
 - **ELF user programs** are loaded into their own page directory and do execute in ring 3
 - ELF launch and exit are now scheduler-owned: `elf_run_image()` seeds a bootstrap context, enqueues the task, and returns `process_t*`
 - the scheduler supports kernel tasks, ELF tasks, voluntary yielding, timer-driven sleeping, and timer-driven switching; `runelf` blocks with `process_wait()`, `runelf_nowait` returns immediately, and `bg` / `runelf_bg` return while keeping a reattachable shell job
@@ -106,6 +107,18 @@ commands_execute()
 cmd_runelf()
   ↓
 elf_run_named()
+```
+
+Mouse input is separate from the foreground keyboard consumer path:
+
+```text
+PS/2 mouse IRQ12
+  ↓
+mouse_handle_irq()
+  ↓
+decode 3-byte packet → accumulate dx/dy/buttons
+  ↓
+SYS_MOUSE_READ copies state to userland and clears dx/dy
 ```
 
 The shell task itself is created in `kernel_main()` with `process_create_kernel_task("shell", shell_task_main)`, enqueued with `sched_enqueue()`, then entered with `sched_start()`.
@@ -403,6 +416,7 @@ kernel_main()
   memory_init()
   pmm_init()
   keyboard_init()
+  mouse_init()
   timer_init(SMALLOS_TIMER_HZ)
   idt_init()
   sched_init()

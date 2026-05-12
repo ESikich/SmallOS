@@ -7,6 +7,7 @@
 #include "uapi_poll.h"
 #include "uapi_epoll.h"
 #include "uapi_display.h"
+#include "uapi_input.h"
 
 struct dirent;
 
@@ -295,6 +296,10 @@ static inline int sys_display_blit(uint32_t x, uint32_t y, uint32_t w,
     req.h = h;
     req.pixels = pixels;
     return syscall1(SYS_DISPLAY_BLIT, (uint32_t)&req);
+}
+
+static inline int sys_mouse_read(sys_mouse_state_t* out_state) {
+    return syscall1(SYS_MOUSE_READ, (uint32_t)out_state);
 }
 
 static inline int sys_socket(int domain, int type, int protocol) {

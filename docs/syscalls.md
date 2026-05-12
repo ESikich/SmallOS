@@ -705,6 +705,25 @@ the owning process exits.
 
 ---
 
+### SYS_MOUSE_READ (58)
+
+```c
+int sys_mouse_read(sys_mouse_state_t* out_state);
+```
+
+Copies the current PS/2 mouse state into user memory and clears the accumulated
+relative movement counters. `dx` and `dy` are signed screen-space deltas since
+the previous successful read, with positive `dy` moving downward. `buttons`
+uses `SYS_MOUSE_BUTTON_LEFT`, `SYS_MOUSE_BUTTON_RIGHT`, and
+`SYS_MOUSE_BUTTON_MIDDLE`; `sequence` increments when a complete mouse packet
+is decoded.
+
+Returns `0` on success, `-EFAULT` for an invalid output pointer, or `-EIO` when
+the mouse driver is unavailable. This is intentionally a small polling
+primitive for graphics demos; it is not a full event queue yet.
+
+---
+
 ### SYS_WRITEFILE (12)
 
 ```c
@@ -939,7 +958,7 @@ u_stat(...)        query path metadata
 * `SYS_EXEC` copies the user `name` and `argv[]` strings into kernel buffers before handing them to the ELF loader, so the loader never depends on caller memory staying stable after validation
 * Each process owns a cwd. Kernel path syscalls normalize `.` / `..`, accept absolute paths with a leading slash, and resolve relative paths against that process cwd before entering VFS or ELF loading.
 * `SYS_YIELD` and the timer path use the same stub layout, but the real scheduler resume ESP is `esp - 8`, not raw `esp`
-* EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`
+* EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`; IRQ12 sends EOI to both PICs before decoding a PS/2 mouse packet
 * The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.
 * fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`); user-opened files and sockets start at fd 3. The handle table is PMM-backed process state: it starts at 16 slots, grows up to the default 128-fd process limit, and has a kernel hard cap of 256. Every handle carries readable/writable/dirty state plus an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`. `process.c` owns fd lifetime and dispatch, `vfs.c` owns FAT16-backed file behavior, `socket.c` owns kernel socket objects plus accept/read/write wait queues, and `tcp.c` owns passive TCP listeners, the global 4-tuple connection table, and the lazy RX/TX rings behind connected sockets.
 * `SYS_WRITEFILE` is the simplest root-only persistence path for user tools that want to emit a generated artifact without managing an fd-based write stream.

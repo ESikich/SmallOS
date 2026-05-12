@@ -488,7 +488,7 @@ Stage 2  →  LBA extension check
 Kernel   →  zero BSS
          →  terminal_init, gdt_init, paging_init
          →  memory_init(page-aligned bss_end), pmm_init
-         →  keyboard, timer, idt, sched_init
+         →  keyboard, mouse, timer, idt, sched_init
          →  ata_init, fat16_init
          →  create shell task, sti, sched_start
 ```

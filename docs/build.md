@@ -209,6 +209,10 @@ make run-sdl
 make run QEMU_DISPLAY=gtk
 ```
 
+Mouse-driven graphics demos need a graphical QEMU backend and a grabbed guest
+window. Use `make run-gtk` or `make run-sdl`, then click/grab the QEMU window
+before testing `apps/demo/mandel` cursor movement.
+
 The guest terminal backend policy is controlled at build time:
 
 ```bash
@@ -431,6 +435,7 @@ build/tools/mkfat16 build/bin/auto/fat16.seed.img \
     bin/echo.elf=build/bin/auto/echo.elf \
     apps/demo/hello.elf=build/bin/auto/hello.elf \
     apps/demo/plasma.elf=build/bin/auto/plasma.elf \
+    apps/demo/mandel.elf=build/bin/auto/mandel.elf \
     apps/tests/runelf_test.elf=build/bin/auto/runelf_test.elf \
     apps/services/ftpd.elf=build/bin/auto/ftpd.elf \
     tools/tcc.elf=build/bin/auto/tcc-smalos.elf \
@@ -462,6 +467,7 @@ Shipped FAT16 programs:
 - `bin/bmpview` - load a BMP, render it into the `gfx` backbuffer, and present it to the framebuffer
 - `apps/demo/hello` - print argc/argv and tick count
 - `apps/demo/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
+- `apps/demo/mandel` - interactive Mandelbrot demo with arrow-key pan, +/- zoom, reset/quit keys, and PS/2 mouse cursor movement
 - `apps/tests/ticks` - print the current tick count
 - `apps/tests/args` - print argc and argv
 - `apps/tests/runelf_test` - verify ELF loading, syscalls, and stack setup
