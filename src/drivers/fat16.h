@@ -40,6 +40,15 @@ typedef struct {
     fat16_write_sink_fn write;
 } fat16_data_sink_t;
 
+typedef struct {
+    u32 total_bytes;
+    u32 used_bytes;
+    u32 free_bytes;
+    u32 cluster_bytes;
+    u32 total_clusters;
+    u32 free_clusters;
+} fat16_fsinfo_t;
+
 /*
  * fat16_init()
  *
@@ -233,5 +242,28 @@ int fat16_copy(const char* src, const char* dst);
  * Returns 1 on success, 0 on failure.
  */
 int fat16_move(const char* src, const char* dst);
+
+/*
+ * fat16_fsinfo(out)
+ *
+ * Read the FAT and report volume-level data cluster usage.
+ *
+ * Returns 1 on success, 0 on failure.
+ */
+int fat16_fsinfo(fat16_fsinfo_t* out);
+
+/*
+ * fat16_fsmap(start_cluster, max_clusters, states, out_clusters)
+ *
+ * Copy FAT allocation states into `states`, starting at zero-based data
+ * cluster index `start_cluster`.  Each returned byte is 0 for free and 1 for
+ * allocated.  Cluster index 0 corresponds to FAT cluster 2.
+ *
+ * Returns 1 on success, 0 on failure.
+ */
+int fat16_fsmap(u32 start_cluster,
+                u32 max_clusters,
+                u8* states,
+                u32* out_clusters);
 
 #endif /* FAT16_H */

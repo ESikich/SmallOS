@@ -66,8 +66,9 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 │   ├── shell/      shell, line_editor, parse, commands
 │   ├── exec/       elf_loader
 │   └── user/       hello.c, ticks.c, args.c, readline.c, exec_test.c,
-│                   bmpview.c, plasma.c, mandel.c, gfx.c, compiler_demo.c, fault.c,
-│                   sleep_test.c, user_lib.h, user_syscall.h
+│                   bmpview.c, diskview.c, plasma.c, mandel.c, gfx.c,
+│                   compiler_demo.c, fault.c, sleep_test.c, user_lib.h,
+│                   user_syscall.h
 ├── tools/
 │   ├── mkfat16.c
 │   └── mkimage.c
@@ -291,8 +292,9 @@ editing; F2 saves, and F3 or Esc exits. If there are unsaved changes, F2 saves
 and exits, F3 discards, and Esc cancels the quit prompt.
 
 Seeded FAT16 layout:
-- command-style apps live under `/bin/` (`echo`, `about`, `uptime`, `halt`, `reboot`, `pwd`, `cat`, `fsread`, `ls`, `fsls`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, `edit`)
+- command-style apps live under `/bin/` (`echo`, `about`, `uptime`, `halt`, `reboot`, `pwd`, `cat`, `fsread`, `ls`, `fsls`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, `edit`, `diskview`)
 - `bin/bmpview` - load a BMP, render it through the userland graphics backbuffer, and present it to the framebuffer
+- `bin/diskview` - show FAT16 used/free space as a framebuffer allocation map
 - `apps/demo/hello` - print argc/argv and tick count
 - `apps/demo/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
 - `apps/demo/mandel` - interactive framebuffer Mandelbrot demo with keyboard pan/zoom and PS/2 mouse cursor movement

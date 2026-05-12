@@ -57,6 +57,7 @@
 
 static int  s_initialised = 0;
 static u32  s_fat16_lba   = 0;   /* absolute LBA of FAT16 partition start */
+static u32  s_fat16_sectors = 0; /* sectors in FAT16 partition */
 
 /* Scratch buffer — reused for BPB, FAT sector, directory sector reads */
 static u8 s_sector[SECTOR_SIZE];
@@ -1926,10 +1927,86 @@ int fat16_init(void) {
     }
 
     s_initialised = 1;
+    s_fat16_sectors = fat16_sectors;
 
     terminal_puts("fat16: ok  lba=");
     terminal_put_uint(s_fat16_lba);
     terminal_putc('\n');
+    return 1;
+}
+
+int fat16_fsinfo(fat16_fsinfo_t* out) {
+    u16* fat;
+    u32 total_clusters;
+    u32 free_clusters = 0;
+
+    if (!out || !s_initialised || s_fat16_sectors <= DATA_REL_SECTOR) {
+        return 0;
+    }
+
+    if (!read_rel_sectors(FAT1_REL_SECTOR, FAT_SECTORS, s_fat_buf)) {
+        terminal_puts("fat16: FAT read error\n");
+        return 0;
+    }
+
+    total_clusters = (s_fat16_sectors - DATA_REL_SECTOR) / SECTORS_PER_CLUSTER;
+    if (total_clusters > FAT_ENTRIES - FIRST_CLUSTER) {
+        total_clusters = FAT_ENTRIES - FIRST_CLUSTER;
+    }
+
+    fat = (u16*)s_fat_buf;
+    for (u32 i = 0; i < total_clusters; i++) {
+        if (fat[FIRST_CLUSTER + i] == 0) {
+            free_clusters++;
+        }
+    }
+
+    out->cluster_bytes = CLUSTER_BYTES;
+    out->total_clusters = total_clusters;
+    out->free_clusters = free_clusters;
+    out->total_bytes = total_clusters * CLUSTER_BYTES;
+    out->free_bytes = free_clusters * CLUSTER_BYTES;
+    out->used_bytes = out->total_bytes - out->free_bytes;
+    return 1;
+}
+
+int fat16_fsmap(u32 start_cluster,
+                u32 max_clusters,
+                u8* states,
+                u32* out_clusters) {
+    u16* fat;
+    u32 total_clusters;
+    u32 count;
+
+    if (!states || !out_clusters || !s_initialised || s_fat16_sectors <= DATA_REL_SECTOR) {
+        return 0;
+    }
+
+    if (!read_rel_sectors(FAT1_REL_SECTOR, FAT_SECTORS, s_fat_buf)) {
+        terminal_puts("fat16: FAT read error\n");
+        return 0;
+    }
+
+    total_clusters = (s_fat16_sectors - DATA_REL_SECTOR) / SECTORS_PER_CLUSTER;
+    if (total_clusters > FAT_ENTRIES - FIRST_CLUSTER) {
+        total_clusters = FAT_ENTRIES - FIRST_CLUSTER;
+    }
+    if (start_cluster >= total_clusters || max_clusters == 0) {
+        *out_clusters = 0;
+        return 1;
+    }
+
+    count = total_clusters - start_cluster;
+    if (count > max_clusters) {
+        count = max_clusters;
+    }
+
+    fat = (u16*)s_fat_buf;
+    for (u32 i = 0; i < count; i++) {
+        states[i] = fat[FIRST_CLUSTER + start_cluster + i] == 0 ? 0u : 1u;
+    }
+
+    *out_clusters = count;
     return 1;
 }
 

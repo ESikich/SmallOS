@@ -260,6 +260,14 @@ static inline int sys_fstat(int fd, uint32_t* out_size, int* out_is_dir) {
     return syscall3(SYS_FSTAT, (uint32_t)fd, (uint32_t)out_size, (uint32_t)out_is_dir);
 }
 
+static inline int sys_fsinfo(sys_fsinfo_t* out_info) {
+    return syscall1(SYS_FSINFO, (uint32_t)out_info);
+}
+
+static inline int sys_fsmap(sys_fsmap_request_t* req) {
+    return syscall1(SYS_FSMAP, (uint32_t)req);
+}
+
 static inline int sys_terminal_size(uint32_t* out_rows, uint32_t* out_cols) {
     return syscall2(SYS_TERMINAL_SIZE, (uint32_t)out_rows, (uint32_t)out_cols);
 }

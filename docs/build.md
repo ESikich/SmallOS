@@ -465,6 +465,7 @@ Shipped FAT16 programs:
 - `bin/mkdir` / `bin/rmdir` - create or remove FAT16 directories
 - `bin/cp` / `bin/mv` - copy or move FAT16 entries
 - `bin/bmpview` - load a BMP, render it into the `gfx` backbuffer, and present it to the framebuffer
+- `bin/diskview` - show FAT16 used/free space as a framebuffer allocation map
 - `apps/demo/hello` - print argc/argv and tick count
 - `apps/demo/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
 - `apps/demo/mandel` - interactive Mandelbrot demo with arrow-key pan, +/- zoom, reset/quit keys, and PS/2 mouse cursor movement

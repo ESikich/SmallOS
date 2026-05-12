@@ -17,10 +17,12 @@
 #include "uapi_epoll.h"
 #include "uapi_display.h"
 #include "uapi_input.h"
+#include "uapi_syscall.h"
 #include "../exec/elf_loader.h"
 #include "vfs.h"
 #include "socket.h"
 #include "../drivers/display.h"
+#include "../drivers/fat16.h"
 
 #define SYSCALL_MAX_WRITE_LEN 4096u
 #define EXEC_NAME_MAX         PROCESS_FD_NAME_MAX
@@ -1760,6 +1762,46 @@ static int sys_mouse_read_impl(sys_mouse_state_t* out_state) {
     return 0;
 }
 
+static int sys_fsinfo_impl(sys_fsinfo_t* out_info) {
+    fat16_fsinfo_t info;
+    sys_fsinfo_t user_info;
+
+    if (!out_info) return -EFAULT;
+    if (!user_buf_ok((unsigned int)out_info, sizeof(*out_info))) return -EFAULT;
+    if (!fat16_fsinfo(&info)) return -EIO;
+
+    user_info.total_bytes = info.total_bytes;
+    user_info.used_bytes = info.used_bytes;
+    user_info.free_bytes = info.free_bytes;
+    user_info.cluster_bytes = info.cluster_bytes;
+    user_info.total_clusters = info.total_clusters;
+    user_info.free_clusters = info.free_clusters;
+    k_memcpy(out_info, &user_info, sizeof(user_info));
+    return 0;
+}
+
+static int sys_fsmap_impl(sys_fsmap_request_t* user_req) {
+    sys_fsmap_request_t req;
+    u32 out_clusters = 0;
+
+    if (!user_req) return -EFAULT;
+    if (!user_buf_ok((unsigned int)user_req, sizeof(req))) return -EFAULT;
+    k_memcpy(&req, user_req, sizeof(req));
+
+    if (req.max_clusters == 0) {
+        req.out_clusters = 0;
+        k_memcpy(user_req, &req, sizeof(req));
+        return 0;
+    }
+    if (!req.states) return -EFAULT;
+    if (!user_buf_ok((unsigned int)req.states, req.max_clusters)) return -EFAULT;
+    if (!fat16_fsmap(req.start_cluster, req.max_clusters, req.states, &out_clusters)) return -EIO;
+
+    req.out_clusters = out_clusters;
+    k_memcpy(user_req, &req, sizeof(req));
+    return 0;
+}
+
 static int sys_getcwd_impl(char* buf, unsigned int size) {
     process_t* proc = (process_t*)sched_current();
     unsigned int pos = 0;
@@ -2143,6 +2185,16 @@ void syscall_handler_main(syscall_regs_t* regs) {
         case SYS_MOUSE_READ:
             regs->eax = (unsigned int)sys_mouse_read_impl(
                             (sys_mouse_state_t*)regs->ebx);
+            break;
+
+        case SYS_FSINFO:
+            regs->eax = (unsigned int)sys_fsinfo_impl(
+                            (sys_fsinfo_t*)regs->ebx);
+            break;
+
+        case SYS_FSMAP:
+            regs->eax = (unsigned int)sys_fsmap_impl(
+                            (sys_fsmap_request_t*)regs->ebx);
             break;
 
         default:

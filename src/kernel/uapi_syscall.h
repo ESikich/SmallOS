@@ -39,6 +39,22 @@
 #define SYS_FCNTL_GETFL 3
 #define SYS_FCNTL_SETFL 4
 
+typedef struct sys_fsinfo {
+    unsigned int total_bytes;
+    unsigned int used_bytes;
+    unsigned int free_bytes;
+    unsigned int cluster_bytes;
+    unsigned int total_clusters;
+    unsigned int free_clusters;
+} sys_fsinfo_t;
+
+typedef struct sys_fsmap_request {
+    unsigned int start_cluster;
+    unsigned int max_clusters;
+    unsigned char* states;
+    unsigned int out_clusters;
+} sys_fsmap_request_t;
+
 enum {
     SYS_WRITE     = 1,
     SYS_EXIT      = 2,
@@ -106,7 +122,9 @@ enum {
     SYS_DISPLAY_BLIT   = 55,  /* blit XRGB8888 pixels into framebuffer */
     SYS_DISPLAY_ACQUIRE = 56, /* enter exclusive graphics drawing mode */
     SYS_DISPLAY_RELEASE = 57, /* leave graphics drawing mode */
-    SYS_MOUSE_READ      = 58  /* read PS/2 mouse deltas/buttons */
+    SYS_MOUSE_READ      = 58, /* read PS/2 mouse deltas/buttons */
+    SYS_FSINFO          = 59, /* write FAT16 volume usage information */
+    SYS_FSMAP           = 60  /* write FAT16 cluster allocation states */
 };
 
 #endif

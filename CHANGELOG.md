@@ -1,5 +1,14 @@
 # Changelog
 
+## [Current] — Disk usage graphics utility
+
+### Added
+
+* **Disk usage syscalls and viewer** (`src/drivers/fat16.c`, `src/kernel/syscall.c`, `src/user/diskview.c`, `Makefile`)
+  * Added `SYS_FSINFO` to report FAT16 total, used, free, and cluster counts from the live FAT.
+  * Added `SYS_FSMAP` to expose FAT16 allocation states for the data area.
+  * Added `/bin/diskview.elf`, a framebuffer utility that draws a used/free space map where each cell represents one FAT16 cluster, currently 4 disk sectors.
+
 ## [Current] — Userland graphics helper and demo
 
 ### Added

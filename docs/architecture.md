@@ -419,9 +419,10 @@ User graphics programs sit above the framebuffer display syscalls. The shared
 helper in `src/user/gfx.c` queries display geometry, requires XRGB8888/32 bpp,
 acquires exclusive graphics mode, allocates a full-screen user backbuffer, and
 presents that buffer with one `SYS_DISPLAY_BLIT`. `bmpview` uses this path for
-scaled/centered BMP presentation, and `apps/demo/plasma` uses it as a simple
-animated graphics smoke demo. `apps/demo/mandel` uses the same helper for an
-interactive Mandelbrot view and polls `SYS_MOUSE_READ` for cursor deltas.
+scaled/centered BMP presentation, `bin/diskview` uses it for a FAT16 used/free
+allocation map, and `apps/demo/plasma` uses it as a simple animated graphics
+smoke demo. `apps/demo/mandel` uses the same helper for an interactive
+Mandelbrot view and polls `SYS_MOUSE_READ` for cursor deltas.
 
 ## Shell
 

@@ -724,6 +724,38 @@ primitive for graphics demos; it is not a full event queue yet.
 
 ---
 
+### SYS_FSINFO (59)
+
+```c
+int sys_fsinfo(sys_fsinfo_t* out_info);
+```
+
+Writes FAT16 volume usage information into user memory. The reported byte
+counts cover allocatable data clusters: total, used, free, cluster size, total
+clusters, and free clusters.
+
+Returns `0` on success, `-EFAULT` for an invalid output pointer, or `-EIO` if
+the FAT16 usage scan fails.
+
+---
+
+### SYS_FSMAP (60)
+
+```c
+int sys_fsmap(sys_fsmap_request_t* req);
+```
+
+Copies FAT16 allocation states for the data area into `req->states`. The
+request starts at zero-based data cluster index `start_cluster` and copies up
+to `max_clusters` bytes. Each returned byte is `0` for free or `1` for used;
+`out_clusters` receives the count actually written. Cluster index 0 maps to
+FAT cluster 2.
+
+Returns `0` on success, `-EFAULT` for invalid request or output buffers, or
+`-EIO` if the FAT scan fails.
+
+---
+
 ### SYS_WRITEFILE (12)
 
 ```c
