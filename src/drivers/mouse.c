@@ -15,6 +15,14 @@
 #define PS2_CMD_WRITE_AUX    0xD4
 
 #define MOUSE_ACK 0xFA
+#define MOUSE_CMD_SET_SAMPLE_RATE 0xF3
+#define MOUSE_CMD_SET_RESOLUTION  0xE8
+#define MOUSE_CMD_SET_SCALING_1_1 0xE6
+#define MOUSE_CMD_SET_DEFAULTS    0xF6
+#define MOUSE_CMD_ENABLE_STREAM   0xF4
+
+#define MOUSE_SAMPLE_RATE 200u
+#define MOUSE_RESOLUTION  3u
 
 static int s_mouse_ready = 0;
 static unsigned char s_packet[3];
@@ -23,6 +31,28 @@ static int s_dx = 0;
 static int s_dy = 0;
 static unsigned int s_buttons = 0;
 static unsigned int s_sequence = 0;
+
+static unsigned int irq_save(void) {
+    unsigned int flags;
+
+    __asm__ __volatile__(
+        "pushfl\n\t"
+        "popl %0\n\t"
+        "cli"
+        : "=r"(flags)
+        :
+        : "memory");
+    return flags;
+}
+
+static void irq_restore(unsigned int flags) {
+    __asm__ __volatile__(
+        "pushl %0\n\t"
+        "popfl"
+        :
+        : "r"(flags)
+        : "memory", "cc");
+}
 
 static int ps2_wait_write(void) {
     for (unsigned int i = 0; i < 100000u; i++) {
@@ -80,6 +110,10 @@ static int mouse_write(unsigned char command) {
     return inb(PS2_DATA) == MOUSE_ACK;
 }
 
+static int mouse_write_arg(unsigned char command, unsigned char value) {
+    return mouse_write(command) && mouse_write(value);
+}
+
 static int ps2_read_config(unsigned char* config) {
     if (!ps2_write_command(PS2_CMD_READ_CONFIG)) {
         return 0;
@@ -122,7 +156,11 @@ int mouse_init(void) {
         return 0;
     }
 
-    if (!mouse_write(0xF6) || !mouse_write(0xF4)) {
+    if (!mouse_write(MOUSE_CMD_SET_DEFAULTS) ||
+        !mouse_write(MOUSE_CMD_SET_SCALING_1_1) ||
+        !mouse_write_arg(MOUSE_CMD_SET_SAMPLE_RATE, MOUSE_SAMPLE_RATE) ||
+        !mouse_write_arg(MOUSE_CMD_SET_RESOLUTION, MOUSE_RESOLUTION) ||
+        !mouse_write(MOUSE_CMD_ENABLE_STREAM)) {
         return 0;
     }
 
@@ -176,15 +214,19 @@ void mouse_handle_irq(void) {
 }
 
 int mouse_read_state(sys_mouse_state_t* out) {
+    unsigned int flags;
+
     if (!s_mouse_ready || !out) {
         return 0;
     }
 
+    flags = irq_save();
     out->dx = s_dx;
     out->dy = s_dy;
     out->buttons = s_buttons;
     out->sequence = s_sequence;
     s_dx = 0;
     s_dy = 0;
+    irq_restore(flags);
     return 1;
 }
