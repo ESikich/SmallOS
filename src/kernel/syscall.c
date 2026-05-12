@@ -14,9 +14,11 @@
 #include "uapi_dirent.h"
 #include "uapi_socket.h"
 #include "uapi_epoll.h"
+#include "uapi_display.h"
 #include "../exec/elf_loader.h"
 #include "vfs.h"
 #include "socket.h"
+#include "../drivers/display.h"
 
 #define SYSCALL_MAX_WRITE_LEN 4096u
 #define EXEC_NAME_MAX         PROCESS_FD_NAME_MAX
@@ -1692,6 +1694,60 @@ static int sys_terminal_size_impl(unsigned int* out_rows, unsigned int* out_cols
     return 0;
 }
 
+static int sys_display_info_impl(sys_display_info_t* out_info) {
+    display_info_t info;
+
+    if (!out_info) return -EFAULT;
+    if (!user_buf_ok((unsigned int)out_info, sizeof(*out_info))) return -EFAULT;
+    if (!display_get_info(&info)) return -EIO;
+
+    out_info->width = info.width;
+    out_info->height = info.height;
+    out_info->pitch = info.pitch;
+    out_info->bpp = info.bpp;
+    out_info->format = info.format;
+    return 0;
+}
+
+static int sys_display_acquire_impl(void) {
+    process_t* proc = (process_t*)sched_current();
+    return display_acquire(proc) ? 0 : -EIO;
+}
+
+static int sys_display_release_impl(void) {
+    process_t* proc = (process_t*)sched_current();
+    display_release(proc);
+    return 0;
+}
+
+static int sys_display_fill_impl(const sys_display_fill_rect_t* user_req) {
+    sys_display_fill_rect_t req;
+
+    if (!user_req) return -EFAULT;
+    if (!user_buf_ok((unsigned int)user_req, sizeof(req))) return -EFAULT;
+    k_memcpy(&req, user_req, sizeof(req));
+    if (req.w == 0 || req.h == 0) return 0;
+    if (!display_fill((process_t*)sched_current(), req.x, req.y, req.w, req.h, req.color)) return -EIO;
+    return 0;
+}
+
+static int sys_display_blit_impl(const sys_display_blit_rect_t* user_req) {
+    sys_display_blit_rect_t req;
+    unsigned int bytes;
+
+    if (!user_req) return -EFAULT;
+    if (!user_buf_ok((unsigned int)user_req, sizeof(req))) return -EFAULT;
+    k_memcpy(&req, user_req, sizeof(req));
+    if (req.w == 0 || req.h == 0) return 0;
+    if (!req.pixels) return -EFAULT;
+    if (req.h > 0xFFFFFFFFu / req.w) return -EOVERFLOW;
+    if (req.w * req.h > 0xFFFFFFFFu / sizeof(unsigned int)) return -EOVERFLOW;
+    bytes = req.w * req.h * sizeof(unsigned int);
+    if (!user_buf_ok((unsigned int)req.pixels, bytes)) return -EFAULT;
+    if (!display_blit((process_t*)sched_current(), req.x, req.y, req.w, req.h, req.pixels)) return -EIO;
+    return 0;
+}
+
 static int sys_getcwd_impl(char* buf, unsigned int size) {
     process_t* proc = (process_t*)sched_current();
     unsigned int pos = 0;
@@ -2047,6 +2103,29 @@ void syscall_handler_main(syscall_regs_t* regs) {
             regs->eax = (unsigned int)sys_terminal_size_impl(
                             (unsigned int*)regs->ebx,
                             (unsigned int*)regs->ecx);
+            break;
+
+        case SYS_DISPLAY_INFO:
+            regs->eax = (unsigned int)sys_display_info_impl(
+                            (sys_display_info_t*)regs->ebx);
+            break;
+
+        case SYS_DISPLAY_FILL:
+            regs->eax = (unsigned int)sys_display_fill_impl(
+                            (const sys_display_fill_rect_t*)regs->ebx);
+            break;
+
+        case SYS_DISPLAY_BLIT:
+            regs->eax = (unsigned int)sys_display_blit_impl(
+                            (const sys_display_blit_rect_t*)regs->ebx);
+            break;
+
+        case SYS_DISPLAY_ACQUIRE:
+            regs->eax = (unsigned int)sys_display_acquire_impl();
+            break;
+
+        case SYS_DISPLAY_RELEASE:
+            regs->eax = (unsigned int)sys_display_release_impl();
             break;
 
         default:

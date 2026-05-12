@@ -277,9 +277,9 @@ void process_pd_destroy(u32* pd) {
         u32 pt_phys = pd_virt[i] & ~0xFFFu;
         u32* pt = paging_pt_virt(pt_phys);
 
-        /* Free every physical frame mapped in this private page table. */
+        /* Free only user-owned physical frames mapped in this private page table. */
         for (u32 j = 0; j < PT_ENTRIES; j++) {
-            if (pt[j] & PAGE_PRESENT) {
+            if ((pt[j] & (PAGE_PRESENT | PAGE_USER)) == (PAGE_PRESENT | PAGE_USER)) {
                 pmm_free_frame(pt[j] & ~0xFFFu);
             }
         }

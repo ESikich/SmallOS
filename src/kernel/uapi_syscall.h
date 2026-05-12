@@ -100,7 +100,12 @@ enum {
     SYS_SHUTDOWN       = 49,
     SYS_GETPEERNAME    = 50,
     SYS_FSTAT          = 51,
-    SYS_TERMINAL_SIZE  = 52   /* write active terminal rows/cols */
+    SYS_TERMINAL_SIZE  = 52,  /* write active terminal rows/cols */
+    SYS_DISPLAY_INFO   = 53,  /* write framebuffer geometry */
+    SYS_DISPLAY_FILL   = 54,  /* fill x,y,w,h with XRGB8888 color */
+    SYS_DISPLAY_BLIT   = 55,  /* blit XRGB8888 pixels into framebuffer */
+    SYS_DISPLAY_ACQUIRE = 56, /* enter exclusive graphics drawing mode */
+    SYS_DISPLAY_RELEASE = 57  /* leave graphics drawing mode */
 };
 
 #endif

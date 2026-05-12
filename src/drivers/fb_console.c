@@ -33,6 +33,29 @@ static const u8* fb_font(void) {
     return (const u8*)BOOT_FONT_PHYS;
 }
 
+static void fb_store_words(volatile u32* dst, u32 value, u32 count) {
+    void* out = (void*)dst;
+
+    __asm__ __volatile__(
+        "cld\n\t"
+        "rep stosl"
+        : "+D"(out), "+c"(count)
+        : "a"(value)
+        : "memory");
+}
+
+static void fb_copy_words(volatile u32* dst, const u32* src, u32 count) {
+    void* out = (void*)dst;
+    const void* in = (const void*)src;
+
+    __asm__ __volatile__(
+        "cld\n\t"
+        "rep movsl"
+        : "+D"(out), "+S"(in), "+c"(count)
+        :
+        : "memory");
+}
+
 static void fb_put_pixel(u32 x, u32 y, u32 color) {
     if (!fb.ready || x >= fb.width || y >= fb.height) {
         return;
@@ -45,9 +68,9 @@ static void fb_put_pixel(u32 x, u32 y, u32 color) {
 static void fb_clear_rect(u32 x, u32 y, u32 w, u32 h) {
     for (u32 py = 0; py < h && y + py < fb.height; py++) {
         volatile u32* row = (volatile u32*)(fb.base + (y + py) * fb.pitch + x * 4u);
-        for (u32 px = 0; px < w && x + px < fb.width; px++) {
-            row[px] = FB_COLOR_BG;
-        }
+        u32 count = w;
+        if (count > fb.width - x) count = fb.width - x;
+        fb_store_words(row, FB_COLOR_BG, count);
     }
 }
 
@@ -269,5 +292,64 @@ int fb_console_init(void) {
 
     terminal_set_backend(&framebuffer_backend);
     terminal_clear();
+    return 1;
+}
+
+int fb_console_info(unsigned int* width, unsigned int* height,
+                    unsigned int* pitch, unsigned int* bpp) {
+    if (!fb.ready) {
+        return 0;
+    }
+    if (width) *width = fb.width;
+    if (height) *height = fb.height;
+    if (pitch) *pitch = fb.pitch;
+    if (bpp) *bpp = fb.bpp;
+    return 1;
+}
+
+int fb_console_fill(unsigned int x, unsigned int y, unsigned int w,
+                    unsigned int h, unsigned int color) {
+    if (!fb.ready) {
+        return 0;
+    }
+    if (x >= fb.width || y >= fb.height) {
+        return 1;
+    }
+    if (w > fb.width - x) {
+        w = fb.width - x;
+    }
+    if (h > fb.height - y) {
+        h = fb.height - y;
+    }
+
+    for (unsigned int py = 0; py < h; py++) {
+        volatile u32* row = (volatile u32*)(fb.base + (y + py) * fb.pitch + x * 4u);
+        fb_store_words(row, color, w);
+    }
+    return 1;
+}
+
+int fb_console_blit(unsigned int x, unsigned int y, unsigned int w,
+                    unsigned int h, const unsigned int* pixels) {
+    unsigned int src_w = w;
+
+    if (!fb.ready || !pixels) {
+        return 0;
+    }
+    if (x >= fb.width || y >= fb.height) {
+        return 1;
+    }
+    if (w > fb.width - x) {
+        w = fb.width - x;
+    }
+    if (h > fb.height - y) {
+        h = fb.height - y;
+    }
+
+    for (unsigned int py = 0; py < h; py++) {
+        volatile u32* dst = (volatile u32*)(fb.base + (y + py) * fb.pitch + x * 4u);
+        const unsigned int* src = pixels + py * src_w;
+        fb_copy_words(dst, src, w);
+    }
     return 1;
 }

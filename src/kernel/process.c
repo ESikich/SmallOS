@@ -14,6 +14,7 @@
 #include "vfs.h"
 #include "socket.h"
 #include "wait.h"
+#include "../drivers/display.h"
 
 typedef char process_t_must_fit_in_one_frame[(sizeof(process_t) <= 4096u) ? 1 : -1];
 
@@ -1190,6 +1191,7 @@ void process_destroy(process_t* proc) {
         keyboard_set_waiting_process(0);
     }
     socket_wait_clear_process(proc);
+    display_release(proc);
 
     for (unsigned int i = 0; i < proc->fd_capacity; i++) {
         if (proc->fds[i].valid) {

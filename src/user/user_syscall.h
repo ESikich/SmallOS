@@ -6,6 +6,7 @@
 #include "uapi_socket.h"
 #include "uapi_poll.h"
 #include "uapi_epoll.h"
+#include "uapi_display.h"
 
 struct dirent;
 
@@ -260,6 +261,40 @@ static inline int sys_fstat(int fd, uint32_t* out_size, int* out_is_dir) {
 
 static inline int sys_terminal_size(uint32_t* out_rows, uint32_t* out_cols) {
     return syscall2(SYS_TERMINAL_SIZE, (uint32_t)out_rows, (uint32_t)out_cols);
+}
+
+static inline int sys_display_info(sys_display_info_t* out_info) {
+    return syscall1(SYS_DISPLAY_INFO, (uint32_t)out_info);
+}
+
+static inline int sys_display_acquire(void) {
+    return syscall0(SYS_DISPLAY_ACQUIRE);
+}
+
+static inline int sys_display_release(void) {
+    return syscall0(SYS_DISPLAY_RELEASE);
+}
+
+static inline int sys_display_fill(uint32_t x, uint32_t y, uint32_t w,
+                                   uint32_t h, uint32_t color) {
+    sys_display_fill_rect_t req;
+    req.x = x;
+    req.y = y;
+    req.w = w;
+    req.h = h;
+    req.color = color;
+    return syscall1(SYS_DISPLAY_FILL, (uint32_t)&req);
+}
+
+static inline int sys_display_blit(uint32_t x, uint32_t y, uint32_t w,
+                                   uint32_t h, const uint32_t* pixels) {
+    sys_display_blit_rect_t req;
+    req.x = x;
+    req.y = y;
+    req.w = w;
+    req.h = h;
+    req.pixels = pixels;
+    return syscall1(SYS_DISPLAY_BLIT, (uint32_t)&req);
 }
 
 static inline int sys_socket(int domain, int type, int protocol) {

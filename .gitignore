@@ -9,6 +9,8 @@ build/
 __pycache__/
 *.pyc
 .state/
+qemu.log
+qemu-console.log
 
 # Editor
 .vscode/
