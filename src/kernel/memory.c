@@ -3,8 +3,10 @@
 #define PAGE_SIZE 4096u
 
 static unsigned int heap_current = 0;
+static unsigned int heap_base = 0;
 
 void memory_init(unsigned int start) {
+    heap_base = start;
     heap_current = start;
 }
 
@@ -53,4 +55,8 @@ void* kmalloc_page(void) {
  */
 unsigned int memory_get_heap_top(void) {
     return heap_current;
+}
+
+unsigned int memory_get_heap_base(void) {
+    return heap_base;
 }

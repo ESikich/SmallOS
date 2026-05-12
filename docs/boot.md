@@ -296,7 +296,13 @@ hang:
     jmp hang
 ```
 
-BSS zeroing is the first thing that happens in protected mode. The kernel's three paging structures (`kernel_page_directory`, `low_page_table_0`, `low_page_table_1`) are static arrays in `.bss`. Without zeroing they contain garbage and `paging_init()` immediately triple-faults.
+BSS zeroing is the first thing that happens in protected mode. The linker
+places `.bss` at `0x100000` as a `NOLOAD` section, so these zero bytes are not
+part of `kernel.bin` and cannot overwrite loader-owned low memory such as boot
+info at `0x90000`. The kernel's three paging structures
+(`kernel_page_directory`, `low_page_table_0`, `low_page_table_1`) are static
+arrays in `.bss`. Without zeroing they contain garbage and `paging_init()`
+immediately triple-faults.
 
 `bss_start` and `bss_end` are linker symbols from `linker.ld`. Both must be declared `extern` in the asm file.
 
@@ -308,6 +314,11 @@ BSS zeroing is the first thing that happens in protected mode. The kernel's thre
 0x00007C00   stage 1 (boot.asm) — done after jump to 0x40000
 0x00040000   stage 2 (loader2.asm) — done after jump to 0x1000
 0x00001000   kernel entry point (_start in kernel_entry.asm)
+0x00090000   loader-written boot info
+0x00091000   copied BIOS font
+0x00100000   kernel .bss start (NOLOAD; zeroed by kernel_entry.asm)
+~0x00190000  current kernel .bss end; varies with static buffers
+~0x00190000  bump allocator start, page-aligned from bss_end
 0x001FF000   stack top (set up by loader2's init_pm)
 ```
 
@@ -358,6 +369,9 @@ The following must always hold:
 * loader2 GDT is temporary — kernel installs its own GDT first
 * segment registers correctly initialized before protected mode entry
 * `bss_start` / `bss_end` correctly defined and BSS zeroed before `paging_init()`
+* `.bss` remains `NOLOAD` and starts above loader-owned low memory; current
+  `kernel_selfcheck()` requires the initial bump pointer to stay below the boot
+  stack page
 * `0x1000 + kernel_sectors * 512` must stay below both the loader2 load address and the generated stage-2 stack top
 
 Violation of any of these results in an immediate crash or silent corruption.
@@ -391,7 +405,8 @@ BSS not zeroed before `paging_init()`. Confirm:
 
 * `kernel_entry.asm` contains the `rep stosb` BSS zeroing loop
 * `extern bss_start` / `extern bss_end` declared in `kernel_entry.asm`
-* `bss_start = .;` / `bss_end = .;` present in `.bss` section of `linker.ld`
+* `bss_start = .;` / `bss_end = .;` present in the `NOLOAD` `.bss` section of
+  `linker.ld`
 
 ## Reboot loop
 
@@ -471,7 +486,8 @@ Stage 2  →  LBA extension check
          →  collect boot info and BIOS E820 memory map at 0x90000
          →  protected mode entry
 Kernel   →  zero BSS
-         →  terminal_init, gdt_init, paging_init, memory_init, pmm_init
+         →  terminal_init, gdt_init, paging_init
+         →  memory_init(page-aligned bss_end), pmm_init
          →  keyboard, timer, idt, sched_init
          →  ata_init, fat16_init
          →  create shell task, sti, sched_start

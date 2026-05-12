@@ -16,6 +16,7 @@
 #define FAT_SECTORS          32u
 #define ROOT_ENTRY_COUNT     512u
 #define ROOT_DIR_SECTORS     (ROOT_ENTRY_COUNT * 32u / SECTOR_SIZE)  /* 32 */
+#define FAT16_IO_BATCH_SECTORS 32u
 
 /* Relative sector offsets within the FAT16 partition */
 #define FAT1_REL_SECTOR   RESERVED_SECTORS                              /* 4   */
@@ -65,6 +66,7 @@ static u8 s_fat_buf[FAT_SECTORS * SECTOR_SIZE] __attribute__((aligned(2)));
 static u8 s_root_buf[ROOT_DIR_SECTORS * SECTOR_SIZE] __attribute__((aligned(2)));
 static u8 s_dir_buf[CLUSTER_BYTES] __attribute__((aligned(2)));
 static u8 s_dir_buf2[CLUSTER_BYTES] __attribute__((aligned(2)));
+static u8 s_io_batch_buf[FAT16_IO_BATCH_SECTORS * SECTOR_SIZE] __attribute__((aligned(2)));
 static u32 s_write_chain[FAT16_MAX_WRITE_FILE_CLUSTERS];
 static u32 s_old_write_chain[FAT16_MAX_WRITE_FILE_CLUSTERS];
 
@@ -107,6 +109,42 @@ static u32 read_u32_le(const u8* buf, u32 off) {
 
 static u32 abs_lba(u32 rel) {
     return s_fat16_lba + rel;
+}
+
+static int read_rel_sectors(u32 rel_sector, u32 count, u8* out) {
+    u32 done = 0;
+
+    while (done < count) {
+        u32 chunk = count - done;
+        if (chunk > 255u) {
+            chunk = 255u;
+        }
+        if (!ata_read_sectors(abs_lba(rel_sector + done), (unsigned char)chunk,
+                              out + done * SECTOR_SIZE)) {
+            return 0;
+        }
+        done += chunk;
+    }
+
+    return 1;
+}
+
+static int write_rel_sectors(u32 rel_sector, u32 count, const u8* data) {
+    u32 done = 0;
+
+    while (done < count) {
+        u32 chunk = count - done;
+        if (chunk > 255u) {
+            chunk = 255u;
+        }
+        if (!ata_write_sectors(abs_lba(rel_sector + done), (unsigned char)chunk,
+                               data + done * SECTOR_SIZE)) {
+            return 0;
+        }
+        done += chunk;
+    }
+
+    return 1;
 }
 
 static u32 cluster_to_rel_sector(u32 cluster) {
@@ -1220,43 +1258,33 @@ static void write_dirent(u8* entry, const u8 name83[11], u16 start_cluster, u32 
 }
 
 static int load_fat_and_root(void) {
-    for (u32 s = 0; s < FAT_SECTORS; s++) {
-        if (!ata_read_sectors(abs_lba(FAT1_REL_SECTOR + s), 1, s_fat_buf + s * SECTOR_SIZE)) {
-            terminal_puts("fat16: FAT read error\n");
-            return 0;
-        }
+    if (!read_rel_sectors(FAT1_REL_SECTOR, FAT_SECTORS, s_fat_buf)) {
+        terminal_puts("fat16: FAT read error\n");
+        return 0;
     }
 
-    for (u32 s = 0; s < ROOT_DIR_SECTORS; s++) {
-        if (!ata_read_sectors(abs_lba(ROOT_REL_SECTOR + s), 1, s_root_buf + s * SECTOR_SIZE)) {
-            terminal_puts("fat16: root dir read error\n");
-            return 0;
-        }
+    if (!read_rel_sectors(ROOT_REL_SECTOR, ROOT_DIR_SECTORS, s_root_buf)) {
+        terminal_puts("fat16: root dir read error\n");
+        return 0;
     }
 
     return 1;
 }
 
 static int write_fat_and_root(void) {
-    for (u32 s = 0; s < FAT_SECTORS; s++) {
-        if (!ata_write_sectors(abs_lba(FAT1_REL_SECTOR + s), 1, s_fat_buf + s * SECTOR_SIZE)) {
-            terminal_puts("fat16: FAT write error\n");
-            return 0;
-        }
+    if (!write_rel_sectors(FAT1_REL_SECTOR, FAT_SECTORS, s_fat_buf)) {
+        terminal_puts("fat16: FAT write error\n");
+        return 0;
     }
 
-    for (u32 s = 0; s < FAT_SECTORS; s++) {
-        if (!ata_write_sectors(abs_lba(FAT2_REL_SECTOR + s), 1, s_fat_buf + s * SECTOR_SIZE)) {
-            terminal_puts("fat16: FAT mirror write error\n");
-            return 0;
-        }
+    if (!write_rel_sectors(FAT2_REL_SECTOR, FAT_SECTORS, s_fat_buf)) {
+        terminal_puts("fat16: FAT mirror write error\n");
+        return 0;
     }
 
-    for (u32 s = 0; s < ROOT_DIR_SECTORS; s++) {
-        if (!ata_write_sectors(abs_lba(ROOT_REL_SECTOR + s), 1, s_root_buf + s * SECTOR_SIZE)) {
-            terminal_puts("fat16: root dir write error\n");
-            return 0;
-        }
+    if (!write_rel_sectors(ROOT_REL_SECTOR, ROOT_DIR_SECTORS, s_root_buf)) {
+        terminal_puts("fat16: root dir write error\n");
+        return 0;
     }
     return 1;
 }
@@ -1495,7 +1523,6 @@ static int write_data_clusters(const u32* chain,
                                u32 clusters,
                                const fat16_data_source_t* source,
                                u32 size) {
-    u8 sector[SECTOR_SIZE];
     u32 offset = 0;
     u32 remaining = size;
 
@@ -1504,24 +1531,48 @@ static int write_data_clusters(const u32* chain,
     }
 
     for (u32 i = 0; i < clusters; i++) {
-        for (u32 s = 0; s < SECTORS_PER_CLUSTER; s++) {
-            k_memset(sector, 0, SECTOR_SIZE);
-            u32 chunk = remaining < SECTOR_SIZE ? remaining : SECTOR_SIZE;
-            if (chunk > 0) {
-                if (!source->read(source->ctx, offset, sector, chunk)) {
-                    terminal_puts("fat16: data source read error\n");
-                    return 0;
-                }
+        u32 run_clusters = 1;
+
+        while (i + run_clusters < clusters &&
+               chain[i + run_clusters] == chain[i] + run_clusters) {
+            run_clusters++;
+        }
+
+        u32 rel_sector = cluster_to_rel_sector(chain[i]);
+        u32 sectors = run_clusters * SECTORS_PER_CLUSTER;
+        u32 sectors_done = 0;
+
+        while (sectors_done < sectors) {
+            u32 batch = sectors - sectors_done;
+            if (batch > FAT16_IO_BATCH_SECTORS) {
+                batch = FAT16_IO_BATCH_SECTORS;
             }
 
-            if (!ata_write_sectors(abs_lba(cluster_to_rel_sector(chain[i]) + s), 1, sector)) {
+            for (u32 s = 0; s < batch; s++) {
+                u8* sector = s_io_batch_buf + s * SECTOR_SIZE;
+                u32 chunk = remaining < SECTOR_SIZE ? remaining : SECTOR_SIZE;
+
+                k_memset(sector, 0, SECTOR_SIZE);
+                if (chunk > 0) {
+                    if (!source->read(source->ctx, offset, sector, chunk)) {
+                        terminal_puts("fat16: data source read error\n");
+                        return 0;
+                    }
+                }
+
+                offset += chunk;
+                remaining -= chunk;
+            }
+
+            if (!write_rel_sectors(rel_sector + sectors_done, batch, s_io_batch_buf)) {
                 terminal_puts("fat16: data write error\n");
                 return 0;
             }
 
-            offset += chunk;
-            remaining -= chunk;
+            sectors_done += batch;
         }
+
+        i += run_clusters - 1u;
     }
 
     return 1;

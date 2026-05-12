@@ -9,18 +9,22 @@ This document describes the memory layout and allocator behavior used by SmallOS
 SmallOS currently uses three distinct memory pools:
 
 ```text
-0x100000 – 0x1FFFFF   kernel bump heap (kmalloc / kmalloc_page)
+0x100000 – 0x1FFFFF   kernel .bss, bump heap, and boot stack arena
 0x200000 – 0x7FFFFFF  reclaimable PMM frame pool, capped at 128 MB
 0x10000000+           per-process user heap (SYS_BRK)
 ```
 
-The kernel heap is permanent and never shrinks. The PMM frame pool is reclaimed on process exit. The user heap is managed per process through `SYS_BRK`, with a user-space allocator layered on top of it.
+The kernel's static storage starts at 1 MiB. The kernel heap begins after
+the linked `.bss` end, is permanent, and never shrinks. The PMM frame pool is
+reclaimed on process exit. The user heap is managed per process through
+`SYS_BRK`, with a user-space allocator layered on top of it.
 
 ---
 
 # Kernel Heap
 
-`memory_init(0x100000)` seeds the kernel bump heap at 1 MiB.
+`memory_init(PAGE_ALIGN(&bss_end))` seeds the kernel bump heap immediately
+after high kernel `.bss`.
 
 Use this heap for:
 
@@ -52,8 +56,8 @@ If E820 is unavailable, PMM falls back to the old 30 MB fixed-window assumption.
 
 The protected ranges that are never handed to PMM include low BIOS memory,
 the boot sector, loader2, boot info at `0x90000`, the copied boot font at
-`0x91000`, the boot stack, the kernel bump heap, and the framebuffer range
-when framebuffer boot info is valid.
+`0x91000`, high kernel `.bss` plus the bump heap, the boot stack, and the
+framebuffer range when framebuffer boot info is valid.
 
 Use PMM frames for:
 
@@ -129,7 +133,9 @@ process page directory without switching CR3.
 - Use `pmm_alloc_frame()` for anything that must be reclaimed
 - Treat `pmm_alloc_frame()` results as physical addresses; translate with
   `paging_phys_to_kernel_virt()` before dereferencing
-- Keep BSS zeroed before paging and PMM initialization
+- Keep `.bss` zeroed before paging and PMM initialization
+- Keep high kernel `.bss` plus the initial bump pointer below the boot stack
+  guard checked by `kernel_selfcheck()`
 
 ## User space
 

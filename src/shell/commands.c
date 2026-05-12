@@ -341,7 +341,7 @@ static void cmd_cd(command_t* cmd) {
 static void cmd_meminfo(command_t* cmd) {
     (void)cmd;
 
-    unsigned int heap_base = 0x100000u;
+    unsigned int heap_base = memory_get_heap_base();
     unsigned int heap_top  = memory_get_heap_top();
     unsigned int heap_used = heap_top - heap_base;
 

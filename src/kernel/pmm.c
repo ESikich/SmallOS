@@ -8,9 +8,10 @@
  *
  * Bitmap allocator covering PMM_BASE (0x200000) .. 0x7FFFFFF.
  *
- * The bump allocator (kmalloc / kmalloc_page) owns 0x100000–0x1FFFFF
- * for kernel-owned permanent allocations.  The PMM owns
- * 0x200000–0x7FFFFFF for reclaimable page-frame allocations such as
+ * Kernel BSS starts at 0x100000.  The bump allocator
+ * (kmalloc / kmalloc_page) starts after BSS and owns the remaining
+ * space before the boot stack for kernel-owned permanent allocations.
+ * The PMM owns 0x200000–0x7FFFFFF for reclaimable page-frame allocations such as
  * per-process page directories, private page tables, user ELF pages,
  * and user stacks.  The ranges never overlap, so there is no ordering
  * constraint between the two allocators.

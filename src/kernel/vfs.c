@@ -18,6 +18,7 @@ typedef struct {
 } vfs_page_sink_t;
 
 static int vfs_page_sink_write(void* ctx, u32 offset, const u8* data, u32 len);
+static int vfs_file_flush(fd_entry_t* ent);
 
 static void vfs_zero_frame(u32 frame) {
     k_memset(paging_phys_to_kernel_virt(frame), 0, 4096u);
@@ -229,6 +230,29 @@ static int vfs_file_write(fd_entry_t* ent, const char* buf, unsigned int len) {
 
     unsigned int end = ent->offset + len;
     if (end < ent->offset) return -EFBIG;
+
+    if (end <= VFS_FILE_CACHE_MAX_BYTES && ent->size <= VFS_FILE_CACHE_MAX_BYTES) {
+        if (ent->size > 0 && ent->cache_page_count == 0 && !vfs_file_load_cache(ent)) {
+            return -EIO;
+        }
+        if (!vfs_file_ensure_capacity(ent, end)) {
+            return -EIO;
+        }
+        if (!vfs_copy_to_cache(ent, ent->offset, (const u8*)buf, len)) {
+            return -EIO;
+        }
+
+        ent->offset = end;
+        if (end > ent->size) {
+            ent->size = end;
+        }
+        ent->dirty = 1;
+        return (int)len;
+    }
+
+    if (ent->dirty && !vfs_file_flush(ent)) {
+        return -EIO;
+    }
     if (!fat16_write_at_path(ent->name, ent->offset, (const u8*)buf, len, &ent->size, 1)) {
         return -EIO;
     }

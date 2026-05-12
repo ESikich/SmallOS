@@ -10,9 +10,11 @@
  *
  * Physical memory split:
  *
- *   0x100000 – 0x1FFFFF   bump allocator (kmalloc / kmalloc_page)
- *                          kernel-owned permanent allocations such as
- *                          heap objects and kernel page tables.
+ *   0x100000 – 0x1FFFFF   kernel BSS, then bump allocator
+ *                          (kmalloc / kmalloc_page) for kernel-owned
+ *                          permanent allocations such as heap objects
+ *                          and kernel page tables. The boot stack lives
+ *                          near the top of this arena.
  *
  *   0x200000 – 0x7FFFFFF   PMM (this file)
  *                          reclaimable per-process allocations such as

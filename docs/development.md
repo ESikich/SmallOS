@@ -40,10 +40,10 @@ if the framebuffer backend is selected, and also requires a nonblank VGA text
 screenshot. Keep these checks out of the regular `make test` loop until they
 have proven stable across host QEMU setups.
 
-`kernel_main()` now runs a small startup selfcheck right after `pmm_init()`.
-It prints `kernel: selfcheck PASS` when the live TSS selector, boot stack,
-heap base, and PMM free-frame baseline all match the boot contract. If any of
-those invariants drift, the kernel halts before the shell starts.
+`kernel_main()` runs startup diagnostics right after `pmm_init()`. They report
+the live TSS selector, boot stack, page-aligned heap start after high kernel
+BSS, and PMM free-frame baseline. If any of those invariants drift, the kernel
+halts before the shell starts.
 
 Descriptor slots are owned by `process.c`, not the syscall dispatcher. fd `0`,
 `1`, and `2` are real console handles created with each process; user-opened
@@ -197,11 +197,15 @@ Do not allocate process-owned paging structures with `kmalloc_page()`. The bump 
 ## Memory Allocator Rules
 
 ```text
-kmalloc / kmalloc_page   0x100000 – 0x1FFFFF   permanent (no free)
+kernel .bss              0x100000 – bss_end    static kernel storage
+kmalloc / kmalloc_page   bss_end – boot stack   permanent (no free)
 pmm_alloc_frame          0x200000 – 0x7FFFFFF  reclaimable on process exit; E820-filtered
 ```
 
-`kmalloc` / `kmalloc_page` are for permanent kernel structures only. Do not use them for transient buffers — the bump allocator has no free path and heap used will grow permanently with each call.
+`memory_init()` seeds the bump allocator from page-aligned `bss_end`, not a
+fixed `0x100000` address. `kmalloc` / `kmalloc_page` are for permanent kernel
+structures only. Do not use them for transient buffers — the bump allocator has
+no free path and heap used will grow permanently with each call.
 
 `pmm_alloc_frame` is for everything reclaimed on exit: `process_t` structs, process page directories, ELF frames, stack frames, all process-private page tables, kernel stack frames, and dynamic per-process handle tables.
 

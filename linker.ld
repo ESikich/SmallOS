@@ -25,7 +25,9 @@ SECTIONS
         *(.data)
     } :data
 
-    .bss : ALIGN(4096)
+    . = 0x100000;
+
+    .bss (NOLOAD) : ALIGN(4096)
     {
         bss_start = .;
         *(.bss)

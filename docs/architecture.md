@@ -40,7 +40,7 @@ kernel_main()
   terminal_init()   ← VGA fallback backend + serial output
   gdt_init()        ← null, k-code, k-data, u-code, u-data, TSS + ltr
   paging_init()     ← identity-maps first 8 MB, enables CR0.PG
-  memory_init()     ← bump allocator base at 0x100000
+  memory_init()     ← bump allocator after high kernel BSS
   pmm_init()        ← E820-filtered bitmap allocator at 0x200000–0x7FFFFFF
   boot diagnostics  ← splash PASS/WARN/FAIL checks for startup invariants
   fb_console_init() ← switch to framebuffer terminal when VBE boot info is valid
@@ -99,7 +99,12 @@ _start:
     call kernel_main
 ```
 
-BSS zeroing is mandatory. The three paging structures and the PMM bitmap live in `.bss` (roughly in the low kernel image area after load, not at a hard-coded address guaranteed by the linker script). Without zeroing, `paging_init()` can triple-fault and the PMM bitmap would falsely show all frames as used.
+BSS zeroing is mandatory. The three paging structures and the PMM bitmap live
+in `.bss`, which the linker places at `0x100000` as a `NOLOAD` section. That
+keeps the flat `kernel.bin` compact and prevents BSS zeroing from overwriting
+loader-owned low memory such as boot info at `0x90000`. Without zeroing,
+`paging_init()` can triple-fault and the PMM bitmap would falsely show all
+frames as used.
 
 ---
 
@@ -110,9 +115,9 @@ Inside `kernel_main()`:
 1. `terminal_init()` — VGA fallback backend and serial output
 2. `gdt_init()` — install GDT with ring-3 segments and TSS; load task register with `ltr`
 3. `paging_init()` — enable paging, identity-map 8 MB
-4. `memory_init(0x100000)` — bump allocator starts at 1 MB
+4. `memory_init(PAGE_ALIGN(&bss_end))` — bump allocator starts after high kernel BSS
 5. `pmm_init()` — bitmap allocator covers 0x200000–0x7FFFFFF; E820 usable ranges are freed, then boot/runtime reservations are marked used again
-6. `kernel_selfcheck()` — report splash checks for TSS selector, boot stack, heap base, and PMM baseline
+6. `kernel_selfcheck()` — report splash checks for TSS selector, boot stack, heap base after BSS, and PMM baseline
 7. `fb_console_init()` — map and select the framebuffer backend when VBE boot info is valid
 8. `keyboard_init()`, `timer_init(SMALLOS_TIMER_HZ)`, `idt_init()` — drivers and interrupt table
 9. `sched_init()` — initialise the scheduler data structures
@@ -458,11 +463,13 @@ Programs are linked at fixed virtual address `0x400000`, loaded into private use
 0x00007C00   bootloader stage 1
 0x00040000   loader2 stage 2 (done after protected-mode jump)
 0x00001000   kernel image
-0x00006000   kernel .bss start (page tables + PMM bitmap)
-~0x0000A000  kernel .bss end
+0x00090000   loader-written boot info
+0x00091000   copied BIOS font
+0x00100000   kernel .bss start (NOLOAD; page tables, PMM bitmap, static buffers)
+~0x00190000  kernel .bss end (depends on static buffers)
+~0x00190000  bump allocator base — permanent kernel structures
 0x001FF000   KERNEL_BOOT_STACK_TOP (defined in `memory.h`) — boot stack top
              (grows downward; fallback ESP0 for kernel tasks such as the shell)
-0x00100000   bump allocator base — permanent kernel structures
                kmalloc()      — long-lived kernel-owned data only
 0x00200000   PMM base — reclaimable frames
                initialized from E820 usable RAM, with SmallOS reservations

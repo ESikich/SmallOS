@@ -272,7 +272,9 @@ SECTIONS
     .rodata : { *(.rodata) }
     .data   : { *(.data)   }
 
-    .bss :
+    . = 0x100000;
+
+    .bss (NOLOAD) : ALIGN(4096)
     {
         bss_start = .;
         *(.bss)
@@ -282,7 +284,11 @@ SECTIONS
 }
 ```
 
-`bss_start` and `bss_end` are used by `kernel_entry.asm` to zero the BSS region at boot. The PMM bitmap lives in BSS and must be zero before `pmm_init()` — the BSS zeroing step handles this automatically.
+`bss_start` and `bss_end` are used by `kernel_entry.asm` to zero the BSS
+region at boot. `.bss` intentionally starts at `0x100000` and is `NOLOAD`: it
+does not inflate `kernel.bin`, and runtime zeroing cannot clobber loader-owned
+low memory such as boot info at `0x90000`. The PMM bitmap lives in BSS and must
+be zero before `pmm_init()` — the BSS zeroing step handles this automatically.
 
 ## Binary conversion
 
@@ -290,7 +296,9 @@ SECTIONS
 i686-elf-objcopy -O binary kernel.elf kernel.bin
 ```
 
-This strips all ELF metadata. The result is a flat binary. The `.bss` section has no representation in this file — it is zero-initialized at runtime by `kernel_entry.asm`.
+This strips all ELF metadata. The result is a flat binary. The `NOLOAD` `.bss`
+section has no representation in this file — it is zero-initialized at runtime
+by `kernel_entry.asm`.
 
 ---
 
@@ -648,11 +656,16 @@ src/boot/kernel_entry.asm: error: symbol 'bss_start' not defined
 
 Cause: symbols not declared `extern` in `kernel_entry.asm`, or not exported in `linker.ld`.
 
-Fix: ensure `extern bss_start` / `extern bss_end` in `kernel_entry.asm`, and `bss_start = .;` / `bss_end = .;` in the `.bss` section of `linker.ld`.
+Fix: ensure `extern bss_start` / `extern bss_end` in `kernel_entry.asm`, and
+`bss_start = .;` / `bss_end = .;` in the `NOLOAD` `.bss` section of
+`linker.ld`.
 
 ## Triple fault on boot
 
-Cause: kernel `.bss` not zeroed. Page tables and PMM bitmap contain garbage. Verify `kernel_entry.asm` has the `rep stosb` loop and correct `extern` declarations.
+Cause: kernel `.bss` not zeroed. Page tables and PMM bitmap contain garbage.
+Verify `kernel_entry.asm` has the `rep stosb` loop and correct `extern`
+declarations. Also verify `.bss` remains `NOLOAD` at `0x100000`; placing it
+back in the low flat image can overwrite loader boot info.
 
 ## Disk read error (runtime, loader screen)
 

@@ -40,7 +40,8 @@
 #define TCP_MAX_RETRIES        3u
 #define TCP_MAX_FRAME       1518u
 #define TCP_MAX_PAYLOAD    (TCP_MAX_FRAME - 14u - 20u - 20u)
-#define TCP_RX_BUFFER_SIZE  PAGE_SIZE
+#define TCP_RX_BUFFER_FRAMES 16u
+#define TCP_RX_BUFFER_SIZE  (TCP_RX_BUFFER_FRAMES * PAGE_SIZE)
 #define TCP_TX_BUFFER_FRAMES 4u
 #define TCP_TX_BUFFER_SIZE  (TCP_TX_BUFFER_FRAMES * PAGE_SIZE)
 #define TCP_MAX_RX_BUFFER_BYTES (128u * TCP_RX_BUFFER_SIZE)
@@ -72,6 +73,7 @@ typedef struct {
     u32 retransmit_at;
     unsigned int retries;
     u32 rx_frame;
+    u32 rx_frames;
     u8* rx_buf;
     u32 rx_len;
     u32 rx_head;
@@ -248,8 +250,13 @@ static void tcp_conn_rx_release(tcp_conn_t* conn) {
         return;
     }
 
-    pmm_free_frame(conn->rx_frame);
+    if (conn->rx_frames > 1u) {
+        pmm_free_contiguous_frames(conn->rx_frame, conn->rx_frames);
+    } else {
+        pmm_free_frame(conn->rx_frame);
+    }
     conn->rx_frame = 0u;
+    conn->rx_frames = 0u;
     conn->rx_buf = 0;
     conn->rx_len = 0u;
     conn->rx_head = 0u;
@@ -268,11 +275,12 @@ static int tcp_conn_rx_ensure(tcp_conn_t* conn) {
         return 0;
     }
 
-    conn->rx_frame = pmm_alloc_frame();
+    conn->rx_frame = pmm_alloc_contiguous_frames(TCP_RX_BUFFER_FRAMES);
     if (!conn->rx_frame) {
         conn->rx_window_closed = 1;
         return 0;
     }
+    conn->rx_frames = TCP_RX_BUFFER_FRAMES;
 
     conn->rx_buf = (u8*)paging_phys_to_kernel_virt(conn->rx_frame);
     conn->rx_head = 0u;
@@ -318,13 +326,19 @@ static unsigned int tcp_conn_rx_push(tcp_conn_t* conn,
         to_copy = len;
     }
 
-    for (unsigned int i = 0u; i < to_copy; i++) {
-        unsigned int pos = conn->rx_head + conn->rx_len + i;
-        if (pos >= TCP_RX_BUFFER_SIZE) {
-            pos -= TCP_RX_BUFFER_SIZE;
-        }
-        conn->rx_buf[pos] = data[i];
+    unsigned int tail = conn->rx_head + conn->rx_len;
+    while (tail >= TCP_RX_BUFFER_SIZE) {
+        tail -= TCP_RX_BUFFER_SIZE;
     }
+    unsigned int first = TCP_RX_BUFFER_SIZE - tail;
+    if (first > to_copy) {
+        first = to_copy;
+    }
+    k_memcpy(conn->rx_buf + tail, data, first);
+    if (first < to_copy) {
+        k_memcpy(conn->rx_buf, data + first, to_copy - first);
+    }
+
     conn->rx_len += to_copy;
     return to_copy;
 }
@@ -343,12 +357,13 @@ static unsigned int tcp_conn_rx_pop(tcp_conn_t* conn,
         to_copy = len;
     }
 
-    for (unsigned int i = 0u; i < to_copy; i++) {
-        unsigned int pos = conn->rx_head + i;
-        if (pos >= TCP_RX_BUFFER_SIZE) {
-            pos -= TCP_RX_BUFFER_SIZE;
-        }
-        buf[i] = conn->rx_buf[pos];
+    unsigned int first = TCP_RX_BUFFER_SIZE - conn->rx_head;
+    if (first > to_copy) {
+        first = to_copy;
+    }
+    k_memcpy(buf, conn->rx_buf + conn->rx_head, first);
+    if (first < to_copy) {
+        k_memcpy(buf + first, conn->rx_buf, to_copy - first);
     }
 
     conn->rx_head += to_copy;
@@ -1567,21 +1582,17 @@ static void tcp_process_rx_payload(tcp_conn_t* conn,
         return;
     }
     if (seq != conn->remote_seq_next) {
-        if ((flags & TCP_FIN) != 0u &&
-            payload_len == 0u &&
-            seq + 1u == conn->remote_seq_next) {
-            tcp_send_segment(conn->local_ip,
-                             conn->remote_ip,
-                             conn->remote_mac,
-                             conn->local_port,
-                             conn->remote_port,
-                             conn->local_seq_next,
-                             conn->remote_seq_next,
-                             TCP_ACK,
-                             tcp_conn_rx_window(conn),
-                             0,
-                             0);
-        }
+        tcp_send_segment(conn->local_ip,
+                         conn->remote_ip,
+                         conn->remote_mac,
+                         conn->local_port,
+                         conn->remote_port,
+                         conn->local_seq_next,
+                         conn->remote_seq_next,
+                         TCP_ACK,
+                         tcp_conn_rx_window(conn),
+                         0,
+                         0);
         return;
     }
 

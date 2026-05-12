@@ -17,6 +17,8 @@
 #include "fb_console.h"
 #include "../drivers/tcp.h"
 
+extern unsigned char bss_end;
+
 static unsigned short kernel_read_tr(void) {
     unsigned short tr;
     __asm__ __volatile__("str %0" : "=r"(tr));
@@ -102,9 +104,11 @@ static void kernel_selfcheck(void) {
     boot_splash_expect(tss_get_kernel_stack() == KERNEL_BOOT_STACK_TOP,
                        "tss: ESP0 uses boot stack top",
                        "TSS ESP0 does not match KERNEL_BOOT_STACK_TOP");
-    boot_splash_expect(memory_get_heap_top() == 0x100000u,
-                       "memory: heap starts at 1 MiB",
-                       "heap top moved before startup allocations");
+    boot_splash_expect(memory_get_heap_top() >= 0x100000u &&
+                       memory_get_heap_top() < KERNEL_BOOT_STACK_TOP - PMM_FRAME_SIZE &&
+                       (memory_get_heap_top() & 0xFFFu) == 0,
+                       "memory: heap starts after kernel BSS",
+                       "heap top is outside the kernel arena or not page-aligned");
     boot_splash_expect(pmm_free_count() > 0 &&
                        pmm_free_count() <= PMM_NUM_FRAMES,
                        "pmm: free frame baseline sane",
@@ -127,7 +131,7 @@ void kernel_main(void) {
                        "paging: kernel directory installed",
                        "kernel page directory was not initialized");
 
-    memory_init(0x100000);
+    memory_init(PAGE_ALIGN((unsigned int)&bss_end));
     pmm_init();
     kernel_selfcheck();
 

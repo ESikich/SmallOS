@@ -332,7 +332,7 @@ kernel_main()
  → boot splash           PASS/WARN/FAIL startup diagnostics
  → gdt_init()            GDT: null, k-code, k-data, u-code, u-data, TSS
  → paging_init()         enable paging, identity-map 8 MB
- → memory_init()         bump allocator at 0x100000
+ → memory_init()         bump allocator after high kernel BSS
  → pmm_init()            E820-filtered bitmap allocator at 0x200000–0x7FFFFFF
  → kernel_selfcheck()    report TSS, stack, heap, and PMM baseline checks
  → fb_console_init()     switch terminal to 1024x768x32 framebuffer when VBE boot info is valid
@@ -404,10 +404,12 @@ mkimage   assembles the final bootable disk image
 0x00007C00   bootloader stage 1
 0x00040000   loader2 stage 2
 0x00001000   kernel image
-0x00006000   kernel .bss start (page tables + PMM bitmap)
-~0x0000A000  kernel .bss end (approx)
+0x00090000   loader-written boot info
+0x00091000   copied BIOS font
+0x00100000   kernel .bss start (NOLOAD; zeroed at kernel entry)
+~0x00190000  kernel .bss end (depends on static buffers)
+~0x00190000  bump allocator — permanent kernel structures
 0x001FF000   kernel stack top (boot / shell context)
-0x00100000   bump allocator — permanent kernel structures
 0x00200000   PMM — reclaimable frames
                process_t structs, process PDs, ELF frames,
                user stack frames, all process-private PTs, kernel stack frames
