@@ -497,7 +497,9 @@ Shipped ext2 programs:
 - `bin/mkdir` / `bin/rmdir` - create or remove ext2 directories
 - `bin/cp` / `bin/mv` - copy or move ext2 entries
 - `bin/bmpview` - load a BMP, render it into the `gfx` backbuffer, and present it to the framebuffer
+- `bin/bootsplash` - non-interactive startup splash presenter for `/boot/splash.bmp`
 - `bin/diskview` - show ext2 used/free space as a framebuffer allocation map
+- `boot/splash.bmp` - splash BMP copied from `assets/boot_splash.bmp`
 - `usr/bin/hello` - print argc/argv and tick count
 - `usr/bin/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
 - `usr/bin/mandel` - interactive Mandelbrot demo with arrow-key pan, +/- zoom, reset/quit keys, and PS/2 mouse cursor movement

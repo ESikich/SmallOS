@@ -17,6 +17,7 @@
 #include "pci.h"
 #include "e1000.h"
 #include "fb_console.h"
+#include "elf_loader.h"
 #include "../drivers/tcp.h"
 #include "../drivers/ntp.h"
 
@@ -205,6 +206,39 @@ static void kernel_selfcheck(void) {
                        "kernel stack pointer is outside the boot stack page");
 }
 
+static void boot_sequence_task_main(void) {
+    char* splash_argv[] = { "bootsplash", "boot/splash.bmp", 0 };
+    process_t* splash_proc = elf_run_named("bin/bootsplash", 2, splash_argv);
+
+    if (splash_proc) {
+        process_claim_for_wait(splash_proc);
+        process_wait(splash_proc);
+    }
+
+    terminal_puts("SmallOS ready\n");
+
+    process_t* shell_proc = process_create_kernel_task("shell", shell_task_main);
+
+    if (!shell_proc) {
+        boot_splash_fail("shell: task created",
+                         "kernel could not allocate the shell process");
+    }
+
+    if (!sched_enqueue(shell_proc)) {
+        boot_splash_fail("shell: task queued",
+                         "kernel could not enqueue the shell process");
+    }
+
+    process_t* current = sched_current();
+    if (current) {
+        current->state = PROCESS_STATE_WAITING;
+    }
+
+    for (;;) {
+        __asm__ __volatile__("sti; hlt");
+    }
+}
+
 void kernel_main(void) {
     terminal_init();
     boot_splash_begin();
@@ -303,28 +337,26 @@ void kernel_main(void) {
                        "ext2: volume mounted",
                        "ext2 volume failed superblock or partition validation");
 
-    process_t* shell_proc = process_create_kernel_task("shell", shell_task_main);
+    process_t* boot_proc = process_create_kernel_task("bootseq", boot_sequence_task_main);
 
-    if (!shell_proc) {
-        boot_splash_fail("shell: task created",
-                         "kernel could not allocate the shell process");
+    if (!boot_proc) {
+        boot_splash_fail("boot sequence: task created",
+                         "kernel could not allocate the boot sequence process");
     }
-    boot_splash_pass("shell: task created");
+    boot_splash_pass("boot sequence: task created");
 
-    if (!sched_enqueue(shell_proc)) {
-        boot_splash_fail("shell: task queued",
-                         "kernel could not enqueue the shell process");
+    if (!sched_enqueue(boot_proc)) {
+        boot_splash_fail("boot sequence: task queued",
+                         "kernel could not enqueue the boot sequence process");
     }
-    boot_splash_pass("shell: task queued");
+    boot_splash_pass("boot sequence: task queued");
 
     boot_splash_expect(process_start_reaper(),
                        "reaper: task queued",
                        "zombie reaper task could not be started");
 
-    terminal_puts("SmallOS ready\n");
-
     __asm__ __volatile__("sti");
-    sched_start(shell_proc);
+    sched_start(boot_proc);
 
     for (;;) {
         __asm__ __volatile__("hlt");

@@ -25,7 +25,7 @@ BOOT_SPLASH_MARKERS = (
     "boot: PASS ata: primary channel ready",
     "boot: PASS tcp: service task queued",
     "boot: PASS ext2: volume mounted",
-    "boot: PASS shell: task queued",
+    "boot: PASS boot sequence: task queued",
     "SmallOS ready",
 )
 CONNECTPROBE_PORT = 45123

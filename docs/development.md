@@ -55,7 +55,15 @@ report the live TSS selector, boot stack, page-aligned heap start after high
 kernel BSS, and PMM free-frame baseline. Later network diagnostics include a
 best-effort NTP clock sync after e1000/TCP initialization; success prints the
 synchronized UTC time, while failure is a warning and boot continues. If a
-hard startup invariant drifts, the kernel halts before the shell starts.
+hard startup invariant drifts, the kernel halts before the post-diagnostics
+boot sequence starts.
+
+After diagnostics, `kernel_main()` queues the `bootseq` kernel task and the
+zombie reaper, then enters the scheduler on `bootseq`. The boot sequence task
+runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to exit, prints
+`SmallOS ready`, and then queues the shell. This keeps framebuffer splash
+rendering in userland and leaves one obvious place to swap shell startup for a
+future login flow.
 
 Descriptor slots are owned by `process.c`, not the syscall dispatcher. fd `0`,
 `1`, and `2` are real console handles created with each process; user-opened
@@ -275,9 +283,9 @@ meminfo              ← still identical after second run
 
 ## Scheduler Rules
 
-`sched_init()` must be called **after `idt_init()` and before `sti`**. It initialises the scheduler table. The shell is not registered here — it is created later in `kernel_main()` and added with `sched_enqueue()`. If called after `sti`, the first timer tick may fire with an uninitialised scheduler state.
+`sched_init()` must be called **after `idt_init()` and before `sti`**. It initialises the scheduler table. The shell is not registered here; `kernel_main()` queues the `bootseq` task, and `bootseq` queues the shell after the post-diagnostics splash. If `sched_init()` is called after `sti`, the first timer tick may fire with an uninitialised scheduler state.
 
-`sched_enqueue(proc)` — call after `proc->state = RUNNING` when handing a task to the scheduler. The shell task follows this path in `kernel_main()`, and ELF launches now do as well.
+`sched_enqueue(proc)` — call after `proc->state = RUNNING` when handing a task to the scheduler. The boot sequence task follows this path in `kernel_main()`, the shell follows it from `bootseq`, and ELF launches do as well.
 
 `sched_dequeue(proc)` is for scheduler-owned tasks. In the current tree it is used from `sched_exit_current()`. It removes the process from the run queue, compacts the table, and adjusts scheduler indices so round-robin execution can continue over the remaining runnable entries.
 
@@ -448,6 +456,9 @@ The launch ABI guarantees `argv[argc] == NULL`. SmallOS does not provide
 Framebuffer apps should use `src/user/gfx.c` instead of calling the display
 syscalls directly. The helper owns acquire/release, full-screen backbuffer
 allocation, simple drawing primitives, and one-shot full-screen present.
+`src/user/bootsplash.c` and `src/user/bmpview.c` both use the shared BMP
+decoder plus this helper; replace `assets/boot_splash.bmp` to change the image
+seeded into the guest at `/boot/splash.bmp`.
 Interactive graphics can poll keyboard availability with `SYS_POLL` on fd `0`
 and poll relative mouse movement with `SYS_MOUSE_READ`. New code that wants
 keyboard and mouse together should prefer `SYS_INPUT_READ`, which drains the

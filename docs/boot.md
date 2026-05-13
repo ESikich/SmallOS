@@ -14,6 +14,7 @@ BIOS
  → protected mode
  → kernel_entry.asm  (zeros BSS, calls kernel_main)
  → kernel_main()
+ → bootseq task      (userland splash, ready line, shell/login path)
 ```
 
 ---
@@ -495,7 +496,10 @@ Kernel   →  zero BSS
          →  ata_init, pci_init, e1000_init, tcp_init
          →  ntp_sync (best-effort realtime clock sync)
          →  ext2_init
-         →  create shell task, sti, sched_start
+         →  create bootseq task and zombie reaper, sti, sched_start
+Bootseq  →  run /bin/bootsplash.elf boot/splash.bmp
+         →  print SmallOS ready
+         →  create shell task (future login hook lives here)
 ```
 
 Boot code is the most fragile part of the system. Failures here are often silent — no terminal, no debug output, just a reboot loop or a hung screen.

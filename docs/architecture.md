@@ -52,11 +52,11 @@ kernel_main()
   e1000_init()      ← bind the Intel 82540EM NIC and set up DMA rings
   tcp_init()        ← start TCP/network service task
   ntp_sync()        ← set CLOCK_REALTIME and print synchronized UTC time
-  ext2_init()      ← read MBR entry 1, validate ext2 superblock and geometry
-  create shell task ← explicit kernel task with dedicated stack
+  ext2_init()       ← read MBR entry 1, validate ext2 superblock and geometry
+  bootseq task      ← run userland splash, print ready, then queue shell/login path
   process_start_reaper() ← create and enqueue zombie reaper task
   sti
-  sched_start()     ← switch from boot stack into shell task
+  sched_start()     ← switch from boot stack into bootseq task
 ```
 
 ---
@@ -128,8 +128,8 @@ Inside `kernel_main()`:
 13. `tcp_init()` — create and enqueue the TCP/network service kernel task
 14. `ntp_sync()` — briefly enables interrupts so PIT-backed timeout logic works, queries the default NTP server through UDP over the e1000 path, sets `CLOCK_REALTIME`, and prints the synchronized UTC time. Failure is a boot warning, not a halt.
 15. `ext2_init()` — read ATA sector 0, extract the ext2 start LBA from partition entry 1 in the MBR partition table, then read and validate the ext2 superblock at that runtime-discovered location
-16. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
-17. `sched_enqueue(shell_proc)` — make the shell runnable
+16. `process_create_kernel_task("bootseq", ...)` — create the post-diagnostics boot sequence task. `bootseq` runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, prints `SmallOS ready`, and queues the shell. A future login task can replace the shell launch here without changing the early boot checks.
+17. `sched_enqueue(boot_proc)` — make the boot sequence task runnable
 18. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
 19. `sti` — enable interrupts
 20. `sched_start(shell_proc)` — switch from the boot stack into the shell task
@@ -430,9 +430,10 @@ User graphics programs sit above the framebuffer display syscalls. The shared
 helper in `src/user/gfx.c` queries display geometry, requires XRGB8888/32 bpp,
 acquires exclusive graphics mode, allocates a full-screen user backbuffer, and
 presents that buffer with one `SYS_DISPLAY_BLIT`. `bmpview` uses this path for
-scaled/centered BMP presentation, `bin/diskview` uses it for an ext2 used/free
-allocation map, and `usr/bin/plasma` uses it as a simple animated graphics
-smoke demo. `usr/bin/mandel` uses the same helper for an interactive
+scaled/centered BMP presentation, `bin/bootsplash` uses it for the
+post-diagnostics `/boot/splash.bmp` startup image, `bin/diskview` uses it for
+an ext2 used/free allocation map, and `usr/bin/plasma` uses it as a simple
+animated graphics smoke demo. `usr/bin/mandel` uses the same helper for an interactive
 Mandelbrot view and polls `SYS_MOUSE_READ` for cursor deltas.
 
 ## Shell

@@ -1,5 +1,7 @@
 # SmallOS
 
+![SmallOS boot splash](assets/boot_splash.jpg)
+
 SmallOS is a BIOS-based x86 hobby operating system built with:
 
 * `nasm`
@@ -25,6 +27,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * PCI bus scan at boot — discovery layer for the e1000 NIC path
 * e1000 NIC bring-up — PCI discovery, MMIO mapping, and DMA ring setup
 * Boot-time NTP clock sync — a tiny UDP/NTP client sets `CLOCK_REALTIME` and prints the synchronized UTC time during startup diagnostics
+* Post-diagnostics graphical boot splash — `/bin/bootsplash.elf` presents `/boot/splash.bmp` before `SmallOS ready` and the shell prompt
 * Shell with line editing, history, and command parsing
 * Shell input processing decoupled from IRQ1 via a small event queue
 * PS/2 mouse packet decoding with a small user syscall for relative deltas/buttons
@@ -59,6 +62,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 
 ```text
 .
+├── assets/         boot splash source/rendered assets
 ├── docs/           documentation
 ├── src/
 │   ├── boot/       boot.asm, loader2.asm, kernel_entry.asm
@@ -68,7 +72,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 │   ├── shell/      shell, line_editor, parse, commands
 │   ├── exec/       elf_loader
 │   └── user/       hello.c, ticks.c, args.c, readline.c, exec_test.c,
-│                   bmpview.c, diskview.c, plasma.c, mandel.c, gfx.c,
+│                   bmpview.c, bootsplash.c, diskview.c, plasma.c, mandel.c, gfx.c,
 │                   compiler_demo.c, fault.c, sleep_test.c, user_lib.h,
 │                   user_syscall.h
 ├── tools/
@@ -314,7 +318,9 @@ and exits, F3 discards, and Esc cancels the quit prompt.
 Seeded ext2 layout:
 - command-style apps live under `/bin/` (`echo`, `about`, `uptime`, `halt`, `reboot`, `date`, `pwd`, `cat`, `fsread`, `ls`, `tree`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, `edit`, `diskview`)
 - `bin/bmpview` - load a BMP, render it through the userland graphics backbuffer, and present it to the framebuffer
+- `bin/bootsplash` - show `/boot/splash.bmp` for the post-diagnostics graphical startup splash
 - `bin/diskview` - show ext2 used/free space as a framebuffer allocation map
+- `boot/splash.bmp` - framebuffer boot splash asset seeded from `assets/boot_splash.bmp`
 - `usr/bin/hello` - print argc/argv and tick count
 - `usr/bin/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
 - `usr/bin/mandel` - interactive framebuffer Mandelbrot demo with keyboard pan/zoom and PS/2 mouse cursor movement
@@ -383,10 +389,10 @@ kernel_main()
  → tcp_init()            start the TCP/network service kernel task
  → ntp_sync()            set CLOCK_REALTIME and print synchronized UTC time
  → ext2_init()          read MBR entry 1, validate ext2 superblock
- → create shell task     explicit kernel task with its own stack
+ → create bootseq task   post-diagnostics startup coordinator
  → process_start_reaper() create and enqueue the zombie reaper task
  → sti
- → sched_start(shell)    switch from boot stack into shell task
+ → sched_start(bootseq)  run splash, print ready, then queue shell/login path
 
 runelf usr/bin/hello
  → process_create()      allocate process_t from PMM
