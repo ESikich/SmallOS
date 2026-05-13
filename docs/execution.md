@@ -230,7 +230,7 @@ host observes EOF.
 ```text
 vfs_load_file(name, &size)
   → backend file lookup
-  → follow block chain with ATA PIO reads
+  → follow block chain with ATA block reads
   → copy file into static ext2 load buffer
   → return pointer to buffer
 ```

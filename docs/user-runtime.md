@@ -120,7 +120,7 @@ accepts, and socket-backed `poll`/`epoll_wait` waits use socket-owned
 accept/read/write wait queues. Timerfd/signalfd-style handles have their own
 read wait queues, and expired timerfds wake waiters from the timer IRQ path.
 Accepted TCP streams are tracked in a global
-4-tuple TCP table, allocate a 4 KiB PMM-backed receive ring on first payload,
+4-tuple TCP table, allocate a 64 KiB PMM-backed receive ring on first payload,
 and release it again after userland drains the buffer. Socket writes allocate a
 16 KiB TX ring on first payload, keep queued bytes until ACKed, release the ring
 once drained, and wake write waiters as TX space returns.

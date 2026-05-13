@@ -37,6 +37,7 @@
 #define EXT2_N_BLOCKS 15u
 #define EXT2_DIRECT_BLOCKS 12u
 #define EXT2_PTRS_PER_BLOCK (EXT2_BLOCK_SIZE / 4u)
+#define EXT2_WRITE_CHUNK_SIZE (16u * EXT2_BLOCK_SIZE)
 
 #define INODE_MODE      0u
 #define INODE_UID       2u
@@ -89,6 +90,11 @@ typedef struct {
 } mem_sink_t;
 
 static int s_initialised = 0;
+static int s_bitmaps_loaded = 0;
+static unsigned int s_bitmap_write_defer_depth = 0;
+static int s_block_bitmap_dirty = 0;
+static int s_inode_bitmap_dirty = 0;
+static u32 s_next_alloc_block = EXT2_FIRST_DATA_BLOCK;
 static u32 s_ext2_lba = 0;
 static u32 s_ext2_sectors = 0;
 static u8* s_load_buf = 0;
@@ -96,7 +102,7 @@ static u8* s_load_buf = 0;
 static u8 s_sector[SECTOR_SIZE];
 static u8 s_block[EXT2_BLOCK_SIZE] __attribute__((aligned(4)));
 static u8 s_block2[EXT2_BLOCK_SIZE] __attribute__((aligned(4)));
-static u8 s_data_buf[EXT2_BLOCK_SIZE] __attribute__((aligned(4)));
+static u8 s_data_buf[EXT2_WRITE_CHUNK_SIZE] __attribute__((aligned(4)));
 static u8 s_block_bitmap[EXT2_BLOCK_SIZE] __attribute__((aligned(4)));
 static u8 s_inode_bitmap[EXT2_BLOCK_SIZE] __attribute__((aligned(4)));
 
@@ -144,36 +150,77 @@ static u32 abs_lba_for_block(u32 block) {
 }
 
 static int read_block(u32 block, u8* out) {
-    for (u32 i = 0; i < EXT2_SECTORS_PER_BLOCK; i++) {
-        if (!ata_read_sectors(abs_lba_for_block(block) + i, 1,
-                              out + i * SECTOR_SIZE)) {
-            return 0;
-        }
-    }
-    return 1;
+    return ata_read_sectors(abs_lba_for_block(block),
+                            (unsigned char)EXT2_SECTORS_PER_BLOCK,
+                            out);
 }
 
 static int write_block(u32 block, const u8* data) {
-    for (u32 i = 0; i < EXT2_SECTORS_PER_BLOCK; i++) {
-        if (!ata_write_sectors(abs_lba_for_block(block) + i, 1,
-                               data + i * SECTOR_SIZE)) {
-            return 0;
-        }
-    }
-    return 1;
+    return ata_write_sectors(abs_lba_for_block(block),
+                             (unsigned char)EXT2_SECTORS_PER_BLOCK,
+                             data);
+}
+
+static int write_blocks(u32 first_block, u32 block_count, const u8* data) {
+    u32 sectors = block_count * EXT2_SECTORS_PER_BLOCK;
+
+    if (block_count == 0u) return 1;
+    if (sectors > 255u) return 0;
+    return ata_write_sectors(abs_lba_for_block(first_block),
+                             (unsigned char)sectors,
+                             data);
 }
 
 static int read_bitmaps(void) {
+    if (s_bitmaps_loaded) return 1;
+
     return read_block(EXT2_BLOCK_BITMAP_BLOCK, s_block_bitmap) &&
-           read_block(EXT2_INODE_BITMAP_BLOCK, s_inode_bitmap);
+           read_block(EXT2_INODE_BITMAP_BLOCK, s_inode_bitmap) &&
+           (s_bitmaps_loaded = 1);
 }
 
 static int write_block_bitmap(void) {
-    return write_block(EXT2_BLOCK_BITMAP_BLOCK, s_block_bitmap);
+    if (s_bitmap_write_defer_depth != 0u) {
+        s_block_bitmap_dirty = 1;
+        return 1;
+    }
+    if (!write_block(EXT2_BLOCK_BITMAP_BLOCK, s_block_bitmap)) return 0;
+    s_block_bitmap_dirty = 0;
+    return 1;
 }
 
 static int write_inode_bitmap(void) {
-    return write_block(EXT2_INODE_BITMAP_BLOCK, s_inode_bitmap);
+    if (s_bitmap_write_defer_depth != 0u) {
+        s_inode_bitmap_dirty = 1;
+        return 1;
+    }
+    if (!write_block(EXT2_INODE_BITMAP_BLOCK, s_inode_bitmap)) return 0;
+    s_inode_bitmap_dirty = 0;
+    return 1;
+}
+
+static void bitmap_write_defer_begin(void) {
+    s_bitmap_write_defer_depth++;
+}
+
+static int bitmap_write_defer_end(void) {
+    if (s_bitmap_write_defer_depth == 0u) return 1;
+
+    s_bitmap_write_defer_depth--;
+    if (s_bitmap_write_defer_depth != 0u) return 1;
+
+    if (s_block_bitmap_dirty &&
+        !write_block(EXT2_BLOCK_BITMAP_BLOCK, s_block_bitmap)) {
+        return 0;
+    }
+    s_block_bitmap_dirty = 0;
+
+    if (s_inode_bitmap_dirty &&
+        !write_block(EXT2_INODE_BITMAP_BLOCK, s_inode_bitmap)) {
+        return 0;
+    }
+    s_inode_bitmap_dirty = 0;
+    return 1;
 }
 
 static int read_inode(u32 ino, ext2_inode_t* out) {
@@ -229,20 +276,44 @@ static int inode_is_file(const ext2_inode_t* inode) {
     return inode && ((inode->mode & 0xF000u) == EXT2_S_IFREG);
 }
 
-static int alloc_block(u32* out_block) {
+static int alloc_block_with_zero(u32* out_block, int zero_block) {
     if (!out_block || !read_bitmaps()) return 0;
 
-    for (u32 block = EXT2_FIRST_DATA_BLOCK; block < EXT2_TOTAL_BLOCKS; block++) {
-        if (!bit_test(s_block_bitmap, block)) {
+    if (s_next_alloc_block < EXT2_FIRST_DATA_BLOCK ||
+        s_next_alloc_block >= EXT2_TOTAL_BLOCKS) {
+        s_next_alloc_block = EXT2_FIRST_DATA_BLOCK;
+    }
+
+    for (u32 pass = 0; pass < 2u; pass++) {
+        u32 begin = pass == 0u ? s_next_alloc_block : EXT2_FIRST_DATA_BLOCK;
+        u32 end = pass == 0u ? EXT2_TOTAL_BLOCKS : s_next_alloc_block;
+
+        for (u32 block = begin; block < end; block++) {
+            if (bit_test(s_block_bitmap, block)) continue;
+
             bit_set(s_block_bitmap, block);
             if (!write_block_bitmap()) return 0;
-            k_memset(s_block, 0, EXT2_BLOCK_SIZE);
-            if (!write_block(block, s_block)) return 0;
+            if (zero_block) {
+                k_memset(s_block, 0, EXT2_BLOCK_SIZE);
+                if (!write_block(block, s_block)) return 0;
+            }
+            s_next_alloc_block = block + 1u;
+            if (s_next_alloc_block >= EXT2_TOTAL_BLOCKS) {
+                s_next_alloc_block = EXT2_FIRST_DATA_BLOCK;
+            }
             *out_block = block;
             return 1;
         }
     }
     return 0;
+}
+
+static int alloc_block(u32* out_block) {
+    return alloc_block_with_zero(out_block, 1);
+}
+
+static int alloc_block_uninit(u32* out_block) {
+    return alloc_block_with_zero(out_block, 0);
 }
 
 static int alloc_inode(u32* out_ino) {
@@ -263,6 +334,7 @@ static int free_block(u32 block) {
     if (block == 0 || block >= EXT2_TOTAL_BLOCKS) return 1;
     if (!read_bitmaps()) return 0;
     bit_clear(s_block_bitmap, block);
+    if (block < s_next_alloc_block) s_next_alloc_block = block;
     return write_block_bitmap();
 }
 
@@ -271,6 +343,46 @@ static int free_inode(u32 ino) {
     if (!read_bitmaps()) return 0;
     bit_clear(s_inode_bitmap, ino - 1u);
     return write_inode_bitmap();
+}
+
+static int alloc_block_run(u32 count, u32* out_first) {
+    u32 run_first = 0;
+    u32 run_count = 0;
+
+    if (!out_first || count == 0u || !read_bitmaps()) return 0;
+    if (s_next_alloc_block < EXT2_FIRST_DATA_BLOCK ||
+        s_next_alloc_block >= EXT2_TOTAL_BLOCKS) {
+        s_next_alloc_block = EXT2_FIRST_DATA_BLOCK;
+    }
+
+    for (u32 pass = 0; pass < 2u; pass++) {
+        u32 begin = pass == 0u ? s_next_alloc_block : EXT2_FIRST_DATA_BLOCK;
+        u32 end = pass == 0u ? EXT2_TOTAL_BLOCKS : s_next_alloc_block;
+
+        run_first = 0;
+        run_count = 0;
+        for (u32 block = begin; block < end; block++) {
+            if (!bit_test(s_block_bitmap, block)) {
+                if (run_count == 0u) run_first = block;
+                run_count++;
+                if (run_count == count) {
+                    for (u32 i = 0; i < count; i++) {
+                        bit_set(s_block_bitmap, run_first + i);
+                    }
+                    if (!write_block_bitmap()) return 0;
+                    s_next_alloc_block = run_first + count;
+                    if (s_next_alloc_block >= EXT2_TOTAL_BLOCKS) {
+                        s_next_alloc_block = EXT2_FIRST_DATA_BLOCK;
+                    }
+                    *out_first = run_first;
+                    return 1;
+                }
+            } else {
+                run_count = 0;
+            }
+        }
+    }
+    return 0;
 }
 
 static u32 ptr_block_entry(u32 block, u32 index) {
@@ -291,17 +403,22 @@ static u32 inode_block_count(const ext2_inode_t* inode) {
     return (inode->size + EXT2_BLOCK_SIZE - 1u) / EXT2_BLOCK_SIZE;
 }
 
-static int inode_get_data_block(ext2_inode_t* inode,
-                                u32 logical,
-                                int create,
-                                u32* out_block) {
+static int inode_get_data_block_ex(ext2_inode_t* inode,
+                                   u32 logical,
+                                   int create,
+                                   int zero_new_data,
+                                   u32* out_block) {
     u32 block = 0;
 
     if (!inode || !out_block) return 0;
 
     if (logical < EXT2_DIRECT_BLOCKS) {
         if (inode->block[logical] == 0 && create) {
-            if (!alloc_block(&inode->block[logical])) return 0;
+            if (zero_new_data) {
+                if (!alloc_block(&inode->block[logical])) return 0;
+            } else if (!alloc_block_uninit(&inode->block[logical])) {
+                return 0;
+            }
             inode->blocks_512 += EXT2_SECTORS_PER_BLOCK;
         }
         *out_block = inode->block[logical];
@@ -320,7 +437,11 @@ static int inode_get_data_block(ext2_inode_t* inode,
         }
         block = ptr_block_entry(inode->block[12], logical);
         if (block == 0 && create) {
-            if (!alloc_block(&block)) return 0;
+            if (zero_new_data) {
+                if (!alloc_block(&block)) return 0;
+            } else if (!alloc_block_uninit(&block)) {
+                return 0;
+            }
             if (!set_ptr_block_entry(inode->block[12], logical, block)) return 0;
             inode->blocks_512 += EXT2_SECTORS_PER_BLOCK;
         }
@@ -355,11 +476,116 @@ static int inode_get_data_block(ext2_inode_t* inode,
 
     block = ptr_block_entry(indirect, inner);
     if (block == 0 && create) {
-        if (!alloc_block(&block)) return 0;
+        if (zero_new_data) {
+            if (!alloc_block(&block)) return 0;
+        } else if (!alloc_block_uninit(&block)) {
+            return 0;
+        }
         if (!set_ptr_block_entry(indirect, inner, block)) return 0;
         inode->blocks_512 += EXT2_SECTORS_PER_BLOCK;
     }
     *out_block = block;
+    return 1;
+}
+
+static int inode_get_data_block(ext2_inode_t* inode,
+                                u32 logical,
+                                int create,
+                                u32* out_block) {
+    return inode_get_data_block_ex(inode, logical, create, 1, out_block);
+}
+
+static int inode_prepare_fresh_blocks(ext2_inode_t* inode,
+                                      u32 logical,
+                                      u32 max_blocks,
+                                      u32* out_first_block,
+                                      u32* out_blocks) {
+    u32 blocks;
+    u32 first = 0;
+
+    if (!inode || !out_first_block || !out_blocks || max_blocks == 0u) return -1;
+
+    if (logical < EXT2_DIRECT_BLOCKS) {
+        blocks = EXT2_DIRECT_BLOCKS - logical;
+        if (blocks > max_blocks) blocks = max_blocks;
+        for (u32 i = 0; i < blocks; i++) {
+            if (inode->block[logical + i] != 0u) return 0;
+        }
+        if (!alloc_block_run(blocks, &first)) return -1;
+        for (u32 i = 0; i < blocks; i++) {
+            inode->block[logical + i] = first + i;
+        }
+        inode->blocks_512 += blocks * EXT2_SECTORS_PER_BLOCK;
+        *out_first_block = first;
+        *out_blocks = blocks;
+        return 1;
+    }
+
+    logical -= EXT2_DIRECT_BLOCKS;
+    if (logical < EXT2_PTRS_PER_BLOCK) {
+        blocks = EXT2_PTRS_PER_BLOCK - logical;
+        if (blocks > max_blocks) blocks = max_blocks;
+
+        if (inode->block[12] == 0u) {
+            if (!alloc_block_uninit(&inode->block[12])) return -1;
+            inode->blocks_512 += EXT2_SECTORS_PER_BLOCK;
+            k_memset(s_block2, 0, EXT2_BLOCK_SIZE);
+        } else if (!read_block(inode->block[12], s_block2)) {
+            return -1;
+        }
+
+        for (u32 i = 0; i < blocks; i++) {
+            if (read_u32_le(s_block2, (logical + i) * 4u) != 0u) return 0;
+        }
+        if (!alloc_block_run(blocks, &first)) return -1;
+        for (u32 i = 0; i < blocks; i++) {
+            write_u32_le(s_block2, (logical + i) * 4u, first + i);
+        }
+        if (!write_block(inode->block[12], s_block2)) return -1;
+        inode->blocks_512 += blocks * EXT2_SECTORS_PER_BLOCK;
+        *out_first_block = first;
+        *out_blocks = blocks;
+        return 1;
+    }
+
+    logical -= EXT2_PTRS_PER_BLOCK;
+    u32 outer = logical / EXT2_PTRS_PER_BLOCK;
+    u32 inner = logical % EXT2_PTRS_PER_BLOCK;
+    if (outer >= EXT2_PTRS_PER_BLOCK) return -1;
+
+    blocks = EXT2_PTRS_PER_BLOCK - inner;
+    if (blocks > max_blocks) blocks = max_blocks;
+
+    if (inode->block[13] == 0u) {
+        if (!alloc_block_uninit(&inode->block[13])) return -1;
+        inode->blocks_512 += EXT2_SECTORS_PER_BLOCK;
+        k_memset(s_block, 0, EXT2_BLOCK_SIZE);
+    } else if (!read_block(inode->block[13], s_block)) {
+        return -1;
+    }
+
+    u32 indirect = read_u32_le(s_block, outer * 4u);
+    if (indirect == 0u) {
+        if (!alloc_block_uninit(&indirect)) return -1;
+        inode->blocks_512 += EXT2_SECTORS_PER_BLOCK;
+        write_u32_le(s_block, outer * 4u, indirect);
+        if (!write_block(inode->block[13], s_block)) return -1;
+        k_memset(s_block2, 0, EXT2_BLOCK_SIZE);
+    } else if (!read_block(indirect, s_block2)) {
+        return -1;
+    }
+
+    for (u32 i = 0; i < blocks; i++) {
+        if (read_u32_le(s_block2, (inner + i) * 4u) != 0u) return 0;
+    }
+    if (!alloc_block_run(blocks, &first)) return -1;
+    for (u32 i = 0; i < blocks; i++) {
+        write_u32_le(s_block2, (inner + i) * 4u, first + i);
+    }
+    if (!write_block(indirect, s_block2)) return -1;
+    inode->blocks_512 += blocks * EXT2_SECTORS_PER_BLOCK;
+    *out_first_block = first;
+    *out_blocks = blocks;
     return 1;
 }
 
@@ -762,8 +988,10 @@ static int write_file_range(u32 ino,
                             const u8* data,
                             u32 len) {
     u32 done = 0;
+    int ok = 1;
     if (!inode || (!data && len > 0)) return 0;
 
+    bitmap_write_defer_begin();
     while (done < len) {
         u32 pos = offset + done;
         u32 logical = pos / EXT2_BLOCK_SIZE;
@@ -772,16 +1000,82 @@ static int write_file_range(u32 ino,
         u32 block = 0;
         if (chunk > len - done) chunk = len - done;
 
-        if (!inode_get_data_block(inode, logical, 1, &block)) return 0;
+        if (block_off == 0u && len - done >= EXT2_BLOCK_SIZE) {
+            u32 max_blocks = (len - done) / EXT2_BLOCK_SIZE;
+            u32 blocks = 1;
+            int prepared;
+
+            if (max_blocks > EXT2_WRITE_CHUNK_SIZE / EXT2_BLOCK_SIZE) {
+                max_blocks = EXT2_WRITE_CHUNK_SIZE / EXT2_BLOCK_SIZE;
+            }
+            prepared = inode_prepare_fresh_blocks(inode,
+                                                  logical,
+                                                  max_blocks,
+                                                  &block,
+                                                  &blocks);
+            if (prepared < 0) {
+                ok = 0;
+                break;
+            }
+            if (prepared > 0) {
+                if (!write_blocks(block, blocks, data + done)) {
+                    ok = 0;
+                    break;
+                }
+                done += blocks * EXT2_BLOCK_SIZE;
+                continue;
+            }
+
+            blocks = 1;
+            if (!inode_get_data_block_ex(inode, logical, 1, 0, &block) ||
+                block == 0u) {
+                ok = 0;
+                break;
+            }
+            while (blocks < max_blocks) {
+                u32 next_block = 0;
+
+                if (!inode_get_data_block_ex(inode,
+                        logical + blocks, 1, 0, &next_block) ||
+                    next_block == 0u) {
+                    ok = 0;
+                    break;
+                }
+                if (next_block != block + blocks) {
+                    break;
+                }
+                blocks++;
+            }
+            if (!ok) break;
+            if (!write_blocks(block, blocks, data + done)) {
+                ok = 0;
+                break;
+            }
+            done += blocks * EXT2_BLOCK_SIZE;
+            continue;
+        }
+
+        if (!inode_get_data_block(inode, logical, 1, &block)) {
+            ok = 0;
+            break;
+        }
         if (chunk != EXT2_BLOCK_SIZE) {
-            if (!read_block(block, s_block)) return 0;
+            if (!read_block(block, s_block)) {
+                ok = 0;
+                break;
+            }
         } else {
             k_memset(s_block, 0, EXT2_BLOCK_SIZE);
         }
         k_memcpy(s_block + block_off, data + done, chunk);
-        if (!write_block(block, s_block)) return 0;
+        if (!write_block(block, s_block)) {
+            ok = 0;
+            break;
+        }
         done += chunk;
     }
+    if (!bitmap_write_defer_end()) ok = 0;
+    if (!ok) return 0;
 
     if (offset + len > inode->size) inode->size = offset + len;
     return write_inode(ino, inode);
@@ -789,7 +1083,12 @@ static int write_file_range(u32 ino,
 
 static int truncate_file(u32 ino, ext2_inode_t* inode) {
     if (!inode) return 0;
-    if (!free_inode_blocks(inode)) return 0;
+    bitmap_write_defer_begin();
+    if (!free_inode_blocks(inode)) {
+        (void)bitmap_write_defer_end();
+        return 0;
+    }
+    if (!bitmap_write_defer_end()) return 0;
     inode->size = 0;
     inode->blocks_512 = 0;
     return write_inode(ino, inode);
@@ -838,7 +1137,7 @@ static int write_file_from_source(u32 ino,
     u32 offset = 0;
     while (offset < size) {
         u32 chunk = size - offset;
-        if (chunk > EXT2_BLOCK_SIZE) chunk = EXT2_BLOCK_SIZE;
+        if (chunk > EXT2_WRITE_CHUNK_SIZE) chunk = EXT2_WRITE_CHUNK_SIZE;
         if (!source->read(source->ctx, offset, s_data_buf, chunk)) return 0;
         if (!write_file_range(ino, inode, offset, s_data_buf, chunk)) return 0;
         offset += chunk;

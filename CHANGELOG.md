@@ -7,8 +7,19 @@
 * **Writable ext2 filesystem** (`src/drivers/ext2.*`, `tools/mkext2.c`, `Makefile`)
   * Replaced the FAT16 runtime and seed image builder with a 16 MB ext2 volume using 4 KiB blocks, native case-sensitive names, direct/single-indirect/double-indirect block mapping, and MBR partition type `0x83`.
   * Preserved the VFS/syscall ABI while routing ELF loading, directory iteration, file writes, mkdir/rmdir, unlink, rename, usage reporting, and allocation maps through the ext2 driver.
+  * Batched buffered file flushes into 64 KiB ext2 writes so large FTP uploads no longer fall off a 4 KiB-per-inode-update cliff when they grow past the VFS write cache.
+  * Switched ext2 block I/O to single 8-sector ATA commands instead of issuing one ATA command per 512-byte sector.
+  * Cached ext2 block/inode bitmaps in memory after the first read to avoid repeated bitmap rereads during block-heavy writes.
+  * Deferred ext2 bitmap writes across file-range allocation/truncation work so large writes commit allocation metadata once per range instead of once per 4 KiB block.
+  * Coalesced contiguous full-block file writes into multi-block ATA transfers, reducing large sequential upload data writes from one command per 4 KiB block to one command per 64 KiB run.
+  * Added a fresh-block sequential write fast path that allocates contiguous ext2 block runs, skips redundant zero-writes for fully overwritten data blocks, and updates indirect pointer blocks once per run.
+  * Switched ATA PIO sector payload copies to `rep insw`/`rep outsw` bulk transfers instead of one inline I/O instruction per loop iteration.
+  * Added ATA bus-master DMA discovery and bounce-buffered READ/WRITE DMA transfers, with automatic fallback to the PIO path when DMA is unavailable or a transfer fails.
+  * Made socket readiness checks actively drain pending e1000 RX descriptors before reporting TCP readability, avoiding timer-tick paced FTP uploads when data is already queued in the NIC ring.
   * Renamed build artifacts to `ext2.seed.img` and `.state/ext2.img`; `mkimage` and `image-layout-check` now treat the appended filesystem image generically.
   * Updated shell/user-visible filesystem labels and QEMU expectations for native ext2 names.
+* **FTP upload path** (`third_party/ftp_server/src/ftp_data.c`)
+  * Buffered STOR socket reads into 64 KiB file writes so uploads do not turn segment-sized TCP reads into repeated partial-block filesystem writes.
 
 ## [Current] — Syscall user-pointer hardening
 

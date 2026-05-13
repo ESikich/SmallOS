@@ -5,6 +5,7 @@
 #include "uapi_poll.h"
 #include "uapi_socket.h"
 #include "wait.h"
+#include "../drivers/net.h"
 #include "../drivers/tcp.h"
 
 #define SOCKET_FLAG_READ_SHUTDOWN  0x00000001u
@@ -283,6 +284,7 @@ int socket_tcp_recv_ready(socket_t* sock) {
         (sock->state != SOCKET_STATE_CONNECTED &&
          sock->state != SOCKET_STATE_CONNECTING)) return 0;
     if ((sock->flags & SOCKET_FLAG_READ_SHUTDOWN) != 0u) return 1;
+    net_poll_drain();
     socket_tcp_use(sock);
     return tcp_socket_recv_ready();
 }
@@ -353,6 +355,7 @@ short socket_poll(socket_t* sock, short events) {
     short revents = 0;
 
     if (!sock || sock->kind != SOCKET_KIND_TCP) return POLLERR;
+    net_poll_drain();
 
     if (sock->state == SOCKET_STATE_LISTENING) {
         socket_tcp_use(sock);

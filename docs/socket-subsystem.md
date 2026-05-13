@@ -111,7 +111,7 @@ large inline arrays.
 - TCP listeners: 8.
 - TCP connections: 256.
 - TCP backlog cap: 32.
-- TCP RX ring: 4 KiB per active receiving connection.
+- TCP RX ring: 64 KiB per active receiving connection.
 - TCP TX ring: 16 KiB per active writing connection.
 - Global TCP RX ring cap: 512 KiB.
 - Global TCP TX ring cap: 1 MiB.
@@ -124,6 +124,9 @@ large inline arrays.
   can share one local listener without fd-local stream arrays.
 - RX windows are derived from ring space. Data that cannot be queued is not
   acknowledged.
+- Socket readiness checks drain pending e1000 RX descriptors before reporting
+  TCP readability, so user-space services can consume already-arrived packets
+  without waiting for the background TCP task's next timer wakeup.
 - TX data remains in the ring until ACKed, which supports retry and makes
   writable readiness reflect actual queued capacity.
 - Zero-window probes cover queued unsent data.

@@ -7,7 +7,7 @@ SmallOS is a BIOS-based x86 hobby operating system built with:
 * `i686-elf-ld`
 * `QEMU`
 
-It boots from a raw disk image, switches to 32-bit protected mode, enables paging, loads user programs from an ext2 partition on disk, and runs a C kernel with a terminal shell, ring-3 ELF program execution, a preemptive round-robin scheduler, voluntary yielding, inter-process exec, and ATA PIO disk access.
+It boots from a raw disk image, switches to 32-bit protected mode, enables paging, loads user programs from an ext2 partition on disk, and runs a C kernel with a terminal shell, ring-3 ELF program execution, a preemptive round-robin scheduler, voluntary yielding, inter-process exec, and ATA disk access.
 
 ---
 
@@ -46,9 +46,9 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * **`SYS_EXEC`** — user process asynchronously spawns a named child ELF and returns `0` on success or a negative errno on failure
 * **`SYS_WRITEFILE`** — user process creates or overwrites a root-directory ext2 file in one shot
 * **`SYS_WRITEFILE_PATH`** — user process creates or overwrites an ext2 file at any nested path
-* **ATA PIO driver** — polls the primary IDE channel (`0x1F0`) to read 512-byte sectors from disk in 32-bit protected mode; no DMA or IRQ required
-* **ext2 partition** — 16 MB ext2 volume appended to the disk image containing `/bin`, `apps/`, `tools/`, and sample sources; built by `tools/mkext2.c` with no external dependencies; readable via ATA PIO with nested directory paths, writable at runtime through the kernel VFS shim for root-directory files and nested paths
-* **TCP service task** — kernel task that drains e1000 RX, dispatches ARP/IPv4/TCP frames, owns passive listeners plus a PMM-backed global 4-tuple connection table, manages lazy PMM-backed RX/TX rings for accepted streams, handles control, buffered-payload, and passive-FIN retransmit/idle timers, and wakes socket wait queues
+* **ATA disk driver** — polls the primary IDE channel (`0x1F0`) and enables PCI IDE bus-master DMA when available, with PIO fallback for compatibility
+* **ext2 partition** — 16 MB ext2 volume appended to the disk image containing `/bin`, `apps/`, `tools/`, and sample sources; built by `tools/mkext2.c` with no external dependencies; readable with nested directory paths, writable at runtime through the kernel VFS shim for root-directory files and nested paths
+* **TCP service task** — kernel task that drains e1000 RX, dispatches ARP/IPv4/TCP frames, owns passive listeners plus a PMM-backed global 4-tuple connection table, manages lazy PMM-backed RX/TX rings for accepted streams, handles control, buffered-payload, and passive-FIN retransmit/idle timers, and wakes socket wait queues; socket readiness also drains queued NIC descriptors so user-space services are not paced by timer ticks
 * **Guest TCP apps** — `apps/services/tcpecho.elf` handles parallel echo clients for socket stress, `apps/services/sockeof.elf` pins down peer-close/read EOF semantics, `apps/services/ftpd.elf` runs the FTP server package session logic, and `apps/services/cserve.elf` runs the cserver HTTP package as normal user-space ELFs
 
 ---
@@ -251,7 +251,7 @@ halt
 reboot              reboot the machine
 uptime
 meminfo
-ataread <lba>        dump first 32 bytes of a disk sector (ATA PIO)
+ataread <lba>        dump first 32 bytes of a disk sector
 
 fsls [path]        list an ext2 directory (root by default)
 ls [pattern]       list an ext2 directory, with `*` and `?` globbing

@@ -777,6 +777,10 @@ The Makefile generates `loader2.gen.asm` by text substitution into `loader2.asm`
 
 Replaces CHS `AH=0x02`. Removes the 18-sector-per-track limit. Required because the kernel and ext2 partition both live beyond what simple CHS assumptions can safely handle.
 
+At runtime, the ATA driver uses PCI IDE bus-master DMA when QEMU exposes it and
+falls back to the original polling PIO transfer path when DMA is unavailable or
+fails.
+
 ---
 
 # Future Improvements

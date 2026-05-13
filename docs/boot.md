@@ -471,7 +471,10 @@ Cons: the image builder and consumers need to agree on partition-table offsets a
 
 ## No Ramdisk
 
-Programs are loaded from the ext2 partition at runtime via ATA PIO. The ramdisk was a temporary program store used while the ext2 driver was being developed; it has been removed.
+Programs are loaded from the ext2 partition at runtime via the ATA driver, using
+bus-master DMA when available and polling PIO as a fallback. The ramdisk was a
+temporary program store used while the ext2 driver was being developed; it has
+been removed.
 
 ---
 

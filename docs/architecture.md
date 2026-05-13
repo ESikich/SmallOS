@@ -575,9 +575,12 @@ the ext2 superblock.
 
 ---
 
-# ATA PIO Driver
+# ATA Disk Driver
 
-`src/drivers/ata.c` provides 28-bit LBA sector reads from the primary ATA channel using port I/O polling. No DMA, no IRQ required. QEMU emulates the primary channel at `0x1F0`.
+`src/drivers/ata.c` provides 28-bit LBA sector reads and writes from the primary
+ATA channel. It discovers PCI IDE bus-master registers and uses bounce-buffered
+DMA when available, then falls back to the original port-I/O polling path if DMA
+is unavailable or fails. QEMU emulates the primary channel at `0x1F0`.
 
 ```text
 ata_init()
@@ -747,7 +750,7 @@ SYS_FCNTL / SYS_POLL / SYS_EPOLL_* / SYS_TIMERFD_* / SYS_SIGNALFD — descriptor
 TCP service task — drains NIC RX, dispatches ARP/IPv4/TCP frames, advertises receive windows from per-connection RX rings, services retransmit/idle timers for control handshakes, buffered TX payloads, active-open SYNs, and FIN paths, handles duplicate peer-FIN ACKs and close-driven final writes, and wakes socket wait queues
 page-aware copy-from-user validation — syscall pointer arguments are checked against user address space [USER_CODE_BASE, USER_STACK_TOP), mapped user pages, and wrapped variable-length byte counts before dereference
 preemptive round-robin scheduler — timer IRQ context switch, `SCHED_QUANTUM_MS` quantum
-ATA PIO driver — 28-bit LBA polling reads from primary IDE channel (0x1F0)
+ATA disk driver — 28-bit LBA reads/writes from primary IDE channel (0x1F0), with bus-master DMA and PIO fallback
 ext2 filesystem — ELF programs loaded from 16 MB ext2 partition on disk
 run/runimg infrastructure removed — `runelf` is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
 interactive shell with meminfo / memmap / ataread / fsls / fsread / mkdir / rmdir / runelf commands

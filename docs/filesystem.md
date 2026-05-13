@@ -127,7 +127,7 @@ That location is in the MBR partition table and does not overlap the boot signat
 
 At runtime:
 
-1. `ata_init()` brings up the ATA PIO driver
+1. `ata_init()` brings up the ATA driver, including bus-master DMA when available
 2. `ext2_init()` reads ATA sector 0
 3. `ext2_init()` extracts the ext2 LBA from partition entry 1
 4. `ext2_init()` reads the ext2 superblock from that partition
@@ -273,7 +273,7 @@ read start block and file size
   ↓
 map logical file blocks through direct/single-indirect/double-indirect pointers
   ↓
-read each 4 KiB block via ATA PIO sectors
+read each 4 KiB block via ATA sectors
   ↓
 copy file bytes into static s_load_buf
   ↓
@@ -501,7 +501,7 @@ direct or indirect pointers. The volume is malformed or inconsistent.
 The filesystem behavior is jointly defined by these files:
 
 - `tools/mkext2.c` — host-side ext2 image builder
-- `src/drivers/ata.[ch]` — ATA PIO sector reads
+- `src/drivers/ata.[ch]` — ATA sector reads/writes, DMA setup, and PIO fallback
 - `src/drivers/ext2.[ch]` — ext2 runtime driver
 - `src/kernel/vfs.[ch]` — kernel VFS shim for ext2-backed file handles and path operations
 - `Makefile` — image layout, kernel padding, ext2 LBA patch
