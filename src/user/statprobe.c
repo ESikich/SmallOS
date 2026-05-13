@@ -24,19 +24,19 @@ void _start(int argc, char** argv) {
     (void)argv;
 
     u_puts("statprobe start\n");
-    check_stat("demo_dir", "apps/demo");
-    check_stat("demo_hello", "apps/demo/hello.elf");
-    check_stat("tests_dir", "apps/tests");
+    check_stat("demo_dir", "usr/bin");
+    check_stat("demo_hello", "usr/bin/hello.elf");
+    check_stat("tests_dir", "usr/libexec/tests");
     {
         struct stat st;
-        if (stat("apps/./tests/../demo", &st) == 0 && S_ISDIR(st.st_mode)) {
+        if (stat("usr/./libexec/../bin", &st) == 0 && S_ISDIR(st.st_mode)) {
             u_puts("statprobe posix dir: PASS\n");
         } else {
             u_puts("statprobe posix dir: FAIL\n");
             sys_exit(1);
         }
     }
-    if (access("apps/demo/hello.elf", R_OK) == 0 && access("apps/demo/nope.elf", F_OK) < 0) {
+    if (access("usr/bin/hello.elf", R_OK) == 0 && access("usr/bin/nope.elf", F_OK) < 0) {
         u_puts("statprobe access: PASS\n");
     } else {
         u_puts("statprobe access: FAIL\n");

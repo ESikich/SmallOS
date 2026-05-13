@@ -102,19 +102,22 @@ void _start(int argc, char** argv) {
     (void)argc;
     (void)argv;
 
-    static const char a_file[] = "PREEMPA.TXT";
-    static const char b_file[] = "PREEMPB.TXT";
+    static const char temp_dir[] = "var/tmp";
+    static const char a_file[] = "var/tmp/PREEMPA.TXT";
+    static const char b_file[] = "var/tmp/PREEMPB.TXT";
 
     u_puts("preempt_test start\n");
 
-    char* a_argv[] = { "apps/tests/spinwkr", "late", (char*)a_file, "30", 0 };
-    char* b_argv[] = { "apps/tests/spinwkr", "early", (char*)b_file, "30", 0 };
+    sys_mkdir(temp_dir, 0);
 
-    if (sys_exec("apps/tests/spinwkr", 4, a_argv) < 0) {
+    char* a_argv[] = { "usr/libexec/tests/spinwkr", "late", (char*)a_file, "30", 0 };
+    char* b_argv[] = { "usr/libexec/tests/spinwkr", "early", (char*)b_file, "30", 0 };
+
+    if (sys_exec("usr/libexec/tests/spinwkr", 4, a_argv) < 0) {
         u_puts("preempt_test: launch A failed\n");
         sys_exit(1);
     }
-    if (sys_exec("apps/tests/spinwkr", 4, b_argv) < 0) {
+    if (sys_exec("usr/libexec/tests/spinwkr", 4, b_argv) < 0) {
         u_puts("preempt_test: launch B failed\n");
         sys_exit(1);
     }

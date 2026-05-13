@@ -5,8 +5,8 @@
  *
  * This is the first building block for a future in-OS compiler: it
  * writes a compiler-style output file to the ext2 root directory and
- * mirrors the same artifact under apps/demo/ so the seeded image keeps
- * its demo content grouped together.
+ * mirrors the same artifact under /tmp so there is also a nested
+ * writable destination in the standard scratch area.
  */
 
 static int bytes_equal(const char* a, const char* b, unsigned int n) {
@@ -25,10 +25,19 @@ void _start(int argc, char** argv) {
         "MOV AX, 1\n"
         "ADD AX, 2\n"
         "INT 0x80\n";
-    static const char file_name[] = "compiler.out";
-    static const char nested_file_name[] = "apps/demo/compiler.out";
+    static const char temp_dir_name[] = "var/tmp";
+    static const char nested_dir_name[] = "var/tmp/WORK";
+    static const char file_name[] = "var/tmp/compiler.out";
+    static const char nested_file_name[] = "var/tmp/WORK/compiler.out";
 
     u_puts("compiler_demo start\n");
+
+    /*
+     * Seeded empty directories are currently awkward write targets, so create
+     * a fresh scratch directory first and use that for the nested-path check.
+     */
+    sys_mkdir(temp_dir_name, 0);
+    sys_mkdir(nested_dir_name, 0);
 
     if (sys_writefile(file_name, artifact, str_len(artifact)) < 0) {
         u_puts("writefile failed\n");

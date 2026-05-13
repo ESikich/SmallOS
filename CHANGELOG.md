@@ -30,7 +30,7 @@
   * Changed `SYS_EXEC` to return the spawned child pid on success and claim the child for parent-side `SYS_WAITPID` collection.
   * Added `SYS_GETPID`, `SYS_WAITPID`, and `SYS_KILL`, plus POSIX-shaped `getpid()`, `waitpid()`, `kill()`, and `sys/wait.h` status macros in the user runtime.
   * Moved automatic zombie cleanup onto the process registry, so unclaimed `runelf_nowait` children are reaped even after the scheduler dequeues them.
-  * Added `apps/tests/waitprobe.elf` coverage for pid return, blocking wait, `WNOHANG`, kill status, and `ECHILD`.
+  * Added `usr/libexec/tests/waitprobe.elf` coverage for pid return, blocking wait, `WNOHANG`, kill status, and `ECHILD`.
 * **Queued input event syscall** (`src/kernel/input.*`, `src/kernel/syscall.c`, `src/drivers/keyboard.c`, `src/drivers/mouse.c`, `src/user/inputprobe.c`)
   * Added a kernel input queue above the raw keyboard and PS/2 mouse drivers, preserving the existing `SYS_MOUSE_READ` accumulator while exposing decoded key and mouse packet events through `SYS_INPUT_READ`.
   * Added blocking and nonblocking reads, foreground queue clearing, stale waiter cleanup on process teardown/termination, and `inputprobe` regression coverage with host-injected keyboard input.
@@ -49,7 +49,7 @@
 ### Added
 
 * **Bad pointer regression probe** (`src/user/badptrprobe.c`, `tests/elfs/badptrprobe.py`, `Makefile`)
-  * Added `apps/tests/badptrprobe.elf` to verify unmapped user pointers return `-EFAULT`, oversized poll/epoll requests return `-EINVAL`, and the shell remains alive after rejected syscall inputs.
+  * Added `usr/libexec/tests/badptrprobe.elf` to verify unmapped user pointers return `-EFAULT`, oversized poll/epoll requests return `-EINVAL`, and the shell remains alive after rejected syscall inputs.
 
 ## [Previous] — Disk usage graphics utility
 
@@ -68,10 +68,10 @@
   * Added a small XRGB8888 graphics layer over the display syscalls with display acquire/release, a full-screen backbuffer, clear/pixel/rect/blit helpers, and one-shot present.
 
 * **Framebuffer demo app** (`src/user/plasma.c`, `Makefile`)
-  * Added `apps/demo/plasma.elf`, an animated framebuffer demo that uses the graphics helper and exits after a fixed frame count or a keypress.
+  * Added `usr/bin/plasma.elf`, an animated framebuffer demo that uses the graphics helper and exits after a fixed frame count or a keypress.
 
 * **Interactive Mandelbrot demo and mouse input** (`src/user/mandel.c`, `src/drivers/mouse.c`, `src/kernel/uapi_input.h`)
-  * Added `apps/demo/mandel.elf` with keyboard pan/zoom/reset/quit controls and a software cursor.
+  * Added `usr/bin/mandel.elf` with keyboard pan/zoom/reset/quit controls and a software cursor.
   * Added a minimal PS/2 mouse path: IRQ12 packet decoding, accumulated relative deltas/buttons, and `SYS_MOUSE_READ` for user graphics demos.
 
 ### Changed
@@ -208,7 +208,7 @@
 
 * **Shell job control** (`src/shell/commands.c`, `README.md`, `docs/`)
   * Added `bg` / `runelf_bg` for reattachable background ELF launches.
-  * Added `jobs`, `fg <jobid>`, and `kill <jobid>` so long-running services such as `apps/services/ftpd` can keep the shell usable and still be inspected, reattached, or stopped later.
+  * Added `jobs`, `fg <jobid>`, and `kill <jobid>` so long-running services such as `usr/sbin/ftpd` can keep the shell usable and still be inspected, reattached, or stopped later.
   * Added Ctrl+Z detach while a shell-owned job is foregrounded, returning it to the background without killing it.
   * Left `runelf_nowait` as the existing fire-and-forget path whose unclaimed exits are handled by the reaper task.
 
@@ -287,11 +287,11 @@
 
 * **Generic user CRT entry adapter** (`src/user/user_crt0.c`, `Makefile`, `docs/build.md`, `docs/execution.md`, `docs/architecture.md`)
   * Hosted-ish user programs can now link `user_crt0` and define `main(argc, argv)` while the kernel launch ABI remains `_start(argc, argv)`.
-  * `tools/tcc.elf` now uses that generic CRT adapter and runs TinyCC's normal hosted CLI `main()` path.
+  * `usr/bin/tcc.elf` now uses that generic CRT adapter and runs TinyCC's normal hosted CLI `main()` path.
   * `process_set_args()` now owns the process-side argc/argv copy, guarantees `argv[argc] == NULL`, and is covered by a CRT-linked `crtprobe` regression.
 
 * **FTP smoke harness** (`Makefile`, `tools/ftp_smoke.py`, `README.md`, `docs/build.md`, `docs/execution.md`)
-  * Added `make ftp-smoke`, which boots QEMU with FTP control and passive data host forwarding, launches `apps/services/ftpd`, and verifies login, `LIST`, `RETR`, `STOR`, and upload cleanup.
+  * Added `make ftp-smoke`, which boots QEMU with FTP control and passive data host forwarding, launches `usr/sbin/ftpd`, and verifies login, `LIST`, `RETR`, `STOR`, and upload cleanup.
   * Expanded the smoke to cover bad auth/path replies, uploaded-file readback, nested directory upload/delete cleanup, and `RMD`.
   * Documented that passive FTP needs both guest port `2121` and guest port `30000` forwarded when using QEMU user networking.
 
@@ -321,8 +321,8 @@
 
 * **Socket ABI + user-space TCP services** (`src/kernel/syscall.c`, `src/drivers/tcp.c`, `src/user/user_posix.c`, `src/user/tcpecho.c`, `src/user/ftpd.c`)
   * The passive socket ABI now reaches a real user-space echo server through QEMU host forwarding
-  * `apps/services/tcpecho.elf` now serves as the end-to-end smoke test for the TCP path
-  * `apps/services/ftpd.elf` runs the FTP server package session logic as a normal guest ELF
+  * `usr/sbin/tcpecho.elf` now serves as the end-to-end smoke test for the TCP path
+  * `usr/sbin/ftpd.elf` runs the FTP server package session logic as a normal guest ELF
 
 ### Changed
 
@@ -389,7 +389,7 @@
   * Keeps `SYS_WRITEFILE` as the historical root-only compatibility path
 
 * **Compiler bootstrap coverage** (`src/user/compiler_demo.c`, `tests/elfs/compiler_demo.py`, `src/user/ptrguard.c`, `tests/elfs/ptrguard.py`)
-  * `compiler_demo` now writes and reads back `apps/demo/compiler.out` in addition to the root-level artifact
+  * `compiler_demo` now writes and reads back `/var/tmp/compiler.out` plus `/var/tmp/WORK/compiler.out`
   * Pointer-validation regression now covers the new path-aware write syscall
 
 ### Changed

@@ -5,7 +5,7 @@ void _start(int argc, char** argv) {
     (void)argv;
 
     char* child_argv[] = {
-        "apps/tests/spinwkr",
+        "usr/libexec/tests/spinwkr",
         "late",
         "pgrp_child.txt",
         "120",
@@ -13,7 +13,7 @@ void _start(int argc, char** argv) {
     };
 
     u_puts("pgrpprobe start\n");
-    int rc = sys_exec("apps/tests/spinwkr", 4, child_argv);
+    int rc = sys_exec("usr/libexec/tests/spinwkr", 4, child_argv);
     if (rc < 0) {
         u_puts("pgrpprobe child launch failed\n");
         sys_exit(1);

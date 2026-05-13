@@ -6,7 +6,7 @@ CASES = [
         name="fsread_path",
         must_contain=[
             "shelltest: fsread_path begin",
-            "fsread: apps/demo/hello.elf",
+            "fsread: usr/bin/hello.elf",
             "bytes",
             "shelltest: fsread_path end",
         ],

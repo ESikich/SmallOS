@@ -33,7 +33,7 @@ void _start(int argc, char** argv) {
         sys_exit(1);
     }
 
-    if (u_chdir("apps/demo") < 0) {
+    if (u_chdir("usr/bin") < 0) {
         u_puts("cwdprobe chdir: FAIL\n");
         sys_exit(1);
     }
@@ -45,7 +45,7 @@ void _start(int argc, char** argv) {
     u_puts("cwdprobe cwd=");
     u_puts(cwd);
     u_putc('\n');
-    if (!streq(cwd, "/apps/demo")) {
+    if (!streq(cwd, "/usr/bin")) {
         u_puts("cwdprobe demo cwd mismatch\n");
         sys_exit(1);
     }
@@ -62,7 +62,7 @@ void _start(int argc, char** argv) {
 
     {
         char resolved[128];
-        if (!realpath("../demo/./hello.elf", resolved) || !streq(resolved, "/apps/demo/hello.elf")) {
+        if (!realpath("./hello.elf", resolved) || !streq(resolved, "/usr/bin/hello.elf")) {
             u_puts("cwdprobe realpath relative: FAIL\n");
             sys_exit(1);
         }

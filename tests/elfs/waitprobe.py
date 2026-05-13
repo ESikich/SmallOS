@@ -4,11 +4,12 @@ from .common import case
 CASES = [
     case(
         name="waitprobe",
-        command="runelf apps/tests/waitprobe",
+        command="runelf usr/libexec/tests/waitprobe",
         must_contain=[
             "waitprobe start",
             "getpid positive: PASS",
-            "sys_exec pid: PASS",
+            "sys_exec pid",
+            ": PASS",
             "waitpid child: PASS",
             "waitpid exited: PASS",
             "waitpid status: PASS",

@@ -38,7 +38,7 @@ Verification rule:
 
 ```text
 meminfo
-runelf apps/demo/hello
+runelf usr/bin/hello
 meminfo
 ```
 

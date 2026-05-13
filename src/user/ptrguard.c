@@ -91,11 +91,11 @@ void _start(int argc, char** argv) {
 
     check_int("sys_writefile_path invalid buf",
               -EFAULT,
-              sys_writefile_path("apps/demo/ptrguard.txt", (const char*)0x1234, 1));
+              sys_writefile_path("usr/bin/ptrguard.txt", (const char*)0x1234, 1));
 
     {
         /* A valid fd should still work, but bad read buffers must fail. */
-        int fd = sys_open("apps/demo/hello.elf");
+        int fd = sys_open("usr/bin/hello.elf");
         check_true("sys_open hello", fd >= 3);
         if (fd >= 3) {
             check_int("sys_fread invalid buf",
@@ -110,7 +110,7 @@ void _start(int argc, char** argv) {
         char* bad_argv[] = { (char*)0x1234, 0 };
         check_int("sys_exec invalid argv",
                   -EFAULT,
-                  sys_exec("apps/demo/hello", 1, bad_argv));
+                  sys_exec("usr/bin/hello", 1, bad_argv));
     }
 
     u_puts("checks = ");

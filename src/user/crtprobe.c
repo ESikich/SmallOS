@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
 
     u_puts("=== crtprobe begin ===\n");
     check("crtprobe argc", argc == 4, &failures);
-    check("crtprobe argv[0]", argc > 0 && str_eq(argv[0], "apps/tests/crtprobe.elf"), &failures);
+    check("crtprobe argv[0]", argc > 0 && str_eq(argv[0], "usr/libexec/tests/crtprobe.elf"), &failures);
     check("crtprobe argv[1]", argc > 1 && str_eq(argv[1], "alpha"), &failures);
     check("crtprobe argv[2]", argc > 2 && str_eq(argv[2], "nested/path"), &failures);
     check("crtprobe long arg",

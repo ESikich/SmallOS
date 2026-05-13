@@ -87,7 +87,7 @@ and variable-length arrays must pass byte-count overflow checks.
 
 Invalid user pointers return `-EFAULT`. Oversized counts that would wrap their
 byte length, such as huge `poll()` / `epoll_wait()` arrays, return `-EINVAL`.
-The `apps/tests/badptrprobe` regression covers unmapped pointers, buffers and
+The `usr/libexec/tests/badptrprobe` regression covers unmapped pointers, buffers and
 output structs that cross from a mapped page into an unmapped page, and wrapped
 array counts.
 
@@ -251,7 +251,7 @@ int sys_getcwd(char* buf, uint32_t size);
 ```
 
 Copies the calling process's current working directory into `buf` as an
-absolute display path such as `/` or `/apps/demo`. Returns `0` on success or
+absolute display path such as `/` or `/usr/bin`. Returns `0` on success or
 a negative errno if the user buffer is invalid or too small.
 
 ---
@@ -818,7 +818,7 @@ int sys_writefile_path(const char* path, const char* buf, uint32_t len);
 
 Creates or overwrites an ext2 file at an arbitrary path. Returns `0` on success or a negative errno on failure.
 
-This is the preferred persistence primitive for build tools and compilers because it can emit directly into nested directories such as `apps/demo/` and `apps/tests/`. The kernel validates both the path and the byte range before calling into the VFS path-write wrapper.
+This is the preferred persistence primitive for build tools and compilers because it can emit directly into nested writable directories such as `/var/tmp/WORK/` or `/var/tmp/samples/`. The kernel validates both the path and the byte range before calling into the VFS path-write wrapper.
 
 ---
 

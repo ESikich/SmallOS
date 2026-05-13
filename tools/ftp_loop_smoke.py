@@ -298,7 +298,7 @@ def run_ftp_loop_smoke(args):
     try:
         with open(args.serial, "r", encoding="utf-8", errors="replace") as log:
             offset = wait_for_prompt(log, args.timeout)
-            send_text(monitor, "runelf_nowait apps/services/ftpd")
+            send_text(monitor, "runelf_nowait usr/sbin/ftpd")
             send_key(monitor, "ret")
             offset = wait_for_log(log, offset, "ftpd: listening", args.timeout)
             offset = capture_netinfo(monitor, log, offset, args.timeout, "before")
@@ -334,7 +334,7 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=2121)
     parser.add_argument("--iterations", type=int, default=5)
-    parser.add_argument("--retr-path", default="apps/demo/hello.elf")
+    parser.add_argument("--retr-path", default="usr/bin/hello.elf")
     parser.add_argument("--stor-prefix", default="LOOP")
     parser.add_argument("--payload-size", type=int, default=96)
     parser.add_argument("--timeout", type=float, default=120.0)

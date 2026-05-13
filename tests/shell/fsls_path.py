@@ -6,7 +6,7 @@ CASES = [
         name="fsls_path",
         must_contain=[
             "shelltest: fsls_path begin",
-            "ext2 directory: apps/demo",
+            "ext2 directory: usr/bin",
             "hello.elf",
             "shelltest: fsls_path end",
         ],

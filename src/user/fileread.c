@@ -4,7 +4,7 @@
  * fileread — end-to-end test for SYS_OPEN / SYS_FREAD / SYS_CLOSE.
  *
  * Opens a nested file from the ext2 partition
- * (apps/demo/hello.elf), reads the first 16 bytes, dumps them as hex,
+ * (usr/bin/hello.elf), reads the first 16 bytes, dumps them as hex,
  * reads the rest to confirm EOF behaviour, then closes the fd.  Also
  * tests double-close and bad-fd error returns.
  *
@@ -13,7 +13,7 @@
  *   fd close: ok
  *
  * Usage:
- *   runelf apps/tests/fileread
+ *   runelf usr/libexec/tests/fileread
  */
 
 static void put_hex_byte(unsigned char b) {
@@ -30,7 +30,7 @@ void _start(int argc, char** argv) {
     u_puts("-------------\n");
 
     /* --- open --- */
-    int fd = sys_open("apps/demo/hello.elf");
+    int fd = sys_open("usr/bin/hello.elf");
     if (fd < 0) {
         u_puts("open failed\n");
         sys_exit(1);

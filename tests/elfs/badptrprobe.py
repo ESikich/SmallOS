@@ -4,7 +4,7 @@ from .common import case
 CASES = [
     case(
         name="badptrprobe",
-        command="runelf apps/tests/badptrprobe",
+        command="runelf usr/libexec/tests/badptrprobe",
         must_contain=[
             "badptrprobe start",
             "write unmapped buffer: PASS",

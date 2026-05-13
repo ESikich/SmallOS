@@ -4,7 +4,7 @@ from .common import case
 CASES = [
     case(
         name="dirprobe",
-        command="runelf apps/tests/dirprobe",
+        command="runelf usr/libexec/tests/dirprobe",
         must_contain=[
             "dirprobe start",
             "dir root: PASS",

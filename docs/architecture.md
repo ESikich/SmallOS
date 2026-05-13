@@ -429,8 +429,8 @@ helper in `src/user/gfx.c` queries display geometry, requires XRGB8888/32 bpp,
 acquires exclusive graphics mode, allocates a full-screen user backbuffer, and
 presents that buffer with one `SYS_DISPLAY_BLIT`. `bmpview` uses this path for
 scaled/centered BMP presentation, `bin/diskview` uses it for an ext2 used/free
-allocation map, and `apps/demo/plasma` uses it as a simple animated graphics
-smoke demo. `apps/demo/mandel` uses the same helper for an interactive
+allocation map, and `usr/bin/plasma` uses it as a simple animated graphics
+smoke demo. `usr/bin/mandel` uses the same helper for an interactive
 Mandelbrot view and polls `SYS_MOUSE_READ` for cursor deltas.
 
 ## Shell
@@ -558,8 +558,8 @@ PMM-frame access API.
 
 A 16 MB ext2 volume is appended to the disk image directly after the kernel.
 The seeded tree uses normal ext2 native directory entries under `/bin`,
-`/apps/demo`, `/apps/tests`, `/apps/services`, and `/tools`, plus root-level
-sample C sources used by the guest TinyCC smoke tests.
+`/usr/bin`, `/usr/libexec/tests`, `/usr/sbin`, `/usr/share/examples/tinycc`,
+`/etc`, `/var`, and `/tmp`.
 
 Built by `tools/mkext2.c` — a host C tool with no external filesystem tooling
 required. The tool writes the ext2 superblock, group descriptor, block and
@@ -614,7 +614,7 @@ ata_read_sectors(lba, count, buf)
 # ELF Execution Model
 
 ```text
-runelf apps/demo/hello arg1
+runelf usr/bin/hello arg1
   ↓
 vfs_load_file("hello", &size)
   → backend lookup, follow block chain, load into s_load_buf
@@ -764,7 +764,7 @@ ATA disk driver — 28-bit LBA reads/writes from primary IDE channel (0x1F0), wi
 ext2 filesystem — ELF programs loaded from 16 MB ext2 partition on disk
 run/runimg infrastructure removed — `runelf` is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
 interactive shell with meminfo / memmap / ataread / fsls / fsread / mkdir / rmdir / runelf commands
-guest TinyCC compiler path — `tools/tcc.elf` runs inside SmallOS through `user_crt0` and TinyCC's normal `main`, then compiles guest C samples during `make test`
+guest TinyCC compiler path — `usr/bin/tcc.elf` runs inside SmallOS through `user_crt0` and TinyCC's normal `main`, then compiles guest C samples during `make test`
 ```
 
 Foundation for:

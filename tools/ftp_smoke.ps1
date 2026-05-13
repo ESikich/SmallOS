@@ -1,7 +1,7 @@
 param(
     [string]$FtpHost = "127.0.0.1",
     [int]$FtpPort = 2121,
-    [string]$RetrPath = "apps/demo/hello.elf",
+    [string]$RetrPath = "usr/bin/hello.elf",
     [string]$StorPath = "PS_SMOKE.TXT",
     [string]$StorPayload = "ftp smoke payload`r`n",
     [int]$TimeoutSeconds = 10

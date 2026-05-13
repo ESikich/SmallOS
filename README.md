@@ -47,9 +47,9 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * **`SYS_WRITEFILE`** — user process creates or overwrites a root-directory ext2 file in one shot
 * **`SYS_WRITEFILE_PATH`** — user process creates or overwrites an ext2 file at any nested path
 * **ATA disk driver** — polls the primary IDE channel (`0x1F0`) and enables PCI IDE bus-master DMA when available, with PIO fallback for compatibility
-* **ext2 partition** — 16 MB ext2 volume appended to the disk image containing `/bin`, `apps/`, `tools/`, and sample sources; built by `tools/mkext2.c` with no external dependencies; readable with nested directory paths, writable at runtime through the kernel VFS shim for root-directory files and nested paths
+* **ext2 partition** — 16 MB ext2 volume appended to the disk image containing `/bin`, `/etc`, `/tmp`, `/usr`, and `/var`; built by `tools/mkext2.c` with no external dependencies; readable with nested directory paths and writable at runtime through the kernel VFS shim
 * **TCP service task** — kernel task that drains e1000 RX, dispatches ARP/IPv4/TCP frames, owns passive listeners plus a PMM-backed global 4-tuple connection table, manages lazy PMM-backed RX/TX rings for accepted streams, handles control, buffered-payload, and passive-FIN retransmit/idle timers, and wakes socket wait queues; socket readiness also drains queued NIC descriptors so user-space services are not paced by timer ticks
-* **Guest TCP apps** — `apps/services/tcpecho.elf` handles parallel echo clients for socket stress, `apps/services/sockeof.elf` pins down peer-close/read EOF semantics, `apps/services/ftpd.elf` runs the FTP server package session logic, and `apps/services/cserve.elf` runs the cserver HTTP package as normal user-space ELFs
+* **Guest TCP apps** — `usr/sbin/tcpecho.elf` handles parallel echo clients for socket stress, `usr/sbin/sockeof.elf` pins down peer-close/read EOF semantics, `usr/sbin/ftpd.elf` runs the FTP server package session logic, and `usr/sbin/cserve.elf` runs the cserver HTTP package as normal user-space ELFs
 
 ---
 
@@ -78,12 +78,13 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 ├── linker.ld
 ```
 
-The seeded ext2 image keeps shipped programs under `apps/demo/` and
-`apps/tests/`, with TinyCC under `tools/`. `tools/tcc.elf` is built from the
-TinyCC submodule sources, links the generic SmallOS CRT adapter, and runs
-TinyCC's normal `main(argc, argv)` path inside the freestanding guest runtime.
-Its sample sources live at the image root for the shell demo that moves them
-into `samples/`.
+The seeded ext2 image keeps core command ELFs under `/bin/`, user-facing apps
+and TinyCC under `/usr/bin/`, regression ELFs under `/usr/libexec/tests/`,
+services under `/usr/sbin/`, sample TinyCC inputs under
+`/usr/share/examples/tinycc/`, config under `/etc/`, and mutable runtime
+artifacts under `/var/tmp/`. `usr/bin/tcc.elf` is built from the TinyCC
+submodule sources, links the generic SmallOS CRT adapter, and runs TinyCC's
+normal `main(argc, argv)` path inside the freestanding guest runtime.
 
 ---
 
@@ -193,8 +194,8 @@ qemu-system-i386 \
   -daemonize -pidfile /tmp/smallos.pid
 ```
 
-Then run `bg apps/services/tcpecho`, `bg apps/services/sockeof`, or
-`bg apps/services/ftpd` in the guest shell and connect from the host to the
+Then run `bg usr/sbin/tcpecho`, `bg usr/sbin/sockeof`, or
+`bg usr/sbin/ftpd` in the guest shell and connect from the host to the
 forwarded service port. Use `jobs` to list reattachable background programs,
 `fg <jobid>` to wait on one in the foreground, Ctrl+Z to return a foregrounded
 job to the background, and `kill <jobid>` to stop a long-running service.
@@ -202,17 +203,17 @@ FTP passive transfers also need the passive data port, currently guest
 `30000`, forwarded to the host.
 
 `make socket-eof-smoke` boots QEMU with host forwarding for
-`apps/services/sockeof`, sends a 3072-byte multi-segment payload plus a TCP
+`usr/sbin/sockeof`, sends a 3072-byte multi-segment payload plus a TCP
 half-close from the host, and verifies that guest `poll()`/`read()` observe EOF
 after the payload before the guest writes back `PASS`, shuts down its write
 side, and rejects later writes.
 
 `make socket-parallel-smoke` boots QEMU with host forwarding for
-`apps/services/tcpecho`, opens 8 parallel host clients by default, verifies
+`usr/sbin/tcpecho`, opens 8 parallel host clients by default, verifies
 echoed payloads, and captures `netinfo` before, during, and after the run.
 
 `make ftp-smoke` runs the FTP path end to end: it boots QEMU with control and
-passive-data host forwarding, starts `apps/services/ftpd`, logs in as
+passive-data host forwarding, starts `usr/sbin/ftpd`, logs in as
 `ftp`/`ftp`, checks negative replies, and verifies `LIST`, `RETR`, `STOR`
 readback, `DELE`, nested directory cleanup, and `RMD`.
 
@@ -220,7 +221,7 @@ readback, `DELE`, nested directory cleanup, and `RMD`.
 sessions through passive `LIST`, `RETR`, and `STOR` cycles.
 
 `make cserve-smoke` boots QEMU with host forwarding for
-`apps/services/cserve.elf`, fetches the static fixture with browser-shaped
+`usr/sbin/cserve.elf --config /etc/cserve.ini`, fetches the static fixture with browser-shaped
 HTTP requests, holds 32 keep-alive clients by default, exercises one slow
 reader, checks a 404, and captures `netinfo`.
 
@@ -301,34 +302,34 @@ Seeded ext2 layout:
 - command-style apps live under `/bin/` (`echo`, `about`, `uptime`, `halt`, `reboot`, `pwd`, `cat`, `fsread`, `ls`, `fsls`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, `edit`, `diskview`)
 - `bin/bmpview` - load a BMP, render it through the userland graphics backbuffer, and present it to the framebuffer
 - `bin/diskview` - show ext2 used/free space as a framebuffer allocation map
-- `apps/demo/hello` - print argc/argv and tick count
-- `apps/demo/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
-- `apps/demo/mandel` - interactive framebuffer Mandelbrot demo with keyboard pan/zoom and PS/2 mouse cursor movement
-- `apps/tests/ticks` - print the current tick count
-- `apps/tests/args` - print argc and argv
-- `apps/tests/runelf_test` - verify ELF loading, syscalls, and stack setup
-- `apps/tests/readline` - interactive SYS_READ demo
-- `apps/tests/exec_test` - exercise SYS_EXEC semantics
-- `apps/tests/waitprobe` - exercise userland getpid/waitpid/kill lifecycle
-- `apps/tests/fileread` - exercise VFS-backed file handles via SYS_OPEN / SYS_FREAD / SYS_CLOSE
-- `apps/tests/compiler_demo` - exercise SYS_WRITEFILE, SYS_WRITEFILE_PATH, and readback
-- `apps/tests/heapprobe` - exercise malloc/free/realloc/calloc
-- `apps/tests/statprobe` - exercise SYS_STAT and path probing
-- `apps/tests/fileprobe` - exercise small file wrapper helpers
-- `apps/tests/cwdprobe` - exercise process cwd and relative path syscalls
-- `apps/tests/stdioprobe` - exercise stdio EOF/error state and fflush
-- `apps/tests/dirprobe` - exercise opendir/readdir/closedir
-- `apps/tests/errnoprobe` - exercise raw syscall errors and POSIX errno wrappers
-- `apps/tests/badptrprobe` - exercise unmapped user pointers, page-crossing buffers/structs, and wrapped syscall byte counts
-- `apps/tests/sleep_test` - exercise SYS_SLEEP semantics
-- `apps/tests/ptrguard` - exercise syscall pointer validation
-- `apps/tests/spinwkr` - helper used by the preemption regression
-- `apps/tests/preempt_test` - prove timer-driven preemption between runnable tasks
-- `apps/tests/crtprobe` - verify `main(argc, argv)` through `user_crt0`
-- `apps/tests/inputprobe` - verify queued keyboard input events and pointer validation
-- `apps/tests/fault` - fault probe (ud/gp/de/br/pf)
-- `tools/tcc.elf` in `tools/` - SmallOS-hosted TinyCC compiler binary
-- `samples/tccmath.c`, `samples/tccagg.c`, `samples/tcctree.c`, `samples/tccmini.c` at the image root for the guest compiler demo
+- `usr/bin/hello` - print argc/argv and tick count
+- `usr/bin/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
+- `usr/bin/mandel` - interactive framebuffer Mandelbrot demo with keyboard pan/zoom and PS/2 mouse cursor movement
+- `usr/libexec/tests/ticks` - print the current tick count
+- `usr/libexec/tests/args` - print argc and argv
+- `usr/libexec/tests/runelf_test` - verify ELF loading, syscalls, and stack setup
+- `usr/libexec/tests/readline` - interactive SYS_READ demo
+- `usr/libexec/tests/exec_test` - exercise SYS_EXEC semantics
+- `usr/libexec/tests/waitprobe` - exercise userland getpid/waitpid/kill lifecycle
+- `usr/libexec/tests/fileread` - exercise VFS-backed file handles via SYS_OPEN / SYS_FREAD / SYS_CLOSE
+- `usr/libexec/tests/compiler_demo` - exercise SYS_WRITEFILE, SYS_WRITEFILE_PATH, and readback under `/var/tmp`
+- `usr/libexec/tests/heapprobe` - exercise malloc/free/realloc/calloc
+- `usr/libexec/tests/statprobe` - exercise SYS_STAT and path probing
+- `usr/libexec/tests/fileprobe` - exercise small file wrapper helpers
+- `usr/libexec/tests/cwdprobe` - exercise process cwd and relative path syscalls
+- `usr/libexec/tests/stdioprobe` - exercise stdio EOF/error state and fflush
+- `usr/libexec/tests/dirprobe` - exercise opendir/readdir/closedir
+- `usr/libexec/tests/errnoprobe` - exercise raw syscall errors and POSIX errno wrappers
+- `usr/libexec/tests/badptrprobe` - exercise unmapped user pointers, page-crossing buffers/structs, and wrapped syscall byte counts
+- `usr/libexec/tests/sleep_test` - exercise SYS_SLEEP semantics
+- `usr/libexec/tests/ptrguard` - exercise syscall pointer validation
+- `usr/libexec/tests/spinwkr` - helper used by the preemption regression
+- `usr/libexec/tests/preempt_test` - prove timer-driven preemption between runnable tasks
+- `usr/libexec/tests/crtprobe` - verify `main(argc, argv)` through `user_crt0`
+- `usr/libexec/tests/inputprobe` - verify queued keyboard input events and pointer validation
+- `usr/libexec/tests/fault` - fault probe (ud/gp/de/br/pf)
+- `usr/bin/tcc.elf` - SmallOS-hosted TinyCC compiler binary
+- `usr/share/examples/tinycc/tccmath.c`, `tccagg.c`, `tcctree.c`, `tccmini.c` - guest compiler demo inputs
 
 `help` renders the shell command list from the command table with the same short descriptions.
 
@@ -369,7 +370,7 @@ kernel_main()
  → sti
  → sched_start(shell)    switch from boot stack into shell task
 
-runelf apps/demo/hello
+runelf usr/bin/hello
  → process_create()      allocate process_t from PMM
  → process_pd_create()   fresh page directory (PMM), kernel entries shared
  → map ELF + stack       pmm_alloc_frame() per page

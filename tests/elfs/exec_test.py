@@ -4,13 +4,13 @@ from .common import case
 CASES = [
     case(
         name="exec_test",
-        command="runelf apps/tests/exec_test alpha beta",
+        command="runelf usr/libexec/tests/exec_test alpha beta",
         must_contain=[
             "[1] exec_test alive",
-            "[2] calling sys_exec apps/demo/hello",
+            "[2] calling sys_exec usr/bin/hello",
             "[3] sys_exec returned pid ",
             'hello from elf via int 0x80',
-            'argv[0] = "apps/demo/hello"',
+            'argv[0] = "usr/bin/hello"',
             "[3b] sys_waitpid returned ",
             "[3c] child status 0",
             "[5] bad name returned -2",

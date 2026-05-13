@@ -4,7 +4,7 @@ from .common import case
 CASES = [
     case(
         name="fileprobe",
-        command="runelf apps/tests/fileprobe alpha beta",
+        command="runelf usr/libexec/tests/fileprobe alpha beta",
         must_contain=[
             "fileprobe start",
             "elf magic: PASS",

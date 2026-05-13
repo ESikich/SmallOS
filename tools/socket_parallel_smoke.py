@@ -227,7 +227,7 @@ def run_socket_parallel_smoke(args):
     try:
         with open(args.serial, "r", encoding="utf-8", errors="replace") as log:
             offset = wait_for_prompt(log, args.timeout)
-            send_text(monitor, "runelf_nowait apps/services/tcpecho")
+            send_text(monitor, "runelf_nowait usr/sbin/tcpecho")
             send_key(monitor, "ret")
             offset, _ = wait_for_log(log, offset, "tcpecho: listening", args.timeout)
 

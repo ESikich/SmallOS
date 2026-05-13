@@ -4,7 +4,7 @@ from .common import case
 CASES = [
     case(
         name="stdioprobe",
-        command="runelf apps/tests/stdioprobe",
+        command="runelf usr/libexec/tests/stdioprobe",
         must_contain=[
             "stdioprobe start",
             "stdio eof: PASS",

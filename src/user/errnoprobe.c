@@ -55,7 +55,7 @@ void _start(int argc, char** argv) {
 
     errno = 0;
     {
-        int dfd = open("apps", O_RDONLY);
+        int dfd = open("usr", O_RDONLY);
         check_int("open directory", 0, dfd >= 0 ? 0 : -1);
         if (dfd >= 0) {
             struct stat st;
@@ -76,7 +76,7 @@ void _start(int argc, char** argv) {
     }
 
     errno = 0;
-    check_errno("chdir file", ENOTDIR, chdir("apps/demo/hello.elf"));
+    check_errno("chdir file", ENOTDIR, chdir("usr/bin/hello.elf"));
 
     errno = 0;
     {
@@ -94,7 +94,7 @@ void _start(int argc, char** argv) {
         int count = 0;
         int fd;
         while (count < 128) {
-            fd = open("apps/demo/hello.elf", O_RDONLY);
+            fd = open("usr/bin/hello.elf", O_RDONLY);
             if (fd < 0) {
                 break;
             }

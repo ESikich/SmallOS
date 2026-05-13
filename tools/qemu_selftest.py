@@ -343,7 +343,7 @@ def run_ctrl_c_regression(sock, log, start_offset, deadline, echo=True, report=T
 
     if echo:
         tee_stdout("\n[ctrl-c-regression] ")
-    send_text(sock, "runelf apps/tests/spinwkr late ctrlc.txt 500")
+    send_text(sock, "runelf usr/libexec/tests/spinwkr late ctrlc.txt 500")
     send_key(sock, "ret")
     time.sleep(0.5)
     send_key(sock, "ctrl-c")
@@ -391,7 +391,7 @@ def run_signalfd_regression(sock, log, start_offset, deadline, echo=True, report
 
     if echo:
         tee_stdout("\n[signalfd-regression] ")
-    send_text(sock, "runelf apps/tests/signalfdprobe")
+    send_text(sock, "runelf usr/libexec/tests/signalfdprobe")
     send_key(sock, "ret")
 
     sent_interrupt = False
@@ -448,7 +448,7 @@ def run_process_group_ctrl_c_regression(sock, log, start_offset, deadline, echo=
     if echo:
         tee_stdout("\n[pgrp-ctrl-c-regression] ")
     clear_prompt_line(sock)
-    send_text(sock, "runelf apps/tests/pgrpprobe")
+    send_text(sock, "runelf usr/libexec/tests/pgrpprobe")
     send_key(sock, "ret")
 
     while time.time() < deadline:
@@ -513,7 +513,7 @@ def run_connect_regression(sock, log, start_offset, deadline, echo=True, report=
     if echo:
         tee_stdout("\n[connect-regression] ")
     clear_prompt_line(sock)
-    send_text(sock, "runelf apps/tests/connectprobe")
+    send_text(sock, "runelf usr/libexec/tests/connectprobe")
     send_key(sock, "ret")
 
     while time.time() < deadline:

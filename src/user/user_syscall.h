@@ -156,7 +156,7 @@ static inline int sys_kill(int pid, int signum) {
  * sys_open(name)
  *
  * Open a file from the ext2 partition by path.  Each component is matched
- * with native case-sensitive ext2 names (e.g. "apps/demo/hello.elf").
+ * with native case-sensitive ext2 names (e.g. "usr/bin/hello.elf").
  *
  * Returns a file descriptor (>= 3) on success, or a negative errno on
  * failure (file not found, fd table full, path too long, invalid pointer).

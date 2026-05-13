@@ -27,7 +27,7 @@ void _start(int argc, char** argv) {
 
     puts("stdioprobe start");
 
-    FILE* in = fopen("apps/demo/hello.elf", "r");
+    FILE* in = fopen("usr/bin/hello.elf", "r");
     if (!in) {
         puts("stdio eof: FAIL");
         sys_exit(1);
@@ -64,7 +64,7 @@ void _start(int argc, char** argv) {
     }
     unlink("stdioprobe.tmp");
 
-    in = fopen("apps/demo/hello.elf", "r");
+    in = fopen("usr/bin/hello.elf", "r");
     if (!in || fwrite("x", 1, 1, in) != 0 || !ferror(in)) {
         puts("stdio write failure: FAIL");
         ok = 0;

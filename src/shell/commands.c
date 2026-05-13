@@ -250,6 +250,11 @@ static int executable_path_exists(const char* path) {
 
 static int resolve_app_command_path(const char* name, char* out, unsigned int out_size) {
     char candidate[SHELL_PATH_MAX];
+    static const char* const search_prefixes[] = {
+        "bin/",
+        "usr/bin/",
+        "usr/sbin/",
+    };
 
     if (!name || name[0] == '\0') {
         return 0;
@@ -272,10 +277,12 @@ static int resolve_app_command_path(const char* name, char* out, unsigned int ou
         return 0;
     }
 
-    if (path_copy3(candidate, sizeof(candidate), "bin/", name, ".elf") &&
-        executable_path_exists(candidate)) {
-        k_strncpy(out, candidate, out_size);
-        return 1;
+    for (unsigned int i = 0; i < sizeof(search_prefixes) / sizeof(search_prefixes[0]); i++) {
+        if (path_copy3(candidate, sizeof(candidate), search_prefixes[i], name, ".elf") &&
+            executable_path_exists(candidate)) {
+            k_strncpy(out, candidate, out_size);
+            return 1;
+        }
     }
 
     if (path_has_dot(name) && executable_path_exists(name)) {
@@ -1184,13 +1191,13 @@ static void cmd_shelltest(command_t* cmd) {
     command_t arpgw_cmd = { 1, { "arpgw" } };
     static command_t ping_cmd = { 2, { "ping", "10.0.2.2" } };
     static command_t pinggw_cmd = { 1, { "pinggw" } };
-    static command_t cd_demo_cmd = { 2, { "cd", "apps/demo" } };
+    static command_t cd_demo_cmd = { 2, { "cd", "usr/bin" } };
     static command_t pwd_demo_cmd = { 1, { "pwd" } };
     static command_t ls_demo_cmd = { 1, { "ls" } };
     static command_t fsread_rel_cmd = { 2, { "fsread", "hello.elf" } };
-    static command_t cat_rel_cmd = { 2, { "cat", "../../compiler.out" } };
-    static command_t touch_rel_cmd = { 2, { "touch", "LOCAL.TXT" } };
-    static command_t fsread_touch_rel_cmd = { 2, { "fsread", "LOCAL.TXT" } };
+    static command_t cat_rel_cmd = { 2, { "cat", "../../var/tmp/compiler.out" } };
+    static command_t touch_rel_cmd = { 2, { "touch", "../../var/tmp/LOCAL.TXT" } };
+    static command_t fsread_touch_rel_cmd = { 2, { "fsread", "../../var/tmp/LOCAL.TXT" } };
     static command_t runelf_rel_cmd = { 4, { "runelf", "hello", "alpha", "beta" } };
     static command_t cd_root_cmd = { 2, { "cd", "/" } };
     static command_t pwd_root_cmd = { 1, { "pwd" } };
@@ -1198,9 +1205,9 @@ static void cmd_shelltest(command_t* cmd) {
     static command_t ls_glob_cmd = { 2, { "ls", "*.elf" } };
     static command_t ataread_cmd = { 2, { "ataread", "0" } };
     static command_t fsls_root_cmd = { 1, { "fsls" } };
-    static command_t fsls_path_cmd = { 2, { "fsls", "apps/demo" } };
-    static command_t fsread_cmd = { 2, { "fsread", "apps/demo/hello.elf" } };
-    static command_t fsread_path_cmd = { 2, { "fsread", "apps/demo/hello.elf" } };
+    static command_t fsls_path_cmd = { 2, { "fsls", "usr/bin" } };
+    static command_t fsread_cmd = { 2, { "fsread", "usr/bin/hello.elf" } };
+    static command_t fsread_path_cmd = { 2, { "fsread", "usr/bin/hello.elf" } };
     static command_t mkdir_cmd = { 2, { "mkdir", "TESTDIR" } };
     static command_t fsls_newdir_cmd = { 2, { "fsls", "TESTDIR" } };
     static command_t rmdir_cmd = { 2, { "rmdir", "TESTDIR" } };
@@ -1211,39 +1218,41 @@ static void cmd_shelltest(command_t* cmd) {
     static command_t rmdir_nested_child_cmd = { 2, { "rmdir", "NESTPARENT/CHILD" } };
     static command_t rmdir_nested_parent_cmd = { 2, { "rmdir", "NESTPARENT" } };
     static command_t fsls_nested_removed_cmd = { 2, { "fsls", "NESTPARENT" } };
-    static command_t mkdir_samples_cmd = { 2, { "mkdir", "samples" } };
-    static command_t mv_tccmath_cmd = { 3, { "mv", "tccmath.c", "samples" } };
-    static command_t mv_tccagg_cmd = { 3, { "mv", "tccagg.c", "samples" } };
-    static command_t mv_tcctree_cmd = { 3, { "mv", "tcctree.c", "samples" } };
-    static command_t mv_tccmini_cmd = { 3, { "mv", "tccmini.c", "samples" } };
-    static command_t fsls_samples_cmd = { 2, { "fsls", "samples" } };
-    static command_t tccmath_build_cmd = { 6, { "runelf", "tools/tcc.elf", "-nostdlib", "-o", "tccmath.elf", "samples/tccmath.c" } };
-    static command_t tccmath_run_cmd = { 2, { "runelf", "tccmath" } };
-    static command_t tccagg_build_cmd = { 6, { "runelf", "tools/tcc.elf", "-nostdlib", "-o", "tccagg.elf", "samples/tccagg.c" } };
-    static command_t tccagg_run_cmd = { 2, { "runelf", "tccagg" } };
-    static command_t tcctree_build_cmd = { 6, { "runelf", "tools/tcc.elf", "-nostdlib", "-o", "tcctree.elf", "samples/tcctree.c" } };
-    static command_t tcctree_run_cmd = { 2, { "runelf", "tcctree" } };
-    static command_t cp_cmd = { 3, { "cp", "compiler.out", "compiler.copy" } };
-    static command_t fsread_copy_cmd = { 2, { "fsread", "compiler.copy" } };
-    static command_t mv_cmd = { 3, { "mv", "compiler.copy", "compiler.moved" } };
-    static command_t fsread_moved_cmd = { 2, { "fsread", "compiler.moved" } };
-    static command_t cp_dir_cmd = { 3, { "cp", "compiler.out", "apps/demo" } };
-    static command_t fsread_dir_copy_cmd = { 2, { "fsread", "apps/demo/compiler.out" } };
-    static command_t rm_dir_cmd = { 2, { "rm", "apps/demo/compiler.out" } };
-    static command_t fsread_dir_removed_cmd = { 2, { "fsread", "apps/demo/compiler.out" } };
-    static command_t mv_dir_cmd = { 3, { "mv", "compiler.moved", "apps/demo" } };
-    static command_t cat_cmd = { 2, { "cat", "compiler.out" } };
-    static command_t touch_cmd = { 2, { "touch", "EMPTY.TXT" } };
-    static command_t fsread_touch_cmd = { 2, { "fsread", "EMPTY.TXT" } };
-    static command_t edit_cmd = { 14, { "edit", "EDIT.TXT", "-c", "c", "-c", "a", "-c", "first-line", "-c", "second-line", "-c", ".", "-c", "wq" } };
-    static command_t cat_edit_cmd = { 2, { "cat", "EDIT.TXT" } };
+    static command_t mkdir_var_tmp_cmd = { 2, { "mkdir", "var/tmp" } };
+    static command_t mkdir_work_cmd = { 2, { "mkdir", "var/tmp/WORK" } };
+    static command_t mkdir_samples_cmd = { 2, { "mkdir", "var/tmp/samples" } };
+    static command_t mv_tccmath_cmd = { 3, { "mv", "usr/share/examples/tinycc/tccmath.c", "var/tmp/samples" } };
+    static command_t mv_tccagg_cmd = { 3, { "mv", "usr/share/examples/tinycc/tccagg.c", "var/tmp/samples" } };
+    static command_t mv_tcctree_cmd = { 3, { "mv", "usr/share/examples/tinycc/tcctree.c", "var/tmp/samples" } };
+    static command_t mv_tccmini_cmd = { 3, { "mv", "usr/share/examples/tinycc/tccmini.c", "var/tmp/samples" } };
+    static command_t fsls_samples_cmd = { 2, { "fsls", "var/tmp/samples" } };
+    static command_t tccmath_build_cmd = { 6, { "runelf", "usr/bin/tcc.elf", "-nostdlib", "-o", "var/tmp/tccmath.elf", "var/tmp/samples/tccmath.c" } };
+    static command_t tccmath_run_cmd = { 2, { "runelf", "var/tmp/tccmath" } };
+    static command_t tccagg_build_cmd = { 6, { "runelf", "usr/bin/tcc.elf", "-nostdlib", "-o", "var/tmp/tccagg.elf", "var/tmp/samples/tccagg.c" } };
+    static command_t tccagg_run_cmd = { 2, { "runelf", "var/tmp/tccagg" } };
+    static command_t tcctree_build_cmd = { 6, { "runelf", "usr/bin/tcc.elf", "-nostdlib", "-o", "var/tmp/tcctree.elf", "var/tmp/samples/tcctree.c" } };
+    static command_t tcctree_run_cmd = { 2, { "runelf", "var/tmp/tcctree" } };
+    static command_t cp_cmd = { 3, { "cp", "var/tmp/compiler.out", "var/tmp/compiler.copy" } };
+    static command_t fsread_copy_cmd = { 2, { "fsread", "var/tmp/compiler.copy" } };
+    static command_t mv_cmd = { 3, { "mv", "var/tmp/compiler.copy", "var/tmp/compiler.moved" } };
+    static command_t fsread_moved_cmd = { 2, { "fsread", "var/tmp/compiler.moved" } };
+    static command_t cp_dir_cmd = { 3, { "cp", "var/tmp/compiler.out", "var/tmp/WORK" } };
+    static command_t fsread_dir_copy_cmd = { 2, { "fsread", "var/tmp/WORK/compiler.out" } };
+    static command_t rm_dir_cmd = { 2, { "rm", "var/tmp/WORK/compiler.out" } };
+    static command_t fsread_dir_removed_cmd = { 2, { "fsread", "var/tmp/WORK/compiler.out" } };
+    static command_t mv_dir_cmd = { 3, { "mv", "var/tmp/compiler.moved", "var/tmp/WORK" } };
+    static command_t cat_cmd = { 2, { "cat", "var/tmp/compiler.out" } };
+    static command_t touch_cmd = { 2, { "touch", "var/tmp/EMPTY.TXT" } };
+    static command_t fsread_touch_cmd = { 2, { "fsread", "var/tmp/EMPTY.TXT" } };
+    static command_t edit_cmd = { 14, { "edit", "var/tmp/EDIT.TXT", "-c", "c", "-c", "a", "-c", "first-line", "-c", "second-line", "-c", ".", "-c", "wq" } };
+    static command_t cat_edit_cmd = { 2, { "cat", "var/tmp/EDIT.TXT" } };
     static command_t runelf_cmd = { 4, { "runelf", "hello", "alpha", "beta" } };
-    static command_t runelf_path_cmd = { 4, { "runelf", "apps/demo/hello", "alpha", "beta" } };
-    static command_t runelf_nowait_cmd = { 2, { "runelf_nowait", "apps/tests/ticks" } };
-    static command_t compiler_demo_cmd = { 2, { "runelf", "apps/tests/compiler_demo" } };
-    static command_t tinycc_cmd = { 3, { "runelf", "tools/tcc.elf", "-v" } };
-    static command_t tccmini_build_cmd = { 6, { "runelf", "tools/tcc.elf", "-nostdlib", "-o", "tccmini.elf", "samples/tccmini.c" } };
-    static command_t tccmini_run_cmd = { 2, { "runelf", "tccmini" } };
+    static command_t runelf_path_cmd = { 4, { "runelf", "usr/bin/hello", "alpha", "beta" } };
+    static command_t runelf_nowait_cmd = { 2, { "runelf_nowait", "usr/libexec/tests/ticks" } };
+    static command_t compiler_demo_cmd = { 2, { "runelf", "usr/libexec/tests/compiler_demo" } };
+    static command_t tinycc_cmd = { 3, { "runelf", "usr/bin/tcc.elf", "-v" } };
+    static command_t tccmini_build_cmd = { 6, { "runelf", "usr/bin/tcc.elf", "-nostdlib", "-o", "var/tmp/tccmini.elf", "var/tmp/samples/tccmini.c" } };
+    static command_t tccmini_run_cmd = { 2, { "runelf", "var/tmp/tccmini" } };
 
     terminal_puts("shelltest: start\n");
 
@@ -1280,6 +1289,8 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_exec("fsls_nested_removed", &fsls_nested_removed_cmd);
     shelltest_call("compiler_demo", cmd_runelf, &compiler_demo_cmd);
     shelltest_call("tinycc", cmd_runelf, &tinycc_cmd);
+    shelltest_exec("mkdir_var_tmp", &mkdir_var_tmp_cmd);
+    shelltest_exec("mkdir_work", &mkdir_work_cmd);
     shelltest_exec("mkdir_samples", &mkdir_samples_cmd);
     shelltest_exec("mv_tccmath", &mv_tccmath_cmd);
     shelltest_exec("mv_tccagg", &mv_tccagg_cmd);
@@ -1385,65 +1396,65 @@ static void cmd_selftest(command_t* cmd) {
      * static storage so the shell task does not trample its kernel stack
      * while it runs the full ELF regression suite.
      */
-    static char* hello_argv[] = { "apps/demo/hello", "alpha", "beta", 0 };
-    static char* ticks_argv[] = { "apps/tests/ticks", "alpha", "beta", 0 };
-    static char* args_argv[] = { "apps/tests/args", "alpha", "beta", 0 };
-    static char* runelf_argv[] = { "apps/tests/runelf_test", "alpha", "beta", "gamma", 0 };
-    static char* readline_argv[] = { "apps/tests/readline", "alpha", "beta", 0 };
-    static char* exec_argv[] = { "apps/tests/exec_test", "alpha", "beta", 0 };
-    static char* waitprobe_argv[] = { "apps/tests/waitprobe", "alpha", "beta", 0 };
-    static char* fileread_argv[] = { "apps/tests/fileread", "alpha", "beta", 0 };
-    static char* compiler_demo_argv[] = { "apps/tests/compiler_demo", "alpha", "beta", 0 };
-    static char* heapprobe_argv[] = { "apps/tests/heapprobe", "alpha", "beta", 0 };
-    static char* statprobe_argv[] = { "apps/tests/statprobe", "alpha", "beta", 0 };
-    static char* fileprobe_argv[] = { "apps/tests/fileprobe", "alpha", "beta", 0 };
-    static char* cwdprobe_argv[] = { "apps/tests/cwdprobe", "alpha", "beta", 0 };
-    static char* stdioprobe_argv[] = { "apps/tests/stdioprobe", "alpha", "beta", 0 };
-    static char* dirprobe_argv[] = { "apps/tests/dirprobe", "alpha", "beta", 0 };
-    static char* errnoprobe_argv[] = { "apps/tests/errnoprobe", "alpha", "beta", 0 };
-    static char* badptrprobe_argv[] = { "apps/tests/badptrprobe", "alpha", "beta", 0 };
-    static char* sleep_argv[] = { "apps/tests/sleep_test", "alpha", "beta", 0 };
-    static char* timerfdprobe_argv[] = { "apps/tests/timerfdprobe", "alpha", "beta", 0 };
-    static char* ptrguard_argv[] = { "apps/tests/ptrguard", "alpha", "beta", 0 };
-    static char* preempt_argv[] = { "apps/tests/preempt_test", "alpha", "beta", 0 };
-    static char* crtprobe_argv[] = { "apps/tests/crtprobe.elf", "alpha", "nested/path", "longish-argument-0123456789abcdef", 0 };
-    static char* inputprobe_argv[] = { "apps/tests/inputprobe", "alpha", "beta", 0 };
-    static char* fault_ud_argv[] = { "apps/tests/fault", "ud", 0 };
-    static char* fault_gp_argv[] = { "apps/tests/fault", "gp", 0 };
-    static char* fault_de_argv[] = { "apps/tests/fault", "de", 0 };
-    static char* fault_br_argv[] = { "apps/tests/fault", "br", 0 };
-    static char* fault_pf_argv[] = { "apps/tests/fault", "pf", 0 };
+    static char* hello_argv[] = { "usr/bin/hello", "alpha", "beta", 0 };
+    static char* ticks_argv[] = { "usr/libexec/tests/ticks", "alpha", "beta", 0 };
+    static char* args_argv[] = { "usr/libexec/tests/args", "alpha", "beta", 0 };
+    static char* runelf_argv[] = { "usr/libexec/tests/runelf_test", "alpha", "beta", "gamma", 0 };
+    static char* readline_argv[] = { "usr/libexec/tests/readline", "alpha", "beta", 0 };
+    static char* exec_argv[] = { "usr/libexec/tests/exec_test", "alpha", "beta", 0 };
+    static char* waitprobe_argv[] = { "usr/libexec/tests/waitprobe", "alpha", "beta", 0 };
+    static char* fileread_argv[] = { "usr/libexec/tests/fileread", "alpha", "beta", 0 };
+    static char* compiler_demo_argv[] = { "usr/libexec/tests/compiler_demo", "alpha", "beta", 0 };
+    static char* heapprobe_argv[] = { "usr/libexec/tests/heapprobe", "alpha", "beta", 0 };
+    static char* statprobe_argv[] = { "usr/libexec/tests/statprobe", "alpha", "beta", 0 };
+    static char* fileprobe_argv[] = { "usr/libexec/tests/fileprobe", "alpha", "beta", 0 };
+    static char* cwdprobe_argv[] = { "usr/libexec/tests/cwdprobe", "alpha", "beta", 0 };
+    static char* stdioprobe_argv[] = { "usr/libexec/tests/stdioprobe", "alpha", "beta", 0 };
+    static char* dirprobe_argv[] = { "usr/libexec/tests/dirprobe", "alpha", "beta", 0 };
+    static char* errnoprobe_argv[] = { "usr/libexec/tests/errnoprobe", "alpha", "beta", 0 };
+    static char* badptrprobe_argv[] = { "usr/libexec/tests/badptrprobe", "alpha", "beta", 0 };
+    static char* sleep_argv[] = { "usr/libexec/tests/sleep_test", "alpha", "beta", 0 };
+    static char* timerfdprobe_argv[] = { "usr/libexec/tests/timerfdprobe", "alpha", "beta", 0 };
+    static char* ptrguard_argv[] = { "usr/libexec/tests/ptrguard", "alpha", "beta", 0 };
+    static char* preempt_argv[] = { "usr/libexec/tests/preempt_test", "alpha", "beta", 0 };
+    static char* crtprobe_argv[] = { "usr/libexec/tests/crtprobe.elf", "alpha", "nested/path", "longish-argument-0123456789abcdef", 0 };
+    static char* inputprobe_argv[] = { "usr/libexec/tests/inputprobe", "alpha", "beta", 0 };
+    static char* fault_ud_argv[] = { "usr/libexec/tests/fault", "ud", 0 };
+    static char* fault_gp_argv[] = { "usr/libexec/tests/fault", "gp", 0 };
+    static char* fault_de_argv[] = { "usr/libexec/tests/fault", "de", 0 };
+    static char* fault_br_argv[] = { "usr/libexec/tests/fault", "br", 0 };
+    static char* fault_pf_argv[] = { "usr/libexec/tests/fault", "pf", 0 };
     static command_t shelltest_cmd = { 1, { "shelltest" } };
 
     const selftest_case_t cases[] = {
-        { "hello",       "apps/demo/hello",       3, hello_argv,       0 },
-        { "ticks",       "apps/tests/ticks",      1, ticks_argv,       0 },
-        { "args",        "apps/tests/args",       3, args_argv,        0 },
-        { "runelf_test", "apps/tests/runelf_test",4, runelf_argv,      0 },
-        { "readline",    "apps/tests/readline",   1, readline_argv,    0 },
-        { "exec_test",   "apps/tests/exec_test",  1, exec_argv,        0 },
-        { "waitprobe",   "apps/tests/waitprobe",  1, waitprobe_argv,   0 },
-        { "fileread",    "apps/tests/fileread",   1, fileread_argv,    0 },
-        { "compiler_demo","apps/tests/compiler_demo",1, compiler_demo_argv,0 },
-        { "heapprobe",   "apps/tests/heapprobe",  1, heapprobe_argv,   0 },
-        { "statprobe",   "apps/tests/statprobe",  1, statprobe_argv,   0 },
-        { "fileprobe",   "apps/tests/fileprobe",  1, fileprobe_argv,   0 },
-        { "cwdprobe",    "apps/tests/cwdprobe",   1, cwdprobe_argv,    0 },
-        { "stdioprobe",  "apps/tests/stdioprobe", 1, stdioprobe_argv,  0 },
-        { "dirprobe",    "apps/tests/dirprobe",   1, dirprobe_argv,    0 },
-        { "errnoprobe",  "apps/tests/errnoprobe", 1, errnoprobe_argv,  0 },
-        { "badptrprobe", "apps/tests/badptrprobe",1, badptrprobe_argv, 0 },
-        { "sleep_test",  "apps/tests/sleep_test", 1, sleep_argv,       0 },
-        { "timerfdprobe","apps/tests/timerfdprobe",1, timerfdprobe_argv,0 }, /* timerfd wait regression */
-        { "ptrguard",    "apps/tests/ptrguard",   1, ptrguard_argv,    0 }, /* syscall pointer regression */
-        { "preempt_test","apps/tests/preempt_test",1, preempt_argv,     0 }, /* timer-preemption regression */
-        { "crtprobe",    "apps/tests/crtprobe.elf",4, crtprobe_argv,    7 },
-        { "inputprobe",  "apps/tests/inputprobe", 1, inputprobe_argv,   0 }, /* input event queue regression */
-        { "fault ud",    "apps/tests/fault",      2, fault_ud_argv,    6 },
-        { "fault gp",    "apps/tests/fault",      2, fault_gp_argv,   13 },
-        { "fault de",    "apps/tests/fault",      2, fault_de_argv,    0 },
-        { "fault br",    "apps/tests/fault",      2, fault_br_argv,    5 },
-        { "fault pf",    "apps/tests/fault",      2, fault_pf_argv,   14 },
+        { "hello",       "usr/bin/hello",       3, hello_argv,       0 },
+        { "ticks",       "usr/libexec/tests/ticks",      1, ticks_argv,       0 },
+        { "args",        "usr/libexec/tests/args",       3, args_argv,        0 },
+        { "runelf_test", "usr/libexec/tests/runelf_test",4, runelf_argv,      0 },
+        { "readline",    "usr/libexec/tests/readline",   1, readline_argv,    0 },
+        { "exec_test",   "usr/libexec/tests/exec_test",  1, exec_argv,        0 },
+        { "waitprobe",   "usr/libexec/tests/waitprobe",  1, waitprobe_argv,   0 },
+        { "fileread",    "usr/libexec/tests/fileread",   1, fileread_argv,    0 },
+        { "compiler_demo","usr/libexec/tests/compiler_demo",1, compiler_demo_argv,0 },
+        { "heapprobe",   "usr/libexec/tests/heapprobe",  1, heapprobe_argv,   0 },
+        { "statprobe",   "usr/libexec/tests/statprobe",  1, statprobe_argv,   0 },
+        { "fileprobe",   "usr/libexec/tests/fileprobe",  1, fileprobe_argv,   0 },
+        { "cwdprobe",    "usr/libexec/tests/cwdprobe",   1, cwdprobe_argv,    0 },
+        { "stdioprobe",  "usr/libexec/tests/stdioprobe", 1, stdioprobe_argv,  0 },
+        { "dirprobe",    "usr/libexec/tests/dirprobe",   1, dirprobe_argv,    0 },
+        { "errnoprobe",  "usr/libexec/tests/errnoprobe", 1, errnoprobe_argv,  0 },
+        { "badptrprobe", "usr/libexec/tests/badptrprobe",1, badptrprobe_argv, 0 },
+        { "sleep_test",  "usr/libexec/tests/sleep_test", 1, sleep_argv,       0 },
+        { "timerfdprobe","usr/libexec/tests/timerfdprobe",1, timerfdprobe_argv,0 }, /* timerfd wait regression */
+        { "ptrguard",    "usr/libexec/tests/ptrguard",   1, ptrguard_argv,    0 }, /* syscall pointer regression */
+        { "preempt_test","usr/libexec/tests/preempt_test",1, preempt_argv,     0 }, /* timer-preemption regression */
+        { "crtprobe",    "usr/libexec/tests/crtprobe.elf",4, crtprobe_argv,    7 },
+        { "inputprobe",  "usr/libexec/tests/inputprobe", 1, inputprobe_argv,   0 }, /* input event queue regression */
+        { "fault ud",    "usr/libexec/tests/fault",      2, fault_ud_argv,    6 },
+        { "fault gp",    "usr/libexec/tests/fault",      2, fault_gp_argv,   13 },
+        { "fault de",    "usr/libexec/tests/fault",      2, fault_de_argv,    0 },
+        { "fault br",    "usr/libexec/tests/fault",      2, fault_br_argv,    5 },
+        { "fault pf",    "usr/libexec/tests/fault",      2, fault_pf_argv,   14 },
     };
 
     terminal_puts("selftest: start\n");

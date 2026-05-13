@@ -71,10 +71,10 @@ void _start(int argc, char** argv) {
     check_int("write unmapped buffer", -EFAULT, sys_write(bad, 1));
     check_int("open unmapped path", -EFAULT, sys_open(bad));
     check_int("exec unmapped argv", -EFAULT,
-              sys_exec("apps/demo/hello.elf", 1, (char**)bad));
+              sys_exec("usr/bin/hello.elf", 1, (char**)bad));
 
     {
-        int fd = sys_open("apps/demo/hello.elf");
+        int fd = sys_open("usr/bin/hello.elf");
         check_int("open fixture", 0, fd >= 0 ? 0 : fd);
         if (fd >= 0) {
             check_int("fread unmapped buffer", -EFAULT, sys_fread(fd, bad, 1));
@@ -83,9 +83,9 @@ void _start(int argc, char** argv) {
     }
 
     check_int("stat unmapped size out", -EFAULT,
-              sys_stat("apps", (uint32_t*)bad, &is_dir));
+              sys_stat("usr", (uint32_t*)bad, &is_dir));
     check_int("stat unmapped dir out", -EFAULT,
-              sys_stat("apps", &size, (int*)bad));
+              sys_stat("usr", &size, (int*)bad));
     check_int("terminal size bad rows", -EFAULT,
               sys_terminal_size((uint32_t*)bad, &cols));
     check_int("terminal size bad cols", -EFAULT,
@@ -107,11 +107,11 @@ void _start(int argc, char** argv) {
         check_int("writefd page-cross buffer", -EFAULT,
                   sys_writefd(1, page_end, 2));
         check_int("stat page-cross size out", -EFAULT,
-                  sys_stat("apps", cross_u32, &is_dir));
+                  sys_stat("usr", cross_u32, &is_dir));
         check_int("terminal size page-cross rows", -EFAULT,
                   sys_terminal_size(cross_u32, &cols));
         check_int("dirlist page-cross out", -EFAULT,
-                  sys_dirlist("apps", 0, (struct dirent*)page_cross_ptr(sizeof(struct dirent))));
+                  sys_dirlist("usr", 0, (struct dirent*)page_cross_ptr(sizeof(struct dirent))));
         check_int("display info page-cross out", -EFAULT,
                   sys_display_info((sys_display_info_t*)page_cross_ptr(sizeof(sys_display_info_t))));
         check_int("fsinfo page-cross out", -EFAULT,

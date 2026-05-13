@@ -4,7 +4,7 @@ from .common import case
 CASES = [
     case(
         name="errnoprobe",
-        command="runelf apps/tests/errnoprobe",
+        command="runelf usr/libexec/tests/errnoprobe",
         must_contain=[
             "errnoprobe start",
             "raw sys_open missing: PASS",

@@ -66,11 +66,11 @@ Important current-state facts:
   fd-backed console streams, streaming VFS-backed file handles,
   `stat`/`rename`/`unlink`, `lseek`, and socket wrappers, which is enough for
   compiler-style tools and small network services
-- the shipped `tools/tcc.elf` compiler binary links the generic SmallOS `user_crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from ext2, write the results back to disk, and then those generated ELFs can be executed immediately
+- the shipped `usr/bin/tcc.elf` compiler binary links the generic SmallOS `user_crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from ext2, write the results back to disk, and then those generated ELFs can be executed immediately
 - QEMU user networking is still the default for `make run` / `make test`, but `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT
 - `pinggw` and `ping 10.0.2.2` are the supported QEMU user-network checks; public ICMP is often unsupported by user-mode networking, so `pingpublic` is only a best-effort probe
 - `netcheck` prints the gateway steps separately from the public ICMP probe so a `1.1.1.1` timeout does not imply the local NAT path is broken
-- `apps/services/tcpecho.elf`, `apps/services/sockeof.elf`, and `apps/services/ftpd.elf` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
+- `usr/sbin/tcpecho.elf`, `usr/sbin/sockeof.elf`, and `usr/sbin/ftpd.elf` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
 - `tcpecho.elf` listens on `2323` in the guest and is driven by `make socket-parallel-smoke` to verify multiple simultaneous echo clients
 - `sockeof.elf` listens on `2463` in the guest and is driven by `make socket-eof-smoke` to verify a multi-segment payload before EOF, `POLLHUP`, post-EOF response writes, and guest write-side shutdown
 - `ftpd.elf` listens on `2121` in the guest and expects passive data connections on `30000`; `make ftp-smoke` and `make ftp-loop-smoke` cover that path, and host-side clients such as `lftp`, WinSCP, and FileZilla should use passive mode
@@ -162,7 +162,7 @@ if (!elf_run_named(cmd->argv[1], cmd->argc - 1, &cmd->argv[1])) {
 That means `argv[0]` inside the ELF process is the launch token passed after
 `runelf`, and the rest of the shell tokens follow as normal argv entries. For
 `runelf hello alpha beta`, `argv[0]` is `hello`; for
-`runelf apps/demo/hello alpha beta`, `argv[0]` is `apps/demo/hello`. Nested
+`runelf usr/bin/hello alpha beta`, `argv[0]` is `usr/bin/hello`. Nested
 paths and explicit `.elf` suffixes are preserved in argv as written.
 
 There is **no active `runimg` command path** in the current shell command table.
@@ -170,18 +170,18 @@ There is **no active `runimg` command path** in the current shell command table.
 The same path is used by the guest TinyCC smoke tests:
 
 ```text
-runelf tools/tcc.elf -nostdlib -o out.elf samples/tccmath.c
-runelf out.elf
+runelf usr/bin/tcc.elf -nostdlib -o var/tmp/tccmath.elf usr/share/examples/tinycc/tccmath.c
+runelf var/tmp/tccmath
 ```
 
-The test suite uses this flow to compile several focused C samples inside the guest and then run the generated ELFs. The produced binaries are written back under the `apps/tests/` subtree so the shell can execute them by path.
+The test suite uses this flow to compile several focused C samples inside the guest and then run the generated ELFs. The sample sources are staged under `/var/tmp/samples/` and the produced binaries are written under `/var/tmp/`.
 
 TinyCC's runtime expectations are part of the user runtime contract in
 [`docs/user-runtime.md`](user-runtime.md).
 
 For the TCP service path, the shell can launch a long-lived reattachable service
-with `bg apps/services/tcpecho`, `bg apps/services/sockeof`, or
-`bg apps/services/ftpd`. Those programs bind and listen inside the guest, and
+with `bg usr/sbin/tcpecho`, `bg usr/sbin/sockeof`, or
+`bg usr/sbin/ftpd`. Those programs bind and listen inside the guest, and
 you connect to them from the host through QEMU `hostfwd`. Use `jobs` to inspect
 them, `fg <jobid>` to wait on one in the foreground, Ctrl+Z to return a
 foregrounded job to the background, and `kill <jobid>` to stop one without
@@ -215,7 +215,7 @@ where a final guest write is delivered before guest `close()` sends FIN and the
 host observes EOF.
 
 `make cserve-smoke` forwards guest port `8080`, launches cserve with the seeded
-`cserve.ini`, checks the large `/www/index.html` static fixture, holds
+`/etc/cserve.ini`, checks the large `/var/www/index.html` static fixture, holds
 32 keep-alive clients by default, exercises a slow reader, verifies
 `/favicon.ico` returns 404, and records the guest `netinfo` socket/TCP summary.
 
@@ -480,10 +480,10 @@ Properties of the current setup:
 
 # Argument Passing
 
-When `runelf apps/demo/hello a b` is invoked, the ELF sees:
+When `runelf usr/bin/hello a b` is invoked, the ELF sees:
 
 - `argc = 3`
-- `argv[0] = "apps/demo/hello"`
+- `argv[0] = "usr/bin/hello"`
 - `argv[1] = "a"`
 - `argv[2] = "b"`
 

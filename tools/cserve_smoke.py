@@ -298,7 +298,7 @@ def run_cserve_smoke(args):
     try:
         with open(args.serial, "r", encoding="utf-8", errors="replace") as log:
             offset = wait_for_prompt(log, args.timeout)
-            send_text(monitor, "runelf_nowait apps/services/cserve --config cserve.ini")
+            send_text(monitor, "runelf_nowait usr/sbin/cserve --config /etc/cserve.ini")
             send_key(monitor, "ret")
             offset = wait_for_prompt(log, args.timeout, offset)
 

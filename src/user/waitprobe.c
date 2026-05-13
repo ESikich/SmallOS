@@ -20,9 +20,9 @@ void _start(int argc, char** argv) {
     check("getpid positive", getpid() > 0);
 
     {
-        char* av[] = { "apps/demo/hello", "waitprobe", 0 };
+        char* av[] = { "usr/bin/hello", "waitprobe", 0 };
         int status = -1;
-        int pid = sys_exec("apps/demo/hello", 2, av);
+        int pid = sys_exec("usr/bin/hello", 2, av);
         int waited;
 
         check("sys_exec pid", pid > 0);
@@ -40,9 +40,9 @@ void _start(int argc, char** argv) {
     }
 
     {
-        char* av[] = { "apps/tests/sleep_test", 0 };
+        char* av[] = { "usr/libexec/tests/sleep_test", 0 };
         int status = -1;
-        int pid = sys_exec("apps/tests/sleep_test", 1, av);
+        int pid = sys_exec("usr/libexec/tests/sleep_test", 1, av);
         int waited;
 
         check("kill child spawn", pid > 0);

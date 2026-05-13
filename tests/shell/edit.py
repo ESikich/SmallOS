@@ -6,7 +6,7 @@ CASES = [
         name="edit",
         must_contain=[
             "shelltest: edit begin",
-            "edit: wrote EDIT.TXT",
+            "edit: wrote var/tmp/EDIT.TXT",
             "shelltest: edit end",
             "shelltest: cat_edit begin",
             "first-line",

@@ -73,8 +73,8 @@ that compare paths before opening them. It returns canonical absolute paths
 with a leading slash, such as:
 
 ```text
-cwd: /apps/demo
-realpath("../demo/./hello.elf") -> /apps/demo/hello.elf
+cwd: /usr/bin
+realpath("./hello.elf") -> /usr/bin/hello.elf
 ```
 
 Current runtime limits are intentionally small:
@@ -237,7 +237,7 @@ directory listing behavior should stay aligned with `dirprobe`.
 
 # TinyCC Expectations
 
-`tools/tcc.elf` is built from TinyCC submodule sources plus the SmallOS runtime.
+`usr/bin/tcc.elf` is built from TinyCC submodule sources plus the SmallOS runtime.
 It links `src/user/user_crt0.c`, so the kernel still enters `_start(argc, argv)`
 while TinyCC itself runs through its upstream `main(argc, argv)` path. It relies
 on normal runtime behavior:

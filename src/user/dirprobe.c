@@ -30,21 +30,21 @@ void _start(int argc, char** argv) {
 
     puts("dirprobe start");
 
-    if (dir_contains("/", "apps")) {
+    if (dir_contains("/", "usr")) {
         puts("dir root: PASS");
     } else {
         puts("dir root: FAIL");
         ok = 0;
     }
 
-    if (dir_contains("apps/tests", "cwdprobe.elf")) {
+    if (dir_contains("usr/libexec/tests", "cwdprobe.elf")) {
         puts("dir nested: PASS");
     } else {
         puts("dir nested: FAIL");
         ok = 0;
     }
 
-    DIR* d = opendir("apps/demo");
+    DIR* d = opendir("usr/bin");
     if (!d) {
         puts("dir eof: FAIL");
         ok = 0;
@@ -60,14 +60,14 @@ void _start(int argc, char** argv) {
         closedir(d);
     }
 
-    if (!opendir("apps/demo/hello.elf")) {
+    if (!opendir("usr/bin/hello.elf")) {
         puts("dir invalid file: PASS");
     } else {
         puts("dir invalid file: FAIL");
         ok = 0;
     }
 
-    if (!opendir("apps/nope")) {
+    if (!opendir("usr/nope")) {
         puts("dir missing: PASS");
     } else {
         puts("dir missing: FAIL");

@@ -53,7 +53,7 @@ missing.
 
 The TinyCC sources stay clean in `third_party/tinycc`. SmallOS applies
 `patches/tinycc/smallos.patch` to a build-local copy under
-`build/tinycc-smalos-src/` before compiling the guest `tools/tcc.elf` variant.
+`build/tinycc-smalos-src/` before compiling the guest `usr/bin/tcc.elf` variant.
 
 ---
 
@@ -62,7 +62,7 @@ The TinyCC sources stay clean in `third_party/tinycc`. SmallOS applies
 ```text
 build/
 ├── bin/<backend>/ → final binaries (kernel.elf, kernel.bin,
-│                    apps/demo/*.elf, apps/tests/*.elf,
+│                    usr/bin/*.elf, usr/libexec/tests/*.elf,
 │                    ext2.seed.img, boot.bin, loader2.bin, tcc-smalos.elf)
 ├── obj/<backend>/ → object files and depfiles (.o, .d), mirrored by source subtree
 ├── gen/<backend>/ → generated source (loader2.gen.asm)
@@ -83,7 +83,7 @@ source files (.c, .asm)
   ↓
 object files (.o)
   ↓
-kernel.elf          apps/demo/hello.elf   apps/tests/*.elf   ...
+kernel.elf          usr/bin/hello.elf   usr/libexec/tests/*.elf   ...
   ↓                      ↓
 kernel.bin         user program ELFs
   ↓                      ↓
@@ -115,7 +115,7 @@ separately: `make verify-display` runs the framebuffer/VGA visual smoke checks,
 Most freestanding test ELFs define `_start(argc, argv)` directly and link with
 the common user runtime objects. Hosted-ish programs define
 `main(argc, argv)` and link `src/user/user_crt0.c`, which supplies `_start` and
-exits with `main`'s return value. `tools/tcc.elf` and `apps/tests/crtprobe.elf`
+exits with `main`'s return value. `usr/bin/tcc.elf` and `usr/libexec/tests/crtprobe.elf`
 use that CRT path; there is no TinyCC-specific startup wrapper.
 
 ## Automated Guest Test
@@ -132,11 +132,11 @@ the long regression run from corrupting process state while the guest test
 harness is exercising the full matrix.
 
 The guest suite also exercises the SmallOS-hosted TinyCC compiler
-(`tools/tcc.elf`) by compiling several sample C files inside the guest
-and immediately running the generated ELFs. `tools/tcc.elf` links the generic
+(`usr/bin/tcc.elf`) by compiling several sample C files inside the guest
+and immediately running the generated ELFs. `usr/bin/tcc.elf` links the generic
 SmallOS CRT adapter and runs TinyCC's normal hosted CLI `main()` path inside
 the freestanding guest runtime. Those generated binaries are stored under
-`apps/tests/`, while the shipped hello demo lives under `apps/demo/`.
+`/var/tmp/`, while the shipped hello demo lives under `usr/bin/`.
 
 The user runtime behavior that those tests depend on is documented in
 [`docs/user-runtime.md`](user-runtime.md), including `errno`, cwd-aware
@@ -172,7 +172,7 @@ The display stack and user programs have separate optimization knobs:
 kernel remains controlled by `KERNEL_CFLAGS`.
 
 `make socket-eof-smoke` boots QEMU with user-network host forwarding for
-guest port `2463`, starts `apps/services/sockeof`, then verifies that
+guest port `2463`, starts `usr/sbin/sockeof`, then verifies that
 a 3072-byte multi-segment payload plus host half-close wakes guest `poll()`,
 leaves the full payload readable, returns `0` on the next `read()`, and still
 allows the guest to write back before `shutdown(SHUT_WR)` rejects later writes
@@ -186,7 +186,7 @@ during, and after the run. Override `SOCKET_PARALLEL_CLIENTS`,
 `SOCKET_PARALLEL_ROUNDS`, or `SOCKET_PARALLEL_PORT` when needed.
 
 `make ftp-smoke` boots QEMU with user-network host forwarding for FTP control
-port `2121` and passive data port `30000`, starts `apps/services/ftpd`, then
+port `2121` and passive data port `30000`, starts `usr/sbin/ftpd`, then
 drives login, negative path checks, `LIST`, `RETR`, `STOR` readback,
 `DELE`, and `RMD` cleanup from the host.
 
@@ -195,7 +195,7 @@ sessions with passive `LIST`, `RETR`, `STOR`, uploaded-file readback, and
 cleanup cycles. Override `FTP_LOOP_ITERATIONS` to change the loop count.
 
 `make cserve-smoke` forwards host port `8080` to guest cserve, starts
-`apps/services/cserve.elf --config cserve.ini`, fetches the large static
+`usr/sbin/cserve.elf --config /etc/cserve.ini`, fetches the large static
 fixture with browser-shaped requests, holds keep-alive clients open, runs one
 slow reader, checks a 404, and captures guest `netinfo` socket/TCP counters.
 It holds 32 clients by default. Override `CSERVE_SMOKE_CLIENTS` or
@@ -224,7 +224,7 @@ make run QEMU_DISPLAY=gtk
 
 Mouse-driven graphics demos need a graphical QEMU backend and a grabbed guest
 window. Use `make run-gtk` or `make run-sdl`, then click/grab the QEMU window
-before testing `apps/demo/mandel` cursor movement.
+before testing `usr/bin/mandel` cursor movement.
 
 The guest terminal backend policy is controlled at build time:
 
@@ -387,11 +387,11 @@ src/user/user_posix.c
 
 All use `user_lib.h` and `user_syscall.h`. No libc, no hosted runtime, and no dynamic linking.
 
-The guest compiler toolchain ships as `tools/tcc.elf`, built from the TinyCC
+The guest compiler toolchain ships as `usr/bin/tcc.elf`, built from the TinyCC
 submodule sources with the generic SmallOS CRT adapter. The guest entry point
 bridges the kernel `_start(argc, argv)` launch ABI to TinyCC's normal
-`main(argc, argv)` path. The shell selftests compile `samples/tccmath.c`,
-`samples/tccagg.c`, `samples/tcctree.c`, and `samples/tccmini.c` inside the
+`main(argc, argv)` path. The shell selftests compile `usr/share/examples/tinycc/tccmath.c`,
+`usr/share/examples/tinycc/tccagg.c`, `usr/share/examples/tinycc/tcctree.c`, and `usr/share/examples/tinycc/tccmini.c` inside the
 guest with that compiler.
 
 ## Compile
@@ -447,13 +447,13 @@ $(TOOLS_DIR)/mkext2: tools/mkext2.c | dirs
 ```bash
 build/tools/mkext2 build/bin/auto/ext2.seed.img \
     bin/echo.elf=build/bin/auto/echo.elf \
-    apps/demo/hello.elf=build/bin/auto/hello.elf \
-    apps/demo/plasma.elf=build/bin/auto/plasma.elf \
-    apps/demo/mandel.elf=build/bin/auto/mandel.elf \
-    apps/tests/runelf_test.elf=build/bin/auto/runelf_test.elf \
-    apps/services/ftpd.elf=build/bin/auto/ftpd.elf \
-    tools/tcc.elf=build/bin/auto/tcc-smalos.elf \
-    tccmath.c=samples/tccmath.c
+    usr/bin/hello.elf=build/bin/auto/hello.elf \
+    usr/bin/plasma.elf=build/bin/auto/plasma.elf \
+    usr/bin/mandel.elf=build/bin/auto/mandel.elf \
+    usr/libexec/tests/runelf_test.elf=build/bin/auto/runelf_test.elf \
+    usr/sbin/ftpd.elf=build/bin/auto/ftpd.elf \
+    usr/bin/tcc.elf=build/bin/auto/tcc-smalos.elf \
+    usr/share/examples/tinycc/tccmath.c=samples/tccmath.c
 ```
 
 Each `[dest=]source` argument either seeds the source file at its basename or
@@ -462,7 +462,8 @@ into the full shipped image through `ext2_*_ENTRIES`; the command above is a
 representative shape rather than the complete invocation.
 
 `mkext2` produces a raw ext2 volume containing the shipped apps under
-`bin/`, `apps/demo/`, `apps/tests/`, `apps/services/`, and `tools/`.
+`bin/`, `usr/bin/`, `usr/libexec/tests/`, `usr/sbin/`, plus config/data
+trees such as `/etc/`, `/var/`, and `/tmp/`.
 
 Shipped ext2 programs:
 - `bin/echo` - print command arguments
@@ -480,45 +481,46 @@ Shipped ext2 programs:
 - `bin/cp` / `bin/mv` - copy or move ext2 entries
 - `bin/bmpview` - load a BMP, render it into the `gfx` backbuffer, and present it to the framebuffer
 - `bin/diskview` - show ext2 used/free space as a framebuffer allocation map
-- `apps/demo/hello` - print argc/argv and tick count
-- `apps/demo/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
-- `apps/demo/mandel` - interactive Mandelbrot demo with arrow-key pan, +/- zoom, reset/quit keys, and PS/2 mouse cursor movement
-- `apps/tests/ticks` - print the current tick count
-- `apps/tests/args` - print argc and argv
-- `apps/tests/runelf_test` - verify ELF loading, syscalls, and stack setup
-- `apps/tests/readline` - interactive SYS_READ demo
-- `apps/tests/exec_test` - exercise SYS_EXEC semantics
-- `apps/tests/waitprobe` - exercise getpid/waitpid/kill process lifecycle
-- `apps/tests/fileread` - exercise VFS-backed file handles via SYS_OPEN / SYS_FREAD / SYS_CLOSE
-- `apps/tests/compiler_demo` - exercise SYS_WRITEFILE, SYS_WRITEFILE_PATH, and readback
-- `apps/tests/heapprobe` - exercise malloc/free/realloc/calloc
-- `apps/tests/statprobe` - exercise SYS_STAT and path probing
-- `apps/tests/fileprobe` - exercise file wrapper helpers, rename, unlink, and stat
-- `apps/tests/cwdprobe` - exercise process cwd and relative path syscalls
-- `apps/tests/stdioprobe` - exercise stdio EOF/error state, `clearerr`, and `fflush`
-- `apps/tests/dirprobe` - exercise root and nested directory iteration
-- `apps/tests/errnoprobe` - exercise raw syscall errors and POSIX errno wrappers
-- `apps/tests/badptrprobe` - exercise unmapped user pointers, page-crossing buffers/structs, and wrapped syscall byte counts
-- `apps/tests/sleep_test` - exercise SYS_SLEEP semantics
-- `apps/tests/ptrguard` - exercise syscall pointer validation
-- `apps/tests/spinwkr` - helper spawned by the preemption regression
-- `apps/tests/preempt_test` - prove timer-driven preemption
-- `apps/tests/crtprobe` - verify `main(argc, argv)` via `user_crt0`
-- `apps/tests/fault` - fault probe (ud/gp/de/br/pf)
-- `tools/tcc.elf` - SmallOS-hosted TinyCC compiler binary linked through
+- `usr/bin/hello` - print argc/argv and tick count
+- `usr/bin/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
+- `usr/bin/mandel` - interactive Mandelbrot demo with arrow-key pan, +/- zoom, reset/quit keys, and PS/2 mouse cursor movement
+- `usr/libexec/tests/ticks` - print the current tick count
+- `usr/libexec/tests/args` - print argc and argv
+- `usr/libexec/tests/runelf_test` - verify ELF loading, syscalls, and stack setup
+- `usr/libexec/tests/readline` - interactive SYS_READ demo
+- `usr/libexec/tests/exec_test` - exercise SYS_EXEC semantics
+- `usr/libexec/tests/waitprobe` - exercise getpid/waitpid/kill process lifecycle
+- `usr/libexec/tests/fileread` - exercise VFS-backed file handles via SYS_OPEN / SYS_FREAD / SYS_CLOSE
+- `usr/libexec/tests/compiler_demo` - exercise SYS_WRITEFILE, SYS_WRITEFILE_PATH, and readback
+- `usr/libexec/tests/heapprobe` - exercise malloc/free/realloc/calloc
+- `usr/libexec/tests/statprobe` - exercise SYS_STAT and path probing
+- `usr/libexec/tests/fileprobe` - exercise file wrapper helpers, rename, unlink, and stat
+- `usr/libexec/tests/cwdprobe` - exercise process cwd and relative path syscalls
+- `usr/libexec/tests/stdioprobe` - exercise stdio EOF/error state, `clearerr`, and `fflush`
+- `usr/libexec/tests/dirprobe` - exercise root and nested directory iteration
+- `usr/libexec/tests/errnoprobe` - exercise raw syscall errors and POSIX errno wrappers
+- `usr/libexec/tests/badptrprobe` - exercise unmapped user pointers, page-crossing buffers/structs, and wrapped syscall byte counts
+- `usr/libexec/tests/sleep_test` - exercise SYS_SLEEP semantics
+- `usr/libexec/tests/ptrguard` - exercise syscall pointer validation
+- `usr/libexec/tests/spinwkr` - helper spawned by the preemption regression
+- `usr/libexec/tests/preempt_test` - prove timer-driven preemption
+- `usr/libexec/tests/crtprobe` - verify `main(argc, argv)` via `user_crt0`
+- `usr/libexec/tests/fault` - fault probe (ud/gp/de/br/pf)
+- `usr/bin/tcc.elf` - SmallOS-hosted TinyCC compiler binary linked through
   `src/user/user_crt0.c`
-- `samples/tccmath.c`, `samples/tccagg.c`, `samples/tcctree.c`, `samples/tccmini.c` - guest compiler test inputs used by the shell selftests
+- `usr/share/examples/tinycc/tccmath.c`, `usr/share/examples/tinycc/tccagg.c`, `usr/share/examples/tinycc/tcctree.c`, `usr/share/examples/tinycc/tccmini.c` - guest compiler test inputs used by the shell selftests
 
 ## Properties
 
 * fixed-size volume defined by `tools/mkext2.c`
-* root directory contains sample C sources and runtime compiler demo artifacts
+* root directory is intended to stay directory-only during normal use
 * `bin/` contains command-style app ELFs found by bare shell command lookup
-* `apps/demo/` contains the hello and plasma demo ELFs
-* `apps/tests/` contains the remaining shipped test ELFs
-* `apps/services/` contains guest service ELFs
-* `tools/` contains the guest TinyCC binary
-* sample C sources live at the image root until the shell demo moves them into `samples/`
+* `usr/bin/` contains the hello and plasma demo ELFs
+* `usr/libexec/tests/` contains the remaining shipped test ELFs
+* `usr/sbin/` contains guest service ELFs
+* `usr/bin/` contains the guest TinyCC binary and user-facing demos/tools
+* `usr/share/examples/tinycc/` contains the shipped TinyCC sample inputs
+* runtime-generated compiler outputs and scratch artifacts belong under `/var/tmp/`
 * filenames are stored as native case-sensitive ext2 names
 * no external filesystem tools are required
 
@@ -732,9 +734,9 @@ Cause: simple linker script does not separate read-only and executable sections.
 # Dependency Model
 
 ```text
-apps/demo/hello.elf ────────────────────┐
-apps/tests/*.elf ───────────────────────┤
-tools/tcc.elf / samples/*.c ────────────┤→ ext2.seed.img → .state/ext2.img ─┐
+usr/bin/hello.elf ────────────────────┐
+usr/libexec/tests/*.elf ───────────────────────┤
+usr/bin/tcc.elf / usr/share/examples/*.c ─┤→ ext2.seed.img → .state/ext2.img ─┐
                                         │                           │
 kernel.bin ───────────────┐             │                           │
                           ├→ loader2.gen.asm → loader2.bin ───────┤

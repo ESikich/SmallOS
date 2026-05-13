@@ -4,7 +4,7 @@
 /*
  * exec_test — diagnostic SYS_EXEC spawn/error test.
  *
- * sys_exec("apps/demo/hello", ...) validates user pointers, copies argv into
+ * sys_exec("usr/bin/hello", ...) validates user pointers, copies argv into
  * kernel-owned storage, enqueues the child, returns its pid, and leaves it
  * waitable. This probe checks the success path plus negative errno returns
  * for bad names and invalid argument counts.
@@ -63,9 +63,9 @@ void _start(int argc, char** argv) {
 
     u_puts("[1] exec_test alive\n");
 
-    u_puts("[2] calling sys_exec apps/demo/hello\n");
-    char* av[] = { "apps/demo/hello", 0 };
-    int r = sys_exec("apps/demo/hello", 1, av);
+    u_puts("[2] calling sys_exec usr/bin/hello\n");
+    char* av[] = { "usr/bin/hello", 0 };
+    int r = sys_exec("usr/bin/hello", 1, av);
     write_result_line("[3] sys_exec returned pid ", r);
     if (r <= 0) {
         ok = 0;
@@ -87,7 +87,7 @@ void _start(int argc, char** argv) {
     }
 
     u_puts("[6] calling sys_exec with too many args\n");
-    int r3 = sys_exec("apps/demo/hello", 17, av);
+    int r3 = sys_exec("usr/bin/hello", 17, av);
     write_result_line("[7] too many args returned ", r3);
     if (r3 != -EINVAL) {
         ok = 0;
