@@ -46,9 +46,9 @@ Shared errno values:
 | `ESRCH` | 3 | no such process |
 | `EINTR` | 4 | interrupted system call |
 | `EIO` | 5 | input/output error |
+| `EBADF` | 9 | bad file descriptor |
 | `ECHILD` | 10 | no child processes |
 | `EAGAIN` / `EWOULDBLOCK` | 11 | resource temporarily unavailable |
-| `EBADF` | 9 | bad file descriptor |
 | `ENOMEM` | 12 | out of memory |
 | `EACCES` | 13 | permission denied |
 | `EFAULT` | 14 | bad user address |
@@ -163,19 +163,6 @@ Blocks until keyboard input is available, echoing each character. Terminates ear
 
 ---
 
-### SYS_READ_RAW (40)
-
-```c
-int sys_read_raw(char* buf, uint32_t len);
-```
-
-Reads console input like `SYS_READ`, but does not echo bytes through the
-terminal. Full-screen programs use this to consume ordinary characters plus
-ANSI-style special-key sequences for arrows, Home/End, Delete, PageUp/PageDown,
-and function keys.
-
----
-
 ### SYS_YIELD (6)
 
 ```c
@@ -188,6 +175,72 @@ Voluntarily surrenders the current scheduler quantum. The calling process is imm
 
 ---
 
+### SYS_EXEC (7)
+
+```c
+int sys_exec(const char* name, int argc, char** argv);
+```
+
+Legacy spawn-style process creation. Loads and asynchronously spawns a named
+ELF program through the kernel VFS layer. Returns the child pid on success or a
+negative errno if validation, lookup, or load fails. The child is claimed for
+the caller until `SYS_WAITPID` collects it or the parent exits. New
+POSIX-shaped code should prefer `SYS_FORK` plus `SYS_EXECVE`.
+
+`sys_exec_impl` copies `name` to a local kernel stack buffer before any VFS or ELF work so the loader does not depend on the caller's user pointer remaining valid. It then calls `elf_run_named()`, which creates the process, seeds its scheduler bootstrap context, enqueues it, and returns immediately.
+
+---
+
+### SYS_OPEN (8)
+
+```c
+int sys_open(const char* name);
+```
+
+Legacy shorthand for `SYS_OPEN_MODE_READ`. Opens an ext2 file by path
+(case-sensitive native ext2 matching per component). Allocates the lowest free
+slot in the calling process's handle table (fd >= 3). The fd points to a shared
+open-file description containing the current offset, status flags, cached file
+data, and backing filename. Duplicated descriptors and fork-inherited
+descriptors share that description. fds 0/1/2 are pre-opened console handles.
+
+Returns the fd (≥ 3) on success, or a negative errno if the file is not found,
+the path names a directory, the process handle table is full, or the name
+pointer fails user-space validation. The fd table starts with 16 slots, grows on
+demand, and defaults to a 128-fd per-process limit.
+
+`sys_open_impl` validates the name with page-aware user checks, copies it into a kernel buffer bounded by `PROCESS_FD_NAME_MAX` (128 bytes), then calls through the VFS stat wrapper to confirm the file exists without loading its data.
+
+---
+
+### SYS_CLOSE (9)
+
+```c
+int sys_close(int fd);
+```
+
+Closes an open handle, freeing its slot for reuse. Returns `0` on success or a
+negative errno if the fd is out of range, not currently open, or no current
+process exists.
+
+---
+
+### SYS_FREAD (10)
+
+```c
+int sys_fread(int fd, char* buf, uint32_t len);
+```
+
+Reads up to `len` bytes from an open readable handle at `fd` into `buf`. File handles read from the current file position and advance it by the number of bytes actually read. Socket handles read from the TCP receive path, which uses the connected stream's lazy 4 KiB PMM-backed RX ring. Socket writes use a lazy 16 KiB PMM-backed TX ring, observe global RX/TX caps, and report writable readiness from remaining TX capacity. fd `0` reads from the console input buffer with the same blocking behavior as `SYS_READ`. Returns the number of bytes read, `0` at end-of-file / closed socket, or a negative errno on error.
+
+For file handles, the read op loads the file once into PMM-backed shared file
+cache pages on first use, then copies the requested slice from that cache into
+the validated user buffer. The cache stays live until the shared open-file
+description is closed, so duplicated and fork-inherited descriptors reuse it
+and share the current file offset.
+
+---
+
 ### SYS_SLEEP (11)
 
 ```c
@@ -197,6 +250,52 @@ int sys_sleep(uint32_t ticks);
 Blocks the calling process for at least `ticks` timer ticks. The task marks itself `PROCESS_STATE_SLEEPING`, yields to the scheduler, and is woken by the timer IRQ once the deadline is reached.
 
 `sys_sleep_impl` uses the same scheduler-owned preemption path as `SYS_YIELD`, but the task remains unrunnable until `timer_get_ticks()` reaches the stored wake deadline. If no other runnable task exists, the kernel still idles in a `hlt` loop until the wake condition is met.
+
+---
+
+### SYS_WRITEFILE (12)
+
+```c
+int sys_writefile(const char* name, const char* buf, uint32_t len);
+```
+
+Creates or overwrites a root-directory ext2 file in one shot. Returns `0` on success or a negative errno on failure.
+
+This is the root-only persistence primitive for generated artifacts such as compiler output, assembly listings, or other build products. The kernel validates both the filename and the byte range before calling into the VFS root-write wrapper.
+
+---
+
+### SYS_HALT (13)
+
+```c
+int sys_halt(void);
+```
+
+Halts the machine through the kernel system path. Used by the `/bin/halt`
+command ELF and the halt smoke test.
+
+---
+
+### SYS_REBOOT (14)
+
+```c
+int sys_reboot(void);
+```
+
+Requests a machine reboot through the kernel system path. Used by the
+`/bin/reboot` command ELF and the reboot smoke test.
+
+---
+
+### SYS_WRITEFILE_PATH (15)
+
+```c
+int sys_writefile_path(const char* path, const char* buf, uint32_t len);
+```
+
+Creates or overwrites an ext2 file at an arbitrary path. Returns `0` on success or a negative errno on failure.
+
+This is the preferred persistence primitive for build tools and compilers because it can emit directly into nested writable directories such as `/var/tmp/WORK/` or `/var/tmp/samples/`. The kernel validates both the path and the byte range before calling into the VFS path-write wrapper.
 
 ---
 
@@ -225,58 +324,6 @@ returns a writable file-backed handle. New runtime code should prefer
 
 ---
 
-### SYS_OPEN_MODE (36)
-
-```c
-int sys_open_mode(const char* name, uint32_t mode);
-```
-
-Mode-aware ext2 open. `mode` is a bitmask of:
-
-```c
-SYS_OPEN_MODE_READ
-SYS_OPEN_MODE_WRITE
-SYS_OPEN_MODE_CREATE
-SYS_OPEN_MODE_TRUNC
-SYS_OPEN_MODE_APPEND
-```
-
-This is the preferred descriptor-open primitive for POSIX `open()` and stdio
-`fopen()` because it can represent read-only, write-truncate, read/write,
-create, and append opens without forcing every write-capable path to truncate.
-Writable file handles stream writes through ext2 at the descriptor offset.
-Partial-sector writes preserve surrounding bytes, append starts at the current
-file size, and seek-past-EOF writes zero-fill the gap.
-
----
-
-### SYS_GETCWD (37)
-
-```c
-int sys_getcwd(char* buf, uint32_t size);
-```
-
-Copies the calling process's current working directory into `buf` as an
-absolute display path such as `/` or `/usr/bin`. Returns `0` on success or
-a negative errno if the user buffer is invalid or too small.
-
----
-
-### SYS_CHDIR (38)
-
-```c
-int sys_chdir(const char* path);
-```
-
-Changes the calling process's current working directory. Relative paths are
-resolved against the process cwd, `.` and `..` are normalized, and the result
-must name an existing ext2 directory. File-oriented syscalls such as
-`SYS_OPEN`, `SYS_OPEN_MODE`, `SYS_STAT`, `SYS_RENAME`, `SYS_UNLINK`,
-`SYS_MKDIR`, `SYS_RMDIR`, `SYS_DIRLIST`, `SYS_WRITEFILE_PATH`, and `SYS_EXEC`
-resolve relative paths through the same process cwd.
-
----
-
 ### SYS_WRITEFD (18)
 
 ```c
@@ -301,18 +348,6 @@ int sys_lseek(int fd, int offset, int whence);
 
 Repositions a seekable handle. ext2 file handles support this today; console
 and socket handles return `-ENOSYS`.
-
----
-
-### SYS_FSYNC (39)
-
-```c
-int sys_fsync(int fd);
-```
-
-Flushes a writable descriptor. Current streaming ext2 writes are committed as
-the write calls run, so this is mostly a stdio contract hook: writable file
-streams call it from `fflush()`, and non-writable handles return success.
 
 ---
 
@@ -492,22 +527,6 @@ User-space should prefer the batched directory syscall below through
 
 ---
 
-### SYS_DIRLIST_BATCH (65)
-
-```c
-int sys_dirlist_batch(const char* path,
-                      uint32_t start_index,
-                      struct uapi_dirent* out,
-                      uint32_t max_count);
-```
-
-Copies up to `max_count` directory entries beginning at `start_index` and
-returns the number copied. The kernel caps each call at 64 entries. Userland
-`readdir()` uses this syscall as a small cache so tools like `ls` and `tree`
-avoid rescanning a directory from zero for every entry.
-
----
-
 ### SYS_SETSOCKOPT (34)
 
 ```c
@@ -534,6 +553,83 @@ byte order for the address and port fields.
 
 ---
 
+### SYS_OPEN_MODE (36)
+
+```c
+int sys_open_mode(const char* name, uint32_t mode);
+```
+
+Mode-aware ext2 open. `mode` is a bitmask of:
+
+```c
+SYS_OPEN_MODE_READ
+SYS_OPEN_MODE_WRITE
+SYS_OPEN_MODE_CREATE
+SYS_OPEN_MODE_TRUNC
+SYS_OPEN_MODE_APPEND
+```
+
+This is the preferred descriptor-open primitive for POSIX `open()` and stdio
+`fopen()` because it can represent read-only, write-truncate, read/write,
+create, and append opens without forcing every write-capable path to truncate.
+Writable file handles stream writes through ext2 at the descriptor offset.
+Partial-sector writes preserve surrounding bytes, append starts at the current
+file size, and seek-past-EOF writes zero-fill the gap.
+
+---
+
+### SYS_GETCWD (37)
+
+```c
+int sys_getcwd(char* buf, uint32_t size);
+```
+
+Copies the calling process's current working directory into `buf` as an
+absolute display path such as `/` or `/usr/bin`. Returns `0` on success or
+a negative errno if the user buffer is invalid or too small.
+
+---
+
+### SYS_CHDIR (38)
+
+```c
+int sys_chdir(const char* path);
+```
+
+Changes the calling process's current working directory. Relative paths are
+resolved against the process cwd, `.` and `..` are normalized, and the result
+must name an existing ext2 directory. File-oriented syscalls such as
+`SYS_OPEN`, `SYS_OPEN_MODE`, `SYS_STAT`, `SYS_RENAME`, `SYS_UNLINK`,
+`SYS_MKDIR`, `SYS_RMDIR`, `SYS_DIRLIST`, `SYS_WRITEFILE_PATH`, and `SYS_EXEC`
+resolve relative paths through the same process cwd.
+
+---
+
+### SYS_FSYNC (39)
+
+```c
+int sys_fsync(int fd);
+```
+
+Flushes a writable descriptor. Current streaming ext2 writes are committed as
+the write calls run, so this is mostly a stdio contract hook: writable file
+streams call it from `fflush()`, and non-writable handles return success.
+
+---
+
+### SYS_READ_RAW (40)
+
+```c
+int sys_read_raw(char* buf, uint32_t len);
+```
+
+Reads console input like `SYS_READ`, but does not echo bytes through the
+terminal. Full-screen programs use this to consume ordinary characters plus
+ANSI-style special-key sequences for arrows, Home/End, Delete, PageUp/PageDown,
+and function keys.
+
+---
+
 ### SYS_FCNTL (41)
 
 ```c
@@ -546,55 +642,6 @@ Supports descriptor flags through `SYS_FCNTL_GETFD` / `F_GETFD` and
 `O_NONBLOCK` is stored on the shared open-file description so duplicated and
 fork-inherited descriptors observe the same nonblocking state. Unsupported
 commands return `-EINVAL`.
-
----
-
-### SYS_PIPE (69)
-
-```c
-int sys_pipe(int fds[2]);
-```
-
-Creates a unidirectional pipe and writes the read end to `fds[0]` and the write
-end to `fds[1]`. Pipes use a one-page ring buffer with `PIPE_BUF == 4096`.
-Writes of `PIPE_BUF` bytes or fewer are atomic: a blocking writer waits until
-the whole write can fit, and a nonblocking writer returns `-EAGAIN` without a
-partial write if the whole request cannot fit. Larger writes may complete
-partially.
-
-Reads from an empty pipe block while a writer exists, return `-EAGAIN` when the
-read end is nonblocking, and return `0` for EOF after all write ends close.
-Writes fail with `-EPIPE` and deliver `SIGPIPE` after all read ends close.
-`poll` and `epoll` report `POLLIN` for data or EOF, `POLLOUT` when space is
-available, and `POLLHUP` after the peer side closes.
-
----
-
-### SYS_PIPE2 (70)
-
-```c
-int sys_pipe2(int fds[2], uint32_t flags);
-```
-
-Creates a pipe with initial flags. Accepted flags are `O_NONBLOCK` and
-`O_CLOEXEC`; other bits return `-EINVAL`.
-
----
-
-### SYS_DUP (71), SYS_DUP2 (72), SYS_DUP3 (73)
-
-```c
-int sys_dup(int oldfd);
-int sys_dup2(int oldfd, int newfd);
-int sys_dup3(int oldfd, int newfd, uint32_t flags);
-```
-
-Duplicates descriptors in the POSIX shape. The new fd points at the same shared
-open-file description, so file offsets and status flags such as `O_NONBLOCK`
-are shared. Per-fd flags such as `FD_CLOEXEC` are independent: `dup` and
-`dup2` clear close-on-exec on the new descriptor, while `dup3` accepts
-`O_CLOEXEC`. `dup2(oldfd, oldfd)` succeeds as a no-op; `dup3(oldfd, oldfd)`
-returns `-EINVAL`.
 
 ---
 
@@ -872,6 +919,57 @@ Returns `0` on success, `-EFAULT` for invalid request or output buffers, or
 
 ---
 
+### SYS_GETPID (62)
+
+```c
+int sys_getpid(void);
+```
+
+Returns the current process id.
+
+---
+
+### SYS_WAITPID (63)
+
+```c
+int sys_waitpid(int pid, int* status, int options);
+```
+
+Waits for a direct child created by legacy `SYS_EXEC` or POSIX-shaped
+`SYS_FORK`. `pid > 0` waits for that child; `pid == -1` waits for any child.
+`SYS_WAITPID_WNOHANG` returns `0` immediately when the selected child has not
+exited. On success, returns the collected child pid and writes a POSIX-style
+wait status when `status` is non-null. Missing children return `-ECHILD`.
+
+---
+
+### SYS_KILL (64)
+
+```c
+int sys_kill(int pid, int signum);
+```
+
+Terminates a user process by pid with status `128 + signum`. Invalid pids return
+`-ESRCH`; invalid signal numbers return `-EINVAL`.
+
+---
+
+### SYS_DIRLIST_BATCH (65)
+
+```c
+int sys_dirlist_batch(const char* path,
+                      uint32_t start_index,
+                      struct uapi_dirent* out,
+                      uint32_t max_count);
+```
+
+Copies up to `max_count` directory entries beginning at `start_index` and
+returns the number copied. The kernel caps each call at 64 entries. Userland
+`readdir()` uses this syscall as a small cache so tools like `ls` and `tree`
+avoid rescanning a directory from zero for every entry.
+
+---
+
 ### SYS_CLOCK_GETTIME (66)
 
 ```c
@@ -919,65 +1017,52 @@ Returns `0` on success, `-ETIMEDOUT` when ARP/send/reply waiting fails, or
 
 ---
 
-### SYS_WRITEFILE (12)
+### SYS_PIPE (69)
 
 ```c
-int sys_writefile(const char* name, const char* buf, uint32_t len);
+int sys_pipe(int fds[2]);
 ```
 
-Creates or overwrites a root-directory ext2 file in one shot. Returns `0` on success or a negative errno on failure.
+Creates a unidirectional pipe and writes the read end to `fds[0]` and the write
+end to `fds[1]`. Pipes use a one-page ring buffer with `PIPE_BUF == 4096`.
+Writes of `PIPE_BUF` bytes or fewer are atomic: a blocking writer waits until
+the whole write can fit, and a nonblocking writer returns `-EAGAIN` without a
+partial write if the whole request cannot fit. Larger writes may complete
+partially.
 
-This is the root-only persistence primitive for generated artifacts such as compiler output, assembly listings, or other build products. The kernel validates both the filename and the byte range before calling into the VFS root-write wrapper.
+Reads from an empty pipe block while a writer exists, return `-EAGAIN` when the
+read end is nonblocking, and return `0` for EOF after all write ends close.
+Writes fail with `-EPIPE` and deliver `SIGPIPE` after all read ends close.
+`poll` and `epoll` report `POLLIN` for data or EOF, `POLLOUT` when space is
+available, and `POLLHUP` after the peer side closes.
 
 ---
 
-### SYS_WRITEFILE_PATH (15)
+### SYS_PIPE2 (70)
 
 ```c
-int sys_writefile_path(const char* path, const char* buf, uint32_t len);
+int sys_pipe2(int fds[2], uint32_t flags);
 ```
 
-Creates or overwrites an ext2 file at an arbitrary path. Returns `0` on success or a negative errno on failure.
-
-This is the preferred persistence primitive for build tools and compilers because it can emit directly into nested writable directories such as `/var/tmp/WORK/` or `/var/tmp/samples/`. The kernel validates both the path and the byte range before calling into the VFS path-write wrapper.
+Creates a pipe with initial flags. Accepted flags are `O_NONBLOCK` and
+`O_CLOEXEC`; other bits return `-EINVAL`.
 
 ---
 
-### SYS_HALT (13)
+### SYS_DUP (71), SYS_DUP2 (72), SYS_DUP3 (73)
 
 ```c
-int sys_halt(void);
+int sys_dup(int oldfd);
+int sys_dup2(int oldfd, int newfd);
+int sys_dup3(int oldfd, int newfd, uint32_t flags);
 ```
 
-Halts the machine through the kernel system path. Used by the `/bin/halt`
-command ELF and the halt smoke test.
-
----
-
-### SYS_REBOOT (14)
-
-```c
-int sys_reboot(void);
-```
-
-Requests a machine reboot through the kernel system path. Used by the
-`/bin/reboot` command ELF and the reboot smoke test.
-
----
-
-### SYS_EXEC (7)
-
-```c
-int sys_exec(const char* name, int argc, char** argv);
-```
-
-Legacy spawn-style process creation. Loads and asynchronously spawns a named
-ELF program through the kernel VFS layer. Returns the child pid on success or a
-negative errno if validation, lookup, or load fails. The child is claimed for
-the caller until `SYS_WAITPID` collects it or the parent exits. New
-POSIX-shaped code should prefer `SYS_FORK` plus `SYS_EXECVE`.
-
-`sys_exec_impl` copies `name` to a local kernel stack buffer before any VFS or ELF work so the loader does not depend on the caller's user pointer remaining valid. It then calls `elf_run_named()`, which creates the process, seeds its scheduler bootstrap context, enqueues it, and returns immediately.
+Duplicates descriptors in the POSIX shape. The new fd points at the same shared
+open-file description, so file offsets and status flags such as `O_NONBLOCK`
+are shared. Per-fd flags such as `FD_CLOEXEC` are independent: `dup` and
+`dup2` clear close-on-exec on the new descriptor, while `dup3` accepts
+`O_CLOEXEC`. `dup2(oldfd, oldfd)` succeeds as a no-op; `dup3(oldfd, oldfd)`
+returns `-EINVAL`.
 
 ---
 
@@ -1007,91 +1092,6 @@ The kernel validates and copies `path` and `argv` from user memory, closes
 close-on-exec descriptors, installs the new ELF address space, and returns to
 the new program entry point. `envp` is accepted for API shape but environment
 delivery is not modeled yet.
-
----
-
-### SYS_GETPID (62)
-
-```c
-int sys_getpid(void);
-```
-
-Returns the current process id.
-
----
-
-### SYS_WAITPID (63)
-
-```c
-int sys_waitpid(int pid, int* status, int options);
-```
-
-Waits for a direct child created by legacy `SYS_EXEC` or POSIX-shaped
-`SYS_FORK`. `pid > 0` waits for that child; `pid == -1` waits for any child.
-`SYS_WAITPID_WNOHANG` returns `0` immediately when the selected child has not
-exited. On success, returns the collected child pid and writes a POSIX-style
-wait status when `status` is non-null. Missing children return `-ECHILD`.
-
----
-
-### SYS_KILL (64)
-
-```c
-int sys_kill(int pid, int signum);
-```
-
-Terminates a user process by pid with status `128 + signum`. Invalid pids return
-`-ESRCH`; invalid signal numbers return `-EINVAL`.
-
----
-
-### SYS_OPEN (8)
-
-```c
-int sys_open(const char* name);
-```
-
-Legacy shorthand for `SYS_OPEN_MODE_READ`. Opens an ext2 file by path
-(case-sensitive native ext2 matching per component). Allocates the lowest free
-slot in the calling process's handle table (fd >= 3). The fd points to a shared
-open-file description containing the current offset, status flags, cached file
-data, and backing filename. Duplicated descriptors and fork-inherited
-descriptors share that description. fds 0/1/2 are pre-opened console handles.
-
-Returns the fd (≥ 3) on success, or a negative errno if the file is not found,
-the path names a directory, the process handle table is full, or the name
-pointer fails user-space validation. The fd table starts with 16 slots, grows on
-demand, and defaults to a 128-fd per-process limit.
-
-`sys_open_impl` validates the name with page-aware user checks, copies it into a kernel buffer bounded by `PROCESS_FD_NAME_MAX` (128 bytes), then calls through the VFS stat wrapper to confirm the file exists without loading its data.
-
----
-
-### SYS_CLOSE (9)
-
-```c
-int sys_close(int fd);
-```
-
-Closes an open handle, freeing its slot for reuse. Returns `0` on success or a
-negative errno if the fd is out of range, not currently open, or no current
-process exists.
-
----
-
-### SYS_FREAD (10)
-
-```c
-int sys_fread(int fd, char* buf, uint32_t len);
-```
-
-Reads up to `len` bytes from an open readable handle at `fd` into `buf`. File handles read from the current file position and advance it by the number of bytes actually read. Socket handles read from the TCP receive path, which uses the connected stream's lazy 4 KiB PMM-backed RX ring. Socket writes use a lazy 16 KiB PMM-backed TX ring, observe global RX/TX caps, and report writable readiness from remaining TX capacity. fd `0` reads from the console input buffer with the same blocking behavior as `SYS_READ`. Returns the number of bytes read, `0` at end-of-file / closed socket, or a negative errno on error.
-
-For file handles, the read op loads the file once into PMM-backed shared file
-cache pages on first use, then copies the requested slice from that cache into
-the validated user buffer. The cache stays live until the shared open-file
-description is closed, so duplicated and fork-inherited descriptors reuse it
-and share the current file offset.
 
 ---
 
@@ -1151,35 +1151,24 @@ If you change **anything** in `isr128_stub`, you MUST update `syscall_regs_t` to
 
 ```c
 sys_write(buf, len)
-sys_putc(c)
 sys_exit(code)
 sys_get_ticks()
+sys_putc(c)
 sys_read(buf, len)
 sys_yield()
-sys_sleep(ticks)
 sys_exec(name, argc, argv)
-sys_getpid()
-sys_waitpid(pid, status, options)
-sys_kill(pid, signum)
-sys_pipe(fds)
-sys_pipe2(fds, flags)
-sys_dup(oldfd)
-sys_dup2(oldfd, newfd)
-sys_dup3(oldfd, newfd, flags)
-sys_fork()
-sys_execve(path, argv, envp)
-sys_writefile(name, buf, len)
-sys_writefile_path(path, buf, len)
 sys_open(name)
-sys_open_write(name)
-sys_open_mode(name, mode)
-sys_getcwd(buf, size)
-sys_chdir(path)
 sys_close(fd)
 sys_fread(fd, buf, len)
+sys_sleep(ticks)
+sys_writefile(name, buf, len)
+sys_halt()
+sys_reboot()
+sys_writefile_path(path, buf, len)
+sys_brk(new_brk)
+sys_open_write(name)
 sys_writefd(fd, buf, len)
 sys_lseek(fd, offset, whence)
-sys_fsync(fd)
 sys_unlink(path)
 sys_rename(src, dst)
 sys_stat(path, out_size, out_is_dir)
@@ -1191,28 +1180,51 @@ sys_connect(fd, addr, addrlen)
 sys_send(fd, buf, len)
 sys_recv(fd, buf, len)
 sys_poll(fds, nfds, timeout)
+sys_mkdir(path, mode)
+sys_rmdir(path)
+sys_dirlist(path, index, out)
+sys_setsockopt(fd, level, optname, optval, optlen)
+sys_getsockname(fd, addr, addrlen)
+sys_open_mode(name, mode)
+sys_getcwd(buf, size)
+sys_chdir(path)
+sys_fsync(fd)
+sys_read_raw(buf, len)
 sys_fcntl(fd, cmd, arg)
 sys_epoll_create(flags)
 sys_epoll_ctl(epfd, op, fd, event)
 sys_epoll_wait(epfd, events, maxevents, timeout)
 sys_timerfd_create(clock_id, flags)
 sys_timerfd_settime(fd, flags, new_value, old_value)
-sys_clock_gettime(clock_id, ts)
-sys_clock_settime(clock_id, ts)
-sys_ntp_sync(server_ip, out_ts)
 sys_signalfd(fd, mask, flags)
 sys_accept4(fd, addr, addrlen, flags)
 sys_shutdown(fd, how)
 sys_getpeername(fd, addr, addrlen)
 sys_fstat(fd, out_size, out_is_dir)
-sys_mkdir(path, mode)
-sys_rmdir(path)
-sys_dirlist(path, index, out)
-sys_setsockopt(fd, level, optname, optval, optlen)
-sys_getsockname(fd, addr, addrlen)
-sys_brk(new_brk)
-sys_halt()
-sys_reboot()
+sys_terminal_size(out_rows, out_cols)
+sys_display_info(out_info)
+sys_display_fill(x, y, w, h, color)
+sys_display_blit(x, y, w, h, pixels)
+sys_display_acquire()
+sys_display_release()
+sys_mouse_read(out_state)
+sys_input_read(out_events, max_events, flags)
+sys_fsinfo(out_info)
+sys_fsmap(req)
+sys_getpid()
+sys_waitpid(pid, status, options)
+sys_kill(pid, signum)
+sys_dirlist_batch(path, index, out, max_count)
+sys_clock_gettime(clock_id, ts)
+sys_clock_settime(clock_id, ts)
+sys_ntp_sync(server_ip, out_ts)
+sys_pipe(fds)
+sys_pipe2(fds, flags)
+sys_dup(oldfd)
+sys_dup2(oldfd, newfd)
+sys_dup3(oldfd, newfd, flags)
+sys_fork()
+sys_execve(path, argv, envp)
 ```
 
 `user_lib.h` higher-level wrappers:
