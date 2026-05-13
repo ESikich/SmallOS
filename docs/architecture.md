@@ -420,7 +420,7 @@ Normal syscalls return through this saved interrupt frame. `SYS_EXIT` is the exc
 
 ## Terminal
 
-`terminal.c` owns terminal semantics and dispatches through an active backend. It provides `terminal_putc`, `terminal_puts`, `terminal_put_uint`, `terminal_put_hex`, cursor control, scrolling behavior, ANSI cursor/clear handling, and runtime `terminal_rows()` / `terminal_cols()` queries. Serial mirrors all terminal bytes and remains the headless test truth.
+`terminal.c` owns terminal semantics and dispatches through an active backend. It provides `terminal_putc`, `terminal_puts`, `terminal_put_uint`, `terminal_put_hex`, cursor control, scrolling behavior, ANSI cursor/clear handling, and runtime `terminal_rows()` / `terminal_cols()` queries. Serial mirrors the original terminal bytes and remains the headless test truth. Display backends receive decoded glyph bytes: `unicode.c` validates UTF-8 streams and maps supported Unicode codepoints onto the CP437/VGA font slots used by both VGA text and the framebuffer console.
 
 The default backend is VGA text mode (`0xB8000`) for early/fallback/debug output. When `DISPLAY_BACKEND=auto` and loader2 provides valid VBE boot info, `fb_console.c` maps the linear framebuffer at `0xD0000000` and switches to a white-on-black 8x16-font framebuffer backend. At 1024x768 this exposes a 128x48 terminal while keeping VGA text available for panic/double-fault markers. With `DISPLAY_BACKEND=vga`, loader2 stays in BIOS/VGA text mode, leaves framebuffer boot info invalid, still collects E820, and the kernel leaves the VGA backend active.
 

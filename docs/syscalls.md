@@ -483,6 +483,11 @@ Returns `0` when the index is past the end of the directory. The returned
 record contains `d_name`, `d_size`, and `d_is_dir`; user-space `readdir()`
 uses this syscall after `opendir()` validates the directory with `SYS_STAT`.
 
+This syscall is intentionally simple but not streaming: each indexed lookup is
+resolved by path and may scan from the start of the directory. Recursive tools
+should batch their terminal output where possible, and a future fd-style
+directory iterator should replace repeated indexed scans for large trees.
+
 ---
 
 ### SYS_SETSOCKOPT (34)

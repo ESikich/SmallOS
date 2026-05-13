@@ -4,6 +4,11 @@
 
 ### Changed
 
+* **Unicode terminal output** (`src/drivers/unicode.*`, `src/drivers/terminal.c`, `src/user/tree.c`)
+  * Added a small UTF-8 decoder and Unicode-to-CP437 compatibility mapper for the active terminal backend, keeping COM1 serial output byte-for-byte UTF-8 for headless logs.
+  * Kept ANSI/control handling in `terminal.c` while moving Unicode decoding and glyph mapping into `src/drivers/unicode.*`.
+  * Switched `/bin/tree.elf` to print UTF-8 branch glyphs (`├──`, `└──`, `│`) and updated shell regression expectations.
+  * Fixed `tree` directory display so entries already returned with a trailing slash do not render as `//`.
 * **Writable ext2 filesystem** (`src/drivers/ext2.*`, `tools/mkext2.c`, `Makefile`)
   * Replaced the FAT16 runtime and seed image builder with a 16 MB ext2 volume using 4 KiB blocks, native case-sensitive names, direct/single-indirect/double-indirect block mapping, and MBR partition type `0x83`.
   * Preserved the VFS/syscall ABI while routing ELF loading, directory iteration, file writes, mkdir/rmdir, unlink, rename, usage reporting, and allocation maps through the ext2 driver.

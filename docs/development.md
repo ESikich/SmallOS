@@ -90,6 +90,8 @@ If you see `implicit declaration of function` — you forgot a header.
 
 Terminal output is mirrored to COM1 serial and the active display backend. Keep ANSI/control-character handling in `terminal.c` so VGA text and framebuffer output share behavior; backend `putc` implementations should only handle raw newline, carriage return, backspace, wrapping, scrolling, and drawing.
 
+UTF-8 decoding and Unicode-to-CP437 glyph compatibility live in `src/drivers/unicode.c` / `src/drivers/unicode.h`. Keep Unicode state machines and glyph mapping tables there rather than growing `terminal.c`; serial mirroring should continue to receive the original bytes so host logs remain UTF-8.
+
 `src/kernel/klib.h` / `src/kernel/klib.c` are now the canonical home for shared freestanding string and memory helpers such as `k_memcpy`, `k_memset`, `k_strlen`, `k_strcmp`, `k_strncpy`, and `k_starts_with`. If a helper is generally useful across more than one file, it belongs in `klib` rather than as a file-local static copy.
 
 ---

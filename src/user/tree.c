@@ -3,6 +3,9 @@
 
 #define TREE_MAX_ENTRIES 128
 #define TREE_PATH_MAX 256
+#define TREE_VERT "\xE2\x94\x82"
+#define TREE_MID "\xE2\x94\x9C\xE2\x94\x80\xE2\x94\x80 "
+#define TREE_LAST "\xE2\x94\x94\xE2\x94\x80\xE2\x94\x80 "
 
 typedef struct {
     char name[NAME_MAX + 1];
@@ -115,7 +118,7 @@ static int build_child_prefix(char* out,
                               const char* prefix,
                               int is_last) {
     unsigned int pos = 0;
-    const char* suffix = is_last ? "    " : "|   ";
+    const char* suffix = is_last ? "    " : TREE_VERT "   ";
 
     if (!out || out_size == 0u) {
         return 0;
@@ -203,14 +206,18 @@ static int print_tree(const char* path, const char* prefix) {
         if (prefix) {
             u_puts(prefix);
         }
-        u_puts(is_last ? "`-- " : "|-- ");
+        u_puts(is_last ? TREE_LAST : TREE_MID);
         u_puts(entry->name);
         if (entry->is_dir) {
             char child_path[TREE_PATH_MAX];
             char child_prefix[TREE_PATH_MAX];
+            uint32_t name_len = str_len(entry->name);
 
             s_dir_count++;
-            u_puts("/\n");
+            if (name_len == 0u || entry->name[name_len - 1u] != '/') {
+                u_putc('/');
+            }
+            u_putc('\n');
             if (!join_path(child_path, sizeof(child_path), path, entry->name) ||
                 !build_child_prefix(child_prefix, sizeof(child_prefix), prefix, is_last)) {
                 free(entries);

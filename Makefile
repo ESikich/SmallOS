@@ -93,6 +93,7 @@ KERNEL_C_SRCS=\
 	$(SHELL_DIR)/shell.c \
 	$(SHELL_DIR)/line_editor.c \
 	$(DRIVERS_DIR)/terminal.c \
+	$(DRIVERS_DIR)/unicode.c \
 	$(DRIVERS_DIR)/display.c \
 	$(DRIVERS_DIR)/screen.c \
 	$(DRIVERS_DIR)/fb_console.c \

@@ -1,6 +1,7 @@
 #include "terminal.h"
 #include "screen.h"
 #include "serial.h"
+#include "unicode.h"
 
 static const terminal_backend_t* active_backend = &vga_text_backend;
 static int esc_state = 0;
@@ -9,6 +10,7 @@ static int csi_arg_count = 0;
 static int csi_value = 0;
 static int csi_has_value = 0;
 static int csi_private = 0;
+static utf8_decoder_t utf8_decoder;
 
 static int clamp_int(int value, int min, int max) {
     if (value < min) return min;
@@ -157,6 +159,28 @@ static int terminal_handle_escape(char c) {
     return 0;
 }
 
+static void terminal_emit_codepoint(unsigned int cp) {
+    if (active_backend && active_backend->putc) {
+        active_backend->putc((char)unicode_to_cp437(cp));
+    }
+}
+
+static void terminal_emit_utf8_byte(unsigned char b) {
+    for (;;) {
+        unsigned int cp = 0;
+        utf8_decode_result_t result = utf8_decoder_feed(&utf8_decoder, b, &cp);
+
+        if (result == UTF8_DECODE_WAIT) {
+            return;
+        }
+
+        terminal_emit_codepoint(cp);
+        if (result != UTF8_DECODE_REJECT_RETRY) {
+            return;
+        }
+    }
+}
+
 void terminal_init(void) {
     serial_init();
     terminal_clear();
@@ -169,6 +193,7 @@ void terminal_set_backend(const terminal_backend_t* backend) {
 
     active_backend = backend;
     esc_state = 0;
+    utf8_decoder_reset(&utf8_decoder);
 }
 
 void terminal_clear(void) {
@@ -178,8 +203,12 @@ void terminal_clear(void) {
 }
 
 void terminal_putc(char c) {
-    if (!terminal_handle_escape(c) && active_backend && active_backend->putc) {
-        active_backend->putc(c);
+    unsigned char b = (unsigned char)c;
+
+    if (terminal_handle_escape(c)) {
+        utf8_decoder_reset(&utf8_decoder);
+    } else {
+        terminal_emit_utf8_byte(b);
     }
     serial_putc(c);
 }

@@ -262,7 +262,7 @@ ataread <lba>        dump first 32 bytes of a disk sector
 
 fsls [path]        list an ext2 directory (root by default)
 ls [pattern]       list an ext2 directory, with `*` and `?` globbing
-tree [path]        print an ext2 directory tree (root by default)
+tree [path]        print an ext2 directory tree with Unicode branches
 fsread <name>      dump first 16 bytes of an ext2 file
 cat <path>          print an ext2 file
 cd <path>           change the shell working directory

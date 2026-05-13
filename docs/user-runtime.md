@@ -215,6 +215,11 @@ int closedir(DIR *dirp);
 The implementation uses `SYS_STAT` to validate that `opendir` targets an
 existing directory, then uses `SYS_DIRLIST` for iteration.
 
+`SYS_DIRLIST` is currently index-based: each `readdir()` asks the kernel for
+entry `N` by path. That keeps the ABI small, but large directory walks can
+re-scan earlier entries. A future streaming directory handle or fd-backed
+directory iterator would be the right shape for faster tools such as `tree`.
+
 Current `struct dirent` contains:
 
 ```c

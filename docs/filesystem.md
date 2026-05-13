@@ -201,7 +201,7 @@ The current ext2 driver is intentionally narrow.
 - shell working-directory navigation via `cd` / `pwd`
 - directory listing by path with `ext2_ls_path(path)` and `fsls [path]`
 - wildcard shell listing with `ls [pattern]`
-- recursive directory display with `tree [path]`
+- recursive directory display with `tree [path]`, including UTF-8 branch glyphs on the terminal path
 - directory creation/removal by path with `ext2_mkdir(path)` / `ext2_rmdir(path)`
 - file removal by path with `ext2_rm(path)`
 - file metadata queries by path with `ext2_stat(path, ...)`
