@@ -262,6 +262,7 @@ ataread <lba>        dump first 32 bytes of a disk sector
 
 fsls [path]        list an ext2 directory (root by default)
 ls [pattern]       list an ext2 directory, with `*` and `?` globbing
+tree [path]        print an ext2 directory tree (root by default)
 fsread <name>      dump first 16 bytes of an ext2 file
 cat <path>          print an ext2 file
 cd <path>           change the shell working directory
@@ -299,7 +300,7 @@ editing; F2 saves, and F3 or Esc exits. If there are unsaved changes, F2 saves
 and exits, F3 discards, and Esc cancels the quit prompt.
 
 Seeded ext2 layout:
-- command-style apps live under `/bin/` (`echo`, `about`, `uptime`, `halt`, `reboot`, `pwd`, `cat`, `fsread`, `ls`, `fsls`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, `edit`, `diskview`)
+- command-style apps live under `/bin/` (`echo`, `about`, `uptime`, `halt`, `reboot`, `pwd`, `cat`, `fsread`, `ls`, `fsls`, `tree`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, `edit`, `diskview`)
 - `bin/bmpview` - load a BMP, render it through the userland graphics backbuffer, and present it to the framebuffer
 - `bin/diskview` - show ext2 used/free space as a framebuffer allocation map
 - `usr/bin/hello` - print argc/argv and tick count

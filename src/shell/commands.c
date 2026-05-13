@@ -1206,6 +1206,8 @@ static void cmd_shelltest(command_t* cmd) {
     static command_t ataread_cmd = { 2, { "ataread", "0" } };
     static command_t fsls_root_cmd = { 1, { "fsls" } };
     static command_t fsls_path_cmd = { 2, { "fsls", "usr/bin" } };
+    static command_t tree_root_cmd = { 1, { "tree" } };
+    static command_t tree_path_cmd = { 2, { "tree", "usr/bin" } };
     static command_t fsread_cmd = { 2, { "fsread", "usr/bin/hello.elf" } };
     static command_t fsread_path_cmd = { 2, { "fsread", "usr/bin/hello.elf" } };
     static command_t mkdir_cmd = { 2, { "mkdir", "TESTDIR" } };
@@ -1272,6 +1274,8 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("ataread", cmd_ataread, &ataread_cmd);
     shelltest_exec("fsls", &fsls_root_cmd);
     shelltest_exec("fsls_path", &fsls_path_cmd);
+    shelltest_exec("tree", &tree_root_cmd);
+    shelltest_exec("tree_path", &tree_path_cmd);
     shelltest_exec("fsread", &fsread_cmd);
     shelltest_exec("fsread_path", &fsread_path_cmd);
     shelltest_exec("cat", &cat_cmd);
@@ -1512,6 +1516,7 @@ static command_entry_t app_commands[] = {
     { "pwd",           "print the shell working directory", 0 },
     { "ls",            "list an ext2 directory",       0 },
     { "fsls",          "list an ext2 directory",       0 },
+    { "tree",          "print an ext2 directory tree", 0 },
     { "fsread",        "dump ext2 file bytes",         0 },
     { "cat",           "print an ext2 file",           0 },
     { "mkdir",         "create an ext2 directory",     0 },

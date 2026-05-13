@@ -475,6 +475,7 @@ Shipped ext2 programs:
 - `bin/cat` - print an ext2 file
 - `bin/fsread` - dump ext2 file metadata and first bytes
 - `bin/ls` / `bin/fsls` - list ext2 directories
+- `bin/tree` - print an ext2 directory tree
 - `bin/touch` - create or truncate an ext2 file
 - `bin/rm` - remove an ext2 file
 - `bin/mkdir` / `bin/rmdir` - create or remove ext2 directories
