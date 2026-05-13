@@ -451,7 +451,7 @@ and poll relative mouse movement with `SYS_MOUSE_READ`.
 
 ## Current Next Steps
 
-* Broaden the syscall pointer regression coverage with more page-boundary and output-buffer cases
+* Keep extending syscall pointer regression coverage whenever a new syscall accepts user buffers or writes output structs
 * Consider smaller quality-of-life shell commands for debugging the new runtime contracts
 
 ---

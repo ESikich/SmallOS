@@ -1,6 +1,6 @@
 # Changelog
 
-## [Current] — ext2 filesystem conversion
+## [Current] — ext2 filesystem conversion and regression hardening
 
 ### Changed
 
@@ -21,7 +21,13 @@
 * **FTP upload path** (`third_party/ftp_server/src/ftp_data.c`)
   * Buffered STOR socket reads into 64 KiB file writes so uploads do not turn segment-sized TCP reads into repeated partial-block filesystem writes.
 
-## [Current] — Syscall user-pointer hardening
+### Added
+
+* **Expanded syscall pointer regression coverage** (`src/user/badptrprobe.c`, `tests/elfs/badptrprobe.py`)
+  * Added page-boundary probes for user buffers and output structs that begin in mapped user memory but cross into an unmapped page.
+  * Covered read/write buffers, path strings, stat/terminal/directory/display/fs outputs, `poll()` / `epoll_*()` arrays, `timerfd_settime()` structs, and `signalfd()` masks.
+
+## [Previous] — Syscall user-pointer hardening
 
 ### Changed
 
@@ -34,7 +40,7 @@
 * **Bad pointer regression probe** (`src/user/badptrprobe.c`, `tests/elfs/badptrprobe.py`, `Makefile`)
   * Added `apps/tests/badptrprobe.elf` to verify unmapped user pointers return `-EFAULT`, oversized poll/epoll requests return `-EINVAL`, and the shell remains alive after rejected syscall inputs.
 
-## [Current] — Disk usage graphics utility
+## [Previous] — Disk usage graphics utility
 
 ### Added
 
@@ -43,7 +49,7 @@
   * Added `SYS_FSMAP` to expose FAT16 allocation states for the data area.
   * Added `/bin/diskview.elf`, a framebuffer utility that draws a used/free space map where each cell represents one FAT16 cluster, currently 4 disk sectors.
 
-## [Current] — Userland graphics helper and demo
+## [Previous] — Userland graphics helper and demo
 
 ### Added
 
@@ -67,7 +73,7 @@
   * Forced-VGA builds now write `build/img/vga/os-image.bin`, leaving the normal auto/framebuffer image at `build/img/os-image.bin`.
   * Documented the display syscalls, `gfx` helper, `bmpview`, `plasma`, `mandel`, PS/2 mouse polling, IRQ12 handling, and backend-specific image paths.
 
-## [Current] — Process group foreground cleanup
+## [Previous] — Process group foreground cleanup
 
 ### Added
 
@@ -79,7 +85,7 @@
 * **Foreground group regression** (`src/user/pgrpprobe.c`, `tools/qemu_selftest.py`)
   * Added a guest probe that spawns a child with `SYS_EXEC`; the QEMU selftest now proves Ctrl+C kills the foreground parent and child together.
 
-## [Current] — E820 memory map and expanded PMM
+## [Previous] — E820 memory map and expanded PMM
 
 ### Added
 
@@ -98,7 +104,7 @@
   * Expanded the E820-backed PMM cap to `0x200000`–`0x7FFFFFF` with a 128 MB ceiling. The no-E820 fallback remains conservative at the old 30 MB window.
   * Added `QEMU_MEMORY_MB` so tests can boot larger guests, for example `make test QEMU_MEMORY_MB=128`.
 
-## [Current] — Framebuffer terminal backend
+## [Previous] — Framebuffer terminal backend
 
 ### Added
 
@@ -124,7 +130,7 @@
   * Introduced `terminal_backend_t` and moved ANSI cursor/clear handling into `terminal.c`, so VGA text and framebuffer output share terminal semantics.
   * Converted `screen.c` into the VGA text backend implementation rather than the owner of terminal behavior.
 
-## [Current] — Socket subsystem foundation
+## [Previous] — Socket subsystem foundation
 
 ### Changed
 
@@ -154,7 +160,7 @@
   * Raised the sample cserve config to `max_conn = 40`; the default `make cserve-smoke` gate still holds 32 keep-alive clients and adds a slow-reader connection.
   * Expanded the socket EOF smoke to cover host-first half-close, guest response shutdown, and guest `close()` sending FIN after a final write.
 
-## [Current] — Full-screen userland text editor
+## [Previous] — Full-screen userland text editor
 
 ### Added
 
@@ -171,7 +177,7 @@
   * Foreground ELF keyboard input now receives arrow/Home/End/Delete/Page/F-key events as ANSI-style escape sequences.
   * The terminal layer now understands the ANSI cursor/clear subset used by text-mode apps, independent of the active display backend.
 
-## [Current] — Boot splash diagnostics
+## [Previous] — Boot splash diagnostics
 
 ### Added
 
@@ -185,7 +191,7 @@
 * **Init result plumbing** (`src/drivers/ata.*`, `src/drivers/tcp.*`, `src/kernel/process.*`)
   * `ata_init()`, `tcp_init()`, and `process_start_reaper()` now return success/failure so the boot splash can report real status instead of assuming success.
 
-## [Current] — Documentation and comment refresh
+## [Previous] — Documentation and comment refresh
 
 ### Changed
 
@@ -204,7 +210,7 @@
   * Updated stale comments around `SYS_EXEC`, path-aware FAT16 helpers, socket/TCP service ownership, `mkfat16` destination-path arguments, and the legacy ramdisk tool.
   * Corrected the `fsls` help description now that it accepts directory paths.
 
-## [Current] — TinyCC guest runtime cleanup
+## [Previous] — TinyCC guest runtime cleanup
 
 ### Changed
 
@@ -298,7 +304,7 @@
 * **ELF loader page setup** (`src/exec/elf_loader.c`)
   * The ELF loader now preserves already-present page-table entries when preparing a process image and only allocates fresh frames for pages that are not mapped yet.
 
-## [Current] — Guest TCP smoke path and FTP ELF launcher
+## [Previous] — Guest TCP smoke path and FTP ELF launcher
 
 ### Added
 
@@ -314,7 +320,7 @@
   * The FTP bring-up plan now records the working hostfwd smoke result and keeps the next FTP step focused on the launcher and passive control/data paths
   * The execution docs now describe the TCP smoke apps as normal ELF launch targets
 
-## [Current] — TCP bring-up and process handle seam
+## [Previous] — TCP bring-up and process handle seam
 
 ### Added
 
@@ -329,7 +335,7 @@
   * `syscall.c` now validates and dispatches instead of owning fd lifetime directly, which leaves a clean seam for future socket handles
   * `make test` stays green on the refactored handle path
 
-## [Current] — Internet reachability probes
+## [Previous] — Internet reachability probes
 
 ### Fixed
 
@@ -345,7 +351,7 @@
   * Public pings are routed through QEMU's gateway instead of ARPing the public IP directly, so the probe matches NAT-mode networking
   * The README and execution docs now explain that `pinggw` and `ping 10.0.2.2` are the supported QEMU user-network checks
 
-## [Current] — TAP networking option
+## [Previous] — TAP networking option
 
 ### Added
 
@@ -354,7 +360,7 @@
   * The default `make run` / `make test` path still uses QEMU's built-in NAT so the existing automated suite stays unchanged
   * The README and docs now describe how to point TAP at a bridged host network when you want the guest reachable beyond QEMU's NAT layer
 
-## [Current] — Shell selftest stack safety
+## [Previous] — Shell selftest stack safety
 
 ### Fixed
 
@@ -363,7 +369,7 @@
   * That keeps `shelltest`, `selftest`, and `runelf_nowait` from trampling process state while the full regression matrix is running
   * `make test` is green again end to end
 
-## [Current] — Path-aware compiler output writes
+## [Previous] — Path-aware compiler output writes
 
 ### Added
 
@@ -382,7 +388,7 @@
   * Filesystem docs now state that regular file writes can target nested paths
   * Shell command docs now mention the path-aware compiler write flow
 
-## [Current] — Make-time selftest + loader fallback + dynamic help
+## [Previous] — Make-time selftest + loader fallback + dynamic help
 
 ### Added
 

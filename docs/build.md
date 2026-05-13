@@ -484,7 +484,7 @@ Shipped ext2 programs:
 - `apps/tests/stdioprobe` - exercise stdio EOF/error state, `clearerr`, and `fflush`
 - `apps/tests/dirprobe` - exercise root and nested directory iteration
 - `apps/tests/errnoprobe` - exercise raw syscall errors and POSIX errno wrappers
-- `apps/tests/badptrprobe` - exercise unmapped user pointers and wrapped syscall byte counts
+- `apps/tests/badptrprobe` - exercise unmapped user pointers, page-crossing buffers/structs, and wrapped syscall byte counts
 - `apps/tests/sleep_test` - exercise SYS_SLEEP semantics
 - `apps/tests/ptrguard` - exercise syscall pointer validation
 - `apps/tests/spinwkr` - helper spawned by the preemption regression

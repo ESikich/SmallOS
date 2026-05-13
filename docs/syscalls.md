@@ -76,6 +76,21 @@ Shared errno values:
 
 ---
 
+## User Pointer Validation
+
+Syscalls that read from or write to user memory validate the full byte range
+before dereferencing it. A pointer must live in the user address window, every
+touched page must be present and user-accessible in the caller's page tables,
+and variable-length arrays must pass byte-count overflow checks.
+
+Invalid user pointers return `-EFAULT`. Oversized counts that would wrap their
+byte length, such as huge `poll()` / `epoll_wait()` arrays, return `-EINVAL`.
+The `apps/tests/badptrprobe` regression covers unmapped pointers, buffers and
+output structs that cross from a mapped page into an unmapped page, and wrapped
+array counts.
+
+---
+
 ## Current Syscalls
 
 ### SYS_WRITE (1)
