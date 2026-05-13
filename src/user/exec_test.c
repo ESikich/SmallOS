@@ -5,9 +5,9 @@
  * exec_test — diagnostic SYS_EXEC spawn/error test.
  *
  * sys_exec("apps/demo/hello", ...) validates user pointers, copies argv into
- * kernel-owned storage, enqueues the child, and returns immediately.  This
- * probe checks the success path plus negative errno returns for bad names and
- * invalid argument counts.
+ * kernel-owned storage, enqueues the child, returns its pid, and leaves it
+ * waitable. This probe checks the success path plus negative errno returns
+ * for bad names and invalid argument counts.
  */
 
 static void append_char(char* buf, uint32_t* pos, char ch) {
@@ -66,9 +66,17 @@ void _start(int argc, char** argv) {
     u_puts("[2] calling sys_exec apps/demo/hello\n");
     char* av[] = { "apps/demo/hello", 0 };
     int r = sys_exec("apps/demo/hello", 1, av);
-    write_result_line("[3] sys_exec returned ", r);
-    if (r != 0) {
+    write_result_line("[3] sys_exec returned pid ", r);
+    if (r <= 0) {
         ok = 0;
+    } else {
+        int status = -1;
+        int wr = sys_waitpid(r, &status, 0);
+        write_result_line("[3b] sys_waitpid returned ", wr);
+        write_result_line("[3c] child status ", status);
+        if (wr != r || status != 0) {
+            ok = 0;
+        }
     }
 
     u_puts("[4] calling sys_exec with bad name\n");

@@ -10,6 +10,7 @@
 #include "sys/signalfd.h"
 #include "sys/uio.h"
 #include "sys/sendfile.h"
+#include "sys/wait.h"
 #include "fcntl.h"
 #include "unistd.h"
 #include "errno.h"
@@ -308,9 +309,11 @@ char* strerror(int errnum) {
     switch (errnum) {
         case EPERM: return "operation not permitted";
         case ENOENT: return "no such file or directory";
+        case ESRCH: return "no such process";
         case EINTR: return "interrupted system call";
         case EIO: return "input/output error";
         case EAGAIN: return "resource temporarily unavailable";
+        case ECHILD: return "no child processes";
         case EBADF: return "bad file descriptor";
         case ENOMEM: return "out of memory";
         case EACCES: return "permission denied";
@@ -432,6 +435,18 @@ sighandler_t signal(int signum, sighandler_t handler) {
     (void)signum;
     (void)handler;
     return SIG_DFL;
+}
+
+pid_t getpid(void) {
+    return (pid_t)sys_getpid();
+}
+
+pid_t waitpid(pid_t pid, int* status, int options) {
+    return (pid_t)errno_from_raw(sys_waitpid((int)pid, status, options));
+}
+
+int kill(int pid, int signum) {
+    return errno_from_raw(sys_kill(pid, signum));
 }
 
 ssize_t writev(int fd, const struct iovec* iov, int iovcnt) {

@@ -470,6 +470,7 @@ static int sys_exec_impl(const char* name, int argc, char** argv) {
     char kargv_data[PROCESS_ARG_BYTES];
     char* kargv[PROCESS_MAX_ARGS + 1];
     unsigned int used = 0;
+    process_t* child;
 
     int name_rc = copy_user_path_resolved(kname, sizeof(kname), name);
     if (name_rc < 0) return name_rc;
@@ -494,7 +495,52 @@ static int sys_exec_impl(const char* name, int argc, char** argv) {
     }
     kargv[argc] = 0;
 
-    return elf_run_named(kname, argc, kargv) ? 0 : -ENOENT;
+    child = elf_run_named(kname, argc, kargv);
+    if (!child) return -ENOENT;
+    process_claim_for_wait(child);
+    return (int)child->pid;
+}
+
+static int wait_status_to_user(int status) {
+    if (status >= 128 && status < 256) {
+        return status - 128;
+    }
+    return (status & 0xFF) << 8;
+}
+
+static int sys_getpid_impl(void) {
+    process_t* proc = (process_t*)sched_current();
+    if (!proc) return -EINVAL;
+    return (int)proc->pid;
+}
+
+static int sys_waitpid_impl(int pid, int* user_status, int options) {
+    process_t* proc = (process_t*)sched_current();
+    int out_pid = 0;
+    int raw_status = 0;
+    int rc;
+
+    if (!proc) return -EINVAL;
+    if (user_status && !user_buf_ok((unsigned int)user_status, sizeof(int))) {
+        return -EFAULT;
+    }
+
+    rc = process_wait_pid(proc, pid, options, &out_pid, &raw_status);
+    if (rc < 0) return rc;
+
+    if (out_pid != 0 && user_status) {
+        int encoded = wait_status_to_user(raw_status);
+        if (copy_to_user(user_status, &encoded, sizeof(encoded)) < 0) {
+            return -EFAULT;
+        }
+    }
+
+    return out_pid;
+}
+
+static int sys_kill_impl(syscall_regs_t* regs, int pid, int signum) {
+    if (signum <= 0 || signum >= 32) return -EINVAL;
+    return process_kill_pid(pid, 128 + signum, (unsigned int)regs);
 }
 
 /*
@@ -2044,6 +2090,24 @@ void syscall_handler_main(syscall_regs_t* regs) {
                             (const char*)regs->ebx,
                             (int)regs->ecx,
                             (char**)regs->edx);
+            break;
+
+        case SYS_GETPID:
+            regs->eax = (unsigned int)sys_getpid_impl();
+            break;
+
+        case SYS_WAITPID:
+            regs->eax = (unsigned int)sys_waitpid_impl(
+                            (int)regs->ebx,
+                            (int*)regs->ecx,
+                            (int)regs->edx);
+            break;
+
+        case SYS_KILL:
+            regs->eax = (unsigned int)sys_kill_impl(
+                            regs,
+                            (int)regs->ebx,
+                            (int)regs->ecx);
             break;
 
         case SYS_OPEN:

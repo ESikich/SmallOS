@@ -1391,6 +1391,7 @@ static void cmd_selftest(command_t* cmd) {
     static char* runelf_argv[] = { "apps/tests/runelf_test", "alpha", "beta", "gamma", 0 };
     static char* readline_argv[] = { "apps/tests/readline", "alpha", "beta", 0 };
     static char* exec_argv[] = { "apps/tests/exec_test", "alpha", "beta", 0 };
+    static char* waitprobe_argv[] = { "apps/tests/waitprobe", "alpha", "beta", 0 };
     static char* fileread_argv[] = { "apps/tests/fileread", "alpha", "beta", 0 };
     static char* compiler_demo_argv[] = { "apps/tests/compiler_demo", "alpha", "beta", 0 };
     static char* heapprobe_argv[] = { "apps/tests/heapprobe", "alpha", "beta", 0 };
@@ -1421,6 +1422,7 @@ static void cmd_selftest(command_t* cmd) {
         { "runelf_test", "apps/tests/runelf_test",4, runelf_argv,      0 },
         { "readline",    "apps/tests/readline",   1, readline_argv,    0 },
         { "exec_test",   "apps/tests/exec_test",  1, exec_argv,        0 },
+        { "waitprobe",   "apps/tests/waitprobe",  1, waitprobe_argv,   0 },
         { "fileread",    "apps/tests/fileread",   1, fileread_argv,    0 },
         { "compiler_demo","apps/tests/compiler_demo",1, compiler_demo_argv,0 },
         { "heapprobe",   "apps/tests/heapprobe",  1, heapprobe_argv,   0 },

@@ -100,6 +100,7 @@ typedef struct process {
     u32*            pd;                 /* PMM physical page-directory frame */
     u32             kernel_stack_frame; /* PMM physical kernel-stack frame */
     u32             pid;                /* kernel process id, unique until wrap */
+    u32             parent_pid;         /* process that spawned this task, if any */
     u32             pgid;               /* lightweight process group id */
     unsigned int    sched_esp;
     volatile process_state_t state;
@@ -154,6 +155,14 @@ unsigned int process_fd_get_flags(fd_entry_t* ent);
 int        process_fd_set_signalfd_mask(fd_entry_t* ent, unsigned int mask);
 void       process_wake_timerfds(process_t* proc, unsigned int now);
 void       process_claim_for_wait(process_t* proc);
+process_t* process_find_by_pid(u32 pid);
+int        process_wait_pid(process_t* parent,
+                            int pid,
+                            int options,
+                            int* out_pid,
+                            int* out_status);
+int        process_kill_pid(int pid, int status, unsigned int esp);
+int        process_reap_unclaimed_zombies(void);
 int        process_set_args(process_t* proc, int argc, char** argv);
 
 process_t* process_get_current(void);

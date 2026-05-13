@@ -20,5 +20,6 @@ int sigemptyset(sigset_t* set);
 int sigaddset(sigset_t* set, int signum);
 int sigprocmask(int how, const sigset_t* set, sigset_t* oldset);
 sighandler_t signal(int signum, sighandler_t handler);
+int kill(int pid, int signum);
 
 #endif /* USER_SIGNAL_H */

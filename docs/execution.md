@@ -307,28 +307,29 @@ That transitions the CPU from CPL 0 to CPL 3 and begins execution at `e_entry` w
 
 # Parent / Child Tracking
 
-The old explicit parent-tracking statics are gone. The current design relies on scheduler ownership, foreground input ownership, and automatic zombie reaping:
+The current design combines scheduler ownership, foreground input ownership, a
+small process registry, and automatic zombie reaping:
 
 - `runelf` launches the child, then waits with `process_wait(proc)`
 - `runelf_nowait` launches the child and returns immediately; the reaper task frees it after exit
 - `bg` / `runelf_bg` launch the child and return immediately, but shell job control owns cleanup until `fg <jobid>` reaps it or `kill <jobid>` stops it
 - Ctrl+Z while a shell-owned job is foregrounded detaches it back to the shell job table without killing it
-- `SYS_EXEC` children are also unclaimed — freed by the reaper
+- `SYS_EXEC` returns the child pid and claims the child for its parent so userland can call `waitpid()`
+- if a parent exits without waiting, its children are orphaned and any unclaimed zombies become reaper-owned
 - interactive foreground input is tracked with `process_set_foreground(proc)` / `process_get_foreground()`, while terminal signals target `process_get_foreground_group()`
 - Ctrl+C is delivered to the current foreground process group as a terminal interrupt. Matching signalfds receive `SIGINT`; otherwise group members exit with status `130` and the waiting shell path is restored. Ctrl+C is not delivered as a byte from `SYS_READ`.
-- process destruction is either explicit via `process_wait()` or automatic via `sched_reap_zombies()`
+- process destruction is explicit via `process_wait()` / `waitpid()` or automatic via `sched_reap_zombies()`
 
 ---
 
 # SYS_EXEC Current Reality
 
-`SYS_EXEC` is in transition.
-
-`sys_exec_impl()` in `src/kernel/syscall.c` is now fully **spawn-style**:
+`sys_exec_impl()` in `src/kernel/syscall.c` is **spawn-style**:
 
 - copy program name into a kernel buffer
 - call `elf_run_named()`
-- return `0` on success, or a negative errno such as `-ENOENT` / `-EFAULT` on failure
+- claim the child for parent-side waiting
+- return the child pid on success, or a negative errno such as `-ENOENT` / `-EFAULT` on failure
 
 `elf_run_named()` follows the same scheduler-owned ELF launch path as shell commands: create the process, seed its bootstrap context, enqueue it, and return immediately.
 
@@ -443,7 +444,8 @@ The active execution path is:
 
 - **ELF launch uses `sched_enqueue(proc)`**
 - **foreground `runelf` waits with `process_wait()`**
-- **`runelf_nowait` and `SYS_EXEC` children are reaped automatically by the reaper task**
+- **`runelf_nowait` children are reaped automatically by the reaper task**
+- **`SYS_EXEC` children are collected by `waitpid()` or orphaned to the reaper when the parent exits**
 - **`bg` / `runelf_bg` children are claimed by shell job control so they can be listed, foregrounded, or killed**
 
 ---
@@ -578,5 +580,5 @@ The execution model is fully scheduler-owned.
 - timer-driven preemption
 - `SYS_YIELD`, `SYS_EXEC`, `SYS_EXIT` all scheduler-owned
 - ELF processes have real per-process page directories
-- foreground `runelf` waits with `process_wait()`; `runelf_nowait` and `SYS_EXEC` children are reaped automatically; `bg` / `runelf_bg` children are shell-owned jobs until `fg` or `kill`
+- foreground `runelf` waits with `process_wait()`; `runelf_nowait` children are reaped automatically; `SYS_EXEC` children are parent-waitable with `waitpid()`; `bg` / `runelf_bg` children are shell-owned jobs until `fg` or `kill`
 - no known zombie or frame leaks

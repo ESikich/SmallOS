@@ -160,6 +160,7 @@ The runtime provides a small POSIX-shaped surface:
 - `rename`
 - `mkdir`, `rmdir`
 - `getcwd`, `chdir`
+- `getpid`, `waitpid`, `kill`
 - socket, poll, epoll, timerfd, and signalfd wrappers used by guest services
 
 `access(path, mode)` validates mode bits and checks existence through
@@ -286,6 +287,7 @@ Runtime coverage currently lives in guest ELF probes:
 - `dirprobe` - root and nested directory iteration, EOF, invalid/missing dirs
 - `errnoprobe` - wrapper `errno` behavior
 - `crtprobe` - `main(argc, argv)` via `user_crt0`, argv terminator, and return status
+- `waitprobe` - `SYS_EXEC` pid return, `waitpid`, `WNOHANG`, `kill`, and wait status macros
 
 Run the full acceptance suite with:
 

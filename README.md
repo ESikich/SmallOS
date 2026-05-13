@@ -43,7 +43,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Shell now runs as an explicit kernel task scheduled by `scheduler.c`
 * **Preemptive round-robin scheduler** — PIT timer IRQ at `SMALLOS_TIMER_HZ`, with a named 20 ms scheduler quantum
 * **`SYS_YIELD`** — voluntary preemption; process surrenders its remaining quantum immediately
-* **`SYS_EXEC`** — user process asynchronously spawns a named child ELF and returns `0` on success or a negative errno on failure
+* **`SYS_EXEC` / `SYS_WAITPID`** — user process asynchronously spawns a named child ELF, receives its pid, and can collect exit/signal status
 * **`SYS_WRITEFILE`** — user process creates or overwrites a root-directory ext2 file in one shot
 * **`SYS_WRITEFILE_PATH`** — user process creates or overwrites an ext2 file at any nested path
 * **ATA disk driver** — polls the primary IDE channel (`0x1F0`) and enables PCI IDE bus-master DMA when available, with PIO fallback for compatibility
@@ -309,6 +309,7 @@ Seeded ext2 layout:
 - `apps/tests/runelf_test` - verify ELF loading, syscalls, and stack setup
 - `apps/tests/readline` - interactive SYS_READ demo
 - `apps/tests/exec_test` - exercise SYS_EXEC semantics
+- `apps/tests/waitprobe` - exercise userland getpid/waitpid/kill lifecycle
 - `apps/tests/fileread` - exercise VFS-backed file handles via SYS_OPEN / SYS_FREAD / SYS_CLOSE
 - `apps/tests/compiler_demo` - exercise SYS_WRITEFILE, SYS_WRITEFILE_PATH, and readback
 - `apps/tests/heapprobe` - exercise malloc/free/realloc/calloc
@@ -506,5 +507,5 @@ The scheduler-owned execution model is complete:
 * the **shell** is a scheduler-owned kernel task
 * **ELF user programs** are scheduler-owned tasks entered through `elf_user_task_bootstrap()`
 * `runelf` blocks by waiting for `PROCESS_STATE_ZOMBIE` via `process_wait()`
-* `runelf_nowait` and `SYS_EXEC` children are automatically reaped by the **reaper kernel task** (`sched_reap_zombies()`) within one scheduler quantum of exit — no frame leaks
+* `runelf_nowait` children are automatically reaped by the **reaper kernel task** (`sched_reap_zombies()`); `SYS_EXEC` children are claimed for their parent until `waitpid()` collects them or the parent exits
 * `bg` / `runelf_bg` children are claimed by the shell job table so they can be reattached with `fg <jobid>` or stopped with `kill <jobid>`

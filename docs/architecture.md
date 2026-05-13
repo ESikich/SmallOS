@@ -293,12 +293,20 @@ runelf (foreground):
   process_wait(proc)           → shell waits until child is ZOMBIE
   process_destroy(proc)        → called from shell's safe stack on wakeup
 
-runelf_nowait / SYS_EXEC (background):
+runelf_nowait (background):
   process_create()
   allocate proc->kernel_stack_frame
   seed proc->sched_esp         → first entry via elf_user_task_bootstrap()
   sched_enqueue(proc)
   return immediately           → no explicit waiter
+
+SYS_EXEC (parent-waitable spawn):
+  process_create()
+  allocate proc->kernel_stack_frame
+  seed proc->sched_esp         → first entry via elf_user_task_bootstrap()
+  sched_enqueue(proc)
+  process_claim_for_wait(proc) → parent owns child until waitpid() or parent exit
+  return child pid
 
 bg / runelf_bg (reattachable background):
   process_create()
@@ -320,12 +328,13 @@ sys_exit:
   mark task ZOMBIE
   switch to next runnable task
   [foreground] process_destroy() called by process_wait() in shell
-  [background] process_destroy() called by reaper within one quantum
+  [background] process_destroy() called by process-registry reaper
+  [SYS_EXEC] process_destroy() called by waitpid(), or by reaper after parent exit
   [shell job] process_destroy() called by fg or kill
 
 reaper task (permanent kernel task):
   loop:
-    sched_reap_zombies()       → destroy any ZOMBIE not currently running
+    sched_reap_zombies()       → destroy unclaimed registry ZOMBIE processes
     sti; hlt                   → sleep until next timer tick
 ```
 
@@ -656,10 +665,11 @@ sys_exec_impl()
 elf_run_named(kname, argc, argv)
   ↓
 elf_run_image()                 [create process, allocate kernel stack, seed bootstrap, enqueue]
+  process_claim_for_wait(child)
   ↓
-sys_exec_impl returns immediately
+sys_exec_impl returns child pid
   ↓
-isr128_stub iretd → parent resumes in ring 3 while child runs independently
+isr128_stub iretd → parent resumes in ring 3 and may waitpid(pid)
 ```
 
 This is async spawn, not blocking foreground execution.
@@ -700,7 +710,7 @@ build/obj/<backend>/kernel/sched_switch.o
 # Known Limitations
 
 * ELF link address fixed at 0x400000 — no PIE/relocation support
-* `SYS_EXEC` is async spawn; foreground waiting is handled by `process_wait()` in shell-side command flow
+* `SYS_EXEC` is async spawn; userland receives a pid and can collect it with `waitpid()`
 
 ---
 
@@ -740,7 +750,7 @@ SYS_READ / fd 0 — true blocking keyboard input through the console handle: par
 SYS_MOUSE_READ — polling PS/2 mouse state for graphics demos: returns accumulated relative deltas/buttons and clears the movement counters
 SYS_YIELD — voluntary preemption via sched_yield_now()
 SYS_SLEEP — timed sleep: parks process in PROCESS_STATE_SLEEPING and wakes via the timer IRQ once the deadline is reached
-SYS_EXEC — async ELF spawn from the current foreground context; the child runs independently and the parent returns immediately in `runelf_nowait` / `sys_exec`
+SYS_EXEC / SYS_WAITPID / SYS_KILL — async ELF spawn returns a child pid; userland can collect exit/signal status or terminate a child by pid
 SYS_GETCWD / SYS_CHDIR — per-process cwd state; relative user paths are normalized before VFS or ELF loading
 SYS_OPEN / SYS_OPEN_MODE / SYS_CLOSE / SYS_FREAD — dynamic PMM-backed per-process handle table backed by readable/writable handle ops; fd 0/1/2 are console handles, user-opened files start at fd 3+, and VFS-backed file reads cache ext2 data in PMM-backed pages until close
 SYS_BRK / user heap — per-process heap break managed in user space through `SYS_BRK` and a shared user allocator

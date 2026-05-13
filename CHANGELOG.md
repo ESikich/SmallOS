@@ -25,6 +25,12 @@
 
 ### Added
 
+* **Userland child process lifecycle** (`src/kernel/process.*`, `src/kernel/syscall.c`, `src/user/user_posix.c`, `src/user/waitprobe.c`)
+  * Added a process registry above the scheduler table so exited children can be found by pid after they leave the run queue.
+  * Changed `SYS_EXEC` to return the spawned child pid on success and claim the child for parent-side `SYS_WAITPID` collection.
+  * Added `SYS_GETPID`, `SYS_WAITPID`, and `SYS_KILL`, plus POSIX-shaped `getpid()`, `waitpid()`, `kill()`, and `sys/wait.h` status macros in the user runtime.
+  * Moved automatic zombie cleanup onto the process registry, so unclaimed `runelf_nowait` children are reaped even after the scheduler dequeues them.
+  * Added `apps/tests/waitprobe.elf` coverage for pid return, blocking wait, `WNOHANG`, kill status, and `ECHILD`.
 * **Queued input event syscall** (`src/kernel/input.*`, `src/kernel/syscall.c`, `src/drivers/keyboard.c`, `src/drivers/mouse.c`, `src/user/inputprobe.c`)
   * Added a kernel input queue above the raw keyboard and PS/2 mouse drivers, preserving the existing `SYS_MOUSE_READ` accumulator while exposing decoded key and mouse packet events through `SYS_INPUT_READ`.
   * Added blocking and nonblocking reads, foreground queue clearing, stale waiter cleanup on process teardown/termination, and `inputprobe` regression coverage with host-injected keyboard input.

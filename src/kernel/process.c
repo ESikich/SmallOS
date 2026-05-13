@@ -26,6 +26,8 @@ typedef char process_t_must_fit_in_one_frame[(sizeof(process_t) <= 4096u) ? 1 : 
 static process_t* s_foreground_reader = 0;
 static u32 s_foreground_pgid = 0;
 static u32 s_next_pid = 1;
+#define PROCESS_REGISTRY_MAX 64
+static process_t* s_process_registry[PROCESS_REGISTRY_MAX];
 static volatile int s_terminal_interrupt_pending = 0;
 static process_t* s_terminal_interrupt_target = 0;
 static volatile process_t* s_detach_requested = 0;
@@ -67,6 +69,91 @@ static int process_group_force_exit(u32 pgid,
                                     int status,
                                     process_t* defer_current,
                                     int mark_terminal_interrupt);
+
+static int process_registry_add(process_t* proc) {
+    if (!proc) return 0;
+
+    for (unsigned int i = 0; i < PROCESS_REGISTRY_MAX; i++) {
+        if (!s_process_registry[i]) {
+            s_process_registry[i] = proc;
+            return 1;
+        }
+    }
+
+    terminal_puts("process: registry full\n");
+    return 0;
+}
+
+static void process_registry_remove(process_t* proc) {
+    if (!proc) return;
+
+    for (unsigned int i = 0; i < PROCESS_REGISTRY_MAX; i++) {
+        if (s_process_registry[i] == proc) {
+            s_process_registry[i] = 0;
+            return;
+        }
+    }
+}
+
+process_t* process_find_by_pid(u32 pid) {
+    if (pid == 0) return 0;
+
+    for (unsigned int i = 0; i < PROCESS_REGISTRY_MAX; i++) {
+        process_t* proc = s_process_registry[i];
+        if (proc && proc->pid == pid) {
+            return proc;
+        }
+    }
+
+    return 0;
+}
+
+static process_t* process_find_child(process_t* parent, int pid) {
+    if (!parent) return 0;
+
+    for (unsigned int i = 0; i < PROCESS_REGISTRY_MAX; i++) {
+        process_t* proc = s_process_registry[i];
+        if (!proc || proc->parent_pid != parent->pid) {
+            continue;
+        }
+        if (pid == -1 || proc->pid == (u32)pid) {
+            return proc;
+        }
+    }
+
+    return 0;
+}
+
+static process_t* process_find_zombie_child(process_t* parent, int pid) {
+    if (!parent) return 0;
+
+    for (unsigned int i = 0; i < PROCESS_REGISTRY_MAX; i++) {
+        process_t* proc = s_process_registry[i];
+        if (!proc || proc->parent_pid != parent->pid) {
+            continue;
+        }
+        if (pid != -1 && proc->pid != (u32)pid) {
+            continue;
+        }
+        if (proc->state == PROCESS_STATE_ZOMBIE) {
+            return proc;
+        }
+    }
+
+    return 0;
+}
+
+static void process_orphan_children(u32 parent_pid) {
+    if (parent_pid == 0) return;
+
+    for (unsigned int i = 0; i < PROCESS_REGISTRY_MAX; i++) {
+        process_t* proc = s_process_registry[i];
+        if (proc && proc->parent_pid == parent_pid) {
+            proc->parent_pid = 0;
+            proc->reaper_claimed = 0;
+        }
+    }
+}
 
 /*
  * process_key_consumer — keyboard consumer active while a user process
@@ -1060,6 +1147,91 @@ void process_claim_for_wait(process_t* proc) {
     proc->reaper_claimed = 1;
 }
 
+int process_wait_pid(process_t* parent,
+                     int pid,
+                     int options,
+                     int* out_pid,
+                     int* out_status) {
+    process_t* child;
+
+    if (!parent || !out_pid || !out_status) return -EINVAL;
+    if (pid == 0 || pid < -1) return -EINVAL;
+    if ((options & ~1) != 0) return -EINVAL;
+
+    child = process_find_child(parent, pid);
+    if (!child) return -ECHILD;
+
+    while (1) {
+        child = process_find_zombie_child(parent, pid);
+        if (child) {
+            int child_pid = (int)child->pid;
+            int status = child->exit_status;
+
+            *out_pid = child_pid;
+            *out_status = status;
+            sched_dequeue(child);
+            process_destroy(child);
+            return 0;
+        }
+
+        if (options & 1) {
+            *out_pid = 0;
+            *out_status = 0;
+            return 0;
+        }
+
+        __asm__ __volatile__("sti; hlt; cli");
+    }
+}
+
+int process_kill_pid(int pid, int status, unsigned int esp) {
+    process_t* proc;
+
+    if (pid <= 0) return -EINVAL;
+
+    proc = process_find_by_pid((u32)pid);
+    if (!proc || proc->state == PROCESS_STATE_ZOMBIE ||
+        proc->state == PROCESS_STATE_EXITED) {
+        return -ESRCH;
+    }
+    if (!proc->pd) {
+        return -EPERM;
+    }
+
+    proc->exit_status = status;
+    if (keyboard_get_waiting_process() == (void*)proc) {
+        keyboard_set_waiting_process(0);
+    }
+    input_forget_waiting_process(proc);
+    socket_wait_clear_process(proc);
+
+    if (proc == sched_current()) {
+        paging_switch(paging_get_kernel_pd());
+    }
+    sched_kill(proc, esp);
+    return 0;
+}
+
+int process_reap_unclaimed_zombies(void) {
+    int reaped = 0;
+    process_t* current = sched_current();
+
+    for (int i = PROCESS_REGISTRY_MAX - 1; i >= 0; i--) {
+        process_t* proc = s_process_registry[i];
+
+        if (!proc) continue;
+        if (proc == current) continue;
+        if (proc->state != PROCESS_STATE_ZOMBIE) continue;
+        if (proc->reaper_claimed) continue;
+
+        sched_dequeue(proc);
+        process_destroy(proc);
+        reaped++;
+    }
+
+    return reaped;
+}
+
 /*
  * Copy launch argv into process-owned storage.  The incoming argv may point at
  * shell parser storage or at a temporary SYS_EXEC validation buffer; after this
@@ -1136,6 +1308,10 @@ process_t* process_create(const char* name) {
     if (s_next_pid == 0) {
         s_next_pid = 1;
     }
+    {
+        process_t* parent = sched_current();
+        proc->parent_pid = parent ? parent->pid : 0;
+    }
     proc->state = PROCESS_STATE_UNUSED;
     proc->heap_base = USER_HEAP_BASE;
     proc->heap_brk = USER_HEAP_BASE;
@@ -1148,6 +1324,12 @@ process_t* process_create(const char* name) {
     process_init_standard_fds(proc);
     if (name) {
         str_copy_n(proc->name, name, PROCESS_NAME_MAX);
+    }
+
+    if (!process_registry_add(proc)) {
+        process_fd_table_free(proc);
+        pmm_free_frame(frame);
+        return 0;
     }
 
     return proc;
@@ -1220,6 +1402,9 @@ void process_destroy(process_t* proc) {
         s_terminal_interrupt_target = 0;
         s_terminal_interrupt_pending = 0;
     }
+
+    process_orphan_children(proc->pid);
+    process_registry_remove(proc);
 
     proc->state = PROCESS_STATE_EXITED;
     pmm_free_frame(paging_kernel_virt_to_phys(proc));

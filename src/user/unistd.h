@@ -3,6 +3,7 @@
 
 #include "user_syscall.h"
 #include "sys/stat.h"
+#include "sys/types.h"
 
 #ifndef USER_SSIZE_T_DEFINED
 typedef int ssize_t;
@@ -30,5 +31,6 @@ char* getcwd(char* buf, unsigned int size);
 int chdir(const char* path);
 int remove(const char* path);
 int execvp(const char* file, char* const argv[]);
+pid_t getpid(void);
 
 #endif

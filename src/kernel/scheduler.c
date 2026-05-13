@@ -293,26 +293,5 @@ int sched_snapshot_process_group(unsigned int pgid, process_t** out, int max) {
 }
 
 int sched_reap_zombies(void) {
-    int reaped = 0;
-
-    /*
-     * Walk the table back-to-front so that process_destroy -> sched_dequeue
-     * compaction doesn't cause us to skip entries.
-     */
-    for (int i = s_count - 1; i >= 0; i--) {
-        process_t* proc = s_table[i];
-
-        if (!proc) continue;
-        if (proc->state != PROCESS_STATE_ZOMBIE) continue;
-        if (proc->reaper_claimed) continue;
-
-        /* Never touch the currently running task from here. */
-        if (i == s_current_idx) continue;
-
-        sched_dequeue(proc);
-        process_destroy(proc);
-        reaped++;
-    }
-
-    return reaped;
+    return process_reap_unclaimed_zombies();
 }

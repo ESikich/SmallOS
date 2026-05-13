@@ -43,8 +43,10 @@ Shared errno values:
 | --- | ---: | --- |
 | `EPERM` | 1 | operation not permitted |
 | `ENOENT` | 2 | no such file or directory |
+| `ESRCH` | 3 | no such process |
 | `EINTR` | 4 | interrupted system call |
 | `EIO` | 5 | input/output error |
+| `ECHILD` | 10 | no child processes |
 | `EAGAIN` / `EWOULDBLOCK` | 11 | resource temporarily unavailable |
 | `EBADF` | 9 | bad file descriptor |
 | `ENOMEM` | 12 | out of memory |
@@ -848,9 +850,44 @@ Requests a machine reboot through the kernel system path. Used by the
 int sys_exec(const char* name, int argc, char** argv);
 ```
 
-Loads and asynchronously spawns a named ELF program through the kernel VFS layer. Returns `0` on success or a negative errno if validation, lookup, or load fails.
+Loads and asynchronously spawns a named ELF program through the kernel VFS layer. Returns the child pid on success or a negative errno if validation, lookup, or load fails. The child is claimed for the caller until `SYS_WAITPID` collects it or the parent exits.
 
 `sys_exec_impl` copies `name` to a local kernel stack buffer before any VFS or ELF work so the loader does not depend on the caller's user pointer remaining valid. It then calls `elf_run_named()`, which creates the process, seeds its scheduler bootstrap context, enqueues it, and returns immediately.
+
+---
+
+### SYS_GETPID (62)
+
+```c
+int sys_getpid(void);
+```
+
+Returns the current process id.
+
+---
+
+### SYS_WAITPID (63)
+
+```c
+int sys_waitpid(int pid, int* status, int options);
+```
+
+Waits for a direct child spawned by `SYS_EXEC`. `pid > 0` waits for that child;
+`pid == -1` waits for any child. `SYS_WAITPID_WNOHANG` returns `0` immediately
+when the selected child has not exited. On success, returns the collected child
+pid and writes a POSIX-style wait status when `status` is non-null. Missing
+children return `-ECHILD`.
+
+---
+
+### SYS_KILL (64)
+
+```c
+int sys_kill(int pid, int signum);
+```
+
+Terminates a user process by pid with status `128 + signum`. Invalid pids return
+`-ESRCH`; invalid signal numbers return `-EINVAL`.
 
 ---
 
@@ -962,6 +999,9 @@ sys_read(buf, len)
 sys_yield()
 sys_sleep(ticks)
 sys_exec(name, argc, argv)
+sys_getpid()
+sys_waitpid(pid, status, options)
+sys_kill(pid, signum)
 sys_writefile(name, buf, len)
 sys_writefile_path(path, buf, len)
 sys_open(name)

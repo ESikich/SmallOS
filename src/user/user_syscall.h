@@ -133,11 +133,23 @@ static inline int sys_sleep(uint32_t ticks) {
  * name and argv point into the caller's user address space — the kernel
  * reads them while the caller's CR3 is still active.
  *
- * Returns 0 on success or a negative errno if the program was not found,
+ * Returns the child pid on success or a negative errno if the program was not found,
  * could not be loaded, or failed validation.
  */
 static inline int sys_exec(const char* name, int argc, char** argv) {
     return syscall3(SYS_EXEC, (uint32_t)name, (uint32_t)argc, (uint32_t)argv);
+}
+
+static inline int sys_getpid(void) {
+    return syscall0(SYS_GETPID);
+}
+
+static inline int sys_waitpid(int pid, int* status, int options) {
+    return syscall3(SYS_WAITPID, (uint32_t)pid, (uint32_t)status, (uint32_t)options);
+}
+
+static inline int sys_kill(int pid, int signum) {
+    return syscall2(SYS_KILL, (uint32_t)pid, (uint32_t)signum);
 }
 
 /*

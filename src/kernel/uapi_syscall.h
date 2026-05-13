@@ -39,6 +39,8 @@
 #define SYS_FCNTL_GETFL 3
 #define SYS_FCNTL_SETFL 4
 
+#define SYS_WAITPID_WNOHANG 1
+
 typedef struct sys_fsinfo {
     unsigned int total_bytes;
     unsigned int used_bytes;
@@ -127,7 +129,10 @@ enum {
     SYS_MOUSE_READ      = 58, /* read PS/2 mouse deltas/buttons */
     SYS_INPUT_READ      = 59, /* read queued keyboard/mouse input events */
     SYS_FSINFO          = 60, /* write ext2 volume usage information */
-    SYS_FSMAP           = 61  /* write ext2 allocation-block states */
+    SYS_FSMAP           = 61, /* write ext2 allocation-block states */
+    SYS_GETPID          = 62, /* return current process id */
+    SYS_WAITPID         = 63, /* wait for a child pid and copy wait status */
+    SYS_KILL            = 64  /* signal/terminate a process by pid */
 };
 
 #endif
