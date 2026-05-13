@@ -14,18 +14,23 @@ USER_DIR=$(SRC_DIR)/user
 
 BUILD_DIR=build
 DISPLAY_BACKEND ?= auto
+SERIAL_CONSOLE ?= 0
 ifneq ($(filter $(DISPLAY_BACKEND),auto vga),$(DISPLAY_BACKEND))
 $(error DISPLAY_BACKEND must be one of: auto vga)
 endif
-OBJ_DIR=$(BUILD_DIR)/obj/$(DISPLAY_BACKEND)
+ifneq ($(filter $(SERIAL_CONSOLE),0 1),$(SERIAL_CONSOLE))
+$(error SERIAL_CONSOLE must be one of: 0 1)
+endif
+SERIAL_SUFFIX=$(if $(filter 1,$(SERIAL_CONSOLE)),-serial,)
+OBJ_DIR=$(BUILD_DIR)/obj/$(DISPLAY_BACKEND)$(SERIAL_SUFFIX)
 BIN_ROOT=$(BUILD_DIR)/bin
-BIN_DIR=$(BIN_ROOT)/$(DISPLAY_BACKEND)
-GEN_DIR=$(BUILD_DIR)/gen/$(DISPLAY_BACKEND)
+BIN_DIR=$(BIN_ROOT)/$(DISPLAY_BACKEND)$(SERIAL_SUFFIX)
+GEN_DIR=$(BUILD_DIR)/gen/$(DISPLAY_BACKEND)$(SERIAL_SUFFIX)
 IMG_DIR=$(BUILD_DIR)/img
 ifeq ($(DISPLAY_BACKEND),auto)
-IMG_FILE=$(IMG_DIR)/os-image.bin
+IMG_FILE=$(IMG_DIR)$(SERIAL_SUFFIX)/os-image.bin
 else
-IMG_FILE=$(IMG_DIR)/$(DISPLAY_BACKEND)/os-image.bin
+IMG_FILE=$(IMG_DIR)/$(DISPLAY_BACKEND)$(SERIAL_SUFFIX)/os-image.bin
 endif
 TOOLS_DIR=$(BUILD_DIR)/tools
 TINYCC_DIR=$(BUILD_DIR)/tinycc-host
@@ -66,6 +71,9 @@ CPPFLAGS+=-DSMALLOS_FORCE_VGA_BACKEND=1
 LOADER2_FORCE_VGA_BACKEND=1
 else
 LOADER2_FORCE_VGA_BACKEND=0
+endif
+ifeq ($(SERIAL_CONSOLE),1)
+CPPFLAGS+=-DSMALLOS_SERIAL_CONSOLE=1
 endif
 CFLAGS=-ffreestanding -m32 -fno-pie -fno-stack-protector -nostdlib -nostartfiles -Wa,--noexecstack
 KERNEL_CFLAGS ?=
@@ -390,6 +398,8 @@ QEMUFLAGS=-drive format=raw,file=$(IMG_FILE) -boot c -m $(QEMU_MEMORY_MB) \
 
 .PHONY: all dirs deps check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap test framebuffer-smoke vga-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean
 
+test ftp-smoke socket-eof-smoke socket-parallel-smoke ftp-loop-smoke cserve-smoke display-smoke-one smoke smoke-reboot smoke-halt: SERIAL_CONSOLE=1
+
 run: image-layout-check
 	$(QEMU) $(QEMUFLAGS) -display $(QEMU_DISPLAY)
 
@@ -413,7 +423,7 @@ run-headless-tap: image-layout-check
 test:
 	@mkdir -p $(BUILD_DIR)
 	@printf '%-38s ' '[test] reset disk'
-	@if $(MAKE) --silent reset-disk >$(TEST_SETUP_LOG) 2>&1; then \
+	@if $(MAKE) --silent reset-disk SERIAL_CONSOLE=1 >$(TEST_SETUP_LOG) 2>&1; then \
 		printf 'PASS\n'; \
 	else \
 		printf 'FAIL\n'; \
@@ -423,7 +433,7 @@ test:
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	@rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
 	@printf '%-38s ' '[test] boot qemu'
-	@if $(MAKE) --silent run-headless >>$(TEST_SETUP_LOG) 2>&1; then \
+	@if $(MAKE) --silent run-headless SERIAL_CONSOLE=1 >>$(TEST_SETUP_LOG) 2>&1; then \
 		printf 'PASS\n'; \
 	else \
 		printf 'FAIL\n'; \
@@ -440,7 +450,7 @@ test:
 ftp-smoke: reset-disk image-layout-check
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
-	$(MAKE) run-headless QEMU_NET_HOSTFWD=',hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000'
+	$(MAKE) run-headless SERIAL_CONSOLE=1 QEMU_NET_HOSTFWD=',hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000'
 	$(PYTHON3) tools/ftp_smoke.py \
 		--monitor $(MONITOR_SOCK) \
 		--serial $(SERIAL_LOG) \
@@ -450,7 +460,7 @@ ftp-smoke: reset-disk image-layout-check
 socket-eof-smoke: reset-disk image-layout-check
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
-	$(MAKE) run-headless QEMU_NET_HOSTFWD=',hostfwd=tcp::2463-:2463'
+	$(MAKE) run-headless SERIAL_CONSOLE=1 QEMU_NET_HOSTFWD=',hostfwd=tcp::2463-:2463'
 	$(PYTHON3) tools/socket_eof_smoke.py \
 		--monitor $(MONITOR_SOCK) \
 		--serial $(SERIAL_LOG) \
@@ -460,7 +470,7 @@ socket-eof-smoke: reset-disk image-layout-check
 socket-parallel-smoke: reset-disk image-layout-check
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
-	$(MAKE) run-headless QEMU_NET_HOSTFWD=',hostfwd=tcp::$(SOCKET_PARALLEL_PORT)-:2323'
+	$(MAKE) run-headless SERIAL_CONSOLE=1 QEMU_NET_HOSTFWD=',hostfwd=tcp::$(SOCKET_PARALLEL_PORT)-:2323'
 	$(PYTHON3) tools/socket_parallel_smoke.py \
 		--monitor $(MONITOR_SOCK) \
 		--serial $(SERIAL_LOG) \
@@ -473,7 +483,7 @@ socket-parallel-smoke: reset-disk image-layout-check
 ftp-loop-smoke: reset-disk image-layout-check
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
-	$(MAKE) run-headless QEMU_NET_HOSTFWD=',hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000'
+	$(MAKE) run-headless SERIAL_CONSOLE=1 QEMU_NET_HOSTFWD=',hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000'
 	$(PYTHON3) tools/ftp_loop_smoke.py \
 		--monitor $(MONITOR_SOCK) \
 		--serial $(SERIAL_LOG) \
@@ -484,7 +494,7 @@ ftp-loop-smoke: reset-disk image-layout-check
 cserve-smoke: reset-disk image-layout-check
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
-	$(MAKE) run-headless QEMU_NET_HOSTFWD=',hostfwd=tcp::$(CSERVE_SMOKE_PORT)-:8080'
+	$(MAKE) run-headless SERIAL_CONSOLE=1 QEMU_NET_HOSTFWD=',hostfwd=tcp::$(CSERVE_SMOKE_PORT)-:8080'
 	$(PYTHON3) tools/cserve_smoke.py \
 		--monitor $(MONITOR_SOCK) \
 		--serial $(SERIAL_LOG) \
@@ -503,7 +513,7 @@ display-smoke-one: reset-disk image-layout-check
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE) $(DISPLAY_SMOKE_VNC_SOCK) $(DISPLAY_SMOKE_PPM)
 	mkdir -p $(SMOKE_DIR)
-	$(MAKE) run-headless DISPLAY_BACKEND=$(DISPLAY_BACKEND) QEMU_HEADLESS_DISPLAY=$(DISPLAY_SMOKE_QEMU_DISPLAY)
+	$(MAKE) run-headless SERIAL_CONSOLE=1 DISPLAY_BACKEND=$(DISPLAY_BACKEND) QEMU_HEADLESS_DISPLAY=$(DISPLAY_SMOKE_QEMU_DISPLAY)
 	$(PYTHON3) tools/display_smoke.py \
 		--mode $(DISPLAY_SMOKE_MODE) \
 		--monitor $(MONITOR_SOCK) \
@@ -521,7 +531,7 @@ smoke: reset-disk image-layout-check
 smoke-reboot: image-layout-check
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
-	$(MAKE) run-headless
+	$(MAKE) run-headless SERIAL_CONSOLE=1
 	$(PYTHON3) tools/qemu_smoke.py \
 		--command reboot \
 		--monitor $(MONITOR_SOCK) \
@@ -532,7 +542,7 @@ smoke-reboot: image-layout-check
 smoke-halt: image-layout-check
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
-	$(MAKE) run-headless
+	$(MAKE) run-headless SERIAL_CONSOLE=1
 	$(PYTHON3) tools/qemu_smoke.py \
 		--command halt \
 		--monitor $(MONITOR_SOCK) \

@@ -12,7 +12,7 @@ void _start(int argc, char** argv) {
         sys_exit(1);
     }
 
-    char buf[256];
+    char buf[4096];
     for (;;) {
         int n = sys_fread(fd, buf, sizeof(buf));
         if (n < 0) {

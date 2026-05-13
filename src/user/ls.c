@@ -3,6 +3,7 @@
 
 #define LS_MAX_ENTRIES 128
 #define LS_LINE_MAX (NAME_MAX + 32)
+#define LS_OUT_BUF_SIZE 4096u
 
 typedef struct {
     char name[NAME_MAX + 1];
@@ -11,6 +12,54 @@ typedef struct {
 } ls_entry_t;
 
 static ls_entry_t s_entries[LS_MAX_ENTRIES];
+static char s_out_buf[LS_OUT_BUF_SIZE];
+static unsigned int s_out_pos = 0;
+static int s_out_error = 0;
+
+static int flush_output(void) {
+    if (s_out_error) return 0;
+    if (s_out_pos == 0u) return 1;
+    if (sys_write(s_out_buf, s_out_pos) != (int)s_out_pos) {
+        s_out_pos = 0;
+        s_out_error = 1;
+        return 0;
+    }
+    s_out_pos = 0;
+    return 1;
+}
+
+static int buffered_write(const char* s, unsigned int len) {
+    unsigned int done = 0;
+
+    if (!s || s_out_error) return 0;
+    while (done < len) {
+        unsigned int avail = LS_OUT_BUF_SIZE - s_out_pos;
+        unsigned int chunk = len - done;
+
+        if (avail == 0u) {
+            if (!flush_output()) return 0;
+            avail = LS_OUT_BUF_SIZE;
+        }
+        if (chunk > avail) chunk = avail;
+        memcpy(s_out_buf + s_out_pos, s + done, chunk);
+        s_out_pos += chunk;
+        done += chunk;
+    }
+    return 1;
+}
+
+static int buffered_puts(const char* s) {
+    return buffered_write(s, str_len(s));
+}
+
+static int buffered_putc(char ch) {
+    return buffered_write(&ch, 1u);
+}
+
+static void print_error_prefix(const char* msg) {
+    flush_output();
+    u_puts(msg);
+}
 
 static int is_root_path(const char* path) {
     return !path || path[0] == '\0' || (path[0] == '/' && path[1] == '\0');
@@ -174,7 +223,7 @@ static int print_entry(const ls_entry_t* ent) {
         }
     }
     if (!append_char(line, sizeof(line), &pos, '\n')) return 0;
-    return sys_write(line, pos) == (int)pos;
+    return buffered_write(line, pos);
 }
 
 static int list_path(const char* path, const char* pattern) {
@@ -182,7 +231,7 @@ static int list_path(const char* path, const char* pattern) {
     DIR* dir = opendir(use_path);
     unsigned int count = 0;
     if (!dir) {
-        u_puts("ext2: not found: ");
+        print_error_prefix("ext2: not found: ");
         u_puts(use_path);
         u_putc('\n');
         return 1;
@@ -195,20 +244,20 @@ static int list_path(const char* path, const char* pattern) {
             cwd[1] = '\0';
         }
         if (is_root_path(cwd)) {
-            u_puts("ext2 root directory:\n");
+            buffered_puts("ext2 root directory:\n");
         } else {
-            u_puts("ext2 directory: ");
-            u_puts(cwd[0] == '/' ? cwd + 1 : cwd);
-            u_putc('\n');
+            buffered_puts("ext2 directory: ");
+            buffered_puts(cwd[0] == '/' ? cwd + 1 : cwd);
+            buffered_putc('\n');
         }
     } else if (is_root_path(use_path)) {
-        u_puts("ext2 root directory:\n");
+        buffered_puts("ext2 root directory:\n");
     } else {
-        u_puts("ext2 directory: ");
-        u_puts(use_path);
-        u_putc('\n');
+        buffered_puts("ext2 directory: ");
+        buffered_puts(use_path);
+        buffered_putc('\n');
     }
-    u_puts("  name  size\n");
+    buffered_puts("  name  size\n");
 
     struct dirent* ent;
     while ((ent = readdir(dir)) != 0) {
@@ -217,7 +266,7 @@ static int list_path(const char* path, const char* pattern) {
         }
         if (count >= LS_MAX_ENTRIES) {
             closedir(dir);
-            u_puts("ls: too many entries\n");
+            print_error_prefix("ls: too many entries\n");
             return 1;
         }
         for (unsigned int i = 0; i < sizeof(s_entries[count].name) - 1u && ent->d_name[i]; i++) {
@@ -233,11 +282,11 @@ static int list_path(const char* path, const char* pattern) {
     sort_entries(s_entries, count);
     for (unsigned int i = 0; i < count; i++) {
         if (!print_entry(&s_entries[i])) {
-            u_puts("ls: line too long\n");
+            print_error_prefix(s_out_error ? "ls: write failed\n" : "ls: line too long\n");
             return 1;
         }
     }
-    return 0;
+    return flush_output() ? 0 : 1;
 }
 
 void _start(int argc, char** argv) {

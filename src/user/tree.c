@@ -4,6 +4,7 @@
 #define TREE_MAX_ENTRIES 128
 #define TREE_PATH_MAX 256
 #define TREE_LINE_MAX (TREE_PATH_MAX + NAME_MAX + 32)
+#define TREE_OUT_BUF_SIZE 4096u
 #define TREE_VERT "\xE2\x94\x82"
 #define TREE_MID "\xE2\x94\x9C\xE2\x94\x80\xE2\x94\x80 "
 #define TREE_LAST "\xE2\x94\x94\xE2\x94\x80\xE2\x94\x80 "
@@ -15,6 +16,89 @@ typedef struct {
 
 static unsigned int s_dir_count = 0;
 static unsigned int s_file_count = 0;
+static char s_out_buf[TREE_OUT_BUF_SIZE];
+static unsigned int s_out_pos = 0;
+static int s_out_error = 0;
+
+static int flush_output(void) {
+    if (s_out_error) {
+        return 0;
+    }
+    if (s_out_pos == 0u) {
+        return 1;
+    }
+    if (sys_write(s_out_buf, s_out_pos) != (int)s_out_pos) {
+        s_out_pos = 0;
+        s_out_error = 1;
+        return 0;
+    }
+    s_out_pos = 0;
+    return 1;
+}
+
+static int buffered_write(const char* s, unsigned int len) {
+    unsigned int done = 0;
+
+    if (!s) {
+        return 0;
+    }
+    if (s_out_error) {
+        return 0;
+    }
+
+    while (done < len) {
+        unsigned int avail = TREE_OUT_BUF_SIZE - s_out_pos;
+        unsigned int chunk = len - done;
+
+        if (avail == 0u) {
+            if (!flush_output()) {
+                return 0;
+            }
+            avail = TREE_OUT_BUF_SIZE;
+        }
+        if (chunk > avail) {
+            chunk = avail;
+        }
+        memcpy(s_out_buf + s_out_pos, s + done, chunk);
+        s_out_pos += chunk;
+        done += chunk;
+    }
+
+    return 1;
+}
+
+static int buffered_puts(const char* s) {
+    return buffered_write(s, str_len(s));
+}
+
+static int buffered_putc(char ch) {
+    return buffered_write(&ch, 1u);
+}
+
+static int buffered_put_uint(unsigned int value) {
+    char buf[16];
+    unsigned int n = 0;
+
+    if (value == 0u) {
+        return buffered_putc('0');
+    }
+
+    while (value > 0u && n < sizeof(buf)) {
+        buf[n++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    }
+    while (n > 0u) {
+        if (!buffered_putc(buf[--n])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void print_error_prefix(const char* msg) {
+    flush_output();
+    u_puts(msg);
+}
 
 static int is_root_path(const char* path) {
     return !path || path[0] == '\0' || (path[0] == '/' && path[1] == '\0');
@@ -198,7 +282,7 @@ static int write_entry_line(const char* prefix, const tree_entry_t* entry, int i
         return 0;
     }
 
-    return sys_write(line, pos) == (int)pos;
+    return buffered_write(line, pos);
 }
 
 static int collect_entries(const char* path, tree_entry_t* entries, unsigned int* out_count) {
@@ -240,13 +324,13 @@ static int print_tree(const char* path, const char* prefix) {
     unsigned int count = 0;
 
     if (!entries) {
-        u_puts("tree: out of memory\n");
+        print_error_prefix("tree: out of memory\n");
         return 0;
     }
 
     if (!collect_entries(path, entries, &count)) {
         free(entries);
-        u_puts("tree: failed to read: ");
+        print_error_prefix("tree: failed to read: ");
         u_puts(path);
         u_putc('\n');
         return 0;
@@ -258,7 +342,7 @@ static int print_tree(const char* path, const char* prefix) {
 
         if (!write_entry_line(prefix, entry, is_last)) {
             free(entries);
-            u_puts("tree: line too long\n");
+            print_error_prefix(s_out_error ? "tree: write failed\n" : "tree: line too long\n");
             return 0;
         }
         if (entry->is_dir) {
@@ -269,7 +353,7 @@ static int print_tree(const char* path, const char* prefix) {
             if (!join_path(child_path, sizeof(child_path), path, entry->name) ||
                 !build_child_prefix(child_prefix, sizeof(child_prefix), prefix, is_last)) {
                 free(entries);
-                u_puts("tree: path too long\n");
+                print_error_prefix("tree: path too long\n");
                 return 0;
             }
             if (!print_tree(child_path, child_prefix)) {
@@ -289,20 +373,20 @@ static void print_start_label(const char* path) {
     char cwd[TREE_PATH_MAX];
 
     if (is_root_path(path)) {
-        u_puts("/\n");
+        buffered_puts("/\n");
         return;
     }
 
     if (path && path[0] == '.' && path[1] == '\0') {
         if (u_getcwd(cwd, sizeof(cwd)) >= 0) {
-            u_puts(cwd);
-            u_putc('\n');
+            buffered_puts(cwd);
+            buffered_putc('\n');
             return;
         }
     }
 
-    u_puts(path);
-    u_putc('\n');
+    buffered_puts(path);
+    buffered_putc('\n');
 }
 
 void _start(int argc, char** argv) {
@@ -324,10 +408,13 @@ void _start(int argc, char** argv) {
         sys_exit(1);
     }
 
-    u_putc('\n');
-    u_put_uint(s_dir_count);
-    u_puts(" directories, ");
-    u_put_uint(s_file_count);
-    u_puts(" files\n");
+    if (!buffered_putc('\n') ||
+        !buffered_put_uint(s_dir_count) ||
+        !buffered_puts(" directories, ") ||
+        !buffered_put_uint(s_file_count) ||
+        !buffered_puts(" files\n") ||
+        !flush_output()) {
+        sys_exit(1);
+    }
     sys_exit(0);
 }

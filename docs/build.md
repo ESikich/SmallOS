@@ -240,6 +240,20 @@ make run-headless DISPLAY_BACKEND=vga   # force BIOS/VGA text mode
 before mapping or selecting the framebuffer. The VGA panic and double-fault
 paths remain available either way.
 
+Serial console mirroring is disabled for normal builds so bulk terminal output
+is not throttled by COM1. Build with `SERIAL_CONSOLE=1` when you want COM1
+logs:
+
+```sh
+make run SERIAL_CONSOLE=1
+```
+
+The headless test and smoke targets opt into `SERIAL_CONSOLE=1` automatically
+because their host harnesses use the serial log as the transcript.
+Serial-enabled builds use separate artifacts such as
+`build/obj/auto-serial/` and `build/img-serial/os-image.bin`, so enabling COM1
+logs does not overwrite the fast default image.
+
 Userland framebuffer programs should use the small graphics helper in
 `src/user/gfx.c`. It validates the display mode, acquires exclusive graphics
 access, allocates a full-screen XRGB8888 backbuffer, and presents it with one

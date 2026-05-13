@@ -182,7 +182,9 @@ static void terminal_emit_utf8_byte(unsigned char b) {
 }
 
 void terminal_init(void) {
+#ifdef SMALLOS_SERIAL_CONSOLE
     serial_init();
+#endif
     terminal_clear();
 }
 
@@ -210,7 +212,36 @@ void terminal_putc(char c) {
     } else {
         terminal_emit_utf8_byte(b);
     }
+#ifdef SMALLOS_SERIAL_CONSOLE
     serial_putc(c);
+#endif
+}
+
+void terminal_write(const char* s, unsigned int len) {
+    if (!s || len == 0u) {
+        return;
+    }
+
+    if (active_backend && active_backend->begin_update) {
+        active_backend->begin_update();
+    }
+
+    for (unsigned int i = 0; i < len; i++) {
+        unsigned char b = (unsigned char)s[i];
+
+        if (terminal_handle_escape((char)b)) {
+            utf8_decoder_reset(&utf8_decoder);
+        } else {
+            terminal_emit_utf8_byte(b);
+        }
+#ifdef SMALLOS_SERIAL_CONSOLE
+        serial_putc((char)b);
+#endif
+    }
+
+    if (active_backend && active_backend->end_update) {
+        active_backend->end_update();
+    }
 }
 
 void terminal_puts(const char* s) {

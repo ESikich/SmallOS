@@ -334,9 +334,7 @@ static int sys_write_impl(const char* buf, unsigned int len) {
     if (len > SYSCALL_MAX_WRITE_LEN) return -EFBIG;
     if (!user_buf_ok((unsigned int)buf, len)) return -EFAULT;
 
-    for (unsigned int i = 0; i < len; i++) {
-        terminal_putc(buf[i]);
-    }
+    terminal_write(buf, len);
     return (int)len;
 }
 

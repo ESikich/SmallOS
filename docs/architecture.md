@@ -37,7 +37,7 @@ kernel_entry.asm (32-bit)
   zeros BSS
   ↓
 kernel_main()
-  terminal_init()   ← VGA fallback backend + serial output
+  terminal_init()   ← VGA fallback backend + optional serial output
   gdt_init()        ← null, k-code, k-data, u-code, u-data, TSS + ltr
   paging_init()     ← identity-maps first 8 MB, enables CR0.PG
   memory_init()     ← bump allocator after high kernel BSS
@@ -113,7 +113,7 @@ frames as used.
 
 Inside `kernel_main()`:
 
-1. `terminal_init()` — VGA fallback backend and serial output
+1. `terminal_init()` — VGA fallback backend and optional serial output
 2. `gdt_init()` — install GDT with ring-3 segments and TSS; load task register with `ltr`
 3. `paging_init()` — enable paging, identity-map 8 MB
 4. `memory_init(PAGE_ALIGN(&bss_end))` — bump allocator starts after high kernel BSS
@@ -722,7 +722,7 @@ build/obj/<backend>/kernel/sched_switch.o
 | ------------------ | ------------------------------------------------------- |
 | boot (real mode)   | BIOS print (int 0x10)                                   |
 | early kernel       | VGA direct (0xB8000)                                    |
-| kernel             | terminal_puts (serial plus active backend)              |
+| kernel             | terminal_puts (active backend, optional serial mirror)  |
 | user process       | sys_write / sys_putc / sys_read                         |
 | memory accounting  | meminfo command                                         |
 | BIOS memory map    | memmap command                                          |

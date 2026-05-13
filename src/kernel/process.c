@@ -755,9 +755,7 @@ static int process_handle_console_write(fd_entry_t* ent, const char* buf, unsign
     if (!ent || !ent->valid || !ent->writable) return -EBADF;
     if (!buf) return -EFAULT;
 
-    for (unsigned int i = 0; i < len; i++) {
-        terminal_putc(buf[i]);
-    }
+    terminal_write(buf, len);
     return (int)len;
 }
 

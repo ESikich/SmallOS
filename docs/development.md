@@ -11,10 +11,11 @@ make clean && make
 qemu-system-i386 -drive format=raw,file=build/img/os-image.bin
 ```
 
-On Windows / PowerShell, this pattern keeps a GTK window open and captures both console output and QEMU logs:
+On Windows / PowerShell, this pattern keeps a GTK window open and captures
+COM1 plus QEMU logs. Build the serial image first with `make SERIAL_CONSOLE=1`:
 
 ```powershell
-qemu-system-i386 -drive format=raw,file=os-image.bin -m 32 -serial stdio -d int,cpu_reset,guest_errors -D qemu.log -display gtk 2>&1 | Tee-Object -FilePath qemu-console.log
+qemu-system-i386 -drive format=raw,file=build/img-serial/os-image.bin -m 32 -serial stdio -d int,cpu_reset,guest_errors -D qemu.log -display gtk 2>&1 | Tee-Object -FilePath qemu-console.log
 ```
 
 `make test` runs the same image headlessly, launches the shell `selftest`
@@ -90,9 +91,11 @@ If you see `implicit declaration of function` — you forgot a header.
 
 `terminal_put_uint` and `terminal_put_hex` are declared in `terminal.h` and defined in `terminal.c`. Do not add private copies in any other file.
 
-Terminal output is mirrored to COM1 serial and the active display backend. Keep ANSI/control-character handling in `terminal.c` so VGA text and framebuffer output share behavior; backend `putc` implementations should only handle raw newline, carriage return, backspace, wrapping, scrolling, and drawing.
+Terminal output goes to the active display backend by default. COM1 serial mirroring is opt-in with `SERIAL_CONSOLE=1`, mainly for headless tests and debug logs. Keep ANSI/control-character handling in `terminal.c` so VGA text and framebuffer output share behavior; backend `putc` implementations should only handle raw newline, carriage return, backspace, wrapping, scrolling, and drawing.
 
-UTF-8 decoding and Unicode-to-CP437 glyph compatibility live in `src/drivers/unicode.c` / `src/drivers/unicode.h`. Keep Unicode state machines and glyph mapping tables there rather than growing `terminal.c`; serial mirroring should continue to receive the original bytes so host logs remain UTF-8.
+Use `terminal_write()` for bulk console output from syscall/fd paths so backends can bracket expensive redraw work. User programs that produce lots of text should batch writes up to the syscall limit instead of writing one rendered row at a time. Do not add automatic "press any key to continue" paging in the terminal or kernel write path; paging belongs in userland commands or a future pager so `write()` does not unexpectedly block on terminal input.
+
+UTF-8 decoding and Unicode-to-CP437 glyph compatibility live in `src/drivers/unicode.c` / `src/drivers/unicode.h`. Keep Unicode state machines and glyph mapping tables there rather than growing `terminal.c`; when serial mirroring is enabled, it should continue to receive the original bytes so host logs remain UTF-8.
 
 `src/kernel/klib.h` / `src/kernel/klib.c` are now the canonical home for shared freestanding string and memory helpers such as `k_memcpy`, `k_memset`, `k_strlen`, `k_strcmp`, `k_strncpy`, and `k_starts_with`. If a helper is generally useful across more than one file, it belongs in `klib` rather than as a file-local static copy.
 

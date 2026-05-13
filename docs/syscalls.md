@@ -106,6 +106,12 @@ errno value.
 Terminal control characters are interpreted by the shared terminal path:
 `\n` advances to the next line, `\r` returns to column 0, and `\b` erases the
 previous VGA cell when possible.
+The kernel routes this through the bulk terminal path so framebuffer backends
+can bracket expensive redraw work around the whole write. User programs that
+produce large output should batch writes up to the syscall limit rather than
+issuing one write per rendered row.
+The terminal does not implement automatic page prompts; long-output paging is
+expected to live in userland commands such as a future `more`/`less`.
 This remains available as the low-level terminal write primitive used by
 `u_puts()` and early/simple user helpers. The normal POSIX/stdio path now
 writes `stdout` and `stderr` through fd-backed console handles via
@@ -480,13 +486,25 @@ int sys_dirlist(const char* path, uint32_t index, struct uapi_dirent* out);
 
 Copies the zero-based directory entry at `index` into `out` and returns `1`.
 Returns `0` when the index is past the end of the directory. The returned
-record contains `d_name`, `d_size`, and `d_is_dir`; user-space `readdir()`
-uses this syscall after `opendir()` validates the directory with `SYS_STAT`.
+record contains `d_name`, `d_size`, and `d_is_dir`.
+User-space should prefer the batched directory syscall below through
+`readdir()`; `SYS_DIRLIST` remains as the simple indexed ABI.
 
-This syscall is intentionally simple but not streaming: each indexed lookup is
-resolved by path and may scan from the start of the directory. Recursive tools
-should batch their terminal output where possible, and a future fd-style
-directory iterator should replace repeated indexed scans for large trees.
+---
+
+### SYS_DIRLIST_BATCH (65)
+
+```c
+int sys_dirlist_batch(const char* path,
+                      uint32_t start_index,
+                      struct uapi_dirent* out,
+                      uint32_t max_count);
+```
+
+Copies up to `max_count` directory entries beginning at `start_index` and
+returns the number copied. The kernel caps each call at 64 entries. Userland
+`readdir()` uses this syscall as a small cache so tools like `ls` and `tree`
+avoid rescanning a directory from zero for every entry.
 
 ---
 

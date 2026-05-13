@@ -60,6 +60,14 @@ static void boot_splash_pass(const char* name) {
     boot_splash_status("PASS", name);
 }
 
+static void boot_splash_terminal_ready(void) {
+#ifdef SMALLOS_SERIAL_CONSOLE
+    boot_splash_pass("terminal: VGA text and serial console");
+#else
+    boot_splash_pass("terminal: VGA text console");
+#endif
+}
+
 static void boot_splash_warn(const char* name) {
     boot_splash_status("WARN", name);
 }
@@ -200,7 +208,7 @@ static void kernel_selfcheck(void) {
 void kernel_main(void) {
     terminal_init();
     boot_splash_begin();
-    boot_splash_pass("terminal: VGA text and serial console");
+    boot_splash_terminal_ready();
     boot_splash_boot_info();
 
     gdt_init();
@@ -215,7 +223,7 @@ void kernel_main(void) {
 
     if (fb_console_init()) {
         boot_splash_begin();
-        boot_splash_pass("terminal: VGA text and serial console");
+        boot_splash_terminal_ready();
         boot_splash_pass("terminal: framebuffer console");
         boot_splash_boot_info();
     } else {

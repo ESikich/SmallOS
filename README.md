@@ -20,8 +20,8 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * BSS zeroing in kernel entry before paging is enabled
 * IDT with PIT timer (IRQ0), keyboard (IRQ1), PS/2 mouse (IRQ12), and syscalls (INT 0x80)
 * Page-fault handler that logs `CR2`, the error code, and user-vs-kernel context; user faults terminate only the offending process
-* COM1 serial driver — mirrors all terminal output to QEMU's serial backend for headless testing
-* Framebuffer-backed terminal with VGA text-mode fallback/debug output
+* COM1 serial driver — optional terminal mirroring for headless testing and debug logs
+* Framebuffer-backed terminal with VGA text-mode fallback/debug output and batched bulk writes
 * PCI bus scan at boot — discovery layer for the e1000 NIC path
 * e1000 NIC bring-up — PCI discovery, MMIO mapping, and DMA ring setup
 * Boot-time NTP clock sync — a tiny UDP/NTP client sets `CLOCK_REALTIME` and prints the synchronized UTC time during startup diagnostics
@@ -123,8 +123,8 @@ graphics demos also need a graphical backend and a grabbed QEMU window.
 
 **Headless (background, serial log):**
 ```bash
-make run-headless           # starts QEMU as a daemon
-make run-headless DISPLAY_BACKEND=vga  # force VGA text mode
+make run-headless SERIAL_CONSOLE=1  # starts QEMU as a daemon with COM1 logs
+make run-headless DISPLAY_BACKEND=vga SERIAL_CONSOLE=1  # force VGA text mode
 tail -f /tmp/smallos-serial.log   # read all kernel output
 ```
 
@@ -155,12 +155,17 @@ do not want to install extra networking drivers, keep using the default
 
 **Windows / PowerShell debug run:**
 ```powershell
-qemu-system-i386 -drive format=raw,file=os-image.bin -m 32 -serial stdio -d int,cpu_reset,guest_errors -D qemu.log -display gtk 2>&1 | Tee-Object -FilePath qemu-console.log
+qemu-system-i386 -drive format=raw,file=build/img-serial/os-image.bin -m 32 -serial stdio -d int,cpu_reset,guest_errors -D qemu.log -display gtk 2>&1 | Tee-Object -FilePath qemu-console.log
 ```
 
-`run-headless` daemonizes QEMU, writes a PID to `/tmp/smallos.pid`, and
-mirrors all terminal output to `/tmp/smallos-serial.log` via the COM1
-serial driver.  Use the QEMU monitor socket at
+Build that image first with `make SERIAL_CONSOLE=1`. For normal interactive
+GTK runs that do not need COM1 logs, use `build/img/os-image.bin` and omit
+`-serial`.
+
+`run-headless` daemonizes QEMU and writes a PID to `/tmp/smallos.pid`.
+Build with `SERIAL_CONSOLE=1` when you want terminal output mirrored to
+`/tmp/smallos-serial.log` via COM1; normal interactive builds leave serial
+mirroring off so text output is not throttled by the UART. Use the QEMU monitor socket at
 `/tmp/smallos-monitor.sock` to send keystrokes (`sendkey`) or take
 screenshots (`screendump`).
 
@@ -177,6 +182,8 @@ while the VM still runs daemonized.
 The normal auto/framebuffer disk image is `build/img/os-image.bin`. Forced-VGA
 builds use their own image at `build/img/vga/os-image.bin`, so running
 `make vga-smoke` no longer leaves the default image in VGA mode.
+Serial-enabled builds use `build/img-serial/os-image.bin`, keeping COM1 debug
+images separate from the fast default image.
 
 The mutable ext2 disk state now lives in `.state/ext2.img`, so normal
 rebuilds keep your files.  Use `make reset-disk` if you want to restore
@@ -189,12 +196,15 @@ service port you want to exercise. For example:
 qemu-system-i386 \
   -drive format=raw,file=build/img/os-image.bin \
   -boot c -m 32 \
-  -serial file:/tmp/smallos-serial.log \
   -nic user,model=e1000,mac=52:54:00:12:34:56,hostfwd=tcp::2462-:2323,hostfwd=tcp::2463-:2463,hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000 \
   -display none \
   -monitor unix:/tmp/smallos-monitor.sock,server,nowait \
   -daemonize -pidfile /tmp/smallos.pid
 ```
+
+If you need a serial transcript for that manual launch, build with
+`SERIAL_CONSOLE=1`, use `build/img-serial/os-image.bin`, and add
+`-serial file:/tmp/smallos-serial.log`.
 
 Then run `bg usr/sbin/tcpecho`, `bg usr/sbin/sockeof`, or
 `bg usr/sbin/ftpd` in the guest shell and connect from the host to the
@@ -336,6 +346,10 @@ Seeded ext2 layout:
 
 `help` renders the shell command list from the command table with the same short descriptions.
 
+The terminal does not automatically pause long output. POSIX-style paging is
+expected to live in userland, e.g. a future `more`/`less` command or explicit
+program options, so `write()` remains predictable and fast.
+
 `pinggw` and `ping 10.0.2.2` are the supported checks for QEMU user networking.
 `pingpublic` still tries an echo request through the QEMU gateway, but public
 ICMP is often unsupported by user-mode networking, especially outside Linux.
@@ -353,7 +367,7 @@ BIOS
  → kernel_entry.asm      zero BSS → kernel_main()
 
 kernel_main()
- → terminal_init()       VGA fallback + serial terminal output
+ → terminal_init()       VGA fallback + optional serial terminal output
  → boot splash           PASS/WARN/FAIL startup diagnostics
  → gdt_init()            GDT: null, k-code, k-data, u-code, u-data, TSS
  → paging_init()         enable paging, identity-map 8 MB

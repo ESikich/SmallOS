@@ -9,10 +9,16 @@
   * Kept ANSI/control handling in `terminal.c` while moving Unicode decoding and glyph mapping into `src/drivers/unicode.*`.
   * Switched `/bin/tree.elf` to print UTF-8 branch glyphs (`├──`, `└──`, `│`) and updated shell regression expectations.
   * Fixed `tree` directory display so entries already returned with a trailing slash do not render as `//`.
+* **Terminal output throughput** (`Makefile`, `src/drivers/terminal.c`, `src/drivers/fb_console.c`, `src/user/cat.c`, `src/user/ls.c`, `src/user/tree.c`)
+  * Made COM1 serial mirroring opt-in with `SERIAL_CONSOLE=1`; normal interactive builds render only to the active display backend so bulk text output is not UART-throttled.
+  * Added `terminal_write()` bulk output hooks so syscall writes can bracket backend updates, letting the framebuffer console erase and redraw its cursor once per write instead of once per byte.
+  * Optimized framebuffer glyph drawing, scroll copies, and dirty-cell flushing so large writes update the text buffer first and redraw the visible console in batches.
+  * Increased `/bin/cat.elf` to 4 KiB read/write chunks and buffered `/bin/ls.elf` and `/bin/tree.elf` output into 4 KiB writes.
+  * Kept paging policy out of the terminal path: long output remains a userland pager/program concern rather than a kernel-side prompt inside `write()`.
 * **Directory listing path** (`src/drivers/ext2.*`, `src/kernel/syscall.c`, `src/user/dirent.*`, `src/user/ls.c`, `src/user/tree.c`, `Makefile`)
   * Added a batched directory-list syscall and userland `readdir()` cache so directory traversal no longer rescans from zero for each entry.
   * Removed duplicate `/bin/fsls.elf`; `ls [path|pattern]` is now the single shipped directory listing command.
-  * Batched `ls` and `tree` row output into one terminal write per row.
+  * Directory display commands now feed the terminal through buffered bulk writes.
   * Moved directory batch scratch storage off the syscall stack and expanded process kernel stacks for larger real-kernel work.
 * **Writable ext2 filesystem** (`src/drivers/ext2.*`, `tools/mkext2.c`, `Makefile`)
   * Replaced the FAT16 runtime and seed image builder with a 16 MB ext2 volume using 4 KiB blocks, native case-sensitive names, direct/single-indirect/double-indirect block mapping, and MBR partition type `0x83`.
