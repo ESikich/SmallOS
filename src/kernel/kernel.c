@@ -12,7 +12,7 @@
 #include "scheduler.h"
 #include "process.h"
 #include "ata.h"
-#include "fat16.h"
+#include "ext2.h"
 #include "pci.h"
 #include "e1000.h"
 #include "fb_console.h"
@@ -174,7 +174,7 @@ void kernel_main(void) {
 
     /*
      * ATA PIO driver — software reset + wait ready.
-     * Must be called before fat16_init() and before sti.
+     * Must be called before ext2_init() and before sti.
      */
     boot_splash_expect(ata_init(),
                        "ata: primary channel ready",
@@ -206,12 +206,12 @@ void kernel_main(void) {
                        "TCP service task could not be created");
 
     /*
-     * FAT16 filesystem — reads FAT16_LBA from sector 0 offset 504
-     * (patched by Makefile), validates BPB geometry.
+     * ext2 filesystem — discovers the partition from MBR entry 1 and
+     * validates the superblock before user programs can be loaded.
      */
-    boot_splash_expect(fat16_init(),
-                       "fat16: volume mounted",
-                       "FAT16 volume failed BPB or partition validation");
+    boot_splash_expect(ext2_init(),
+                       "ext2: volume mounted",
+                       "ext2 volume failed superblock or partition validation");
 
     process_t* shell_proc = process_create_kernel_task("shell", shell_task_main);
 

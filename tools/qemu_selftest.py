@@ -24,7 +24,7 @@ BOOT_SPLASH_MARKERS = (
     "boot: PASS pmm: free frame baseline sane",
     "boot: PASS ata: primary channel ready",
     "boot: PASS tcp: service task queued",
-    "boot: PASS fat16: volume mounted",
+    "boot: PASS ext2: volume mounted",
     "boot: PASS shell: task queued",
     "SmallOS ready",
 )
@@ -239,6 +239,7 @@ def collect_selftest_transcript(sock, log, start_offset, deadline, cases, echo=T
 
             for marker, response in interactive:
                 if marker in buf and marker not in responded:
+                    time.sleep(0.15)
                     send_text(sock, response)
                     send_key(sock, "ret")
                     responded.add(marker)

@@ -15,7 +15,7 @@ void _start(int argc, char** argv) {
     uint32_t size = 0;
     int is_dir = 0;
     if (u_stat(argv[1], &size, &is_dir) < 0 || is_dir) {
-        u_puts("fat16: not found: ");
+        u_puts("ext2: not found: ");
         u_puts(argv[1]);
         u_putc('\n');
         u_puts("fsread: load failed\n");

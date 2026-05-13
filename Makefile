@@ -54,8 +54,8 @@ LOADER2_LOAD_ADDR := $(shell echo $$(( ( $(LOADER2_SEGMENT) << 4 ) + $(LOADER2_O
 STAGE2_STACK_TOP := 0xFF00
 STAGE2_STACK_TOP_PHYS := $(shell printf '0x%X' $$(( $(LOADER2_LOAD_ADDR) + $(STAGE2_STACK_TOP) )))
 STAGE2_STACK_TOP_32 := 0x1FF000
-FAT16_TOTAL_SECTORS := $(shell awk '/^#define[[:space:]]+TOTAL_SECTORS[[:space:]]+/ {print $$3}' tools/mkfat16.c)
-FAT16_TOTAL_SIZE_MB := $(shell awk '/^#define[[:space:]]+TOTAL_SIZE_MB[[:space:]]+/ {print $$3}' tools/mkfat16.c)
+EXT2_TOTAL_BLOCKS := $(shell awk '/^#define[[:space:]]+TOTAL_BLOCKS[[:space:]]+/ {print $$3}' tools/mkext2.c)
+EXT2_TOTAL_SIZE_MB := $(shell awk '/^#define[[:space:]]+TOTAL_SIZE_MB[[:space:]]+/ {print $$3}' tools/mkext2.c)
 BOOT_PARTITION_TABLE_OFFSET := $(shell awk '/^MBR_PARTITION_TABLE_OFFSET[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 BOOT_PARTITION_ENTRY_SIZE := $(shell awk '/^MBR_PARTITION_ENTRY_SIZE[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 LOADER2_SIZE_BYTES := $(shell awk '/^LOADER2_SIZE_BYTES[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/loader2.asm)
@@ -120,7 +120,7 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/arp.c \
 	$(DRIVERS_DIR)/ipv4.c \
 	$(DRIVERS_DIR)/tcp.c \
-	$(DRIVERS_DIR)/fat16.c \
+	$(DRIVERS_DIR)/ext2.c \
 	$(DRIVERS_DIR)/serial.c
 
 USER_PROGS=echo about uptime halt reboot pwd cat fsread ls fsls touch rm mkdir rmdir cp mv edit bmpview diskview hello ticks args runelf_test readline exec_test fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe plasma mandel tcpecho sockeof ftpd
@@ -138,15 +138,15 @@ CSERVER_SRCS=\
 	$(CSERVER_DIR)/src/config.c \
 	$(CSERVER_DIR)/src/util.c
 CSERVER_OBJS=$(patsubst $(CSERVER_DIR)/src/%.c,$(CSERVER_OBJ_DIR)/%.o,$(CSERVER_SRCS))
-FAT16_BIN_ENTRIES=bin/echo.elf=$(BIN_DIR)/echo.elf bin/about.elf=$(BIN_DIR)/about.elf bin/uptime.elf=$(BIN_DIR)/uptime.elf bin/halt.elf=$(BIN_DIR)/halt.elf bin/reboot.elf=$(BIN_DIR)/reboot.elf bin/pwd.elf=$(BIN_DIR)/pwd.elf bin/cat.elf=$(BIN_DIR)/cat.elf bin/fsread.elf=$(BIN_DIR)/fsread.elf bin/ls.elf=$(BIN_DIR)/ls.elf bin/fsls.elf=$(BIN_DIR)/fsls.elf bin/touch.elf=$(BIN_DIR)/touch.elf bin/rm.elf=$(BIN_DIR)/rm.elf bin/mkdir.elf=$(BIN_DIR)/mkdir.elf bin/rmdir.elf=$(BIN_DIR)/rmdir.elf bin/cp.elf=$(BIN_DIR)/cp.elf bin/mv.elf=$(BIN_DIR)/mv.elf bin/edit.elf=$(BIN_DIR)/edit.elf bin/bmpview.elf=$(BIN_DIR)/bmpview.elf bin/diskview.elf=$(BIN_DIR)/diskview.elf
-FAT16_DEMO_ENTRIES=apps/demo/hello.elf=$(BIN_DIR)/hello.elf apps/demo/plasma.elf=$(BIN_DIR)/plasma.elf apps/demo/mandel.elf=$(BIN_DIR)/mandel.elf
-FAT16_TEST_ENTRIES=apps/tests/ticks.elf=$(BIN_DIR)/ticks.elf apps/tests/args.elf=$(BIN_DIR)/args.elf apps/tests/runelf_test.elf=$(BIN_DIR)/runelf_test.elf apps/tests/readline.elf=$(BIN_DIR)/readline.elf apps/tests/exec_test.elf=$(BIN_DIR)/exec_test.elf apps/tests/fileread.elf=$(BIN_DIR)/fileread.elf apps/tests/compiler_demo.elf=$(BIN_DIR)/compiler_demo.elf apps/tests/heapprobe.elf=$(BIN_DIR)/heapprobe.elf apps/tests/statprobe.elf=$(BIN_DIR)/statprobe.elf apps/tests/fileprobe.elf=$(BIN_DIR)/fileprobe.elf apps/tests/cwdprobe.elf=$(BIN_DIR)/cwdprobe.elf apps/tests/stdioprobe.elf=$(BIN_DIR)/stdioprobe.elf apps/tests/dirprobe.elf=$(BIN_DIR)/dirprobe.elf apps/tests/errnoprobe.elf=$(BIN_DIR)/errnoprobe.elf apps/tests/badptrprobe.elf=$(BIN_DIR)/badptrprobe.elf apps/tests/fault.elf=$(BIN_DIR)/fault.elf apps/tests/sleep_test.elf=$(BIN_DIR)/sleep_test.elf apps/tests/timerfdprobe.elf=$(BIN_DIR)/timerfdprobe.elf apps/tests/signalfdprobe.elf=$(BIN_DIR)/signalfdprobe.elf apps/tests/connectprobe.elf=$(BIN_DIR)/connectprobe.elf apps/tests/ptrguard.elf=$(BIN_DIR)/ptrguard.elf apps/tests/spinwkr.elf=$(BIN_DIR)/spinwkr.elf apps/tests/pgrpprobe.elf=$(BIN_DIR)/pgrpprobe.elf apps/tests/preempt_test.elf=$(BIN_DIR)/preempt_test.elf apps/tests/crtprobe.elf=$(BIN_DIR)/crtprobe.elf apps/tests/displayprobe.elf=$(BIN_DIR)/displayprobe.elf
-FAT16_APP_ENTRIES=$(FAT16_BIN_ENTRIES) $(FAT16_DEMO_ENTRIES) $(FAT16_TEST_ENTRIES)
-FAT16_APP_ENTRIES+= apps/services/tcpecho.elf=$(BIN_DIR)/tcpecho.elf apps/services/sockeof.elf=$(BIN_DIR)/sockeof.elf apps/services/ftpd.elf=$(BIN_DIR)/ftpd.elf
-FAT16_APP_ENTRIES+= apps/services/cserve.elf=$(CSERVER_BIN)
-FAT16_EXTRA_DIRS=logs/
-FAT16_EXTRA_ENTRIES=tools/tcc.elf=$(TINYCC_SMALOS_BIN) tccmath.c=$(CURDIR)/samples/tccmath.c tccagg.c=$(CURDIR)/samples/tccagg.c tcctree.c=$(CURDIR)/samples/tcctree.c tccmini.c=$(CURDIR)/samples/tccmini.c cserve.ini=$(CURDIR)/samples/cserve.ini www/index.html=$(CURDIR)/samples/cserve_index.html
-FAT16_EXTRA_FILES=$(foreach entry,$(FAT16_EXTRA_ENTRIES),$(word 2,$(subst =, ,$(entry))))
+EXT2_BIN_ENTRIES=bin/echo.elf=$(BIN_DIR)/echo.elf bin/about.elf=$(BIN_DIR)/about.elf bin/uptime.elf=$(BIN_DIR)/uptime.elf bin/halt.elf=$(BIN_DIR)/halt.elf bin/reboot.elf=$(BIN_DIR)/reboot.elf bin/pwd.elf=$(BIN_DIR)/pwd.elf bin/cat.elf=$(BIN_DIR)/cat.elf bin/fsread.elf=$(BIN_DIR)/fsread.elf bin/ls.elf=$(BIN_DIR)/ls.elf bin/fsls.elf=$(BIN_DIR)/fsls.elf bin/touch.elf=$(BIN_DIR)/touch.elf bin/rm.elf=$(BIN_DIR)/rm.elf bin/mkdir.elf=$(BIN_DIR)/mkdir.elf bin/rmdir.elf=$(BIN_DIR)/rmdir.elf bin/cp.elf=$(BIN_DIR)/cp.elf bin/mv.elf=$(BIN_DIR)/mv.elf bin/edit.elf=$(BIN_DIR)/edit.elf bin/bmpview.elf=$(BIN_DIR)/bmpview.elf bin/diskview.elf=$(BIN_DIR)/diskview.elf
+EXT2_DEMO_ENTRIES=apps/demo/hello.elf=$(BIN_DIR)/hello.elf apps/demo/plasma.elf=$(BIN_DIR)/plasma.elf apps/demo/mandel.elf=$(BIN_DIR)/mandel.elf
+EXT2_TEST_ENTRIES=apps/tests/ticks.elf=$(BIN_DIR)/ticks.elf apps/tests/args.elf=$(BIN_DIR)/args.elf apps/tests/runelf_test.elf=$(BIN_DIR)/runelf_test.elf apps/tests/readline.elf=$(BIN_DIR)/readline.elf apps/tests/exec_test.elf=$(BIN_DIR)/exec_test.elf apps/tests/fileread.elf=$(BIN_DIR)/fileread.elf apps/tests/compiler_demo.elf=$(BIN_DIR)/compiler_demo.elf apps/tests/heapprobe.elf=$(BIN_DIR)/heapprobe.elf apps/tests/statprobe.elf=$(BIN_DIR)/statprobe.elf apps/tests/fileprobe.elf=$(BIN_DIR)/fileprobe.elf apps/tests/cwdprobe.elf=$(BIN_DIR)/cwdprobe.elf apps/tests/stdioprobe.elf=$(BIN_DIR)/stdioprobe.elf apps/tests/dirprobe.elf=$(BIN_DIR)/dirprobe.elf apps/tests/errnoprobe.elf=$(BIN_DIR)/errnoprobe.elf apps/tests/badptrprobe.elf=$(BIN_DIR)/badptrprobe.elf apps/tests/fault.elf=$(BIN_DIR)/fault.elf apps/tests/sleep_test.elf=$(BIN_DIR)/sleep_test.elf apps/tests/timerfdprobe.elf=$(BIN_DIR)/timerfdprobe.elf apps/tests/signalfdprobe.elf=$(BIN_DIR)/signalfdprobe.elf apps/tests/connectprobe.elf=$(BIN_DIR)/connectprobe.elf apps/tests/ptrguard.elf=$(BIN_DIR)/ptrguard.elf apps/tests/spinwkr.elf=$(BIN_DIR)/spinwkr.elf apps/tests/pgrpprobe.elf=$(BIN_DIR)/pgrpprobe.elf apps/tests/preempt_test.elf=$(BIN_DIR)/preempt_test.elf apps/tests/crtprobe.elf=$(BIN_DIR)/crtprobe.elf apps/tests/displayprobe.elf=$(BIN_DIR)/displayprobe.elf
+EXT2_APP_ENTRIES=$(EXT2_BIN_ENTRIES) $(EXT2_DEMO_ENTRIES) $(EXT2_TEST_ENTRIES)
+EXT2_APP_ENTRIES+= apps/services/tcpecho.elf=$(BIN_DIR)/tcpecho.elf apps/services/sockeof.elf=$(BIN_DIR)/sockeof.elf apps/services/ftpd.elf=$(BIN_DIR)/ftpd.elf
+EXT2_APP_ENTRIES+= apps/services/cserve.elf=$(CSERVER_BIN)
+EXT2_EXTRA_DIRS=logs/
+EXT2_EXTRA_ENTRIES=tools/tcc.elf=$(TINYCC_SMALOS_BIN) tccmath.c=$(CURDIR)/samples/tccmath.c tccagg.c=$(CURDIR)/samples/tccagg.c tcctree.c=$(CURDIR)/samples/tcctree.c tccmini.c=$(CURDIR)/samples/tccmini.c cserve.ini=$(CURDIR)/samples/cserve.ini www/index.html=$(CURDIR)/samples/cserve_index.html
+EXT2_EXTRA_FILES=$(foreach entry,$(EXT2_EXTRA_ENTRIES),$(word 2,$(subst =, ,$(entry))))
 
 KERNEL_OBJS=$(patsubst $(SRC_DIR)/%.asm,$(OBJ_DIR)/%.o,$(KERNEL_ASM_SRCS)) \
             $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(KERNEL_C_SRCS))
@@ -256,26 +256,26 @@ $(BIN_DIR)/kernel.bin: $(BIN_DIR)/kernel.elf | dirs
 $(BIN_DIR)/%.elf: $(OBJ_DIR)/user/%.o $(USER_RUNTIME_OBJS) | dirs
 	$(LD) $(USER_LDFLAGS) $^ -o $@
 
-$(TOOLS_DIR)/mkfat16: tools/mkfat16.c | dirs
+$(TOOLS_DIR)/mkext2: tools/mkext2.c | dirs
 	$(HOST_CC) -o $@ $<
 
 $(TOOLS_DIR)/mkimage: tools/mkimage.c | dirs
 	$(HOST_CC) -o $@ $<
 
-# FAT16 seed image (generated from the current tree)
+# ext2 seed image (generated from the current tree)
 #
-$(BIN_DIR)/fat16.seed.img: $(USER_ELFS) $(CSERVER_BIN) $(TOOLS_DIR)/mkfat16 $(FAT16_EXTRA_FILES) Makefile | dirs
-	$(TOOLS_DIR)/mkfat16 $@ $(FAT16_APP_ENTRIES) $(FAT16_EXTRA_ENTRIES) $(FAT16_EXTRA_DIRS)
+$(BIN_DIR)/ext2.seed.img: $(USER_ELFS) $(CSERVER_BIN) $(TOOLS_DIR)/mkext2 $(EXT2_EXTRA_FILES) Makefile | dirs
+	$(TOOLS_DIR)/mkext2 $@ $(EXT2_APP_ENTRIES) $(EXT2_EXTRA_ENTRIES) $(EXT2_EXTRA_DIRS)
 
-$(STATE_DIR)/fat16.img: $(BIN_DIR)/fat16.seed.img | dirs
+$(STATE_DIR)/ext2.img: $(BIN_DIR)/ext2.seed.img | dirs
 	cp $< $@
 
 $(TINYCC_CONFIG_STAMP): check-third-party tools/build_tinycc.sh | dirs
 	./tools/build_tinycc.sh $(CURDIR) $(TINYCC_DIR) $(CURDIR)/third_party/tinycc
 	touch $@
 
-reset-disk: $(BIN_DIR)/fat16.seed.img | dirs
-	cp $< $(STATE_DIR)/fat16.img
+reset-disk: $(BIN_DIR)/ext2.seed.img | dirs
+	cp $< $(STATE_DIR)/ext2.img
 
 tinycc-host: $(TINYCC_CONFIG_STAMP)
 
@@ -318,18 +318,18 @@ boot-layout-check: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(GEN_DIR)/loader2
 #   boot.bin             ($(BOOT_SECTOR_SIZE) bytes,   LBA 0)
 #   loader2.bin          ($(LOADER2_SIZE_BYTES) bytes, LBA 1-$(shell echo $$(( $(LOADER2_SIZE_BYTES) / $(BOOT_SECTOR_SIZE) ))))
 #   kernel_padded.bin    (sector-aligned, immediately after loader2.bin)
-#   .state/fat16.img     mutable FAT16 partition copy, after the padded kernel
+#   .state/ext2.img      mutable ext2 partition copy, after the padded kernel
 #
 # Sector 0 is now an MBR-style boot sector with partition table entries for
-# the kernel image and FAT16 partition, so stage 2 and the kernel can
+# the kernel image and ext2 partition, so stage 2 and the kernel can
 # discover disk locations directly from the image itself.
 #
-$(IMG_FILE): boot-layout-check $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(STATE_DIR)/fat16.img $(TOOLS_DIR)/mkimage | dirs
+$(IMG_FILE): boot-layout-check $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(STATE_DIR)/ext2.img $(TOOLS_DIR)/mkimage | dirs
 	$(TOOLS_DIR)/mkimage \
 		--boot $(BIN_DIR)/boot.bin \
 		--loader $(BIN_DIR)/loader2.bin \
 		--kernel $(BIN_DIR)/kernel.bin \
-		--fat16 $(STATE_DIR)/fat16.img \
+		--fs $(STATE_DIR)/ext2.img \
 		--out $@ \
 		--sector-size $(BOOT_SECTOR_SIZE) \
 		--loader-size $(LOADER2_SIZE_BYTES) \
@@ -342,7 +342,7 @@ image-layout-check: $(IMG_FILE)
 		--boot $(BIN_DIR)/boot.bin \
 		--loader2 $(BIN_DIR)/loader2.bin \
 		--kernel $(BIN_DIR)/kernel.bin \
-		--fat16 $(STATE_DIR)/fat16.img \
+		--fs $(STATE_DIR)/ext2.img \
 		--sector-size $(BOOT_SECTOR_SIZE) \
 		--loader-size $(LOADER2_SIZE_BYTES) \
 		--boot-partition-table-offset $(BOOT_PARTITION_TABLE_OFFSET) \

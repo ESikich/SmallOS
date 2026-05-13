@@ -43,12 +43,14 @@ typedef struct sys_fsinfo {
     unsigned int total_bytes;
     unsigned int used_bytes;
     unsigned int free_bytes;
+    /* ABI names are historical; values are ext2 allocation blocks. */
     unsigned int cluster_bytes;
     unsigned int total_clusters;
     unsigned int free_clusters;
 } sys_fsinfo_t;
 
 typedef struct sys_fsmap_request {
+    /* ABI names are historical; values are ext2 allocation-block indexes. */
     unsigned int start_cluster;
     unsigned int max_clusters;
     unsigned char* states;
@@ -63,21 +65,21 @@ enum {
     SYS_READ      = 5,
     SYS_YIELD     = 6,
     SYS_EXEC      = 7,
-    SYS_OPEN      = 8,   /* open a FAT16 file; returns fd or -1 */
+    SYS_OPEN      = 8,   /* open an ext2 file; returns fd or -1 */
     SYS_CLOSE     = 9,   /* close an fd */
     SYS_FREAD     = 10,  /* read bytes from an open fd into a user buffer */
     SYS_SLEEP     = 11,  /* block for N timer ticks */
     SYS_WRITEFILE = 12,  /* create/overwrite a root-directory file */
     SYS_HALT      = 13,  /* halt the machine */
     SYS_REBOOT    = 14,  /* reboot the machine */
-    SYS_WRITEFILE_PATH = 15, /* create/overwrite a FAT16 file at any path */
+    SYS_WRITEFILE_PATH = 15, /* create/overwrite an ext2 file at any path */
     SYS_BRK       = 16,  /* query or grow the calling process heap break */
-    SYS_OPEN_WRITE = 17, /* open a FAT16 file for write/truncate */
+    SYS_OPEN_WRITE = 17, /* open an ext2 file for write/truncate */
     SYS_WRITEFD    = 18,  /* write bytes to an open fd */
     SYS_LSEEK      = 19,  /* reposition an open fd */
-    SYS_UNLINK     = 20,  /* remove a FAT16 file */
-    SYS_RENAME     = 21,  /* rename or move a FAT16 entry */
-    SYS_STAT       = 22,  /* query size / directory status for a FAT16 path */
+    SYS_UNLINK     = 20,  /* remove an ext2 file */
+    SYS_RENAME     = 21,  /* rename or move an ext2 entry */
+    SYS_STAT       = 22,  /* query size / directory status for an ext2 path */
 
     /*
      * Socket ABI.
@@ -123,8 +125,8 @@ enum {
     SYS_DISPLAY_ACQUIRE = 56, /* enter exclusive graphics drawing mode */
     SYS_DISPLAY_RELEASE = 57, /* leave graphics drawing mode */
     SYS_MOUSE_READ      = 58, /* read PS/2 mouse deltas/buttons */
-    SYS_FSINFO          = 59, /* write FAT16 volume usage information */
-    SYS_FSMAP           = 60  /* write FAT16 cluster allocation states */
+    SYS_FSINFO          = 59, /* write ext2 volume usage information */
+    SYS_FSMAP           = 60  /* write ext2 allocation-block states */
 };
 
 #endif

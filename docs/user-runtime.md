@@ -20,7 +20,7 @@ program code
   -> raw syscall helpers in user_syscall.h
   -> int 0x80 syscall ABI
   -> kernel syscall dispatcher
-  -> VFS / FAT16 / console / socket backends
+  -> VFS / ext2 / console / socket backends
 ```
 
 Programs may call raw `sys_*` helpers directly, but higher-level code should
@@ -58,7 +58,7 @@ TinyCC relies on the wrapper convention.
 Each process has a current working directory stored in its `process_t`.
 
 Kernel path-taking syscalls resolve paths against that cwd before touching the
-filesystem. Absolute paths start at the FAT16 root. Relative paths start at the
+filesystem. Absolute paths start at the ext2 root. Relative paths start at the
 calling process cwd.
 
 Path normalization supports:
@@ -102,7 +102,7 @@ Interactive full-screen programs can use `sys_read_raw()` when they need
 keyboard input without kernel echo. Foreground process input reports ordinary
 characters plus ANSI-style special-key sequences for arrows, Home/End,
 Delete, PageUp/PageDown, and function keys; `edit` uses this path together
-with normal fd-backed writes to edit FAT16 text files.
+with normal fd-backed writes to edit ext2 text files.
 
 Graphics programs that need mouse motion can call `sys_mouse_read()` from
 `user_syscall.h`. It returns accumulated PS/2 relative movement and button
@@ -125,7 +125,7 @@ and release it again after userland drains the buffer. Socket writes allocate a
 16 KiB TX ring on first payload, keep queued bytes until ACKed, release the ring
 once drained, and wake write waiters as TX space returns.
 
-FAT16-backed file descriptors support:
+ext2-backed file descriptors support:
 
 - read-only opens
 - write/create/truncate opens
@@ -135,13 +135,13 @@ FAT16-backed file descriptors support:
 - flush
 - close-time writeback
 
-The user-visible fd API is preserved while FAT writes stream directly through
-FAT16 write-at. Small reads still use the kernel page cache; writes invalidate
+The user-visible fd API is preserved while file writes stream directly through
+ext2 write-at. Small reads still use the kernel page cache; writes invalidate
 that read cache for the descriptor.
 
-Current fd-backed regular files are bounded by FAT/free space and the FAT16
+Current fd-backed regular files are bounded by ext2 free space and the ext2
 driver's safety limit for the 16 MB test volume. The older whole-file
-`fat16_load()` helper still has a 1 MB static-buffer limit, so runtime file IO
+`ext2_load()` helper still has a 1 MB static-buffer limit, so runtime file IO
 should prefer descriptors when it needs seek, append, writes, or larger
 readback.
 
@@ -195,7 +195,7 @@ tracked normally:
 
 `fflush(stream)` calls `SYS_FSYNC` for writable file streams. That makes it
 meaningful even though userland stdio is unbuffered: it asks the kernel VFS
-layer to commit any dirty writable descriptor state. FAT16 fd writes now stream
+layer to commit any dirty writable descriptor state. ext2 fd writes now stream
 to disk as they arrive, so `fflush` is usually a confirmation point rather than
 a whole-file rewrite. Console streams treat `fflush` as success.
 
@@ -222,9 +222,9 @@ unsigned int d_size;
 int d_is_dir;
 ```
 
-FAT16 display names follow the existing filesystem presentation rules:
+ext2 display names follow the existing filesystem presentation rules:
 
-- short 8.3 names are returned in display form
+- short native names are returned in display form
 - directory names include a trailing `/`
 - iteration returns `NULL` at EOF
 - invalid handles set `errno = EBADF`
@@ -246,7 +246,7 @@ on normal runtime behavior:
 - fd-backed stdio streams
 - meaningful `fflush`
 - directory traversal through `opendir` / `readdir`
-- FAT16 writeback through normal streaming fd writes and flush/close
+- ext2 writeback through normal streaming fd writes and flush/close
 
 The TinyCC acceptance gate is the guest compiler suite:
 

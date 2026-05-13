@@ -8,7 +8,7 @@ typedef unsigned short u16;
  * ata.h — ATA PIO driver (primary channel, master drive)
  *
  * Provides 28-bit LBA sector reads via polling (no DMA, no IRQ).
- * Suitable for reading a FAT16 filesystem in 32-bit protected mode.
+ * Suitable for reading an ext2 filesystem in 32-bit protected mode.
  *
  * Hardware:
  *   Primary ATA channel  I/O base  0x1F0

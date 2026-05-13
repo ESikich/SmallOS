@@ -4,7 +4,7 @@
 /*
  * elf_run_named(name, argc, argv)
  *
- * Look up `name` in the FAT16 partition, load it into a per-process address space,
+ * Look up `name` in the ext2 partition, load it into a per-process address space,
  * and create a process, seed its scheduler bootstrap context, enqueue it,
  * and return the created process_t*. Returns 0 on failure.
  */

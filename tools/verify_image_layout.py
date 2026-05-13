@@ -50,7 +50,7 @@ def main() -> int:
     parser.add_argument("--boot", type=Path, required=True)
     parser.add_argument("--loader2", type=Path, required=True)
     parser.add_argument("--kernel", type=Path, required=True)
-    parser.add_argument("--fat16", type=Path, required=True)
+    parser.add_argument("--fs", type=Path, required=True)
     parser.add_argument("--sector-size", type=int, required=True)
     parser.add_argument("--loader-size", type=int, required=True)
     parser.add_argument("--boot-partition-table-offset", type=int, required=True)
@@ -61,7 +61,7 @@ def main() -> int:
     boot = bytearray(read_bytes(args.boot))
     loader2 = read_bytes(args.loader2)
     kernel = read_bytes(args.kernel)
-    fat16 = read_bytes(args.fat16)
+    fs = read_bytes(args.fs)
 
     expect(len(boot) == args.sector_size, f"boot.bin must be {args.sector_size} bytes")
     expect(len(loader2) == args.loader_size,
@@ -75,17 +75,17 @@ def main() -> int:
     kernel_padded_size = ((len(kernel) + args.sector_size - 1) // args.sector_size) * args.sector_size
     kernel_pad = kernel_padded_size - len(kernel)
     kernel_sectors = kernel_padded_size // args.sector_size
-    fat16_lba = kernel_lba + kernel_sectors
-    fat16_sectors = len(fat16) // args.sector_size
+    fs_lba = kernel_lba + kernel_sectors
+    fs_sectors = len(fs) // args.sector_size
 
-    expected_size = args.sector_size + len(loader2) + kernel_padded_size + len(fat16)
+    expected_size = args.sector_size + len(loader2) + kernel_padded_size + len(fs)
     expect(len(image) == expected_size,
            f"image size mismatch: expected {expected_size}, got {len(image)}")
 
     write_partition_entry(boot, args.boot_partition_table_offset + 0 * args.boot_partition_entry_size,
                           0x80, 0x83, kernel_lba, kernel_sectors)
     write_partition_entry(boot, args.boot_partition_table_offset + 1 * args.boot_partition_entry_size,
-                          0x00, 0x06, fat16_lba, fat16_sectors)
+                          0x00, 0x83, fs_lba, fs_sectors)
     expect(image[:len(boot)] == boot, "boot sector bytes do not match patched boot.bin")
     expect(image[args.sector_size:args.sector_size + len(loader2)] == loader2,
            "loader2 bytes do not match loader2.bin")
@@ -96,16 +96,16 @@ def main() -> int:
                  kernel_lba * args.sector_size + kernel_padded_size] == b"\x00" * kernel_pad,
            "kernel padding bytes are not zero")
 
-    fat16_offset = fat16_lba * args.sector_size
-    expect(image[fat16_offset:fat16_offset + len(fat16)] == fat16,
-           "fat16 image bytes do not match at the expected LBA")
+    fs_offset = fs_lba * args.sector_size
+    expect(image[fs_offset:fs_offset + len(fs)] == fs,
+           "filesystem image bytes do not match at the expected LBA")
 
     print("image layout ok")
     print(f"  image size          = {len(image)} bytes")
     print(f"  loader2 sectors     = {loader2_sectors}")
     print(f"  kernel start LBA    = {kernel_lba}")
     print(f"  kernel sectors      = {kernel_sectors}")
-    print(f"  FAT16 start LBA     = {fat16_lba}")
+    print(f"  ext2 start LBA      = {fs_lba}")
     print(f"  kernel padded bytes = {kernel_padded_size}")
     return 0
 

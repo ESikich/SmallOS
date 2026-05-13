@@ -3,7 +3,7 @@
 ; Stage 2 loader contract:
 ;   - loaded by boot sector to physical 0x40000
 ;   - occupies exactly 8 sectors (4096 bytes)
-;   - kernel and FAT16 partitions are described by the MBR partition table
+;   - kernel and ext2 partitions are described by the MBR partition table
 ;   - kernel is loaded to physical 0x1000
 ;   - versioned boot info is written at physical 0x90000
 ;   - after loading, stage 2 enters 32-bit protected mode

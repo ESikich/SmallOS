@@ -1,5 +1,15 @@
 # Changelog
 
+## [Current] — ext2 filesystem conversion
+
+### Changed
+
+* **Writable ext2 filesystem** (`src/drivers/ext2.*`, `tools/mkext2.c`, `Makefile`)
+  * Replaced the FAT16 runtime and seed image builder with a 16 MB ext2 volume using 4 KiB blocks, native case-sensitive names, direct/single-indirect/double-indirect block mapping, and MBR partition type `0x83`.
+  * Preserved the VFS/syscall ABI while routing ELF loading, directory iteration, file writes, mkdir/rmdir, unlink, rename, usage reporting, and allocation maps through the ext2 driver.
+  * Renamed build artifacts to `ext2.seed.img` and `.state/ext2.img`; `mkimage` and `image-layout-check` now treat the appended filesystem image generically.
+  * Updated shell/user-visible filesystem labels and QEMU expectations for native ext2 names.
+
 ## [Current] — Syscall user-pointer hardening
 
 ### Changed

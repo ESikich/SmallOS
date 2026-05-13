@@ -66,7 +66,7 @@ Important current-state facts:
   fd-backed console streams, streaming VFS-backed file handles,
   `stat`/`rename`/`unlink`, `lseek`, and socket wrappers, which is enough for
   compiler-style tools and small network services
-- the shipped `tools/tcc.elf` compiler binary links the generic SmallOS `user_crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from FAT16, write the results back to disk, and then those generated ELFs can be executed immediately
+- the shipped `tools/tcc.elf` compiler binary links the generic SmallOS `user_crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from ext2, write the results back to disk, and then those generated ELFs can be executed immediately
 - QEMU user networking is still the default for `make run` / `make test`, but `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT
 - `pinggw` and `ping 10.0.2.2` are the supported QEMU user-network checks; public ICMP is often unsupported by user-mode networking, so `pingpublic` is only a best-effort probe
 - `netcheck` prints the gateway steps separately from the public ICMP probe so a `1.1.1.1` timeout does not imply the local NAT path is broken
@@ -230,15 +230,15 @@ host observes EOF.
 ```text
 vfs_load_file(name, &size)
   → backend file lookup
-  → follow cluster chain with ATA PIO reads
-  → copy file into static FAT16 load buffer
+  → follow block chain with ATA PIO reads
+  → copy file into static ext2 load buffer
   → return pointer to buffer
 ```
 
 Important invariant:
 
-- `fat16_load()` returns a pointer into a **static internal buffer**
-- callers must copy what they need before another FAT16 load reuses that buffer
+- `ext2_load()` returns a pointer into a **static internal buffer**
+- callers must copy what they need before another ext2 load reuses that buffer
 
 `elf_run_named()` then passes that image pointer to `elf_run_image()`.
 
@@ -250,7 +250,7 @@ Important invariant:
 - allocates a fresh `process_t` with `process_create("elf")`
 - allocates a fresh page directory with `process_pd_create()`
 - maps each `PT_LOAD` segment into user memory using PMM frames
-- copies file-backed bytes from the FAT16 load buffer into those frames
+- copies file-backed bytes from the ext2 load buffer into those frames
 - allocates and maps one user stack page
 - allocates one kernel stack frame for privilege transitions
 
@@ -351,7 +351,7 @@ FINs, preserve final writes before close-driven FIN, and clean up once the peer
 close/ACK sequence completes or idles out.
 Each process also carries cwd state, so user path syscalls resolve relative
 paths before entering VFS or ELF loading.
-FAT16-backed file behavior and path operations sit behind `vfs.c`, so
+ext2-backed file behavior and path operations sit behind `vfs.c`, so
 `syscall.c` stays focused on validation and dispatch instead of handle
 lifetime or resource-specific behavior.
 
@@ -421,7 +421,7 @@ kernel_main()
   idt_init()
   sched_init()
   ata_init()
-  fat16_init()
+  ext2_init()
   create shell kernel task
   sched_enqueue(shell_proc)
   process_start_reaper()    ← creates and enqueues reaper task
@@ -523,8 +523,8 @@ low-level probes and freestanding tests; new hosted-ish programs should prefer
 
 The following must remain true:
 
-- `fat16_init()` must run after `ata_init()` and before any VFS-backed FAT16 file load
-- `vfs_load_file()` / `fat16_load()` results must be copied before another FAT16 load reuses the static buffer
+- `ext2_init()` must run after `ata_init()` and before any VFS-backed ext2 file load
+- `vfs_load_file()` / `ext2_load()` results must be copied before another ext2 load reuses the static buffer
 - every user process must have a valid kernel stack frame before ring-3 entry
 - `tss_set_kernel_stack()` must match the process that will next return from ring 3 into the kernel
   - this is enforced by `elf_user_task_bootstrap()` on first entry, not by the earlier `elf_run_image()` setup path
@@ -540,8 +540,8 @@ The following must remain true:
 
 Likely causes:
 
-- FAT16 file not found
-- FAT16 load failed
+- ext2 file not found
+- ext2 load failed
 - ELF magic invalid
 - PMM frame allocation failure during segment or stack setup
 

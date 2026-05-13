@@ -3,7 +3,7 @@
 /*
  * fileread — end-to-end test for SYS_OPEN / SYS_FREAD / SYS_CLOSE.
  *
- * Opens a nested file from the FAT16 partition
+ * Opens a nested file from the ext2 partition
  * (apps/demo/hello.elf), reads the first 16 bytes, dumps them as hex,
  * reads the rest to confirm EOF behaviour, then closes the fd.  Also
  * tests double-close and bad-fd error returns.

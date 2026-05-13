@@ -22,7 +22,7 @@
 #include "vfs.h"
 #include "socket.h"
 #include "../drivers/display.h"
-#include "../drivers/fat16.h"
+#include "../drivers/ext2.h"
 
 #define SYSCALL_MAX_WRITE_LEN 4096u
 #define EXEC_NAME_MAX         PROCESS_FD_NAME_MAX
@@ -498,7 +498,7 @@ static int sys_exec_impl(const char* name, int argc, char** argv) {
 /*
  * sys_writefile_impl(name, buf, len)
  *
- * Create or overwrite a root-directory FAT16 file in one shot.  This is
+ * Create or overwrite a root-directory ext2 file in one shot.  This is
  * the historical output primitive for user-space tools.
  */
 static int sys_writefile_impl(const char* name, const void* buf, unsigned int len) {
@@ -514,7 +514,7 @@ static int sys_writefile_impl(const char* name, const void* buf, unsigned int le
 /*
  * sys_writefile_path_impl(path, buf, len)
  *
- * Create or overwrite a FAT16 file at an arbitrary path.  This is the
+ * Create or overwrite an ext2 file at an arbitrary path.  This is the
  * preferred output primitive for compilers because it can emit directly
  * into nested directories.
  */
@@ -1834,11 +1834,11 @@ static int sys_mouse_read_impl(sys_mouse_state_t* out_state) {
 }
 
 static int sys_fsinfo_impl(sys_fsinfo_t* out_info) {
-    fat16_fsinfo_t info;
+    ext2_fsinfo_t info;
     sys_fsinfo_t user_info;
 
     if (!out_info) return -EFAULT;
-    if (!fat16_fsinfo(&info)) return -EIO;
+    if (!ext2_fsinfo(&info)) return -EIO;
 
     user_info.total_bytes = info.total_bytes;
     user_info.used_bytes = info.used_bytes;
@@ -1864,7 +1864,7 @@ static int sys_fsmap_impl(sys_fsmap_request_t* user_req) {
     }
     if (!req.states) return -EFAULT;
     if (!user_buf_ok((unsigned int)req.states, req.max_clusters)) return -EFAULT;
-    if (!fat16_fsmap(req.start_cluster, req.max_clusters, req.states, &out_clusters)) return -EIO;
+    if (!ext2_fsmap(req.start_cluster, req.max_clusters, req.states, &out_clusters)) return -EIO;
 
     req.out_clusters = out_clusters;
     if (copy_to_user(user_req, &req, sizeof(req)) < 0) return -EFAULT;

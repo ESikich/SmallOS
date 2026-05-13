@@ -11,7 +11,7 @@ typedef uint32_t u32;
  * Final disk image assembly inputs and layout parameters.
  *
  * The Makefile discovers layout constants from the source files that own
- * them (boot.asm, loader2.asm, mkfat16.c) and passes them in here.
+ * them (boot.asm, loader2.asm, mkext2.c) and passes them in here.
  *
  * mkimage itself does not "own" those constants. It just applies them.
  */
@@ -19,7 +19,7 @@ typedef struct {
     const char* boot_path;
     const char* loader_path;
     const char* kernel_path;
-    const char* fat16_path;
+    const char* fs_path;
     const char* out_path;
     u32 sector_size;
     u32 loader_size;
@@ -66,7 +66,7 @@ static u32 parse_u32(const char* s, const char* name) {
  *   - boot.bin
  *   - loader2.bin
  *   - kernel.bin
- *   - fat16.img
+ *   - filesystem image
  *
  * Required numeric parameters define how those binaries are assembled into
  * the final bootable disk image.
@@ -81,8 +81,8 @@ static void parse_args(int argc, char** argv, Options* opt) {
             opt->loader_path = argv[++i];
         } else if (strcmp(argv[i], "--kernel") == 0 && i + 1 < argc) {
             opt->kernel_path = argv[++i];
-        } else if (strcmp(argv[i], "--fat16") == 0 && i + 1 < argc) {
-            opt->fat16_path = argv[++i];
+        } else if (strcmp(argv[i], "--fs") == 0 && i + 1 < argc) {
+            opt->fs_path = argv[++i];
         } else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
             opt->out_path = argv[++i];
         } else if (strcmp(argv[i], "--sector-size") == 0 && i + 1 < argc) {
@@ -100,7 +100,7 @@ static void parse_args(int argc, char** argv, Options* opt) {
     }
 
     if (!opt->boot_path || !opt->loader_path || !opt->kernel_path ||
-        !opt->fat16_path || !opt->out_path) {
+        !opt->fs_path || !opt->out_path) {
         die("missing required path arguments");
     }
 
@@ -164,8 +164,8 @@ static void write_all(FILE* f, const u8* buf, size_t size, const char* out_path)
 /*
  * Append zero padding.
  *
- * Used to round kernel.bin up to a whole number of sectors before fat16.img
- * is appended, so FAT16 starts at a clean LBA boundary.
+ * Used to round kernel.bin up to a whole number of sectors before the
+ * filesystem image is appended, so it starts at a clean LBA boundary.
  */
 static void write_zeroes(FILE* f, size_t count, const char* out_path) {
     static const u8 zeros[4096] = {0};
@@ -203,13 +203,13 @@ int main(int argc, char** argv) {
     Options opt;
     parse_args(argc, argv, &opt);
 
-    u8 *boot = NULL, *loader = NULL, *kernel = NULL, *fat16 = NULL;
-    size_t boot_size = 0, loader_size = 0, kernel_size = 0, fat16_size = 0;
+    u8 *boot = NULL, *loader = NULL, *kernel = NULL, *fs = NULL;
+    size_t boot_size = 0, loader_size = 0, kernel_size = 0, fs_size = 0;
 
     read_file(opt.boot_path, &boot, &boot_size);
     read_file(opt.loader_path, &loader, &loader_size);
     read_file(opt.kernel_path, &kernel, &kernel_size);
-    read_file(opt.fat16_path, &fat16, &fat16_size);
+    read_file(opt.fs_path, &fs, &fs_size);
 
     /*
      * Validate fixed-layout invariants before building the final image.
@@ -234,9 +234,9 @@ int main(int argc, char** argv) {
      *   [loader2.bin]
      *   [kernel.bin]
      *   [zero padding to next sector boundary]
-     *   [fat16.img]
+     *   [filesystem image]
      *
-     * The MBR partition table records the kernel and FAT16 ranges so stage 2
+     * The MBR partition table records the kernel and filesystem ranges so stage 2
      * and the kernel can discover them without any boot-sector patch fields.
      */
     size_t padded_kernel_size =
@@ -248,23 +248,23 @@ int main(int argc, char** argv) {
     u32 kernel_lba = 1u + loader_sectors;
 
     if (kernel_sectors > 0xFFFFFFFFu - kernel_lba) {
-        die("computed FAT16 LBA overflows u32");
+        die("computed filesystem LBA overflows u32");
     }
-    u32 fat16_lba = kernel_lba + kernel_sectors;
-    u32 fat16_sectors = (u32)(fat16_size / opt.sector_size);
+    u32 fs_lba = kernel_lba + kernel_sectors;
+    u32 fs_sectors = (u32)(fs_size / opt.sector_size);
 
     /*
      * Populate the MBR partition table entries.
      *
      * Entry 0: kernel image partition
-     * Entry 1: FAT16 filesystem partition
+     * Entry 1: ext2 filesystem partition
      */
     write_partition_entry(boot,
                           opt.boot_partition_table_offset + 0u * opt.boot_partition_entry_size,
                           0x80u, 0x83u, kernel_lba, kernel_sectors);
     write_partition_entry(boot,
                           opt.boot_partition_table_offset + 1u * opt.boot_partition_entry_size,
-                          0x00u, 0x06u, fat16_lba, fat16_sectors);
+                          0x00u, 0x83u, fs_lba, fs_sectors);
 
     FILE* out = fopen(opt.out_path, "wb");
     if (!out) die_errno("cannot open output", opt.out_path);
@@ -273,7 +273,7 @@ int main(int argc, char** argv) {
     write_all(out, loader, loader_size, opt.out_path);
     write_all(out, kernel, kernel_size, opt.out_path);
     write_zeroes(out, kernel_pad, opt.out_path);
-    write_all(out, fat16, fat16_size, opt.out_path);
+    write_all(out, fs, fs_size, opt.out_path);
 
     if (fclose(out) != 0) {
         die_errno("cannot close output", opt.out_path);
@@ -285,20 +285,20 @@ int main(int argc, char** argv) {
      */
     printf("kernel:  %zu bytes (%u sectors, LBA %u)\n",
            kernel_size, kernel_sectors, kernel_lba);
-    printf("fat16:   %u sectors (%zu MB), LBA %u\n",
-           fat16_sectors,
-           fat16_size / (1024u * 1024u),
-           fat16_lba);
+    printf("ext2:    %u sectors (%zu MB), LBA %u\n",
+           fs_sectors,
+           fs_size / (1024u * 1024u),
+           fs_lba);
     printf("boot:    partition table offset %u\n",
            opt.boot_partition_table_offset);
     printf("boot:    kernel partition  LBA %u size %u sectors\n",
            kernel_lba, kernel_sectors);
-    printf("boot:    FAT16 partition   LBA %u size %u sectors\n",
-           fat16_lba, fat16_sectors);
+    printf("boot:    ext2 partition    LBA %u size %u sectors\n",
+           fs_lba, fs_sectors);
 
     free(boot);
     free(loader);
     free(kernel);
-    free(fat16);
+    free(fs);
     return 0;
 }

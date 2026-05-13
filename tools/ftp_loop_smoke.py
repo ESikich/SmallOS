@@ -346,8 +346,8 @@ def main():
     if args.payload_size < 1:
         print("--payload-size must be at least 1", file=sys.stderr)
         return 1
-    if len(args.stor_prefix) > 4:
-        print("--stor-prefix must be 4 characters or fewer for 8.3 names", file=sys.stderr)
+    if len(args.stor_prefix) > 64:
+        print("--stor-prefix must be 64 characters or fewer", file=sys.stderr)
         return 1
 
     return run_ftp_loop_smoke(args)

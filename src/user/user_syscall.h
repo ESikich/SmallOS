@@ -125,7 +125,7 @@ static inline int sys_sleep(uint32_t ticks) {
 /*
  * sys_exec(name, argc, argv)
  *
- * Load and spawn the named ELF from the FAT16 partition.
+ * Load and spawn the named ELF from the ext2 partition.
  *
  * The kernel returns immediately after enqueueing the child.  The child
  * runs independently under the scheduler.
@@ -143,8 +143,8 @@ static inline int sys_exec(const char* name, int argc, char** argv) {
 /*
  * sys_open(name)
  *
- * Open a file from the FAT16 partition by path.  Each component is matched
- * case-insensitively using 8.3 rules (e.g. "apps/demo/hello.elf").
+ * Open a file from the ext2 partition by path.  Each component is matched
+ * with native case-sensitive ext2 names (e.g. "apps/demo/hello.elf").
  *
  * Returns a file descriptor (>= 3) on success, or a negative errno on
  * failure (file not found, fd table full, path too long, invalid pointer).
@@ -156,7 +156,7 @@ static inline int sys_open(const char* name) {
 /*
  * sys_open_write(name)
  *
- * Open a FAT16 file for streaming write/truncate.
+ * Open an ext2 file for streaming write/truncate.
  */
 static inline int sys_open_write(const char* name) {
     return syscall1(SYS_OPEN_WRITE, (uint32_t)name);
@@ -230,7 +230,7 @@ static inline int sys_fsync(int fd) {
 /*
  * sys_unlink(path)
  *
- * Remove a FAT16 file.
+ * Remove an ext2 file.
  */
 static inline int sys_unlink(const char* path) {
     return syscall1(SYS_UNLINK, (uint32_t)path);
@@ -239,7 +239,7 @@ static inline int sys_unlink(const char* path) {
 /*
  * sys_rename(src, dst)
  *
- * Rename or move a FAT16 entry.
+ * Rename or move an ext2 entry.
  */
 static inline int sys_rename(const char* src, const char* dst) {
     return syscall2(SYS_RENAME, (uint32_t)src, (uint32_t)dst);
@@ -411,7 +411,7 @@ static inline int sys_signalfd(int fd, const void* mask, int flags) {
 /*
  * sys_writefile(name, buf, len)
  *
- * Create or overwrite a root-directory FAT16 file with the provided
+ * Create or overwrite a root-directory ext2 file with the provided
  * data.  This is the simplest persistence primitive for generated
  * compiler output and similar build artifacts.
  */
@@ -422,7 +422,7 @@ static inline int sys_writefile(const char* name, const char* buf, uint32_t len)
 /*
  * sys_writefile_path(path, buf, len)
  *
- * Create or overwrite a FAT16 file at an arbitrary path.  This is the
+ * Create or overwrite an ext2 file at an arbitrary path.  This is the
  * preferred write primitive for compilers and build tools because it can
  * emit directly into nested directories.
  */

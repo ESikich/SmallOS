@@ -324,7 +324,7 @@
         </thead>
         <tbody>
           <tr>
-            <td>FAT16 lookup</td>
+            <td>ext2 lookup</td>
             <td>Server opens <code>/www/index.html</code> from the seeded volume.</td>
             <td>Run <code>fsls www</code> in the shell.</td>
             <td>Directory support is exercised before the server sends anything.</td>
@@ -436,7 +436,7 @@ Expected:
       <div class="payload">
         <article>
           <h3>Block 01: boot</h3>
-          <p>The image boots, mounts FAT16, starts the shell, and leaves the cserver ELF available under apps/services.</p>
+          <p>The image boots, mounts ext2, starts the shell, and leaves the cserver ELF available under apps/services.</p>
           <p class="muted">Signal: if this card appears, the first payload segment arrived intact.</p>
         </article>
         <article>

@@ -99,10 +99,10 @@ The user allocator is simple and deterministic rather than fragmentation-optimiz
 
 ---
 
-# FAT16 Load Buffer
+# ext2 Load Buffer
 
-The FAT16 driver keeps one permanent load buffer allocated during
-`fat16_init()`:
+The ext2 driver keeps one permanent load buffer allocated during
+`ext2_init()`:
 
 ```text
 s_load_buf[1 MB]
@@ -116,9 +116,9 @@ The loader copies ELF segment data out of this buffer into PMM-backed frames bef
 
 Fd-backed file reads and writes do not need to fit inside this static buffer.
 Small fd reads still use reclaimable PMM cache pages owned by the open
-descriptor, while larger reads use FAT16 read-at directly. Fd writes stream
-through FAT16 write-at and invalidate any read cache for that descriptor, so
-large uploads and compiler outputs are bounded by FAT/free space rather than by
+descriptor, while larger reads use ext2 read-at directly. Fd writes stream
+through ext2 write-at and invalidate any read cache for that descriptor, so
+large uploads and compiler outputs are bounded by ext2 free space rather than by
 the fd cache. VFS accesses PMM cache frames through the high kernel PMM alias
 (`KERNEL_PMM_MAP_BASE`), so file-cache frames remain reachable under every
 process page directory without switching CR3.

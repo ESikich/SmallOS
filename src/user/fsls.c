@@ -68,16 +68,16 @@ void _start(int argc, char** argv) {
     DIR* dir = opendir(path);
     unsigned int count = 0;
     if (!dir) {
-        u_puts("fat16: not found: ");
+        u_puts("ext2: not found: ");
         u_puts(path);
         u_putc('\n');
         sys_exit(1);
     }
 
     if (is_root_path(path)) {
-        u_puts("fat16 root directory:\n");
+        u_puts("ext2 root directory:\n");
     } else {
-        u_puts("fat16 directory: ");
+        u_puts("ext2 directory: ");
         u_puts(path);
         u_putc('\n');
     }

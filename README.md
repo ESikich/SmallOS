@@ -7,7 +7,7 @@ SmallOS is a BIOS-based x86 hobby operating system built with:
 * `i686-elf-ld`
 * `QEMU`
 
-It boots from a raw disk image, switches to 32-bit protected mode, enables paging, loads user programs from a FAT16 partition on disk, and runs a C kernel with a terminal shell, ring-3 ELF program execution, a preemptive round-robin scheduler, voluntary yielding, inter-process exec, and ATA PIO disk access.
+It boots from a raw disk image, switches to 32-bit protected mode, enables paging, loads user programs from an ext2 partition on disk, and runs a C kernel with a terminal shell, ring-3 ELF program execution, a preemptive round-robin scheduler, voluntary yielding, inter-process exec, and ATA PIO disk access.
 
 ---
 
@@ -37,17 +37,17 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Ring 3 user mode — hardware-enforced privilege separation
 * Per-process kernel stacks — dedicated PMM frame per process; TSS ESP0 set from it; freed on exit
 * Syscall layer via `int 0x80` (DPL=3 gate): console, process, heap, cwd, file, directory, and socket calls shared by the kernel and user runtime headers
-* Small VFS boundary for FAT16-backed file handles and path operations; `process.c` owns fd lifetime while `vfs.c` owns file behavior
+* Small VFS boundary for ext2-backed file handles and path operations; `process.c` owns fd lifetime while `vfs.c` owns file behavior
 * Socket/poll ABI via `int 0x80`: passive TCP sockets, `accept4`, basic TCP half-close via `shutdown`, `getsockname`/`getpeername`, `poll`, `epoll`, `timerfd`, and `signalfd` shims for guest services
 * `sys_exit()` is scheduler-owned: it switches to the kernel page directory, marks the current task `PROCESS_STATE_ZOMBIE`, and switches to the next runnable task
 * Shell now runs as an explicit kernel task scheduled by `scheduler.c`
 * **Preemptive round-robin scheduler** — PIT timer IRQ at `SMALLOS_TIMER_HZ`, with a named 20 ms scheduler quantum
 * **`SYS_YIELD`** — voluntary preemption; process surrenders its remaining quantum immediately
 * **`SYS_EXEC`** — user process asynchronously spawns a named child ELF and returns `0` on success or a negative errno on failure
-* **`SYS_WRITEFILE`** — user process creates or overwrites a root-directory FAT16 file in one shot
-* **`SYS_WRITEFILE_PATH`** — user process creates or overwrites a FAT16 file at any nested path
+* **`SYS_WRITEFILE`** — user process creates or overwrites a root-directory ext2 file in one shot
+* **`SYS_WRITEFILE_PATH`** — user process creates or overwrites an ext2 file at any nested path
 * **ATA PIO driver** — polls the primary IDE channel (`0x1F0`) to read 512-byte sectors from disk in 32-bit protected mode; no DMA or IRQ required
-* **FAT16 partition** — 16 MB FAT16 volume appended to the disk image containing `/bin`, `apps/`, `tools/`, and sample sources; built by `tools/mkfat16.c` with no external dependencies; readable via ATA PIO with nested directory paths, writable at runtime through the kernel VFS shim for root-directory files and nested paths
+* **ext2 partition** — 16 MB ext2 volume appended to the disk image containing `/bin`, `apps/`, `tools/`, and sample sources; built by `tools/mkext2.c` with no external dependencies; readable via ATA PIO with nested directory paths, writable at runtime through the kernel VFS shim for root-directory files and nested paths
 * **TCP service task** — kernel task that drains e1000 RX, dispatches ARP/IPv4/TCP frames, owns passive listeners plus a PMM-backed global 4-tuple connection table, manages lazy PMM-backed RX/TX rings for accepted streams, handles control, buffered-payload, and passive-FIN retransmit/idle timers, and wakes socket wait queues
 * **Guest TCP apps** — `apps/services/tcpecho.elf` handles parallel echo clients for socket stress, `apps/services/sockeof.elf` pins down peer-close/read EOF semantics, `apps/services/ftpd.elf` runs the FTP server package session logic, and `apps/services/cserve.elf` runs the cserver HTTP package as normal user-space ELFs
 
@@ -62,7 +62,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 │   ├── boot/       boot.asm, loader2.asm, kernel_entry.asm
 │   ├── kernel/     kernel.c, gdt, idt, paging, memory, pmm, process,
 │   │               scheduler, sched_switch.asm, syscall, timer, system, setjmp, vfs
-│   ├── drivers/    keyboard, mouse, screen, terminal, ata, fat16
+│   ├── drivers/    keyboard, mouse, screen, terminal, ata, ext2
 │   ├── shell/      shell, line_editor, parse, commands
 │   ├── exec/       elf_loader
 │   └── user/       hello.c, ticks.c, args.c, readline.c, exec_test.c,
@@ -70,7 +70,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 │                   compiler_demo.c, fault.c, sleep_test.c, user_lib.h,
 │                   user_syscall.h
 ├── tools/
-│   ├── mkfat16.c
+│   ├── mkext2.c
 │   └── mkimage.c
 ├── third_party/    git submodules for external package sources
 ├── build/
@@ -78,7 +78,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 ├── linker.ld
 ```
 
-The seeded FAT16 image keeps shipped programs under `apps/demo/` and
+The seeded ext2 image keeps shipped programs under `apps/demo/` and
 `apps/tests/`, with TinyCC under `tools/`. `tools/tcc.elf` is built from the
 TinyCC submodule sources, links the generic SmallOS CRT adapter, and runs
 TinyCC's normal `main(argc, argv)` path inside the freestanding guest runtime.
@@ -175,7 +175,7 @@ The normal auto/framebuffer disk image is `build/img/os-image.bin`. Forced-VGA
 builds use their own image at `build/img/vga/os-image.bin`, so running
 `make vga-smoke` no longer leaves the default image in VGA mode.
 
-The mutable FAT16 disk state now lives in `.state/fat16.img`, so normal
+The mutable ext2 disk state now lives in `.state/ext2.img`, so normal
 rebuilds keep your files.  Use `make reset-disk` if you want to restore
 the seeded filesystem from the latest build.
 
@@ -253,10 +253,10 @@ uptime
 meminfo
 ataread <lba>        dump first 32 bytes of a disk sector (ATA PIO)
 
-fsls [path]        list a FAT16 directory (root by default)
-ls [pattern]       list a FAT16 directory, with `*` and `?` globbing
-fsread <name>      dump first 16 bytes of a FAT16 file
-cat <path>          print a FAT16 file
+fsls [path]        list an ext2 directory (root by default)
+ls [pattern]       list an ext2 directory, with `*` and `?` globbing
+fsread <name>      dump first 16 bytes of an ext2 file
+cat <path>          print an ext2 file
 cd <path>           change the shell working directory
 pwd                 print the shell working directory
 netinfo             show PCI NIC status
@@ -267,14 +267,14 @@ ping <ip>           ping an IPv4 address
 pinggw              ping the QEMU gateway
 pingpublic          try public ICMP (often unsupported by QEMU user net)
 netcheck            check gateway and public connectivity
-mkdir <path>       create a FAT16 directory
-rmdir <path>       remove an empty FAT16 directory
-rm <path>          remove a FAT16 file
-touch <path>       create or truncate a FAT16 file
-cp <src> <dst>     copy a FAT16 file
-mv <src> <dst>     move or rename a FAT16 entry
-edit <path>        full-screen edit a FAT16 text file
-runelf <name> [args] load and run an ELF from the FAT16 partition
+mkdir <path>       create an ext2 directory
+rmdir <path>       remove an empty ext2 directory
+rm <path>          remove an ext2 file
+touch <path>       create or truncate an ext2 file
+cp <src> <dst>     copy an ext2 file
+mv <src> <dst>     move or rename an ext2 entry
+edit <path>        full-screen edit an ext2 text file
+runelf <name> [args] load and run an ELF from the ext2 partition
 runelf_nowait <name> [args] enqueue an ELF and return immediately
 bg <name> [args]       run a reattachable background ELF
 runelf_bg <name> [args] run a reattachable background ELF
@@ -286,15 +286,15 @@ selftest            run all shipped ELF self-tests
 shelltest           run built-in shell command tests
 ```
 
-`edit <path>` opens a full-screen text editor for FAT16 files. It uses the
+`edit <path>` opens a full-screen text editor for ext2 files. It uses the
 cursor keys, Home/End, PageUp/PageDown, Enter, Backspace, and Delete for
 editing; F2 saves, and F3 or Esc exits. If there are unsaved changes, F2 saves
 and exits, F3 discards, and Esc cancels the quit prompt.
 
-Seeded FAT16 layout:
+Seeded ext2 layout:
 - command-style apps live under `/bin/` (`echo`, `about`, `uptime`, `halt`, `reboot`, `pwd`, `cat`, `fsread`, `ls`, `fsls`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, `edit`, `diskview`)
 - `bin/bmpview` - load a BMP, render it through the userland graphics backbuffer, and present it to the framebuffer
-- `bin/diskview` - show FAT16 used/free space as a framebuffer allocation map
+- `bin/diskview` - show ext2 used/free space as a framebuffer allocation map
 - `apps/demo/hello` - print argc/argv and tick count
 - `apps/demo/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
 - `apps/demo/mandel` - interactive framebuffer Mandelbrot demo with keyboard pan/zoom and PS/2 mouse cursor movement
@@ -355,7 +355,7 @@ kernel_main()
  → pci_init()            scan PCI devices and log discovered network controllers
  → e1000_init()          bind the QEMU 82540EM NIC and set up DMA rings
  → tcp_init()            start the TCP/network service kernel task
- → fat16_init()          read BPB, validate FAT16 volume
+ → ext2_init()          read MBR entry 1, validate ext2 superblock
  → create shell task     explicit kernel task with its own stack
  → process_start_reaper() create and enqueue the zombie reaper task
  → sti
@@ -384,19 +384,19 @@ LBA 0           boot.bin              (512 bytes)
 LBA 1–8         loader2.bin           (currently 4096 bytes)
 LBA 9+          padded kernel region  (sector-aligned)
 LBA 9+ks
-               FAT16 partition        (16 MB volume inside the image)
+               ext2 partition        (16 MB volume inside the image)
 ```
 
-`MBR_PARTITION_TABLE_OFFSET` and `MBR_PARTITION_ENTRY_SIZE` are declared in `src/boot/boot.asm`. Stage 2 reads the kernel range from partition entry 0, and the kernel discovers the FAT16 partition from entry 1.
+`MBR_PARTITION_TABLE_OFFSET` and `MBR_PARTITION_ENTRY_SIZE` are declared in `src/boot/boot.asm`. Stage 2 reads the kernel range from partition entry 0, and the kernel discovers the ext2 partition from entry 1.
 
 During image assembly, the Makefile reads those declarations and passes them to `mkimage`, which computes:
 
 ```text
 kernel_lba = 1 + loader2_sectors
-FAT16_LBA = kernel_lba + kernel_sectors
+ext2_LBA = kernel_lba + kernel_sectors
 ```
 
-The resulting kernel and FAT16 spans are written into the MBR partition table in sector 0 after image assembly.
+The resulting kernel and ext2 spans are written into the MBR partition table in sector 0 after image assembly.
 
 `make verify` runs the full preflight: boot-layout check, image-layout check, guest `test`, and `smoke`. Use `make boot-layout-check` or `make image-layout-check` when you want to isolate a specific layer.
 
@@ -405,7 +405,7 @@ The resulting kernel and FAT16 spans are written into the MBR partition table in
 ## Build Tools
 
 ```text
-mkfat16   builds the seeded FAT16 volume from `[dest=]source` entries
+mkext2   builds the seeded ext2 volume from `[dest=]source` entries
 mkimage   assembles the final bootable disk image
 ```
 
@@ -487,7 +487,7 @@ This path no longer relies on a cached pointer into the packed TSS structure.
 
 * Launch as a hard disk, not a floppy
 * User programs are linked at `0x400000`
-* `fat16_load()` uses a static load buffer, so repeated `runelf` calls do not grow the heap
+* `ext2_load()` uses a static load buffer, so repeated `runelf` calls do not grow the heap
 * The scheduler switch path updates TSS.ESP0 through `tss_set_kernel_stack()`, not by caching a pointer into the TSS
 
 ---

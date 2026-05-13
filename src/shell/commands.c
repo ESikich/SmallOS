@@ -11,7 +11,7 @@
 #include "tcp.h"
 #include "arp.h"
 #include "ipv4.h"
-#include "fat16.h"
+#include "ext2.h"
 #include "vfs.h"
 #include "process.h"
 #include "scheduler.h"
@@ -295,7 +295,7 @@ static int resolve_app_command_path(const char* name, char* out, unsigned int ou
 
 static int resolve_shell_path_arg(const char* input, char* out, unsigned int out_size) {
     if (!shell_resolve_path(input, out, out_size)) {
-        terminal_puts("fat16: invalid path: ");
+        terminal_puts("ext2: invalid path: ");
         terminal_puts(input ? input : "");
         terminal_putc('\n');
         return 0;
@@ -678,16 +678,16 @@ static void cmd_ataread(command_t* cmd) {
             MBR_PARTITION_TABLE_OFFSET = 446,
             MBR_PARTITION_ENTRY_SIZE = 16,
             MBR_PARTITION_LBA_OFFSET = 8,
-            FAT16_PARTITION_ENTRY_INDEX = 1,
+            EXT2_PARTITION_ENTRY_INDEX = 1,
         };
         unsigned int entry_off = MBR_PARTITION_TABLE_OFFSET +
-                                 FAT16_PARTITION_ENTRY_INDEX * MBR_PARTITION_ENTRY_SIZE;
+                                 EXT2_PARTITION_ENTRY_INDEX * MBR_PARTITION_ENTRY_SIZE;
         terminal_puts("sig: ");
         terminal_put_hex(sector[510]);
         terminal_putc(' ');
         terminal_put_hex(sector[511]);
         terminal_puts(" (expect 0x55 0xAA)\n");
-        terminal_puts("fat16 partition lba: ");
+        terminal_puts("ext2 partition lba: ");
         unsigned int partition_lba = sector[entry_off + MBR_PARTITION_LBA_OFFSET]
                                    | ((unsigned int)sector[entry_off + MBR_PARTITION_LBA_OFFSET + 1] << 8)
                                    | ((unsigned int)sector[entry_off + MBR_PARTITION_LBA_OFFSET + 2] << 16)
@@ -699,7 +699,7 @@ static void cmd_ataread(command_t* cmd) {
 
 static void cmd_fsls(command_t* cmd) {
     if (cmd->argc < 2) {
-        fat16_ls();
+        ext2_ls();
         return;
     }
 
@@ -710,11 +710,11 @@ static void cmd_ls(command_t* cmd) {
     if (cmd->argc < 2) {
         const char* cwd = shell_get_cwd();
         if (!cwd || cwd[0] == '\0') {
-            fat16_ls();
+            ext2_ls();
             return;
         }
 
-        fat16_ls_path(cwd);
+        ext2_ls_path(cwd);
         return;
     }
 
@@ -776,7 +776,7 @@ static void cmd_ls_path(const char* input) {
     }
 
     if (!path_has_wildcards(path)) {
-        fat16_ls_path(path);
+        ext2_ls_path(path);
         return;
     }
 
@@ -787,7 +787,7 @@ static void cmd_ls_path(const char* input) {
         return;
     }
 
-    fat16_ls_path_filtered(dir, pattern);
+    ext2_ls_path_filtered(dir, pattern);
 }
 
 static void cmd_fsread(command_t* cmd) {
@@ -946,7 +946,7 @@ static void cmd_cp(command_t* cmd) {
         return;
     }
 
-    if (!fat16_copy(src, dst)) {
+    if (!ext2_copy(src, dst)) {
         terminal_puts("cp: failed\n");
         return;
     }
@@ -1475,8 +1475,8 @@ static command_entry_t commands[] = {
     { "netcheck",      "check gateway and public connectivity", cmd_netcheck },
     { "cd",            "change the shell working directory", cmd_cd },
     { "ataread",       "dump raw sector bytes",         cmd_ataread },
-    { "runelf",        "run a FAT16 ELF and wait",      cmd_runelf },
-    { "runelf_nowait", "run a FAT16 ELF and return",    cmd_runelf_nowait },
+    { "runelf",        "run an ext2 ELF and wait",      cmd_runelf },
+    { "runelf_nowait", "run an ext2 ELF and return",    cmd_runelf_nowait },
     { "runelf_bg",     "run a reattachable background ELF", cmd_runelf_bg },
     { "bg",            "run a reattachable background ELF", cmd_runelf_bg },
     { "jobs",          "list reattachable background jobs", cmd_jobs },
@@ -1495,17 +1495,17 @@ static command_entry_t app_commands[] = {
     { "reboot",        "reboot the machine via ELF",    0 },
     { "uptime",        "show tick and second counts via ELF", 0 },
     { "pwd",           "print the shell working directory", 0 },
-    { "ls",            "list a FAT16 directory",       0 },
-    { "fsls",          "list a FAT16 directory",       0 },
-    { "fsread",        "dump FAT16 file bytes",         0 },
-    { "cat",           "print a FAT16 file",            0 },
-    { "mkdir",         "create a FAT16 directory",     0 },
-    { "rmdir",         "remove a FAT16 directory",     0 },
-    { "rm",            "remove a FAT16 file",          0 },
-    { "touch",         "create or truncate a FAT16 file", 0 },
-    { "cp",            "copy a FAT16 file",            0 },
-    { "mv",            "move or rename a FAT16 entry", 0 },
-    { "edit",          "edit a FAT16 text file",       0 },
+    { "ls",            "list an ext2 directory",       0 },
+    { "fsls",          "list an ext2 directory",       0 },
+    { "fsread",        "dump ext2 file bytes",         0 },
+    { "cat",           "print an ext2 file",           0 },
+    { "mkdir",         "create an ext2 directory",     0 },
+    { "rmdir",         "remove an ext2 directory",     0 },
+    { "rm",            "remove an ext2 file",          0 },
+    { "touch",         "create or truncate an ext2 file", 0 },
+    { "cp",            "copy an ext2 file",            0 },
+    { "mv",            "move or rename an ext2 entry", 0 },
+    { "edit",          "edit an ext2 text file",       0 },
 };
 
 #define APP_COMMAND_COUNT (sizeof(app_commands) / sizeof(app_commands[0]))

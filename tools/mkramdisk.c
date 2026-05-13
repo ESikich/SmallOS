@@ -1,7 +1,7 @@
 /*
  * mkramdisk.c — legacy SmallOS ramdisk builder
  *
- * The current boot path loads programs from the FAT16 partition.  This tool
+ * The current boot path loads programs from the ext2 partition.  This tool
  * is kept only for archaeology/debugging of the old flat ramdisk format and
  * is not invoked by the Makefile.
  *

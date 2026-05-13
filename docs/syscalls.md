@@ -196,7 +196,7 @@ int sys_open_write(const char* name);
 ```
 
 Legacy shorthand for `SYS_OPEN_MODE_WRITE | SYS_OPEN_MODE_CREATE |
-SYS_OPEN_MODE_TRUNC`. Opens a FAT16 file for streaming write/truncate and
+SYS_OPEN_MODE_TRUNC`. Opens an ext2 file for streaming write/truncate and
 returns a writable file-backed handle. New runtime code should prefer
 `SYS_OPEN_MODE` so read/write/append/truncate intent is explicit.
 
@@ -208,7 +208,7 @@ returns a writable file-backed handle. New runtime code should prefer
 int sys_open_mode(const char* name, uint32_t mode);
 ```
 
-Mode-aware FAT16 open. `mode` is a bitmask of:
+Mode-aware ext2 open. `mode` is a bitmask of:
 
 ```c
 SYS_OPEN_MODE_READ
@@ -221,7 +221,7 @@ SYS_OPEN_MODE_APPEND
 This is the preferred descriptor-open primitive for POSIX `open()` and stdio
 `fopen()` because it can represent read-only, write-truncate, read/write,
 create, and append opens without forcing every write-capable path to truncate.
-Writable file handles stream writes through FAT16 at the descriptor offset.
+Writable file handles stream writes through ext2 at the descriptor offset.
 Partial-sector writes preserve surrounding bytes, append starts at the current
 file size, and seek-past-EOF writes zero-fill the gap.
 
@@ -247,7 +247,7 @@ int sys_chdir(const char* path);
 
 Changes the calling process's current working directory. Relative paths are
 resolved against the process cwd, `.` and `..` are normalized, and the result
-must name an existing FAT16 directory. File-oriented syscalls such as
+must name an existing ext2 directory. File-oriented syscalls such as
 `SYS_OPEN`, `SYS_OPEN_MODE`, `SYS_STAT`, `SYS_RENAME`, `SYS_UNLINK`,
 `SYS_MKDIR`, `SYS_RMDIR`, `SYS_DIRLIST`, `SYS_WRITEFILE_PATH`, and `SYS_EXEC`
 resolve relative paths through the same process cwd.
@@ -261,8 +261,8 @@ int sys_writefd(int fd, const char* buf, uint32_t len);
 ```
 
 Writes bytes to an open writable handle. Returns bytes written or a negative
-errno-style value on error. FAT16 file descriptors stream the bytes to the
-current file offset, allocate clusters as the file grows, preserve untouched
+errno-style value on error. ext2 file descriptors stream the bytes to the
+current file offset, allocate blocks as the file grows, preserve untouched
 bytes in partial sectors, and zero-fill gaps created by seek-past-EOF writes.
 Descriptors `1` and `2` are fd-backed console handles, so `write(1, ...)`,
 `write(2, ...)`, `printf`, and `fprintf(stderr, ...)` all travel through this
@@ -276,7 +276,7 @@ same handle path. User-opened files and sockets still start at fd `3`.
 int sys_lseek(int fd, int offset, int whence);
 ```
 
-Repositions a seekable handle. FAT16 file handles support this today; console
+Repositions a seekable handle. ext2 file handles support this today; console
 and socket handles return `-ENOSYS`.
 
 ---
@@ -287,7 +287,7 @@ and socket handles return `-ENOSYS`.
 int sys_fsync(int fd);
 ```
 
-Flushes a writable descriptor. Current streaming FAT16 writes are committed as
+Flushes a writable descriptor. Current streaming ext2 writes are committed as
 the write calls run, so this is mostly a stdio contract hook: writable file
 streams call it from `fflush()`, and non-writable handles return success.
 
@@ -299,7 +299,7 @@ streams call it from `fflush()`, and non-writable handles return success.
 int sys_unlink(const char* path);
 ```
 
-Removes a FAT16 file.
+Removes an ext2 file.
 
 ---
 
@@ -309,7 +309,7 @@ Removes a FAT16 file.
 int sys_rename(const char* src, const char* dst);
 ```
 
-Renames or moves a FAT16 entry.
+Renames or moves an ext2 entry.
 
 ---
 
@@ -319,7 +319,7 @@ Renames or moves a FAT16 entry.
 int sys_stat(const char* path, uint32_t* out_size, int* out_is_dir);
 ```
 
-Queries whether a FAT16 path exists and whether it resolves to a file or directory. For regular files, `out_size` receives the file size. For directories, `out_is_dir` is set to 1 and `out_size` is set to 0.
+Queries whether an ext2 path exists and whether it resolves to a file or directory. For regular files, `out_size` receives the file size. For directories, `out_is_dir` is set to 1 and `out_size` is set to 0.
 
 ---
 
@@ -439,7 +439,7 @@ with socket-owned accept/read/write queues while sleeping.
 int sys_mkdir(const char* path, uint32_t mode);
 ```
 
-Creates a FAT16 directory at `path`. `mode` is accepted for POSIX-shaped
+Creates an ext2 directory at `path`. `mode` is accepted for POSIX-shaped
 callers but ignored because SmallOS does not model Unix permission bits.
 
 ---
@@ -450,7 +450,7 @@ callers but ignored because SmallOS does not model Unix permission bits.
 int sys_rmdir(const char* path);
 ```
 
-Removes an existing empty FAT16 directory. Removing `/` is rejected by the
+Removes an existing empty ext2 directory. Removing `/` is rejected by the
 filesystem driver.
 
 ---
@@ -730,12 +730,12 @@ primitive for graphics demos; it is not a full event queue yet.
 int sys_fsinfo(sys_fsinfo_t* out_info);
 ```
 
-Writes FAT16 volume usage information into user memory. The reported byte
-counts cover allocatable data clusters: total, used, free, cluster size, total
-clusters, and free clusters.
+Writes ext2 volume usage information into user memory. The reported byte
+counts cover allocatable data blocks: total, used, free, block size, total
+blocks, and free blocks.
 
 Returns `0` on success, `-EFAULT` for an invalid output pointer, or `-EIO` if
-the FAT16 usage scan fails.
+the ext2 usage scan fails.
 
 ---
 
@@ -745,14 +745,15 @@ the FAT16 usage scan fails.
 int sys_fsmap(sys_fsmap_request_t* req);
 ```
 
-Copies FAT16 allocation states for the data area into `req->states`. The
-request starts at zero-based data cluster index `start_cluster` and copies up
-to `max_clusters` bytes. Each returned byte is `0` for free or `1` for used;
-`out_clusters` receives the count actually written. Cluster index 0 maps to
-FAT cluster 2.
+Copies ext2 allocation states for the data area into `req->states`. The
+request starts at zero-based ext2 data-block index `start_cluster` and copies
+up to `max_clusters` bytes. The field names keep the original ABI spelling,
+but the units are ext2 allocation blocks. Each returned byte is `0` for free
+or `1` for used; `out_clusters` receives the count actually written. Block
+index 0 maps to ext2 block 12.
 
 Returns `0` on success, `-EFAULT` for invalid request or output buffers, or
-`-EIO` if the FAT scan fails.
+`-EIO` if the ext2 bitmap scan fails.
 
 ---
 
@@ -762,7 +763,7 @@ Returns `0` on success, `-EFAULT` for invalid request or output buffers, or
 int sys_writefile(const char* name, const char* buf, uint32_t len);
 ```
 
-Creates or overwrites a root-directory FAT16 file in one shot. Returns `0` on success or a negative errno on failure.
+Creates or overwrites a root-directory ext2 file in one shot. Returns `0` on success or a negative errno on failure.
 
 This is the root-only persistence primitive for generated artifacts such as compiler output, assembly listings, or other build products. The kernel validates both the filename and the byte range before calling into the VFS root-write wrapper.
 
@@ -774,7 +775,7 @@ This is the root-only persistence primitive for generated artifacts such as comp
 int sys_writefile_path(const char* path, const char* buf, uint32_t len);
 ```
 
-Creates or overwrites a FAT16 file at an arbitrary path. Returns `0` on success or a negative errno on failure.
+Creates or overwrites an ext2 file at an arbitrary path. Returns `0` on success or a negative errno on failure.
 
 This is the preferred persistence primitive for build tools and compilers because it can emit directly into nested directories such as `apps/demo/` and `apps/tests/`. The kernel validates both the path and the byte range before calling into the VFS path-write wrapper.
 
@@ -820,8 +821,8 @@ Loads and asynchronously spawns a named ELF program through the kernel VFS layer
 int sys_open(const char* name);
 ```
 
-Legacy shorthand for `SYS_OPEN_MODE_READ`. Opens a FAT16 file by path
-(case-insensitive 8.3 matching per component). Allocates the lowest free
+Legacy shorthand for `SYS_OPEN_MODE_READ`. Opens an ext2 file by path
+(case-sensitive native ext2 matching per component). Allocates the lowest free
 slot in the calling process's handle table (fd ≥ 3) and records the filename,
 file size, and an initial read offset of 0. fds 0/1/2 are pre-opened console
 handles.
@@ -976,8 +977,8 @@ u_readline(...)    sys_read + null-terminate + strip newline
 u_open_write(...)  streaming write/truncate open
 u_writefd(...)     write to writable handle
 u_lseek(...)       reposition writable handle
-u_unlink(...)      remove FAT16 file
-u_rename(...)      rename or move FAT16 entry
+u_unlink(...)      remove ext2 file
+u_rename(...)      rename or move ext2 entry
 u_stat(...)        query path metadata
 ```
 
@@ -992,7 +993,7 @@ u_stat(...)        query path metadata
 * `SYS_YIELD` and the timer path use the same stub layout, but the real scheduler resume ESP is `esp - 8`, not raw `esp`
 * EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`; IRQ12 sends EOI to both PICs before decoding a PS/2 mouse packet
 * The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.
-* fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`); user-opened files and sockets start at fd 3. The handle table is PMM-backed process state: it starts at 16 slots, grows up to the default 128-fd process limit, and has a kernel hard cap of 256. Every handle carries readable/writable/dirty state plus an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`. `process.c` owns fd lifetime and dispatch, `vfs.c` owns FAT16-backed file behavior, `socket.c` owns kernel socket objects plus accept/read/write wait queues, and `tcp.c` owns passive TCP listeners, the global 4-tuple connection table, and the lazy RX/TX rings behind connected sockets.
+* fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`); user-opened files and sockets start at fd 3. The handle table is PMM-backed process state: it starts at 16 slots, grows up to the default 128-fd process limit, and has a kernel hard cap of 256. Every handle carries readable/writable/dirty state plus an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`. `process.c` owns fd lifetime and dispatch, `vfs.c` owns ext2-backed file behavior, `socket.c` owns kernel socket objects plus accept/read/write wait queues, and `tcp.c` owns passive TCP listeners, the global 4-tuple connection table, and the lazy RX/TX rings behind connected sockets.
 * `SYS_WRITEFILE` is the simplest root-only persistence path for user tools that want to emit a generated artifact without managing an fd-based write stream.
 * `SYS_WRITEFILE_PATH` is the preferred path-aware persistence primitive for compilers and build tools, especially when writing into nested directories.
 

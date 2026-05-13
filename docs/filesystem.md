@@ -3,12 +3,12 @@
 This document defines how the system stores, discovers, reads, and writes files
 on disk.
 
-The current implementation stores a **raw FAT16 volume inside an MBR-partitioned disk image**. Sector 0 contains the partition table, and the FAT16 partition starts immediately after the kernel region. The runtime resolves nested FAT16 paths for reads and directory listings, and it can also create/remove directories in place. Regular file writes now work at nested paths too, and `rm` removes files in place. `cat` prints file contents, `touch` creates or truncates files, `edit` opens a full-screen text editor for FAT16 files, and the shell keeps a working directory for `cd` / `pwd` and `ls`. `ls` also accepts simple `*` and `?` wildcards, while still sorting directories before files.
+The current implementation stores a **raw ext2 volume inside an MBR-partitioned disk image**. Sector 0 contains the partition table, and the ext2 partition starts immediately after the kernel region. The runtime resolves nested ext2 paths for reads and directory listings, and it can also create/remove directories in place. Regular file writes now work at nested paths too, and `rm` removes files in place. `cat` prints file contents, `touch` creates or truncates files, `edit` opens a full-screen text editor for ext2 files, and the shell keeps a working directory for `cd` / `pwd` and `ls`. `ls` also accepts simple `*` and `?` wildcards, while still sorting directories before files.
 The filesystem layer also exposes file metadata through `stat`, and the fd
 path now routes file, socket, and console descriptors through a dynamic generic
-per-process handle table. FAT16-backed file handles and path operations are
+per-process handle table. ext2-backed file handles and path operations are
 wrapped by the small kernel VFS layer in `src/kernel/vfs.c`, which currently
-maps directly onto the FAT16 driver. Writable handles support `rename`,
+maps directly onto the ext2 driver. Writable handles support `rename`,
 `unlink`, `lseek`, streaming `write`, and flush/close operations for
 toolchain-style programs.
 
@@ -22,94 +22,100 @@ The final disk image is:
 LBA 0                     boot sector + MBR partition table
 LBA 1 ... loader2_sectors stage 2 loader
 LBA kernel_lba ... N      padded kernel
-LBA N+1 ...               FAT16 partition   (raw FAT16 volume data)
+LBA N+1 ...               ext2 partition   (raw ext2 volume data)
 ```
 
 where:
 
 ```text
-ks = ceil(kernel.bin / 512)
-fat16_lba = 5 + ks
+loader2_sectors = loader2.bin / 512
+kernel_lba = 1 + loader2_sectors
+kernel_sectors = ceil(kernel.bin / 512)
+ext2_lba = kernel_lba + kernel_sectors
 ```
 
-The FAT16 start LBA is **not** compiled into the kernel. The Makefile computes it after the kernel size is known, writes it into partition entry 1, and `fat16_init()` reads the partition table back at boot.
+The ext2 start LBA is **not** compiled into the kernel. The Makefile computes it after the kernel size is known, writes it into partition entry 1, and `ext2_init()` reads the partition table back at boot.
 
 ---
 
 # On-Disk Layout
 
-`build/bin/fat16.seed.img` is built by `tools/mkfat16.c` as a raw 16 MB FAT16
-volume. Normal runs copy that seed to `.state/fat16.img`, which is the mutable
+`build/bin/ext2.seed.img` is built by `tools/mkext2.c` as a raw 16 MB ext2
+volume. Normal runs copy that seed to `.state/ext2.img`, which is the mutable
 volume appended to `os-image.bin`.
 
 ## Fixed geometry
 
 ```text
 sector size           512 bytes
-sectors per cluster   4
-cluster size          2048 bytes
-reserved sectors      4
-number of FATs        2
-sectors per FAT       32
-root entries          512
-root dir sectors      32
-volume size           32768 sectors (16 MB)
+block size           4096 bytes
+sectors per block       8
+volume size          4096 blocks / 32768 sectors (16 MB)
+inode size            128 bytes
+inode count           256
+root inode              2
+first data block       12
+partition type       0x83
+superblock magic   0xEF53
 ```
 
-## Internal FAT16 layout
+## Internal ext2 layout
 
-Relative to the start of the FAT16 volume:
+Relative to the start of the ext2 volume:
 
 ```text
-Sector   0        FAT16 boot sector / BPB
-Sectors  1–3      reserved
-Sectors  4–35     FAT 1
-Sectors 36–67     FAT 2
-Sectors 68–99     root directory
-Sectors 100+      data region
+byte offset 1024    ext2 superblock
+block 1             block group descriptor table
+block 2             block bitmap
+block 3             inode bitmap
+blocks 4-11         inode table
+block 12+           file and directory data blocks
 ```
 
-Cluster numbering follows normal FAT16 rules:
+Block numbering follows normal ext2 rules:
 
 ```text
-cluster 2 = first data cluster
-cluster N = data sector 100 + (N - 2) * 4
+absolute LBA = ext2_lba + block * 8
+block 12     = first allocatable data block
 ```
 
 This layout must match both:
-- `tools/mkfat16.c`
-- `src/drivers/fat16.c`
+- `tools/mkext2.c`
+- `src/drivers/ext2.c`
 
 Any change to one without the other breaks file lookup.
 
 ---
 
-# How the FAT16 Volume Gets Into the Image
+# How the ext2 Volume Gets Into the Image
 
 The image build contract is:
 
 1. build `kernel.bin`
 2. pad it to a 512-byte boundary as `kernel_padded.bin`
 3. compute `kernel_sectors = ceil(kernel.bin / 512)`
-4. compute `fat16_lba = 5 + kernel_sectors`
-5. build `build/bin/fat16.seed.img` and refresh `.state/fat16.img` when needed
+4. compute `ext2_lba = kernel_lba + kernel_sectors`
+5. build `build/bin/ext2.seed.img` and refresh `.state/ext2.img` when needed
 6. assemble:
 
 ```text
-os-image.bin = boot.bin + loader2.bin + kernel_padded.bin + .state/fat16.img
+os-image.bin = boot.bin + loader2.bin + kernel_padded.bin + .state/ext2.img
 ```
 
 ## Why kernel padding matters
 
-The FAT16 volume is addressed in sectors. If the kernel were appended without 512-byte padding, the computed `fat16_lba` would no longer point at the real start of the FAT16 boot sector and all filesystem reads would be offset into the wrong bytes.
+The ext2 volume is addressed through ATA sectors even though allocation uses
+4 KiB blocks. If the kernel were appended without 512-byte padding, the
+computed `ext2_lba` would no longer point at the real start of the ext2 volume
+and all filesystem reads would be offset into the wrong bytes.
 
 Padding the kernel is therefore a hard requirement, not an optimization.
 
 ---
 
-# FAT16 LBA Entry
+# ext2 LBA Entry
 
-The kernel cannot know the FAT16 start LBA at compile time because it depends on the final kernel size.
+The kernel cannot know the ext2 start LBA at compile time because it depends on the final kernel size.
 
 Instead, the Makefile writes a little-endian `u32` into:
 
@@ -122,15 +128,15 @@ That location is in the MBR partition table and does not overlap the boot signat
 At runtime:
 
 1. `ata_init()` brings up the ATA PIO driver
-2. `fat16_init()` reads ATA sector 0
-3. `fat16_init()` extracts the FAT16 LBA from partition entry 1
-4. `fat16_init()` reads the FAT16 boot sector at that LBA
-5. `fat16_init()` validates the BPB geometry
+2. `ext2_init()` reads ATA sector 0
+3. `ext2_init()` extracts the ext2 LBA from partition entry 1
+4. `ext2_init()` reads the ext2 superblock from that partition
+5. `ext2_init()` validates the ext2 superblock and fixed geometry
 
-If the partition entry is missing or malformed, `fat16_init()` prints:
+If the partition entry is missing or malformed, `ext2_init()` prints:
 
 ```text
-fat16: partition entry not populated
+ext2: partition entry not populated
 ```
 
 ---
@@ -141,7 +147,7 @@ The kernel boot path calls:
 
 ```text
 ata_init()
-fat16_init()
+ext2_init()
 ```
 
 in that order.
@@ -158,24 +164,26 @@ The ATA driver is:
 It performs a software reset, waits for the drive to become ready, and returns
 failure if the ready poll times out.
 
-## `fat16_init()`
+## `ext2_init()`
 
-`fat16_init()` is the one-time mount/validation step. It does **not** accept an LBA argument.
+`ext2_init()` is the one-time mount/validation step. It does **not** accept an LBA argument.
 
-It validates these BPB fields against the hardcoded geometry in `fat16.c`:
+It validates the MBR partition entry and ext2 superblock against the hardcoded
+geometry in `ext2.c`:
 
-- bytes per sector = 512
-- sectors per cluster = 4
-- reserved sectors = 4
-- number of FATs = 2
-- root entry count = 512
-- FAT size = 32 sectors
-- boot signature = `0x55AA`
+- MBR signature = `0x55AA`
+- partition entry 1 type = `0x83`
+- partition entry 1 has a non-zero LBA and sector count
+- superblock magic = `0xEF53`
+- block size = 4096 bytes
+- inode size = 128 bytes
+- inode count = 256
+- root inode = 2
 
 On success it sets internal state and prints:
 
 ```text
-fat16: ok  lba=<value>
+ext2: ok  lba=<value>
 ```
 
 On failure it leaves the driver unusable.
@@ -184,91 +192,88 @@ On failure it leaves the driver unusable.
 
 # What the Driver Supports
 
-The current FAT16 driver is intentionally narrow.
+The current ext2 driver is intentionally narrow.
 
 ## Supported
 
 - read access to root-directory and nested-directory files
 - raw file display via `cat`; CRLF text relies on terminal `\r` handling instead of file-content normalization
 - shell working-directory navigation via `cd` / `pwd`
-- directory listing by path with `fat16_ls_path(path)` and `fsls [path]`
+- directory listing by path with `ext2_ls_path(path)` and `fsls [path]`
 - wildcard shell listing with `ls [pattern]`
-- directory creation/removal by path with `fat16_mkdir(path)` / `fat16_rmdir(path)`
-- file removal by path with `fat16_rm(path)`
-- file metadata queries by path with `fat16_stat(path, ...)`
+- directory creation/removal by path with `ext2_mkdir(path)` / `ext2_rmdir(path)`
+- file removal by path with `ext2_rm(path)`
+- file metadata queries by path with `ext2_stat(path, ...)`
 - empty-file creation / truncation via `touch`
-- root-directory file creation and overwrite via `fat16_write(name, ...)`
-- nested-path file creation and overwrite via `fat16_write_path(path, ...)`
-- VFS-backed writable file handles with streaming FAT16 writes via `SYS_OPEN_WRITE`, `SYS_WRITEFD`, `SYS_LSEEK`, and `SYS_FSYNC`
+- root-directory file creation and overwrite via `ext2_write(name, ...)`
+- nested-path file creation and overwrite via `ext2_write_path(path, ...)`
+- VFS-backed writable file handles with streaming ext2 writes via `SYS_OPEN_WRITE`, `SYS_WRITEFD`, `SYS_LSEEK`, and `SYS_FSYNC`
 - file removal and rename/move through `SYS_UNLINK` and `SYS_RENAME`
 - fd-backed console handles for stdin/stdout/stderr
 - socket-backed handles for the current passive TCP stream path via `SYS_SOCKET`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_ACCEPT4`, `SYS_SEND`, `SYS_RECV`, `SYS_POLL`, `SYS_SETSOCKOPT`, `SYS_SHUTDOWN`, `SYS_GETSOCKNAME`, and `SYS_GETPEERNAME`
-- case-insensitive 8.3 filename matching
-- FAT chain following for file reads
+- long, case-sensitive native ext2 names
+- direct, single-indirect, and double-indirect block mapping
 - loading one file at a time into a shared static buffer
 
 ## Not supported
 
-- long filenames (LFN)
+- permission enforcement, ownership semantics, or timestamps
 - multiple concurrent file buffers
 - arbitrary transport stacks beyond the current passive TCP stream path
-- mounting arbitrary FAT layouts
+- mounting arbitrary ext2 layouts
 
-Directory scan code explicitly skips:
-- deleted entries (`0xE5`)
-- long filename entries (`attr == 0x0F`)
-- volume label entries (`attr & 0x08`)
+Directory scan code skips entries with inode `0` and only exposes regular
+files and directories.
 
 ---
 
 # Filename Rules
 
-`fat16_load(name, &size)` resolves each path component from the root directory
-using uppercase 8.3 semantics.
+`ext2_load(name, &size)` resolves each path component from the root directory
+using ext2 native directory names. Names are long and case-sensitive.
 
-Examples that match the same file:
+Examples that are distinct names:
 
 ```text
 hello
-HELLO
 hello.elf
+Hello.elf
 HELLO.ELF
 ```
 
 Internally the driver:
-- uppercases the requested name
-- splits at the last `.`
-- pads base name and extension with spaces to 11 bytes
-- compares against the 11-byte FAT directory entry name
-- resolves path components one at a time before applying the 8.3 match
+- splits paths into slash-separated components
+- rejects empty components and names longer than 255 bytes
+- compares each component byte-for-byte against ext2 directory entries
+- uses the directory entry `file_type` field plus inode mode bits to distinguish files and directories
 
 Path components such as `apps/demo/hello.elf` therefore work even though each
-component is still matched with FAT16 8.3 rules.
+component is matched independently.
 
 Practical limits:
-- base name truncated to 8 characters for matching
-- extension truncated to 3 characters for matching
-- nested directories are supported for reads and listings, but regular file
-  writes can target either the root directory or a nested path
+- path strings copied through syscall buffers are bounded by the current kernel
+  path buffer sizes
+- each path component may be up to 255 bytes
+- nested directories are supported for reads, writes, listings, rename, and removal
 
 ---
 
 # Reading a File
 
-The read path for `fat16_load()` is:
+The read path for `ext2_load()` is:
 
 ```text
-fat16_load(name, &size)
+ext2_load(name, &size)
   ↓
 resolve path components from the root directory downward
   ↓
-find matching 8.3 entry
+find matching native entry
   ↓
-read start cluster and file size
+read start block and file size
   ↓
-follow FAT chain through FAT 1
+map logical file blocks through direct/single-indirect/double-indirect pointers
   ↓
-read each cluster via ATA PIO
+read each 4 KiB block via ATA PIO sectors
   ↓
 copy file bytes into static s_load_buf
   ↓
@@ -277,7 +282,7 @@ return pointer to s_load_buf and set *out_size
 
 ## Buffer ownership
 
-`fat16_load()` returns a pointer into a **single static internal buffer**:
+`ext2_load()` returns a pointer into a **single static internal buffer**:
 
 ```text
 s_load_buf[1 MB]
@@ -285,17 +290,17 @@ s_load_buf[1 MB]
 
 This buffer:
 - lives in BSS
-- is reused on every `fat16_load()` call
+- is reused on every `ext2_load()` call
 - must not be freed by the caller
 - must not be assumed stable across another filesystem load
 
 Code that needs to read a file without flattening it into this 1 MB buffer can
 use the sink-oriented or read-at paths. VFS keeps the PMM page cache for small
-fd reads, then falls back to direct FAT16 read-at for files larger than the fd
+fd reads, then falls back to direct ext2 read-at for files larger than the fd
 cache.
 
-The driver also uses a separate static cluster scratch buffer so it does not
-need a large stack allocation while copying cluster data.
+The driver also uses a separate static block scratch buffer so it does not
+need a large stack allocation while copying block data.
 
 ## Size limit
 
@@ -305,10 +310,10 @@ The whole-file load helper rejects files larger than:
 1 MB
 ```
 
-If a file is larger, `fat16_load()` fails with:
+If a file is larger, `ext2_load()` fails with:
 
 ```text
-fat16: file too large
+ext2: file too large
 ```
 
 Small fd reads can currently use a page-backed cache up to:
@@ -318,62 +323,61 @@ Small fd reads can currently use a page-backed cache up to:
 ```
 
 That fd cache is page-backed, not one contiguous kernel buffer. Larger fd reads
-stream from FAT16 sectors directly. Fd writes no longer require caching the
-whole file; practical write size is bounded by FAT/free space and the current
+stream from ext2 blocks directly. Fd writes no longer require caching the
+whole file; practical write size is bounded by ext2 free space and the current
 15 MB safety limit for this 16 MB test volume.
 
 ## Empty files
 
 The current implementation supports zero-length regular files. `touch` uses
 the normal write path with size `0`, records a directory entry with no starting
-cluster, and readback reports a zero-byte file.
+block, and readback reports a zero-byte file.
 
 ---
 
 # Writing a File
 
-`fat16_write(name, data, size)` creates or overwrites a root-directory file from
+`ext2_write(name, data, size)` creates or overwrites a root-directory file from
 a contiguous buffer. The shell's `touch` and compiler-style write paths use
-`fat16_write_path(path, ...)` when they need to target nested directories.
-Fd-backed writes use `fat16_write_at_path(...)`, writing user chunks directly to
+`ext2_write_path(path, ...)` when they need to target nested directories.
+Fd-backed writes use `ext2_write_at_path(...)`, writing user chunks directly to
 the target file offset without first caching the whole file. The older
-`fat16_write_path_from_source(...)` whole-file rewrite path remains for simple
+`ext2_write_path_from_source(...)` whole-file rewrite path remains for simple
 path helpers such as `touch`, `cp`, and `SYS_WRITEFILE_PATH`.
 
-The FAT16 write path is intentionally narrow:
+The ext2 write path is intentionally narrow:
 
-- 8.3 filename matching
-- fd writes stream through FAT16 write-at and update the descriptor size/offset
-- FAT16 data reads can stream into a caller-provided sink callback
-- partial-sector writes read/patch/write existing sectors so surrounding bytes are preserved
+- native ext2 filename matching
+- fd writes stream through ext2 write-at and update the descriptor size/offset
+- ext2 data reads can stream into a caller-provided sink callback
+- partial-block writes read/patch/write existing blocks so surrounding bytes are preserved
 - seek-past-EOF writes zero-fill the gap before writing new data
-- no long filenames
 - no concurrent writer support
 
 At runtime, the kernel:
 
-1. loads FAT1 and the root directory into temporary working buffers
+1. reads block and inode bitmaps into temporary working buffers
 2. resolves the destination entry or finds a free slot in the target parent
-3. allocates additional clusters only when the write extends the chain
-4. writes full sectors directly and patches partial sectors in place
-5. commits only the FAT sectors that changed and the directory sector containing the file entry
+3. allocates additional data or pointer blocks only when the write extends the file
+4. writes full blocks directly and patches partial blocks in place
+5. commits changed bitmaps, inodes, directory blocks, and file blocks
 
-This small VFS boundary is enough for compiler-style tools to emit generated artifacts such as `compiler.out` without exposing FAT16 details to every syscall path.
+This small VFS boundary is enough for compiler-style tools to emit generated artifacts such as `compiler.out` without exposing ext2 details to every syscall path.
 It is also enough for SmallOS-hosted compiler binaries to create temp files, rename outputs into place, and inspect candidate paths before writing. The next filesystem rewrite can grow this boundary into mount-style backends without pushing that complexity back into `syscall.c`.
 
 ## Creating and Removing Directories
 
-`fat16_mkdir(path)` creates a new empty directory entry and writes the
-initial `.` / `..` records into a fresh data cluster. `fat16_rmdir(path)`
+`ext2_mkdir(path)` creates a new empty directory entry and writes the
+initial `.` / `..` records into a fresh data block. `ext2_rmdir(path)`
 removes an existing empty directory entry.
 
 Rules:
 
-- directories use the same path-aware 8.3 lookup as reads and listings
+- directories use the same path-aware native ext2 lookup as reads and listings
 - the target must not already exist for `mkdir`
 - `rmdir` only succeeds on empty directories
 - the root directory cannot be removed
-- directory entries are deleted with the standard FAT16 `0xE5` marker
+- directory entries are deleted by clearing the ext2 directory entry inode field
 
 ---
 
@@ -393,7 +397,7 @@ vfs_load_file(name, &size)
 elf_run_image(image, argc, argv)
 ```
 
-This is safe with the static FAT16 buffer because `elf_run_image()` copies ELF segment data out of `s_load_buf` into PMM-backed frames before entering ring 3.
+This is safe with the static ext2 buffer because `elf_run_image()` copies ELF segment data out of `s_load_buf` into PMM-backed frames before entering ring 3.
 
 That means the filesystem buffer can be reused after the load path completes.
 
@@ -406,16 +410,16 @@ Important invariant:
 
 # Root Directory Listing
 
-`fat16_ls()` prints all non-empty root-directory entries, grouped with
+`ext2_ls()` prints all non-empty root-directory entries, grouped with
 directories first and files second.
 
 For each file it prints:
 
 ```text
-<NAME.EXT>  <size> bytes  cluster <start_cluster>
+<NAME.EXT>  <size> bytes  block <start_block>
 ```
 
-`fat16_ls_path(path)` descends into nested directories before listing. The
+`ext2_ls_path(path)` descends into nested directories before listing. The
 listing is derived directly from directory entries and keeps the same
 directory-first alphabetical order. The shell `ls` command can also apply a
 wildcard pattern after resolving the path prefix.
@@ -424,69 +428,71 @@ wildcard pattern after resolving the path prefix.
 
 # Failure Modes
 
-## `fat16: not initialised`
+## `ext2: not initialised`
 
-A filesystem API was called before `fat16_init()` succeeded.
+A filesystem API was called before `ext2_init()` succeeded.
 
-## `fat16: cannot read sector 0`
+## `ext2: cannot read sector 0`
 
-ATA could not read the image boot sector, so the FAT16 start LBA could not be discovered.
+ATA could not read the image boot sector, so the ext2 start LBA could not be discovered.
 
-## `fat16: bad MBR signature`
+## `ext2: bad MBR signature`
 
 The disk image does not contain the expected MBR signature at the end of sector 0.
 
-## `fat16: MBR partition type mismatch`
+## `ext2: MBR partition type mismatch`
 
-The FAT16 partition entry does not have the expected partition type.
+The ext2 partition entry does not have the expected partition type.
 
-## `fat16: partition entry not populated`
+## `ext2: partition entry not populated`
 
-The FAT16 partition entry is empty or has a zero start LBA.
+The ext2 partition entry is empty or has a zero start LBA.
 
-## `fat16: cannot read FAT16 boot sector`
+## `ext2: cannot read superblock`
 
-The discovered FAT16 LBA does not point at a readable FAT16 volume.
+The discovered ext2 LBA does not point at a readable ext2 volume.
 
-## `fat16: bad boot signature`
+## `ext2: bad superblock magic`
 
-The sector at `fat16_lba` does not end with `0x55AA`.
+The discovered partition does not contain an ext2 superblock with magic
+`0xEF53`.
 
-## `fat16: BPB mismatch`
+## `ext2: unsupported geometry`
 
-The FAT16 image was built with geometry that does not match `fat16.c`.
+The ext2 image was built with geometry that does not match `ext2.c`.
 
-## `fat16: not found: <name>`
+## `ext2: not found: <name>`
 
-No matching 8.3 entry exists for the requested path component chain.
+No matching native entry exists for the requested path component chain.
 
-## `fat16: already exists: <name>`
+## `ext2: already exists: <name>`
 
 `mkdir` was asked to create a directory that is already present.
 
-## `fat16: directory full`
+## `ext2: directory full`
 
 The parent directory has no free slot for a new entry.
 
-## `fat16: directory not empty`
+## `ext2: directory not empty`
 
 `rmdir` was asked to remove a directory that still contains files or subdirectories.
 
-## `fat16: cannot remove root`
+## `ext2: cannot remove root`
 
 `rmdir` was asked to remove the root directory or a root-like path.
 
-## `fat16: invalid directory name`
+## `ext2: invalid directory name`
 
-The final path component is not a valid 8.3 directory name.
+The final path component is not a valid native directory name.
 
-## `fat16: dir read error` / `fat16: cluster read error` / `fat16: FAT read error`
+## `ext2: dir read error` / `ext2: block read error`
 
-ATA read failed during directory scan, cluster read, or FAT traversal.
+ATA read failed during directory scan or block read.
 
-## `fat16: chain ended early`
+## `ext2: block map failed`
 
-The directory entry file size requires more data than the FAT chain provides. The volume is malformed or inconsistent.
+The file requires a logical block that cannot be resolved through its ext2
+direct or indirect pointers. The volume is malformed or inconsistent.
 
 ---
 
@@ -494,11 +500,11 @@ The directory entry file size requires more data than the FAT chain provides. Th
 
 The filesystem behavior is jointly defined by these files:
 
-- `tools/mkfat16.c` — host-side FAT16 image builder
+- `tools/mkext2.c` — host-side ext2 image builder
 - `src/drivers/ata.[ch]` — ATA PIO sector reads
-- `src/drivers/fat16.[ch]` — FAT16 runtime driver
-- `src/kernel/vfs.[ch]` — kernel VFS shim for FAT16-backed file handles and path operations
-- `Makefile` — image layout, kernel padding, FAT16 LBA patch
+- `src/drivers/ext2.[ch]` — ext2 runtime driver
+- `src/kernel/vfs.[ch]` — kernel VFS shim for ext2-backed file handles and path operations
+- `Makefile` — image layout, kernel padding, ext2 LBA patch
 - `src/exec/elf_loader.c` — runtime ELF loader that reads program images through `vfs_load_file()`
 
 When changing the filesystem, check all of them together.
@@ -509,14 +515,14 @@ When changing the filesystem, check all of them together.
 
 The following must stay true unless the implementation is changed everywhere:
 
-- FAT16 volume starts at `5 + kernel_sectors`
-- kernel image is padded to a 512-byte boundary before FAT16 is appended
-- FAT16 start LBA is patched into sector 0 offset 504
-- `fat16_init()` reads sector 0 to discover the start LBA at runtime
-- FAT16 geometry in `fat16.c` matches `mkfat16.c`
-- `vfs_load_file()` currently returns the FAT16 driver's reused static buffer
+- ext2 volume starts at `kernel_lba + kernel_sectors`
+- kernel image is padded to a 512-byte boundary before ext2 is appended
+- ext2 partition metadata is written into MBR partition entry 1
+- `ext2_init()` reads sector 0 to discover the start LBA at runtime
+- ext2 geometry in `ext2.c` matches `mkext2.c`
+- `vfs_load_file()` currently returns the ext2 driver's reused static buffer
 - callers copy data out before another file load occurs
-- nested reads/listings use path-aware 8.3 lookup; regular file writes can target the root or a nested path
-- fd-backed writes use FAT16 write-at paths and do not cache the whole output file before committing sectors
+- nested reads/listings use path-aware native lookup; regular file writes can target the root or a nested path
+- fd-backed writes use ext2 write-at paths and do not cache the whole output file before committing sectors
 
 Breaking any of these produces either immediate mount failure or silent file corruption.

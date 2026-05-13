@@ -1,5 +1,5 @@
 #include "vfs.h"
-#include "fat16.h"
+#include "ext2.h"
 #include "klib.h"
 #include "paging.h"
 #include "pmm.h"
@@ -168,9 +168,9 @@ static int vfs_file_load_cache(fd_entry_t* ent) {
 
     u32 loaded_size = 0;
     vfs_page_sink_t page_sink = { ent };
-    fat16_data_sink_t sink = { &page_sink, vfs_page_sink_write };
+    ext2_data_sink_t sink = { &page_sink, vfs_page_sink_write };
 
-    if (!fat16_read_path_to_sink(ent->name, &sink, &loaded_size)) {
+    if (!ext2_read_path_to_sink(ent->name, &sink, &loaded_size)) {
         vfs_file_cache_free(ent);
         return 0;
     }
@@ -215,7 +215,7 @@ static int vfs_file_read(fd_entry_t* ent, char* buf, unsigned int len) {
         return (int)to_copy;
     }
 
-    if (!fat16_read_at_path(ent->name, ent->offset, (u8*)buf, len, &read_len)) {
+    if (!ext2_read_at_path(ent->name, ent->offset, (u8*)buf, len, &read_len)) {
         return -EIO;
     }
 
@@ -253,7 +253,7 @@ static int vfs_file_write(fd_entry_t* ent, const char* buf, unsigned int len) {
     if (ent->dirty && !vfs_file_flush(ent)) {
         return -EIO;
     }
-    if (!fat16_write_at_path(ent->name, ent->offset, (const u8*)buf, len, &ent->size, 1)) {
+    if (!ext2_write_at_path(ent->name, ent->offset, (const u8*)buf, len, &ent->size, 1)) {
         return -EIO;
     }
 
@@ -320,9 +320,9 @@ static int vfs_file_flush(fd_entry_t* ent) {
     }
 
     vfs_page_source_t page_source = { ent };
-    fat16_data_source_t source = { &page_source, vfs_page_source_read };
+    ext2_data_source_t source = { &page_source, vfs_page_source_read };
 
-    if (!fat16_write_path_from_source(ent->name, &source, ent->size)) {
+    if (!ext2_write_path_from_source(ent->name, &source, ent->size)) {
         return 0;
     }
     ent->dirty = 0;
@@ -363,13 +363,13 @@ void vfs_file_init(fd_entry_t* ent, const char* path, u32 size, int readable, in
 }
 
 const u8* vfs_load_file(const char* path, u32* out_size) {
-    return fat16_load(path, out_size);
+    return ext2_load(path, out_size);
 }
 
 int vfs_stat(const char* path, u32* out_size, int* out_is_dir) {
     u32 size = 0;
 
-    if (fat16_stat(path, &size)) {
+    if (ext2_stat(path, &size)) {
         if (out_size) {
             *out_size = size;
         }
@@ -379,7 +379,7 @@ int vfs_stat(const char* path, u32* out_size, int* out_is_dir) {
         return 1;
     }
 
-    if (!fat16_is_dir(path)) {
+    if (!ext2_is_dir(path)) {
         return 0;
     }
 
@@ -393,31 +393,31 @@ int vfs_stat(const char* path, u32* out_size, int* out_is_dir) {
 }
 
 int vfs_is_dir(const char* path) {
-    return fat16_is_dir(path);
+    return ext2_is_dir(path);
 }
 
 int vfs_write_root(const char* name, const u8* data, u32 size) {
-    return fat16_write(name, data, size);
+    return ext2_write(name, data, size);
 }
 
 int vfs_write_path(const char* path, const u8* data, u32 size) {
-    return fat16_write_path(path, data, size);
+    return ext2_write_path(path, data, size);
 }
 
 int vfs_unlink(const char* path) {
-    return fat16_rm(path);
+    return ext2_rm(path);
 }
 
 int vfs_rename(const char* src, const char* dst) {
-    return fat16_move(src, dst);
+    return ext2_move(src, dst);
 }
 
 int vfs_mkdir(const char* path) {
-    return fat16_mkdir(path);
+    return ext2_mkdir(path);
 }
 
 int vfs_rmdir(const char* path) {
-    return fat16_rmdir(path);
+    return ext2_rmdir(path);
 }
 
 int vfs_dirent_at(const char* path,
@@ -426,6 +426,6 @@ int vfs_dirent_at(const char* path,
                   u32 out_name_size,
                   u32* out_size,
                   int* out_is_dir) {
-    return fat16_dirent_at(path, index, out_name, out_name_size,
-                           out_size, out_is_dir);
+    return ext2_dirent_at(path, index, out_name, out_name_size,
+                          out_size, out_is_dir);
 }

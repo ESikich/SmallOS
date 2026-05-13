@@ -192,7 +192,7 @@ static void draw_map(gfx_surface_t* s, const sys_fsinfo_t* info, const unsigned 
 
     gfx_clear(s, COLOR_BG);
     draw_text(s, margin, margin, "DISK SPACE MAP", title_scale, COLOR_TEXT);
-    draw_text(s, margin, margin + 34u, "FAT16 DATA AREA", text_scale, COLOR_MUTED);
+    draw_text(s, margin, margin + 34u, "ext2 DATA AREA", text_scale, COLOR_MUTED);
 
     draw_card(s, map_x, map_y, map_w, map_h, COLOR_PANEL);
 

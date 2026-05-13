@@ -30,7 +30,7 @@ CASES = [
             "rm: apps/demo/compiler.out",
             "shelltest: rm_dir end",
             "shelltest: fsread_dir_removed begin",
-            "fat16: not found: apps/demo/compiler.out",
+            "ext2: not found: apps/demo/compiler.out",
             "fsread: load failed",
             "shelltest: fsread_dir_removed end",
             "shelltest: mv_dir begin",

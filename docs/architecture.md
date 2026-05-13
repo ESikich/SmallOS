@@ -8,7 +8,7 @@ Boot-image layout facts are owned by the files that define them, not by the Make
 * `src/boot/boot.asm` owns `MBR_PARTITION_ENTRY_SIZE`
 * `src/boot/loader2.asm` owns `LOADER2_SIZE_BYTES`
 * `Makefile` owns the generated stage-2 stack top
-* `tools/mkfat16.c` owns `TOTAL_SIZE_MB` / `TOTAL_SECTORS`
+* `tools/mkext2.c` owns `TOTAL_SIZE_MB` / `TOTAL_BLOCKS`
 
 The Makefile consumes these declarations while building `os-image.bin`, and passes them into `mkimage` for final image assembly.
 
@@ -51,7 +51,7 @@ kernel_main()
   pci_init()        ← scan PCI config space and log network controllers
   e1000_init()      ← bind the Intel 82540EM NIC and set up DMA rings
   tcp_init()        ← start TCP/network service task
-  fat16_init()      ← read BPB, validate FAT16 volume geometry
+  ext2_init()      ← read MBR entry 1, validate ext2 superblock and geometry
   create shell task ← explicit kernel task with dedicated stack
   process_start_reaper() ← create and enqueue zombie reaper task
   sti
@@ -125,7 +125,7 @@ Inside `kernel_main()`:
 11. `pci_init()` — scan PCI config space and log discovered network controllers
 12. `e1000_init()` — bind the Intel 82540EM NIC and set up DMA rings
 13. `tcp_init()` — create and enqueue the TCP/network service kernel task
-14. `fat16_init()` — read ATA sector 0, extract the FAT16 start LBA from partition entry 1 in the MBR partition table, then read and validate the FAT16 BPB at that runtime-discovered location
+14. `ext2_init()` — read ATA sector 0, extract the ext2 start LBA from partition entry 1 in the MBR partition table, then read and validate the ext2 superblock at that runtime-discovered location
 15. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
 16. `sched_enqueue(shell_proc)` — make the shell runnable
 17. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
@@ -198,7 +198,7 @@ read / write / seek / poll / flush / close
 ```
 
 `process.c` owns descriptor allocation, lifetime, and generic dispatch. The
-resource backends own the behavior behind each handle: FAT16-backed file
+resource backends own the behavior behind each handle: ext2-backed file
 handles are initialized by `vfs_file_init()` and implemented in `vfs.c`,
 socket handles point at `socket_t` objects implemented in `socket.c`, and
 socket blocking readiness is tracked by socket-owned wait queues. The TCP
@@ -419,7 +419,7 @@ User graphics programs sit above the framebuffer display syscalls. The shared
 helper in `src/user/gfx.c` queries display geometry, requires XRGB8888/32 bpp,
 acquires exclusive graphics mode, allocates a full-screen user backbuffer, and
 presents that buffer with one `SYS_DISPLAY_BLIT`. `bmpview` uses this path for
-scaled/centered BMP presentation, `bin/diskview` uses it for a FAT16 used/free
+scaled/centered BMP presentation, `bin/diskview` uses it for an ext2 used/free
 allocation map, and `apps/demo/plasma` uses it as a simple animated graphics
 smoke demo. `apps/demo/mandel` uses the same helper for an interactive
 Mandelbrot view and polls `SYS_MOUSE_READ` for cursor deltas.
@@ -545,29 +545,33 @@ PMM-frame access API.
 
 ---
 
-# FAT16 Partition
+# ext2 Partition
 
-A 16 MB FAT16 volume is appended to the disk image directly after the kernel.
-The seeded tree uses normal FAT16 8.3 directory entries under `/bin`,
+A 16 MB ext2 volume is appended to the disk image directly after the kernel.
+The seeded tree uses normal ext2 native directory entries under `/bin`,
 `/apps/demo`, `/apps/tests`, `/apps/services`, and `/tools`, plus root-level
 sample C sources used by the guest TinyCC smoke tests.
 
-Built by `tools/mkfat16.c` — a host C tool with no external dependencies (`mkfs.vfat` and `mtools` are not required). The tool writes the BPB, both FAT copies, the root directory, and all file data directly.
+Built by `tools/mkext2.c` — a host C tool with no external filesystem tooling
+required. The tool writes the ext2 superblock, group descriptor, block and
+inode bitmaps, inode table, directory entries, and file data directly.
 
 Volume layout (within the partition image):
 
 ```text
-Sector   0        Boot sector (BPB) — OEM "SIMPLEOS", FAT16 signature 0x55 0xAA
-Sectors  1–3      Reserved (4 reserved sectors total)
-Sectors  4–35     FAT 1  (32 sectors, 8192 FAT16 entries)
-Sectors 36–67     FAT 2  (mirror)
-Sectors 68–99     Root directory (512 entries × 32 bytes = 32 sectors)
-Sectors 100+      Data region  (cluster 2 = sectors 100–103, etc.)
+byte offset 1024    ext2 superblock
+block 1             block group descriptor table
+block 2             block bitmap
+block 3             inode bitmap
+blocks 4-11         inode table
+block 12+           file and directory data blocks
 ```
 
-The FAT16 start LBA is computed during final image assembly by `mkimage` as `kernel_lba + kernel_sectors` and written into partition entry 1 of the MBR partition table. `loader2.asm` reads partition entry 0 to load the kernel. At runtime, `fat16_init()` reads ATA sector 0, extracts the FAT16 partition metadata, and uses it to locate the live FAT16 volume.
+The ext2 start LBA is computed during final image assembly by `mkimage` as `kernel_lba + kernel_sectors` and written into partition entry 1 of the MBR partition table. `loader2.asm` reads partition entry 0 to load the kernel. At runtime, `ext2_init()` reads ATA sector 0, extracts the ext2 partition metadata, and uses it to locate the live ext2 volume.
 
-Verified at runtime: `ataread <FAT16_LBA>` shows `EB 58 90 SmallOS` and `0x55 0xAA`; `ataread <FAT16_LBA + 100>` shows `7F 45 4C 46` (ELF magic at cluster 2).
+Verified by `make image-layout-check`: partition entry 1 has type `0x83` and
+points at the appended ext2 image; the runtime then validates magic `0xEF53` in
+the ext2 superblock.
 
 ---
 
@@ -601,7 +605,7 @@ ata_read_sectors(lba, count, buf)
 runelf apps/demo/hello arg1
   ↓
 vfs_load_file("hello", &size)
-  → backend lookup, follow cluster chain, load into s_load_buf
+  → backend lookup, follow block chain, load into s_load_buf
   ↓
 elf_run_image(data, argc, argv)
   ↓
@@ -667,20 +671,20 @@ This is async spawn, not blocking foreground execution.
 LBA 0                     boot.bin
 LBA 1 ... loader2_sectors loader2.bin
 LBA kernel_lba ... N      padded kernel region
-LBA N+1 ...               fat16.img
+LBA N+1 ...               ext2.img
 ```
 
-`kernel.bin` is padded to a sector boundary during final image assembly by `mkimage`. `kernel_lba` is derived from the actual loader2 size, and `FAT16_LBA = kernel_lba + kernel_sectors` is written into partition entry 1 of the MBR partition table.
+`kernel.bin` is padded to a sector boundary during final image assembly by `mkimage`. `kernel_lba` is derived from the actual loader2 size, and `ext2_LBA = kernel_lba + kernel_sectors` is written into partition entry 1 of the MBR partition table.
 
 ## Key generated artifacts
 
 ```text
 build/gen/<backend>/loader2.gen.asm
                                 stack-top values injected
-build/bin/<backend>/fat16.seed.img
-                                16 MB seeded FAT16 image built by build/tools/mkfat16
-.state/fat16.img             mutable FAT16 working copy used by normal runs
-build/tools/mkfat16          host tool for FAT volume construction
+build/bin/<backend>/ext2.seed.img
+                                16 MB seeded ext2 image built by build/tools/mkext2
+.state/ext2.img             mutable ext2 working copy used by normal runs
+build/tools/mkext2          host tool for ext2 volume construction
 build/tools/mkimage          host tool for final disk image assembly
 build/obj/<backend>/kernel/setjmp.o
                                 assembled from src/kernel/setjmp.asm
@@ -735,7 +739,7 @@ SYS_YIELD — voluntary preemption via sched_yield_now()
 SYS_SLEEP — timed sleep: parks process in PROCESS_STATE_SLEEPING and wakes via the timer IRQ once the deadline is reached
 SYS_EXEC — async ELF spawn from the current foreground context; the child runs independently and the parent returns immediately in `runelf_nowait` / `sys_exec`
 SYS_GETCWD / SYS_CHDIR — per-process cwd state; relative user paths are normalized before VFS or ELF loading
-SYS_OPEN / SYS_OPEN_MODE / SYS_CLOSE / SYS_FREAD — dynamic PMM-backed per-process handle table backed by readable/writable handle ops; fd 0/1/2 are console handles, user-opened files start at fd 3+, and VFS-backed file reads cache FAT16 data in PMM-backed pages until close
+SYS_OPEN / SYS_OPEN_MODE / SYS_CLOSE / SYS_FREAD — dynamic PMM-backed per-process handle table backed by readable/writable handle ops; fd 0/1/2 are console handles, user-opened files start at fd 3+, and VFS-backed file reads cache ext2 data in PMM-backed pages until close
 SYS_BRK / user heap — per-process heap break managed in user space through `SYS_BRK` and a shared user allocator
 SYS_OPEN_WRITE / SYS_WRITEFD / SYS_LSEEK / SYS_FSYNC / SYS_UNLINK / SYS_RENAME / SYS_STAT — VFS-backed writable file handles plus path metadata and file management for compiler-style tools; dirty writable handles flush on close, append/read-write modes preserve existing bytes, and stdout/stderr writes also use fd-backed console handles
 SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_ACCEPT4 / SYS_CONNECT / SYS_SEND / SYS_RECV / SYS_SHUTDOWN / SYS_GETSOCKNAME / SYS_GETPEERNAME — socket ABI for passive TCP servers, FTP userland, and client-style active opens; fd handles point at kernel socket objects, TCP streams are backed by a global 4-tuple TCP table plus lazy 4 KiB RX rings and 16 KiB TX rings, basic `shutdown()` half-close state is implemented, and socket readiness plugs into the same handle poll path
@@ -744,7 +748,7 @@ TCP service task — drains NIC RX, dispatches ARP/IPv4/TCP frames, advertises r
 page-aware copy-from-user validation — syscall pointer arguments are checked against user address space [USER_CODE_BASE, USER_STACK_TOP), mapped user pages, and wrapped variable-length byte counts before dereference
 preemptive round-robin scheduler — timer IRQ context switch, `SCHED_QUANTUM_MS` quantum
 ATA PIO driver — 28-bit LBA polling reads from primary IDE channel (0x1F0)
-FAT16 filesystem — ELF programs loaded from 16 MB FAT16 partition on disk
+ext2 filesystem — ELF programs loaded from 16 MB ext2 partition on disk
 run/runimg infrastructure removed — `runelf` is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
 interactive shell with meminfo / memmap / ataread / fsls / fsread / mkdir / rmdir / runelf commands
 guest TinyCC compiler path — `tools/tcc.elf` runs inside SmallOS through `user_crt0` and TinyCC's normal `main`, then compiles guest C samples during `make test`

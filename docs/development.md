@@ -51,7 +51,7 @@ halts before the shell starts.
 
 Descriptor slots are owned by `process.c`, not the syscall dispatcher. fd `0`,
 `1`, and `2` are real console handles created with each process; user-opened
-files and sockets start at fd `3`. FAT16-backed file handles and path helpers
+files and sockets start at fd `3`. ext2-backed file handles and path helpers
 live behind `vfs.c`; socket objects and accept/read/write wait queues live
 behind `socket.c`; passive TCP listeners, the global 4-tuple connection table,
 and lazy RX/TX rings live behind `tcp.c`; and `process.c` keeps the generic fd
@@ -134,7 +134,7 @@ Examples:
 * `boot.asm` owns `BOOT_SECTOR_SIZE`, `MBR_PARTITION_TABLE_OFFSET`, and `MBR_PARTITION_ENTRY_SIZE`
 * `boot.asm` owns `LOADER2_SECTORS`
 * `loader2.asm` owns `LOADER2_SIZE_BYTES`
-* `mkfat16.c` owns FAT image size constants
+* `mkext2.c` owns ext2 image size constants
 
 The Makefile should read those declarations and pass them into host tools such as `mkimage`. Do not reintroduce anonymous layout numbers into the Makefile.
 
@@ -143,7 +143,7 @@ The Makefile should read those declarations and pass them into host tools such a
 * `loader2.asm` must be **exactly `LOADER2_SIZE_BYTES` bytes** (currently 4096 bytes / 8 sectors)
 * `kernel.bin` must be padded to a 512-byte sector boundary during final image assembly (`mkimage` handles this)
 * `kernel_lba` is derived as `1 + loader2_sectors`
-* `FAT16_LBA` is computed as `kernel_lba + kernel_sectors` and written into the FAT16 partition entry — if padding is skipped, FAT16 reads will return incorrect data
+* `ext2_lba` is computed as `kernel_lba + kernel_sectors` and written into MBR partition entry 1 — if padding is skipped, ext2 reads will return incorrect data
 
 ### Loader2 address invariant
 
@@ -161,7 +161,7 @@ The required invariant is that `0x1000 + kernel_sectors * BOOT_SECTOR_SIZE` must
 `make boot-layout-check` is the host-side guard for the fixed boot-stage layout. It verifies the built boot artifacts, the loader size/sector contract, and the generated stage-2 stack values before the disk image is assembled.
 
 `make image-layout-check` then validates the finished image for the active
-`DISPLAY_BACKEND`, including the patched FAT16 LBA and the sector placement of
+`DISPLAY_BACKEND`, including the patched ext2 LBA and the sector placement of
 each component.
 
 ---
@@ -227,10 +227,10 @@ store those physical addresses. Convert only at the point of kernel access with
 `paging_phys_to_kernel_virt()`, and convert aliases back with
 `paging_kernel_virt_to_phys()` before freeing a PMM-backed object.
 
-### FAT16 load buffer rule
+### ext2 load buffer rule
 
-`fat16_load()` uses one permanent kernel-heap buffer allocated during
-`fat16_init()` (`s_load_buf[1 MB]`). Do not allocate a fresh load buffer per
+`ext2_load()` uses one permanent kernel-heap buffer allocated during
+`ext2_init()` (`s_load_buf[1 MB]`). Do not allocate a fresh load buffer per
 call; each `runelf` call would permanently consume heap.
 
 Fd-backed file IO uses PMM cache pages instead. Those pages can sit in the same
@@ -299,11 +299,11 @@ Exited tasks must be marked `PROCESS_STATE_ZOMBIE` and destroyed later from a sa
 
 ---
 
-## ATA / FAT16 Rules
+## ATA / ext2 Rules
 
-* `ata_init()` must be called before `fat16_init()` and before any `ata_read_sectors()` call
-* `fat16_init()` must be called before `fat16_load()` or `fat16_ls()`
-* `fat16_load()` returns a pointer into the static `s_load_buf` buffer — the caller must not hold this pointer across another `fat16_load()` call
+* `ata_init()` must be called before `ext2_init()` and before any `ata_read_sectors()` call
+* `ext2_init()` must be called before `ext2_load()` or `ext2_ls()`
+* `ext2_load()` returns a pointer into the static `s_load_buf` buffer — the caller must not hold this pointer across another `ext2_load()` call
 * `elf_run_image()` copies all ELF segment data into PMM frames before returning, so the buffer is safe to reuse immediately after `elf_run_named()` returns
 
 ---
@@ -387,7 +387,7 @@ Useful signals:
 |---|---|---|
 | 1 | Reboot loop | Bad GDT or IDT |
 | 2 | Triple fault on boot | BSS not zeroed |
-| 3 | "fat16: bad boot signature" | kernel.bin not sector-padded, FAT16 image missing, or `-fda` mode |
+| 3 | "ext2: bad superblock magic" | kernel.bin not sector-padded, ext2 image missing, or `-fda` mode |
 | 4 | Red '8' on screen | Double fault — bad TSS ESP0 or corrupt stack |
 | 5 | Crash after iret | TSS not loaded; wrong TSS ESP0; bad user GDT entries; DPL=0 on int 0x80 gate |
 | 6 | argv garbage in ring 3 | Strings not copied to user stack before iret |
@@ -399,21 +399,21 @@ Useful signals:
 | 12 | Timer fires but no preemption | EOI sent after sched_tick; or irq0_stub not passing ESP |
 | 13 | System freezes after context switch | EOI not sent before sched_switch; IRQ0 permanently masked |
 | 14 | Hangs at "Loading." | Kernel too large — overwrites loader2 during INT 0x13 read; move loader2 higher |
-| 15 | "fat16: bad MBR signature" / "fat16: partition entry not populated" | final image assembly failed; check the `mkimage` step and its arguments |
-| 16 | Heap grows across runelf | fat16_load is using kmalloc instead of static buffer |
-| 17 | "fat16: not found" | Filename not matching 8.3 uppercase format; check mkfat16 output |
+| 15 | "ext2: bad MBR signature" / "ext2: partition entry not populated" | final image assembly failed; check the `mkimage` step and its arguments |
+| 16 | Heap grows across runelf | ext2_load is using kmalloc instead of static buffer |
+| 17 | "ext2: not found" | Path does not match the native case-sensitive ext2 name; check mkext2 output |
 
 ---
 
 ## Safe Development Order
 
 1. `make clean && make` — fix compile errors
-2. Boot — confirm shell appears and `fat16: ok` prints
-3. `ataread 0` — confirm `sig: 0x55 0xAA` and the correct FAT16 partition LBA value
-4. `fsls` — confirm FAT16 root directory lists correctly
+2. Boot — confirm shell appears and `ext2: ok` prints
+3. `ataread 0` — confirm `sig: 0x55 0xAA` and the correct ext2 partition LBA value
+4. `fsls` — confirm ext2 root directory lists correctly
 5. `mkdir TESTDIR` / `rmdir TESTDIR` — confirm directory creation and removal
 6. `fsread apps/demo/hello.elf` — confirm `7F 45 4C 46` (ELF magic)
-7. `runelf apps/demo/hello` — confirm ELF loads from FAT16 and exits cleanly
+7. `runelf apps/demo/hello` — confirm ELF loads from ext2 and exits cleanly
 8. `meminfo` before and after — heap top and frame count must be identical
 9. Run a second `runelf apps/demo/hello` — confirm static buffer reuse is safe
 10. Then expand
@@ -424,7 +424,7 @@ Useful signals:
 
 1. Prefer `int main(int argc, char** argv)` for hosted-ish programs, and link `src/user/user_crt0.c`
 2. Use direct `void _start(int argc, char** argv)` plus `sys_exit(status)` only for low-level probes
-3. Add `myprog` to `USER_PROGS` in Makefile - automatically included in the FAT16 image
+3. Add `myprog` to `USER_PROGS` in Makefile - automatically included in the ext2 image
 4. If the program needs extra user objects, add a custom link rule like `bmpview.elf` or `plasma.elf`
 5. `make clean && make`
 6. `runelf myprog`

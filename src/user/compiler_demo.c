@@ -4,7 +4,7 @@
  * compiler_demo — proof that user space can emit a file artifact.
  *
  * This is the first building block for a future in-OS compiler: it
- * writes a compiler-style output file to the FAT16 root directory and
+ * writes a compiler-style output file to the ext2 root directory and
  * mirrors the same artifact under apps/demo/ so the seeded image keeps
  * its demo content grouped together.
  */

@@ -27,7 +27,7 @@ LBA 0           → boot.bin              (512 bytes, exactly)
 LBA 1–8         → loader2.bin           (currently 4096 bytes, exactly)
 LBA 9+          → padded kernel region  (sector-aligned)
 LBA 9+ks
-               → FAT16 partition        (16 MB volume inside the image)
+               → ext2 partition        (16 MB volume inside the image)
 ```
 
 where `ks = ceil(kernel.bin / BOOT_SECTOR_SIZE)` and `kernel_lba = 1 + loader2_sectors`.
@@ -36,10 +36,10 @@ Constraints:
 
 * `boot.bin` must be **exactly `BOOT_SECTOR_SIZE` bytes**
 * `loader2.bin` must be **exactly `LOADER2_SIZE_BYTES` bytes** (currently 4096 bytes / 8 sectors)
-* `kernel.bin` must be **padded to a sector boundary during final image assembly** so the FAT16 partition starts at a clean LBA
-* FAT16 partition starts at `kernel_lba + kernel_sectors`
+* `kernel.bin` must be **padded to a sector boundary during final image assembly** so the ext2 partition starts at a clean LBA
+* ext2 partition starts at `kernel_lba + kernel_sectors`
 * partition entry 0 records the kernel LBA range and boot flag
-* partition entry 1 records the FAT16 LBA range; the kernel reads it during `fat16_init()`
+* partition entry 1 records the ext2 LBA range; the kernel reads it during `ext2_init()`
 
 ---
 
@@ -85,7 +85,7 @@ Loaded to `0x4000:0x0000` (physical `0x40000`).
 ## Responsibilities
 
 * Check INT 0x13 LBA extension support — halt with message if unsupported
-* Load kernel from disk immediately before the FAT16 partition to physical `0x1000`
+* Load kernel from disk immediately before the ext2 partition to physical `0x1000`
 * Apply the build-time display policy: VBE framebuffer in auto mode, BIOS/VGA text in forced VGA mode
 * Copy the BIOS 8x16 font, publish framebuffer fields when VBE is selected, and collect BIOS E820 memory-map entries in boot info
 * Setup temporary GDT
@@ -125,7 +125,7 @@ The Makefile reads these declarations during image construction rather than rede
 
 This keeps the hand-rolled boot path explicit: the build fails before QEMU starts if the fixed boot-stage layout drifts.
 
-`make image-layout-check` goes one step further and validates the finished `os-image.bin` itself. It checks the partition table entries, the loader and kernel placement, the FAT16 start LBA, and the zero padding between the kernel and FAT16 region.
+`make image-layout-check` goes one step further and validates the finished `os-image.bin` itself. It checks the partition table entries, the loader and kernel placement, the ext2 start LBA, and the zero padding between the kernel and ext2 region.
 
 `make verify` runs the full preflight sequence: boot-layout check, image-layout check, guest `test`, and `smoke`.
 
@@ -137,7 +137,7 @@ This keeps the hand-rolled boot path explicit: the build fails before QEMU start
 
 Stage 2 uses **INT 0x13 AH=0x42** (LBA extended read) for all disk reads. CHS was abandoned because:
 
-* The kernel and FAT16 partition can easily extend beyond one CHS track (18 sectors on a standard floppy geometry).
+* The kernel and ext2 partition can easily extend beyond one CHS track (18 sectors on a standard floppy geometry).
 * CHS reads beyond sector 18 on track 0 either fail or silently read wrong data.
 * LBA addressing has no track geometry limit.
 
@@ -339,18 +339,18 @@ Stage 1 cannot fit LBA logic, protected mode setup, or disk reads in 512 bytes. 
 
 `kernel.bin` is padded to a `BOOT_SECTOR_SIZE` boundary during final image assembly by `mkimage`.
 
-Without this padding, the FAT16 partition does not start on a clean sector boundary. Final image assembly computes `kernel_lba = 1 + loader2_sectors` and `FAT16_LBA = kernel_lba + kernel_sectors`, where `kernel_sectors = ceil(kernel.bin / BOOT_SECTOR_SIZE)`. If `kernel.bin` is not padded before `fat16.img` is appended, FAT16 reads land mid-sector and return incorrect data.
+Without this padding, the ext2 partition does not start on a clean sector boundary. Final image assembly computes `kernel_lba = 1 + loader2_sectors` and `ext2_LBA = kernel_lba + kernel_sectors`, where `kernel_sectors = ceil(kernel.bin / BOOT_SECTOR_SIZE)`. If `kernel.bin` is not padded before `ext2.img` is appended, ext2 reads land mid-sector and return incorrect data.
 
 ---
 
-# FAT16 LBA Delivery
+# ext2 LBA Delivery
 
-The FAT16 partition start LBA cannot be a compile-time constant in `fat16.c` without a chicken-and-egg dependency (kernel compilation needs it, but it depends on kernel size). Instead:
+The ext2 partition start LBA cannot be a compile-time constant in `ext2.c` without a chicken-and-egg dependency (kernel compilation needs it, but it depends on kernel size). Instead:
 
 1. The Makefile discovers source-owned layout constants from `boot.asm` and `loader2.asm`
-2. `mkimage` computes `kernel_lba = 1 + loader2_sectors` and then `fat16_lba = kernel_lba + kernel_sectors` during final image assembly
-3. `mkimage` writes the kernel and FAT16 spans into the MBR partition table entries declared by `MBR_PARTITION_TABLE_OFFSET` and `MBR_PARTITION_ENTRY_SIZE` in `boot.asm`
-4. At runtime, `fat16_init()` reads ATA sector 0 and extracts the partition metadata
+2. `mkimage` computes `kernel_lba = 1 + loader2_sectors` and then `ext2_lba = kernel_lba + kernel_sectors` during final image assembly
+3. `mkimage` writes the kernel and ext2 spans into the MBR partition table entries declared by `MBR_PARTITION_TABLE_OFFSET` and `MBR_PARTITION_ENTRY_SIZE` in `boot.asm`
+4. At runtime, `ext2_init()` reads ATA sector 0 and extracts the partition metadata
 
 The partition table lives in the declared boot-sector padding area before the `0x55AA` signature and is safe to overwrite.
 
@@ -363,9 +363,9 @@ The following must always hold:
 * kernel starts at `kernel_lba = 1 + loader2_sectors` in the disk image
 * kernel is loaded to physical `0x1000`
 * `kernel.bin` is padded to a whole-sector boundary during final image assembly
-* FAT16 partition starts at `kernel_lba + kernel_sectors` (LBA)
+* ext2 partition starts at `kernel_lba + kernel_sectors` (LBA)
 * partition entry 0 describes the kernel range
-* partition entry 1 describes the FAT16 range
+* partition entry 1 describes the ext2 range
 * loader2 GDT is temporary — kernel installs its own GDT first
 * segment registers correctly initialized before protected mode entry
 * `bss_start` / `bss_end` correctly defined and BSS zeroed before `paging_init()`
@@ -389,15 +389,15 @@ The kernel load overwrote loader2 or the generated stage-2 stack mid-transfer. T
 `INT 0x13 AH=0x42` returned carry set. Causes:
 
 * Drive not presented as hard disk — use `-drive format=raw,file=...` not `-fda`
-* LBA address out of range — disk image too small or fat16.img not appended
+* LBA address out of range — disk image too small or ext2.img not appended
 
 ## "NO LBA!" on screen
 
 BIOS does not support INT 0x13 extensions. Ensure QEMU is not in floppy mode.
 
-## "fat16: bad MBR signature", "fat16: MBR partition type mismatch", or "fat16: partition entry not populated"
+## "ext2: bad MBR signature", "ext2: MBR partition type mismatch", or "ext2: partition entry not populated"
 
-The partition table is missing, malformed, or the FAT16 image was not appended. Check the `mkimage` step in the final image build.
+The partition table is missing, malformed, or the ext2 image was not appended. Check the `mkimage` step in the final image build.
 
 ## Triple fault immediately after kernel loads
 
@@ -464,14 +464,14 @@ Cons: a little more code in stage 2 and the kernel.
 Pros: easy to reason about, matches linker script directly.
 Cons: no relocation support.
 
-## FAT16 LBA via Partition Entry
+## ext2 LBA via Partition Entry
 
 Pros: no compile-time dependency, no chicken-and-egg; the correct value is always in the image regardless of kernel size changes.
 Cons: the image builder and consumers need to agree on partition-table offsets and entry meanings.
 
 ## No Ramdisk
 
-Programs are loaded from the FAT16 partition at runtime via ATA PIO. The ramdisk was a temporary program store used while the FAT16 driver was being developed; it has been removed.
+Programs are loaded from the ext2 partition at runtime via ATA PIO. The ramdisk was a temporary program store used while the ext2 driver was being developed; it has been removed.
 
 ---
 
@@ -489,7 +489,7 @@ Kernel   →  zero BSS
          →  terminal_init, gdt_init, paging_init
          →  memory_init(page-aligned bss_end), pmm_init
          →  keyboard, mouse, timer, idt, sched_init
-         →  ata_init, fat16_init
+         →  ata_init, ext2_init
          →  create shell task, sti, sched_start
 ```
 

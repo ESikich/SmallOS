@@ -136,7 +136,7 @@ static int list_path(const char* path, const char* pattern) {
     DIR* dir = opendir(use_path);
     unsigned int count = 0;
     if (!dir) {
-        u_puts("fat16: not found: ");
+        u_puts("ext2: not found: ");
         u_puts(use_path);
         u_putc('\n');
         return 1;
@@ -149,16 +149,16 @@ static int list_path(const char* path, const char* pattern) {
             cwd[1] = '\0';
         }
         if (is_root_path(cwd)) {
-            u_puts("fat16 root directory:\n");
+            u_puts("ext2 root directory:\n");
         } else {
-            u_puts("fat16 directory: ");
+            u_puts("ext2 directory: ");
             u_puts(cwd[0] == '/' ? cwd + 1 : cwd);
             u_putc('\n');
         }
     } else if (is_root_path(use_path)) {
-        u_puts("fat16 root directory:\n");
+        u_puts("ext2 root directory:\n");
     } else {
-        u_puts("fat16 directory: ");
+        u_puts("ext2 directory: ");
         u_puts(use_path);
         u_putc('\n');
     }

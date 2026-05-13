@@ -18,7 +18,7 @@ This image contains:
 boot.bin         stage 1 bootloader   (size declared by boot.asm; currently 512 bytes)
 loader2.bin      stage 2 loader       (size declared by loader2.asm; currently 4096 bytes)
 kernel.bin       kernel               (padded to sector boundary during final image assembly)
-.state/fat16.img FAT16 partition     (mutable fixed-size FAT volume, stored after the padded kernel)
+.state/ext2.img ext2 partition     (mutable fixed-size ext2 volume, stored after the padded kernel)
 ```
 
 ---
@@ -30,7 +30,7 @@ nasm             → assembly (boot stages, interrupt stubs, kernel entry)
 i686-elf-gcc     → C compilation (freestanding, 32-bit, no stdlib)
 i686-elf-ld      → linking
 i686-elf-objcopy → strip ELF metadata → flat binary
-gcc              → host tool compilation (mkfat16, mkimage)
+gcc              → host tool compilation (mkext2, mkimage)
 ```
 
 The `third_party/cserver`, `third_party/ftp_client`, `third_party/ftp_server`,
@@ -63,15 +63,15 @@ The TinyCC sources stay clean in `third_party/tinycc`. SmallOS applies
 build/
 ├── bin/<backend>/ → final binaries (kernel.elf, kernel.bin,
 │                    apps/demo/*.elf, apps/tests/*.elf,
-│                    fat16.seed.img, boot.bin, loader2.bin, tcc-smalos.elf)
+│                    ext2.seed.img, boot.bin, loader2.bin, tcc-smalos.elf)
 ├── obj/<backend>/ → object files and depfiles (.o, .d), mirrored by source subtree
 ├── gen/<backend>/ → generated source (loader2.gen.asm)
 ├── img/           → final disk images (os-image.bin, vga/os-image.bin)
-└── tools/         → host tools (mkfat16, mkimage)
+└── tools/         → host tools (mkext2, mkimage)
 ```
 
-The generated seed image lives at `build/bin/<backend>/fat16.seed.img`; normal
-runs use the mutable copy at `.state/fat16.img` so guest writes survive rebuilds
+The generated seed image lives at `build/bin/<backend>/ext2.seed.img`; normal
+runs use the mutable copy at `.state/ext2.img` so guest writes survive rebuilds
 until `make reset-disk`.
 
 ---
@@ -87,7 +87,7 @@ kernel.elf          apps/demo/hello.elf   apps/tests/*.elf   ...
   ↓                      ↓
 kernel.bin         user program ELFs
   ↓                      ↓
-loader2.gen.asm     fat16.seed.img      ← built by build/tools/mkfat16 from seeded entries
+loader2.gen.asm     ext2.seed.img      ← built by build/tools/mkext2 from seeded entries
   ↓                      ↓
 loader2.bin          boot.bin
           \            |            /
@@ -98,7 +98,7 @@ loader2.bin          boot.bin
               os-image.bin
 ```
 
-`mkimage` performs the final disk-image assembly step. It pads `kernel.bin` to a whole number of sectors, computes the FAT16 start LBA, concatenates the component binaries, and patches the FAT16 start LBA into the boot-sector field declared by `boot.asm`.
+`mkimage` performs the final disk-image assembly step. It pads `kernel.bin` to a whole number of sectors, computes the ext2 start LBA, concatenates the component binaries, and patches the ext2 start LBA into the boot-sector field declared by `boot.asm`.
 
 `make boot-layout-check` verifies the generated boot-chain inputs before that step runs, and `make image-layout-check` verifies the finished image afterwards.
 
@@ -335,7 +335,7 @@ src/boot/boot.asm
 src/boot/loader2.asm
   LOADER2_SIZE_BYTES
 
-tools/mkfat16.c
+tools/mkext2.c
   TOTAL_SIZE_MB
   TOTAL_SECTORS
 ```
@@ -346,7 +346,7 @@ This keeps the boot-stage source files and filesystem tool as the single source 
 
 # User Programs (ELF)
 
-User programs are compiled separately and packed into the FAT16 image. Adding or changing a program rebuilds the FAT16 image and final disk image, but does not require relinking `kernel.elf` or regenerating `kernel.bin` unless kernel sources also change.
+User programs are compiled separately and packed into the ext2 image. Adding or changing a program rebuilds the ext2 image and final disk image, but does not require relinking `kernel.elf` or regenerating `kernel.bin` unless kernel sources also change.
 
 ## Source files
 
@@ -418,21 +418,21 @@ Multiple programs sharing `-Ttext-segment 0x400000` is safe because each `runelf
 
 ---
 
-# FAT16 Image
+# ext2 Image
 
 ## Tool
 
-`tools/mkfat16.c` is a host C program compiled by the Makefile:
+`tools/mkext2.c` is a host C program compiled by the Makefile:
 
 ```makefile
-$(TOOLS_DIR)/mkfat16: tools/mkfat16.c | dirs
+$(TOOLS_DIR)/mkext2: tools/mkext2.c | dirs
     $(HOST_CC) -o $@ $<
 ```
 
 ## Building
 
 ```bash
-build/tools/mkfat16 build/bin/auto/fat16.seed.img \
+build/tools/mkext2 build/bin/auto/ext2.seed.img \
     bin/echo.elf=build/bin/auto/echo.elf \
     apps/demo/hello.elf=build/bin/auto/hello.elf \
     apps/demo/plasma.elf=build/bin/auto/plasma.elf \
@@ -444,29 +444,29 @@ build/tools/mkfat16 build/bin/auto/fat16.seed.img \
 ```
 
 Each `[dest=]source` argument either seeds the source file at its basename or
-places it at an explicit FAT16 destination path.  The Makefile expands this
-into the full shipped image through `FAT16_*_ENTRIES`; the command above is a
+places it at an explicit ext2 destination path.  The Makefile expands this
+into the full shipped image through `ext2_*_ENTRIES`; the command above is a
 representative shape rather than the complete invocation.
 
-`mkfat16` produces a raw FAT16 volume containing the shipped apps under
+`mkext2` produces a raw ext2 volume containing the shipped apps under
 `bin/`, `apps/demo/`, `apps/tests/`, `apps/services/`, and `tools/`.
 
-Shipped FAT16 programs:
+Shipped ext2 programs:
 - `bin/echo` - print command arguments
 - `bin/about` - print the OS version
 - `bin/uptime` - print tick and second counts
 - `bin/halt` - halt the machine
 - `bin/reboot` - reboot the machine
 - `bin/pwd` - print the process cwd inherited from the shell
-- `bin/cat` - print a FAT16 file
-- `bin/fsread` - dump FAT16 file metadata and first bytes
-- `bin/ls` / `bin/fsls` - list FAT16 directories
-- `bin/touch` - create or truncate a FAT16 file
-- `bin/rm` - remove a FAT16 file
-- `bin/mkdir` / `bin/rmdir` - create or remove FAT16 directories
-- `bin/cp` / `bin/mv` - copy or move FAT16 entries
+- `bin/cat` - print an ext2 file
+- `bin/fsread` - dump ext2 file metadata and first bytes
+- `bin/ls` / `bin/fsls` - list ext2 directories
+- `bin/touch` - create or truncate an ext2 file
+- `bin/rm` - remove an ext2 file
+- `bin/mkdir` / `bin/rmdir` - create or remove ext2 directories
+- `bin/cp` / `bin/mv` - copy or move ext2 entries
 - `bin/bmpview` - load a BMP, render it into the `gfx` backbuffer, and present it to the framebuffer
-- `bin/diskview` - show FAT16 used/free space as a framebuffer allocation map
+- `bin/diskview` - show ext2 used/free space as a framebuffer allocation map
 - `apps/demo/hello` - print argc/argv and tick count
 - `apps/demo/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
 - `apps/demo/mandel` - interactive Mandelbrot demo with arrow-key pan, +/- zoom, reset/quit keys, and PS/2 mouse cursor movement
@@ -497,7 +497,7 @@ Shipped FAT16 programs:
 
 ## Properties
 
-* fixed-size volume defined by `tools/mkfat16.c`
+* fixed-size volume defined by `tools/mkext2.c`
 * root directory contains sample C sources and runtime compiler demo artifacts
 * `bin/` contains command-style app ELFs found by bare shell command lookup
 * `apps/demo/` contains the hello and plasma demo ELFs
@@ -505,7 +505,7 @@ Shipped FAT16 programs:
 * `apps/services/` contains guest service ELFs
 * `tools/` contains the guest TinyCC binary
 * sample C sources live at the image root until the shell demo moves them into `samples/`
-* filenames are converted to uppercase 8.3 names
+* filenames are stored as native case-sensitive ext2 names
 * no external filesystem tools are required
 
 ---
@@ -539,15 +539,15 @@ The size constraint is enforced by `LOADER2_SIZE_BYTES` in `loader2.asm`. The Ma
 
 # Kernel Padding — Critical
 
-`kernel.bin` must occupy a whole number of sectors in the final disk image before `fat16.img` is appended.
+`kernel.bin` must occupy a whole number of sectors in the final disk image before `ext2.img` is appended.
 
 That padding is now performed by `mkimage`, not by a separate Makefile-generated `kernel_padded.bin` artifact.
 
-**Why this is required:** The final FAT16 start LBA is computed as:
+**Why this is required:** The final ext2 start LBA is computed as:
 
 ```text
 kernel_lba     = 1 + loader2_sectors
-FAT16_LBA      = kernel_lba + kernel_sectors
+ext2_LBA      = kernel_lba + kernel_sectors
 ```
 
 where:
@@ -557,7 +557,7 @@ loader2_sectors = loader2.bin / BOOT_SECTOR_SIZE
 kernel_sectors  = ceil(kernel.bin / BOOT_SECTOR_SIZE)
 ```
 
-If `kernel.bin` is not padded to a sector boundary before `fat16.img` is appended, the FAT volume would begin mid-sector in the final image while the kernel would still try to read it from the next full LBA. FAT16 reads would then return incorrect data.
+If `kernel.bin` is not padded to a sector boundary before `ext2.img` is appended, the ext2 volume would begin mid-sector in the final image while the kernel would still try to read it from the next full LBA. ext2 reads would then return incorrect data.
 
 ---
 
@@ -581,7 +581,7 @@ build/tools/mkimage \
     --boot build/bin/auto/boot.bin \
     --loader build/bin/auto/loader2.bin \
     --kernel build/bin/auto/kernel.bin \
-    --fat16 .state/fat16.img \
+    --fs .state/ext2.img \
     --out build/img/os-image.bin \
     --sector-size 512 \
     --loader-size 4096 \
@@ -598,7 +598,7 @@ boot.bin
 loader2.bin
 kernel.bin
 zero padding to next sector boundary
-fat16.img
+ext2.img
 ```
 
 It computes:
@@ -607,10 +607,10 @@ It computes:
 loader2_sectors = loader2.bin / BOOT_SECTOR_SIZE
 kernel_lba      = 1 + loader2_sectors
 kernel_sectors  = ceil(kernel.bin / BOOT_SECTOR_SIZE)
-FAT16_LBA       = kernel_lba + kernel_sectors
+ext2_LBA       = kernel_lba + kernel_sectors
 ```
 
-It then writes the kernel and FAT16 spans into the MBR partition table entries declared by `MBR_PARTITION_TABLE_OFFSET` and `MBR_PARTITION_ENTRY_SIZE` in `boot.asm`.
+It then writes the kernel and ext2 spans into the MBR partition table entries declared by `MBR_PARTITION_TABLE_OFFSET` and `MBR_PARTITION_ENTRY_SIZE` in `boot.asm`.
 
 ## Layout
 
@@ -618,7 +618,7 @@ It then writes the kernel and FAT16 spans into the MBR partition table entries d
 LBA 0                     boot.bin
 LBA 1 ... loader2_sectors loader2.bin
 LBA kernel_lba ... N      padded kernel region
-LBA N+1 ...               fat16.img
+LBA N+1 ...               ext2.img
 ```
 
 The exact kernel span depends on `kernel.bin` size rounded up to a whole number of sectors.
@@ -635,7 +635,7 @@ Constraints:
 
 * boot sector size is declared by `BOOT_SECTOR_SIZE` in `boot.asm`
 * the BIOS boot signature `0xAA55` must be present at the end of the sector
-* the boot sector also contains a declared patch field for the FAT16 start LBA
+* the boot sector also contains a declared patch field for the ext2 start LBA
 
 Stage 1 uses the old CHS interface (`INT 0x13 AH=0x02`) because it only reads the fixed-size stage-2 loader, which fits comfortably within track 0.
 
@@ -654,11 +654,11 @@ qemu-system-i386 -drive format=raw,file=build/img/os-image.bin
 
 # Common Build Failures
 
-## fat16: bad boot signature (runtime)
+## ext2: bad superblock magic (runtime)
 
-Cause: FAT16 start LBA was computed or patched incorrectly, FAT16 image missing from the disk image, or launching in floppy mode. The kernel reads the wrong LBA or invalid data instead of a FAT16 boot sector.
+Cause: ext2 start LBA was computed or patched incorrectly, ext2 image missing from the disk image, or launching in floppy mode. The kernel reads the wrong LBA or invalid data instead of an ext2 volume.
 
-Fix: the `mkimage` step handles kernel padding and FAT16 partition-table writing automatically. If the image is assembled manually, preserve the same layout and table rules.
+Fix: the `mkimage` step handles kernel padding and ext2 partition-table writing automatically. If the image is assembled manually, preserve the same layout and table rules.
 
 ## loader2.bin size error
 
@@ -698,7 +698,7 @@ back in the low flat image can overwrite loader boot info.
 `INT 0x13 AH=0x42` returned carry set. Causes:
 
 * launched as floppy (`-fda`) instead of hard disk — use `-drive format=raw`
-* disk image too small — `fat16.img` not appended to image
+* disk image too small — `ext2.img` not appended to image
 * LBA out of range for the disk image size
 
 ## NO LBA! (runtime, loader screen)
@@ -720,7 +720,7 @@ Cause: simple linker script does not separate read-only and executable sections.
 ```text
 apps/demo/hello.elf ────────────────────┐
 apps/tests/*.elf ───────────────────────┤
-tools/tcc.elf / samples/*.c ────────────┤→ fat16.seed.img → .state/fat16.img ─┐
+tools/tcc.elf / samples/*.c ────────────┤→ ext2.seed.img → .state/ext2.img ─┐
                                         │                           │
 kernel.bin ───────────────┐             │                           │
                           ├→ loader2.gen.asm → loader2.bin ───────┤
@@ -759,9 +759,9 @@ All user ELFs are linked at the same virtual address. This is safe because each 
 Pros: simple linking, no need for unique link addresses per program.
 Cons: no PIE, no dynamic linking, and all programs must currently fit the fixed loader / exec model even though a scheduler now exists.
 
-## FAT16 Image Instead of Embedded Programs
+## ext2 Image Instead of Embedded Programs
 
-Current approach: ELF binaries are stored in a separate `fat16.img` partition. Kernel rebuild is not required to add or update programs. Kernel binary size is unaffected by program count.
+Current approach: ELF binaries are stored in a separate `ext2.img` partition. Kernel rebuild is not required to add or update programs. Kernel binary size is unaffected by program count.
 
 ## Generated Loader2
 
@@ -775,7 +775,7 @@ The Makefile generates `loader2.gen.asm` by text substitution into `loader2.asm`
 
 ## LBA Extended Reads
 
-Replaces CHS `AH=0x02`. Removes the 18-sector-per-track limit. Required because the kernel and FAT16 partition both live beyond what simple CHS assumptions can safely handle.
+Replaces CHS `AH=0x02`. Removes the 18-sector-per-track limit. Required because the kernel and ext2 partition both live beyond what simple CHS assumptions can safely handle.
 
 ---
 
