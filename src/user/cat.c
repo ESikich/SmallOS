@@ -23,7 +23,11 @@ void _start(int argc, char** argv) {
         if (n == 0) {
             break;
         }
-        sys_write(buf, (uint32_t)n);
+        if (u_writefd(1, buf, (uint32_t)n) < 0) {
+            sys_close(fd);
+            u_puts("cat: failed\n");
+            sys_exit(1);
+        }
     }
 
     sys_close(fd);

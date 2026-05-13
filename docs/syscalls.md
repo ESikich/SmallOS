@@ -111,7 +111,8 @@ can bracket expensive redraw work around the whole write. User programs that
 produce large output should batch writes up to the syscall limit rather than
 issuing one write per rendered row.
 The terminal does not implement automatic page prompts; long-output paging is
-expected to live in userland commands such as a future `more`/`less`.
+provided by userland commands such as `more` so `write()` never unexpectedly
+blocks on terminal input.
 This remains available as the low-level terminal write primitive used by
 `u_puts()` and early/simple user helpers. The normal POSIX/stdio path now
 writes `stdout` and `stderr` through fd-backed console handles via

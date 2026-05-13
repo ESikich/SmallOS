@@ -36,8 +36,8 @@ guest.
   service task, passive sockets, `poll`/`epoll` readiness, FTP, echo, and HTTP
   server smoke paths.
 - Guest userland includes familiar commands such as `ls`, `tree`, `cat`,
-  `pwd`, `touch`, `mkdir`, `rm`, `cp`, `mv`, `edit`, `date`, `uptime`,
-  `halt`, and `reboot`, plus diagnostics and demos.
+  `more`, `pwd`, `touch`, `mkdir`, `rm`, `cp`, `mv`, `edit`, `date`,
+  `uptime`, `halt`, and `reboot`, plus diagnostics and demos.
 - TinyCC is built as `usr/bin/tcc.elf` and can compile sample C programs inside
   SmallOS.
 

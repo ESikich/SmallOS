@@ -1088,6 +1088,7 @@ static void cmd_shelltest(command_t* cmd) {
     command_t echo_cmd = { 4, { "echo", "alpha", "beta", "gamma" } };
     static command_t pipeline_cmd = { 4, { "echo", "pipeline-ok", "|", "cat" } };
     static command_t pipeline3_cmd = { 6, { "echo", "pipeline3-ok", "|", "cat", "|", "cat" } };
+    static command_t more_pipe_cmd = { 4, { "echo", "more-pipe-ok", "|", "more" } };
     command_t about_cmd = { 1, { "about" } };
     command_t uptime_cmd = { 1, { "uptime" } };
     command_t meminfo_cmd = { 1, { "meminfo" } };
@@ -1170,6 +1171,7 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_exec("echo", &echo_cmd);
     shelltest_exec("pipeline", &pipeline_cmd);
     shelltest_exec("pipeline3", &pipeline3_cmd);
+    shelltest_exec("more_pipe", &more_pipe_cmd);
     shelltest_exec("about", &about_cmd);
     shelltest_exec("uptime", &uptime_cmd);
     shelltest_call("meminfo", cmd_meminfo, &meminfo_cmd);
@@ -1435,6 +1437,7 @@ static command_entry_t app_commands[] = {
     { "tree",          "print an ext2 directory tree", 0 },
     { "fsread",        "dump ext2 file bytes",         0 },
     { "cat",           "print an ext2 file",           0 },
+    { "more",          "page a file or stdin",         0 },
     { "mkdir",         "create an ext2 directory",     0 },
     { "rmdir",         "remove an ext2 directory",     0 },
     { "rm",            "remove an ext2 file",          0 },
@@ -1543,6 +1546,14 @@ static int run_pipeline(command_t* cmd) {
         }
         procs[i] = proc;
     }
+    if (stage_count > 0) {
+        /*
+         * The pipeline has not run yet because IF is still clear.  Assign the
+         * foreground reader now so process_set_foreground() can discard the
+         * shell command's key events before a pager reaches its first prompt.
+         */
+        process_set_foreground(procs[stage_count - 1]);
+    }
     __asm__ __volatile__("sti");
 
     for (int i = 0; i < stage_count - 1; i++) {
@@ -1550,10 +1561,24 @@ static int run_pipeline(command_t* cmd) {
         close_shell_fd(shell_proc, pipes[i][1]);
     }
 
-    for (int i = 0; i < stage_count; i++) {
-        if (procs[i]) {
-            process_wait(procs[i]);
-        }
+    if (stage_count > 0) {
+        int remaining;
+
+        remaining = stage_count;
+        do {
+            for (int i = 0; i < stage_count; i++) {
+                if (procs[i] && procs[i]->state == PROCESS_STATE_ZOMBIE) {
+                    process_destroy(procs[i]);
+                    procs[i] = 0;
+                    remaining--;
+                }
+            }
+            if (remaining) {
+                __asm__ __volatile__("sti; hlt");
+            }
+        } while (remaining);
+
+        process_set_foreground(0);
     }
     return 1;
 }

@@ -125,6 +125,8 @@ def send_text(sock, text):
             send_key(sock, "slash")
         elif ch == "-":
             send_key(sock, "minus")
+        elif ch == "|":
+            send_key(sock, "shift-backslash")
         elif "a" <= ch <= "z" or "0" <= ch <= "9":
             send_key(sock, ch)
         else:
@@ -498,6 +500,51 @@ def run_process_group_ctrl_c_regression(sock, log, start_offset, deadline, echo=
     return False, log_offset
 
 
+def run_more_pipeline_regression(sock, log, start_offset, deadline, echo=True, report=True):
+    buf = ""
+    log_offset = start_offset
+    saw_more = False
+
+    if echo:
+        tee_stdout("\n[more-pipeline-regression] ")
+    clear_prompt_line(sock)
+    send_text(sock, "cat var/tmp/samples/tccagg.c | more")
+    send_key(sock, "ret")
+
+    while time.time() < deadline:
+        chunk, log_offset = read_new(log, log_offset)
+        if chunk:
+            if echo:
+                tee_stdout(chunk)
+            buf += chunk
+
+            if "--More--" in buf and not saw_more:
+                saw_more = True
+                send_text(sock, "q")
+
+            if saw_more and saw_prompt_after(buf, "--More--"):
+                if report:
+                    print("[more_pipeline] PASS")
+                return True, log_offset
+            if not saw_more and "cat: failed" in buf:
+                if report:
+                    print("[more_pipeline] FAIL")
+                return False, log_offset
+            if not saw_more and saw_prompt_after(buf, "| more"):
+                if report:
+                    print("[more_pipeline] FAIL")
+                return False, log_offset
+
+            if len(buf) > TRANSCRIPT_LIMIT:
+                buf = buf[-TRANSCRIPT_TRIM:]
+        else:
+            time.sleep(0.05)
+
+    if report:
+        print("[more_pipeline] FAIL")
+    return False, log_offset
+
+
 def run_connect_regression(sock, log, start_offset, deadline, echo=True, report=True):
     buf = ""
     log_offset = start_offset
@@ -702,6 +749,15 @@ def main():
         if args.summary:
             status_end(pgrp_pass)
         overall_pass = overall_pass and pgrp_pass
+
+        if args.summary:
+            status_begin("interactive: more pipeline")
+        more_pipeline_pass, log_offset = run_more_pipeline_regression(
+            sock, log, log_offset, deadline, echo=echo, report=not args.summary
+        )
+        if args.summary:
+            status_end(more_pipeline_pass)
+        overall_pass = overall_pass and more_pipeline_pass
 
         if args.summary:
             status_begin("interactive: outbound connect")

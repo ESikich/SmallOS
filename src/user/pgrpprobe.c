@@ -8,7 +8,7 @@ void _start(int argc, char** argv) {
         "usr/libexec/tests/spinwkr",
         "late",
         "pgrp_child.txt",
-        "120",
+        "500",
         0
     };
 

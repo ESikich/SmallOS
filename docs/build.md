@@ -489,6 +489,7 @@ Shipped ext2 programs:
 - `bin/date` - print UTC realtime, or `date -s [server-ip]` to sync from NTP
 - `bin/pwd` - print the process cwd inherited from the shell
 - `bin/cat` - print an ext2 file
+- `bin/more` - page an ext2 file or piped stdin
 - `bin/fsread` - dump ext2 file metadata and first bytes
 - `bin/ls` - list ext2 directories
 - `bin/tree` - print an ext2 directory tree

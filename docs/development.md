@@ -101,7 +101,7 @@ If you see `implicit declaration of function` — you forgot a header.
 
 Terminal output goes to the active display backend by default. COM1 serial mirroring is opt-in with `SERIAL_CONSOLE=1`, mainly for headless tests and debug logs. Keep ANSI/control-character handling in `terminal.c` so VGA text and framebuffer output share behavior; backend `putc` implementations should only handle raw newline, carriage return, backspace, wrapping, scrolling, and drawing.
 
-Use `terminal_write()` for bulk console output from syscall/fd paths so backends can bracket expensive redraw work. User programs that produce lots of text should batch writes up to the syscall limit instead of writing one rendered row at a time. Do not add automatic "press any key to continue" paging in the terminal or kernel write path; paging belongs in userland commands or a future pager so `write()` does not unexpectedly block on terminal input.
+Use `terminal_write()` for bulk console output from syscall/fd paths so backends can bracket expensive redraw work. User programs that produce lots of text should batch writes up to the syscall limit instead of writing one rendered row at a time. Do not add automatic "press any key to continue" paging in the terminal or kernel write path; paging belongs in userland commands such as `more` so `write()` does not unexpectedly block on terminal input.
 
 UTF-8 decoding and Unicode-to-CP437 glyph compatibility live in `src/drivers/unicode.c` / `src/drivers/unicode.h`. Keep Unicode state machines and glyph mapping tables there rather than growing `terminal.c`; when serial mirroring is enabled, it should continue to receive the original bytes so host logs remain UTF-8.
 
