@@ -11,6 +11,18 @@
 #include "process.h"
 
 process_t* elf_run_named(const char* name, int argc, char** argv);
+int elf_exec_image_into(process_t* proc,
+                        const unsigned char* image,
+                        int argc,
+                        char** argv,
+                        unsigned int* out_entry,
+                        unsigned int* out_user_esp);
+int elf_exec_named_into(process_t* proc,
+                        const char* name,
+                        int argc,
+                        char** argv,
+                        unsigned int* out_entry,
+                        unsigned int* out_user_esp);
 
 /*
  * elf_run_image(image, argc, argv)

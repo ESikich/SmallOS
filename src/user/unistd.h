@@ -30,6 +30,14 @@ int fstat(int fd, struct stat* st);
 char* getcwd(char* buf, unsigned int size);
 int chdir(const char* path);
 int remove(const char* path);
+int pipe(int fds[2]);
+int pipe2(int fds[2], int flags);
+int dup(int oldfd);
+int dup2(int oldfd, int newfd);
+int dup3(int oldfd, int newfd, int flags);
+pid_t fork(void);
+int execve(const char* path, char* const argv[], char* const envp[]);
+int execv(const char* path, char* const argv[]);
 int execvp(const char* file, char* const argv[]);
 pid_t getpid(void);
 

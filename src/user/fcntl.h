@@ -13,10 +13,12 @@
 #define O_CLOEXEC 0x00080000u
 #define O_BINARY 0
 
+#define FD_CLOEXEC SYS_FD_FLAG_CLOEXEC
+
+#define F_GETFD SYS_FCNTL_GETFD
+#define F_SETFD SYS_FCNTL_SETFD
 #define F_GETFL SYS_FCNTL_GETFL
 #define F_SETFL SYS_FCNTL_SETFL
-#define F_GETFD 1
-#define F_SETFD 2
 
 int open(const char* path, int flags, ...);
 int fcntl(int fd, int cmd, ...);

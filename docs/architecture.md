@@ -201,9 +201,13 @@ read / write / seek / poll / flush / close
 
 `process.c` owns descriptor allocation, lifetime, and generic dispatch. The
 resource backends own the behavior behind each handle: ext2-backed file
-handles are initialized by `vfs_file_init()` and implemented in `vfs.c`,
-socket handles point at `socket_t` objects implemented in `socket.c`, and
-socket blocking readiness is tracked by socket-owned wait queues. The TCP
+handles are shared open-file descriptions initialized by `vfs_file_init()` and
+implemented in `vfs.c`, pipe handles point at refcounted one-page ring buffers
+with read/write wait queues, socket handles point at `socket_t` objects
+implemented in `socket.c`, and socket blocking readiness is tracked by
+socket-owned wait queues. `dup*()` and `fork()` copy descriptors while sharing
+file offsets/status flags; `FD_CLOEXEC` is per descriptor and honored by
+`execve()`. The TCP
 driver owns passive listeners plus outbound active-open streams in a
 PMM-backed global 4-tuple connection table, with lazy 4 KiB PMM-backed RX
 rings and lazy 16 KiB PMM-backed TX rings for streams; TX payloads remain
@@ -310,6 +314,15 @@ SYS_EXEC (parent-waitable spawn):
   process_claim_for_wait(proc) → parent owns child until waitpid() or parent exit
   return child pid
 
+SYS_FORK + SYS_EXECVE (POSIX-shaped):
+  process_fork_from_syscall()
+  eager-copy user address space
+  duplicate fd table entries    → shared open-file descriptions
+  parent returns child pid
+  child returns 0 from same syscall frame
+  child may dup2 pipe ends, close unused fds, then execve()
+  execve replaces user image and closes FD_CLOEXEC descriptors
+
 bg / runelf_bg (reattachable background):
   process_create()
   allocate proc->kernel_stack_frame
@@ -331,7 +344,7 @@ sys_exit:
   switch to next runnable task
   [foreground] process_destroy() called by process_wait() in shell
   [background] process_destroy() called by process-registry reaper
-  [SYS_EXEC] process_destroy() called by waitpid(), or by reaper after parent exit
+  [SYS_EXEC/SYS_FORK] process_destroy() called by waitpid(), or by reaper after parent exit
   [shell job] process_destroy() called by fg or kill
 
 reaper task (permanent kernel task):
@@ -655,9 +668,10 @@ sys_exit() → int 0x80 → sched_exit_current((unsigned int)regs)
 
 ---
 
-# SYS_EXEC
+# SYS_EXEC / SYS_FORK / SYS_EXECVE
 
-A running user process can invoke a named child through the same ELF creation path:
+A running user process can invoke a named child through the legacy spawn-style
+ELF creation path:
 
 ```text
 sys_exec("hello", argc, argv)   [ring-3 call via int 0x80]
@@ -675,7 +689,10 @@ sys_exec_impl returns child pid
 isr128_stub iretd → parent resumes in ring 3 and may waitpid(pid)
 ```
 
-This is async spawn, not blocking foreground execution.
+This is async spawn, not blocking foreground execution. POSIX-shaped userland
+uses `fork()` to clone the current process, `dup2()` to wire pipe ends or other
+descriptors, and `execve()` / `execvp()` to replace the child image while
+preserving pid, cwd, process group, and non-`FD_CLOEXEC` descriptors.
 
 ---
 
@@ -713,7 +730,8 @@ build/obj/<backend>/kernel/sched_switch.o
 # Known Limitations
 
 * ELF link address fixed at 0x400000 — no PIE/relocation support
-* `SYS_EXEC` is async spawn; userland receives a pid and can collect it with `waitpid()`
+* `SYS_EXEC` is legacy async spawn; userland receives a pid and can collect it with `waitpid()`
+* `SYS_FORK` uses eager address-space copying; copy-on-write is not implemented yet
 
 ---
 
@@ -753,13 +771,13 @@ SYS_READ / fd 0 — true blocking keyboard input through the console handle: par
 SYS_MOUSE_READ — polling PS/2 mouse state for graphics demos: returns accumulated relative deltas/buttons and clears the movement counters
 SYS_YIELD — voluntary preemption via sched_yield_now()
 SYS_SLEEP — timed sleep: parks process in PROCESS_STATE_SLEEPING and wakes via the timer IRQ once the deadline is reached
-SYS_EXEC / SYS_WAITPID / SYS_KILL — async ELF spawn returns a child pid; userland can collect exit/signal status or terminate a child by pid
+SYS_EXEC / SYS_FORK / SYS_EXECVE / SYS_WAITPID / SYS_KILL — legacy async ELF spawn plus POSIX-shaped fork/replace; userland can collect exit/signal status or terminate a child by pid
 SYS_GETCWD / SYS_CHDIR — per-process cwd state; relative user paths are normalized before VFS or ELF loading
-SYS_OPEN / SYS_OPEN_MODE / SYS_CLOSE / SYS_FREAD — dynamic PMM-backed per-process handle table backed by readable/writable handle ops; fd 0/1/2 are console handles, user-opened files start at fd 3+, and VFS-backed file reads cache ext2 data in PMM-backed pages until close
+SYS_OPEN / SYS_OPEN_MODE / SYS_CLOSE / SYS_FREAD — dynamic PMM-backed per-process descriptor table backed by readable/writable handle ops; fd 0/1/2 are console handles, user-opened files start at fd 3+, and VFS-backed file reads cache ext2 data in shared PMM-backed file descriptions until the final close
 SYS_BRK / user heap — per-process heap break managed in user space through `SYS_BRK` and a shared user allocator
 SYS_OPEN_WRITE / SYS_WRITEFD / SYS_LSEEK / SYS_FSYNC / SYS_UNLINK / SYS_RENAME / SYS_STAT — VFS-backed writable file handles plus path metadata and file management for compiler-style tools; dirty writable handles flush on close, append/read-write modes preserve existing bytes, and stdout/stderr writes also use fd-backed console handles
 SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_ACCEPT4 / SYS_CONNECT / SYS_SEND / SYS_RECV / SYS_SHUTDOWN / SYS_GETSOCKNAME / SYS_GETPEERNAME — socket ABI for passive TCP servers, FTP userland, and client-style active opens; fd handles point at kernel socket objects, TCP streams are backed by a global 4-tuple TCP table plus lazy 4 KiB RX rings and 16 KiB TX rings, basic `shutdown()` half-close state is implemented, and socket readiness plugs into the same handle poll path
-SYS_FCNTL / SYS_POLL / SYS_EPOLL_* / SYS_TIMERFD_* / SYS_SIGNALFD — descriptor flags and event-loop shims for cserve-style guest services; socket waits register on socket wait queues, timerfd handles register read waiters that timer IRQs can wake when timerfds expire, and signalfd handles can be woken by kernel SIGINT/SIGTERM delivery
+SYS_PIPE / SYS_PIPE2 / SYS_DUP* / SYS_FCNTL / SYS_POLL / SYS_EPOLL_* / SYS_TIMERFD_* / SYS_SIGNALFD — pipes, descriptor duplication, descriptor flags, and event-loop shims for shell pipelines and cserve-style guest services; socket waits register on socket wait queues, timerfd handles register read waiters that timer IRQs can wake when timerfds expire, and signalfd handles can be woken by kernel SIGINT/SIGTERM delivery
 SYS_CLOCK_GETTIME / SYS_CLOCK_SETTIME / SYS_NTP_SYNC — realtime clock syscalls; `CLOCK_MONOTONIC` reports uptime, `CLOCK_REALTIME` is maintained as an offset from uptime and can be set directly or by the tiny NTP client
 TCP service task — drains NIC RX, dispatches ARP/IPv4/TCP frames, advertises receive windows from per-connection RX rings, services retransmit/idle timers for control handshakes, buffered TX payloads, active-open SYNs, and FIN paths, handles duplicate peer-FIN ACKs and close-driven final writes, and wakes socket wait queues
 page-aware copy-from-user validation — syscall pointer arguments are checked against user address space [USER_CODE_BASE, USER_STACK_TOP), mapped user pages, page-crossing buffers/structs, and wrapped variable-length byte counts before dereference

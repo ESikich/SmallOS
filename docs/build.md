@@ -509,6 +509,10 @@ Shipped ext2 programs:
 - `usr/libexec/tests/readline` - interactive SYS_READ demo
 - `usr/libexec/tests/exec_test` - exercise SYS_EXEC semantics
 - `usr/libexec/tests/waitprobe` - exercise getpid/waitpid/kill process lifecycle
+- `usr/libexec/tests/pipeprobe` - exercise pipe EOF, EPIPE, nonblocking, PIPE_BUF, poll, and blocking transfer behavior
+- `usr/libexec/tests/dupprobe` - exercise dup/dup2 shared descriptions and FD_CLOEXEC
+- `usr/libexec/tests/forkprobe` - exercise fork memory copy, wait, and shared inherited fd offsets
+- `usr/libexec/tests/execveprobe` - exercise replacing execve image handoff
 - `usr/libexec/tests/fileread` - exercise VFS-backed file handles via SYS_OPEN / SYS_FREAD / SYS_CLOSE
 - `usr/libexec/tests/compiler_demo` - exercise SYS_WRITEFILE, SYS_WRITEFILE_PATH, and readback
 - `usr/libexec/tests/heapprobe` - exercise malloc/free/realloc/calloc

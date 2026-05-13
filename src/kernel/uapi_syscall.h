@@ -35,7 +35,12 @@
 #define SYS_OPEN_MODE_APPEND 0x10u
 
 #define SYS_FD_FLAG_NONBLOCK 0x00000800u
+#define SYS_FD_FLAG_CLOEXEC  0x00080000u
 
+#define SYS_PIPE_BUF 4096u
+
+#define SYS_FCNTL_GETFD 1
+#define SYS_FCNTL_SETFD 2
 #define SYS_FCNTL_GETFL 3
 #define SYS_FCNTL_SETFL 4
 
@@ -136,7 +141,14 @@ enum {
     SYS_DIRLIST_BATCH   = 65, /* copy a range of directory entries */
     SYS_CLOCK_GETTIME   = 66, /* copy realtime/monotonic timespec */
     SYS_CLOCK_SETTIME   = 67, /* set CLOCK_REALTIME seconds/nanoseconds */
-    SYS_NTP_SYNC        = 68  /* query NTP server and set CLOCK_REALTIME */
+    SYS_NTP_SYNC        = 68, /* query NTP server and set CLOCK_REALTIME */
+    SYS_PIPE            = 69, /* create pipe fds */
+    SYS_PIPE2           = 70, /* create pipe fds with O_NONBLOCK/O_CLOEXEC */
+    SYS_DUP             = 71, /* duplicate fd */
+    SYS_DUP2            = 72, /* duplicate fd to exact fd */
+    SYS_DUP3            = 73, /* dup2 plus O_CLOEXEC */
+    SYS_FORK            = 74, /* clone current process */
+    SYS_EXECVE          = 75  /* replace current process image */
 };
 
 #endif

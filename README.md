@@ -21,11 +21,12 @@ guest.
 - E820-aware physical memory manager plus a simple kernel heap for permanent
   kernel allocations.
 - Preemptive round-robin scheduler with kernel tasks, ring-3 ELF processes,
-  per-process address spaces, per-process kernel stacks, `exec`, `waitpid`,
-  `yield`, zombie reaping, and user-fault isolation.
+  per-process address spaces, per-process kernel stacks, `fork`, `execve`,
+  legacy spawn-style `exec`, `waitpid`, `yield`, zombie reaping, and
+  user-fault isolation.
 - `int 0x80` syscall ABI for console I/O, files, directories, cwd, process
-  control, heap growth, time, framebuffer display, input, sockets, polling, and
-  timer/signalfd-style shims.
+  control, pipes, descriptor duplication, heap growth, time, framebuffer
+  display, input, sockets, polling, and timer/signalfd-style shims.
 - ATA disk driver and an ext2-backed VFS. The generated filesystem includes
   `/bin`, `/usr/bin`, `/usr/sbin`, `/usr/libexec/tests`, `/etc`, `/boot`,
   `/var`, and `/tmp`.

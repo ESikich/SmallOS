@@ -86,7 +86,7 @@ void _start(int argc, char** argv) {
     }
 
     errno = 0;
-    check_errno("execvp unsupported", ENOSYS, execvp("hello", 0));
+    check_errno("execvp missing", ENOENT, execvp("missing-nope", 0));
 
     errno = 0;
     {

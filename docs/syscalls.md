@@ -540,9 +540,61 @@ byte order for the address and port fields.
 int sys_fcntl(int fd, int cmd, uint32_t arg);
 ```
 
-Supports `SYS_FCNTL_GETFL` / `F_GETFL` and `SYS_FCNTL_SETFL` / `F_SETFL`.
-Only `SYS_FD_FLAG_NONBLOCK` / `O_NONBLOCK` is persisted today; unsupported
+Supports descriptor flags through `SYS_FCNTL_GETFD` / `F_GETFD` and
+`SYS_FCNTL_SETFD` / `F_SETFD`, plus status flags through `SYS_FCNTL_GETFL` /
+`F_GETFL` and `SYS_FCNTL_SETFL` / `F_SETFL`. `FD_CLOEXEC` is per descriptor;
+`O_NONBLOCK` is stored on the shared open-file description so duplicated and
+fork-inherited descriptors observe the same nonblocking state. Unsupported
 commands return `-EINVAL`.
+
+---
+
+### SYS_PIPE (69)
+
+```c
+int sys_pipe(int fds[2]);
+```
+
+Creates a unidirectional pipe and writes the read end to `fds[0]` and the write
+end to `fds[1]`. Pipes use a one-page ring buffer with `PIPE_BUF == 4096`.
+Writes of `PIPE_BUF` bytes or fewer are atomic: a blocking writer waits until
+the whole write can fit, and a nonblocking writer returns `-EAGAIN` without a
+partial write if the whole request cannot fit. Larger writes may complete
+partially.
+
+Reads from an empty pipe block while a writer exists, return `-EAGAIN` when the
+read end is nonblocking, and return `0` for EOF after all write ends close.
+Writes fail with `-EPIPE` and deliver `SIGPIPE` after all read ends close.
+`poll` and `epoll` report `POLLIN` for data or EOF, `POLLOUT` when space is
+available, and `POLLHUP` after the peer side closes.
+
+---
+
+### SYS_PIPE2 (70)
+
+```c
+int sys_pipe2(int fds[2], uint32_t flags);
+```
+
+Creates a pipe with initial flags. Accepted flags are `O_NONBLOCK` and
+`O_CLOEXEC`; other bits return `-EINVAL`.
+
+---
+
+### SYS_DUP (71), SYS_DUP2 (72), SYS_DUP3 (73)
+
+```c
+int sys_dup(int oldfd);
+int sys_dup2(int oldfd, int newfd);
+int sys_dup3(int oldfd, int newfd, uint32_t flags);
+```
+
+Duplicates descriptors in the POSIX shape. The new fd points at the same shared
+open-file description, so file offsets and status flags such as `O_NONBLOCK`
+are shared. Per-fd flags such as `FD_CLOEXEC` are independent: `dup` and
+`dup2` clear close-on-exec on the new descriptor, while `dup3` accepts
+`O_CLOEXEC`. `dup2(oldfd, oldfd)` succeeds as a no-op; `dup3(oldfd, oldfd)`
+returns `-EINVAL`.
 
 ---
 
@@ -552,8 +604,8 @@ commands return `-EINVAL`.
 int sys_epoll_create(int flags);
 ```
 
-Creates an epoll handle. `EPOLL_CLOEXEC` is accepted for compatibility but
-close-on-exec state is not modeled yet.
+Creates an epoll handle. `EPOLL_CLOEXEC` sets `FD_CLOEXEC` on the returned
+descriptor.
 
 ---
 
@@ -591,8 +643,8 @@ int sys_timerfd_create(int clock_id, int flags);
 ```
 
 Creates a timerfd handle for `CLOCK_REALTIME` or `CLOCK_MONOTONIC`.
-`TFD_NONBLOCK` is persisted as descriptor nonblocking state; `TFD_CLOEXEC` is
-accepted for compatibility but close-on-exec state is not modeled yet.
+`TFD_NONBLOCK` is persisted as descriptor nonblocking state; `TFD_CLOEXEC`
+sets `FD_CLOEXEC` on the returned descriptor.
 
 ---
 
@@ -617,7 +669,7 @@ int sys_signalfd(int fd, const sigset_t* mask, int flags);
 ```
 
 Creates or reconfigures a signalfd handle. `SFD_NONBLOCK` is persisted as
-descriptor nonblocking state and `SFD_CLOEXEC` is accepted for compatibility.
+descriptor nonblocking state and `SFD_CLOEXEC` sets `FD_CLOEXEC`.
 Kernel terminal interrupts now queue `SIGINT` to matching signalfds in the
 foreground process group before falling back to Ctrl+C group termination, and
 shell job `kill` queues `SIGTERM` to matching job-group signalfds before
@@ -635,8 +687,7 @@ int sys_accept4(int fd, struct sockaddr* addr,
 ```
 
 Accepts a queued TCP connection like `SYS_ACCEPT`, with support for
-`SOCK_NONBLOCK` on the returned descriptor. `SOCK_CLOEXEC` is accepted for
-compatibility but close-on-exec state is not modeled yet.
+`SOCK_NONBLOCK` and `SOCK_CLOEXEC` on the returned descriptor.
 
 ---
 
@@ -920,9 +971,42 @@ Requests a machine reboot through the kernel system path. Used by the
 int sys_exec(const char* name, int argc, char** argv);
 ```
 
-Loads and asynchronously spawns a named ELF program through the kernel VFS layer. Returns the child pid on success or a negative errno if validation, lookup, or load fails. The child is claimed for the caller until `SYS_WAITPID` collects it or the parent exits.
+Legacy spawn-style process creation. Loads and asynchronously spawns a named
+ELF program through the kernel VFS layer. Returns the child pid on success or a
+negative errno if validation, lookup, or load fails. The child is claimed for
+the caller until `SYS_WAITPID` collects it or the parent exits. New
+POSIX-shaped code should prefer `SYS_FORK` plus `SYS_EXECVE`.
 
 `sys_exec_impl` copies `name` to a local kernel stack buffer before any VFS or ELF work so the loader does not depend on the caller's user pointer remaining valid. It then calls `elf_run_named()`, which creates the process, seeds its scheduler bootstrap context, enqueues it, and returns immediately.
+
+---
+
+### SYS_FORK (74)
+
+```c
+int sys_fork(void);
+```
+
+Clones the current user process with eager address-space copying. The parent
+receives the child pid, and the child resumes from the same syscall frame with
+return value `0`. User memory is copied so later writes are independent. The fd
+table is duplicated as descriptors pointing to the same shared open-file
+descriptions, preserving shared file offsets and status flags.
+
+---
+
+### SYS_EXECVE (75)
+
+```c
+int sys_execve(const char* path, char* const argv[], char* const envp[]);
+```
+
+Replaces the current user image with a named ELF while preserving the process
+pid, cwd, process group, and descriptors that do not have `FD_CLOEXEC` set.
+The kernel validates and copies `path` and `argv` from user memory, closes
+close-on-exec descriptors, installs the new ELF address space, and returns to
+the new program entry point. `envp` is accepted for API shape but environment
+delivery is not modeled yet.
 
 ---
 
@@ -942,11 +1026,11 @@ Returns the current process id.
 int sys_waitpid(int pid, int* status, int options);
 ```
 
-Waits for a direct child spawned by `SYS_EXEC`. `pid > 0` waits for that child;
-`pid == -1` waits for any child. `SYS_WAITPID_WNOHANG` returns `0` immediately
-when the selected child has not exited. On success, returns the collected child
-pid and writes a POSIX-style wait status when `status` is non-null. Missing
-children return `-ECHILD`.
+Waits for a direct child created by legacy `SYS_EXEC` or POSIX-shaped
+`SYS_FORK`. `pid > 0` waits for that child; `pid == -1` waits for any child.
+`SYS_WAITPID_WNOHANG` returns `0` immediately when the selected child has not
+exited. On success, returns the collected child pid and writes a POSIX-style
+wait status when `status` is non-null. Missing children return `-ECHILD`.
 
 ---
 
@@ -969,9 +1053,10 @@ int sys_open(const char* name);
 
 Legacy shorthand for `SYS_OPEN_MODE_READ`. Opens an ext2 file by path
 (case-sensitive native ext2 matching per component). Allocates the lowest free
-slot in the calling process's handle table (fd ≥ 3) and records the filename,
-file size, and an initial read offset of 0. fds 0/1/2 are pre-opened console
-handles.
+slot in the calling process's handle table (fd >= 3). The fd points to a shared
+open-file description containing the current offset, status flags, cached file
+data, and backing filename. Duplicated descriptors and fork-inherited
+descriptors share that description. fds 0/1/2 are pre-opened console handles.
 
 Returns the fd (≥ 3) on success, or a negative errno if the file is not found,
 the path names a directory, the process handle table is full, or the name
@@ -1002,7 +1087,11 @@ int sys_fread(int fd, char* buf, uint32_t len);
 
 Reads up to `len` bytes from an open readable handle at `fd` into `buf`. File handles read from the current file position and advance it by the number of bytes actually read. Socket handles read from the TCP receive path, which uses the connected stream's lazy 4 KiB PMM-backed RX ring. Socket writes use a lazy 16 KiB PMM-backed TX ring, observe global RX/TX caps, and report writable readiness from remaining TX capacity. fd `0` reads from the console input buffer with the same blocking behavior as `SYS_READ`. Returns the number of bytes read, `0` at end-of-file / closed socket, or a negative errno on error.
 
-For file handles, the read op loads the file once into PMM-backed per-fd cache pages on first use, then copies the requested slice from that cache into the validated user buffer. The cache stays live until `sys_close()` or process teardown, so repeated reads from the same descriptor avoid extra ATA traffic.
+For file handles, the read op loads the file once into PMM-backed shared file
+cache pages on first use, then copies the requested slice from that cache into
+the validated user buffer. The cache stays live until the shared open-file
+description is closed, so duplicated and fork-inherited descriptors reuse it
+and share the current file offset.
 
 ---
 
@@ -1072,6 +1161,13 @@ sys_exec(name, argc, argv)
 sys_getpid()
 sys_waitpid(pid, status, options)
 sys_kill(pid, signum)
+sys_pipe(fds)
+sys_pipe2(fds, flags)
+sys_dup(oldfd)
+sys_dup2(oldfd, newfd)
+sys_dup3(oldfd, newfd, flags)
+sys_fork()
+sys_execve(path, argv, envp)
 sys_writefile(name, buf, len)
 sys_writefile_path(path, buf, len)
 sys_open(name)
@@ -1145,7 +1241,7 @@ u_stat(...)        query path metadata
 * `SYS_YIELD` and the timer path use the same stub layout, but the real scheduler resume ESP is `esp - 8`, not raw `esp`
 * EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`; IRQ12 sends EOI to both PICs before decoding a PS/2 mouse packet
 * The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.
-* fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`); user-opened files and sockets start at fd 3. The handle table is PMM-backed process state: it starts at 16 slots, grows up to the default 128-fd process limit, and has a kernel hard cap of 256. Every handle carries readable/writable/dirty state plus an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`. `process.c` owns fd lifetime and dispatch, `vfs.c` owns ext2-backed file behavior, `socket.c` owns kernel socket objects plus accept/read/write wait queues, and `tcp.c` owns passive TCP listeners, the global 4-tuple connection table, and the lazy RX/TX rings behind connected sockets.
+* fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`); user-opened files, pipes, sockets, and event handles start at fd 3. The descriptor table is PMM-backed process state: it starts at 16 slots, grows up to the default 128-fd process limit, and has a kernel hard cap of 256. Every handle carries readable/writable state plus an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`. File, pipe, and socket resources are shared/refcounted when descriptors are duplicated or inherited across `fork()`, while `FD_CLOEXEC` is per descriptor. `process.c` owns fd lifetime and dispatch, `vfs.c` owns ext2-backed file behavior, `socket.c` owns kernel socket objects plus accept/read/write wait queues, and `tcp.c` owns passive TCP listeners, the global 4-tuple connection table, and the lazy RX/TX rings behind connected sockets.
 * `SYS_WRITEFILE` is the simplest root-only persistence path for user tools that want to emit a generated artifact without managing an fd-based write stream.
 * `SYS_WRITEFILE_PATH` is the preferred path-aware persistence primitive for compilers and build tools, especially when writing into nested directories.
 

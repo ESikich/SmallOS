@@ -43,7 +43,8 @@ typedef enum {
     PROCESS_HANDLE_KIND_CONSOLE = 3,
     PROCESS_HANDLE_KIND_EPOLL = 4,
     PROCESS_HANDLE_KIND_TIMERFD = 5,
-    PROCESS_HANDLE_KIND_SIGNALFD = 6
+    PROCESS_HANDLE_KIND_SIGNALFD = 6,
+    PROCESS_HANDLE_KIND_PIPE = 7
 } process_handle_kind_t;
 
 typedef enum {
@@ -73,6 +74,7 @@ struct fd_entry {
     int  dirty;                            /* 1 if buffered file writes need flush */
     int  is_dir;                           /* 1 for directory descriptors */
     u32  flags;                            /* SYS_FD_FLAG_* descriptor status flags */
+    u32  fd_flags;                         /* per-descriptor flags, e.g. FD_CLOEXEC */
     u32  socket_state;                     /* PROCESS_SOCKET_STATE_* */
     u32  socket_port;                      /* listener or peer port */
     u32  socket_conn;                      /* global accepted TCP stream id */
@@ -145,6 +147,10 @@ int        process_fd_open_file_mode(process_t* proc,
                                      int writable);
 int        process_fd_open_socket(process_t* proc, const char* name);
 int        process_fd_open_special(process_t* proc, int kind, const char* name);
+int        process_fd_pipe(process_t* proc, int fds[2], unsigned int flags);
+int        process_fd_dup(process_t* proc, int oldfd, int minfd, unsigned int fd_flags);
+int        process_fd_dup2(process_t* proc, int oldfd, int newfd, unsigned int fd_flags, int reject_same);
+int        process_fd_dup_from(process_t* dst, int newfd, process_t* src, int oldfd, unsigned int fd_flags);
 void       process_fd_close(fd_entry_t* ent);
 int        process_fd_read(fd_entry_t* ent, char* buf, unsigned int len);
 int        process_fd_read_raw(fd_entry_t* ent, char* buf, unsigned int len);
@@ -155,6 +161,11 @@ int        process_fd_flush(fd_entry_t* ent);
 int        process_fd_seek(fd_entry_t* ent, int offset, int whence);
 int        process_fd_set_flags(fd_entry_t* ent, unsigned int flags);
 unsigned int process_fd_get_flags(fd_entry_t* ent);
+int        process_fd_set_fd_flags(fd_entry_t* ent, unsigned int flags);
+unsigned int process_fd_get_fd_flags(fd_entry_t* ent);
+void       process_close_cloexec_fds(process_t* proc);
+int        process_copy_fd_table(process_t* dst, process_t* src);
+process_t* process_fork_from_syscall(unsigned int regs_esp, unsigned int frame_top);
 int        process_fd_set_signalfd_mask(fd_entry_t* ent, unsigned int mask);
 void       process_wake_timerfds(process_t* proc, unsigned int now);
 void       process_claim_for_wait(process_t* proc);

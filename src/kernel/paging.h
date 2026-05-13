@@ -109,6 +109,7 @@ u32* paging_get_kernel_pd(void);
  * Returns 0 (via paging_panic — halts) on allocation failure.
  */
 u32* process_pd_create(void);
+u32* process_pd_clone_user(u32* src_pd);
 
 /*
  * process_pd_destroy(pd)

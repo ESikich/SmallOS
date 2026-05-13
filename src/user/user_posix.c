@@ -69,14 +69,8 @@ int fcntl(int fd, int cmd, ...) {
         __builtin_va_end(ap);
     }
 
-    if (cmd == F_GETFL || cmd == F_SETFL) {
+    if (cmd == F_GETFD || cmd == F_SETFD || cmd == F_GETFL || cmd == F_SETFL) {
         return errno_from_raw(sys_fcntl(fd, cmd, arg));
-    }
-    if (cmd == F_GETFD) {
-        return 0;
-    }
-    if (cmd == F_SETFD) {
-        return 0;
     }
 
     set_errno(EINVAL);
@@ -180,10 +174,94 @@ int remove(const char* path) {
     return unlink(path);
 }
 
+int pipe(int fds[2]) {
+    return errno_from_raw(sys_pipe(fds));
+}
+
+int pipe2(int fds[2], int flags) {
+    return errno_from_raw(sys_pipe2(fds, flags));
+}
+
+int dup(int oldfd) {
+    return errno_from_raw(sys_dup(oldfd));
+}
+
+int dup2(int oldfd, int newfd) {
+    return errno_from_raw(sys_dup2(oldfd, newfd));
+}
+
+int dup3(int oldfd, int newfd, int flags) {
+    return errno_from_raw(sys_dup3(oldfd, newfd, flags));
+}
+
+pid_t fork(void) {
+    return (pid_t)errno_from_raw(sys_fork());
+}
+
+int execve(const char* path, char* const argv[], char* const envp[]) {
+    return errno_from_raw(sys_execve(path, argv, envp));
+}
+
+int execv(const char* path, char* const argv[]) {
+    return execve(path, argv, 0);
+}
+
+static int path_has_sep_user(const char* path) {
+    if (!path) return 0;
+    for (const char* p = path; *p; p++) {
+        if (*p == '/' || *p == '\\') return 1;
+    }
+    return 0;
+}
+
+static int join_exec_path(char* out, unsigned int out_size, const char* dir, const char* file) {
+    unsigned int pos = 0;
+    if (!out || !dir || !file || out_size == 0) return 0;
+    while (dir[pos]) {
+        if (pos + 1 >= out_size) return 0;
+        out[pos] = dir[pos];
+        pos++;
+    }
+    if (pos > 0 && out[pos - 1] != '/') {
+        if (pos + 1 >= out_size) return 0;
+        out[pos++] = '/';
+    }
+    for (unsigned int i = 0; file[i]; i++) {
+        if (pos + 1 >= out_size) return 0;
+        out[pos++] = file[i];
+    }
+    out[pos] = '\0';
+    return 1;
+}
+
 int execvp(const char* file, char* const argv[]) {
-    (void)file;
-    (void)argv;
-    set_errno(ENOSYS);
+    static const char* dirs[] = { "", "bin", "usr/bin", "usr/sbin" };
+    char path[128];
+    int last_errno = ENOENT;
+
+    if (!file || !file[0]) {
+        set_errno(ENOENT);
+        return -1;
+    }
+    if (path_has_sep_user(file)) {
+        return execve(file, argv, 0);
+    }
+    for (unsigned int i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++) {
+        if (dirs[i][0] == '\0') {
+            if (strlen(file) + 1u > sizeof(path)) {
+                set_errno(ENAMETOOLONG);
+                return -1;
+            }
+            strcpy(path, file);
+        } else if (!join_exec_path(path, sizeof(path), dirs[i], file)) {
+            set_errno(ENAMETOOLONG);
+            return -1;
+        }
+        execve(path, argv, 0);
+        last_errno = errno;
+        if (last_errno != ENOENT) break;
+    }
+    set_errno(last_errno);
     return -1;
 }
 

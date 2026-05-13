@@ -5,7 +5,10 @@
 #include "ext2.h"
 
 const process_handle_ops_t* vfs_file_ops(void);
-void vfs_file_init(fd_entry_t* ent, const char* path, u32 size, int readable, int writable);
+int vfs_file_init(fd_entry_t* ent, const char* path, u32 size, int readable, int writable);
+void vfs_file_retain(fd_entry_t* ent);
+void vfs_file_set_is_dir(fd_entry_t* ent, int is_dir);
+int vfs_file_stat_fd(fd_entry_t* ent, u32* out_size, int* out_is_dir);
 
 const u8* vfs_load_file(const char* path, u32* out_size);
 int vfs_stat(const char* path, u32* out_size, int* out_is_dir);

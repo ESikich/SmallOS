@@ -18,7 +18,7 @@ CASES = [
             "close directory: PASS",
             "chdir file: PASS",
             "getcwd tiny result: PASS",
-            "execvp unsupported: PASS",
+            "execvp missing: PASS",
             "fd exhaustion count: PASS",
             "fd exhaustion errno: PASS",
             "errnoprobe PASS",

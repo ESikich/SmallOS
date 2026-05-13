@@ -17,31 +17,64 @@ typedef struct {
     fd_entry_t* ent;
 } vfs_page_sink_t;
 
+typedef struct vfs_file_object {
+    unsigned int refs;
+    int readable;
+    int writable;
+    int dirty;
+    int is_dir;
+    char name[PROCESS_FD_NAME_MAX];
+    u32 size;
+    u32 offset;
+    u32 cache_page_count;
+    u32 cache_pages_frame;
+} vfs_file_object_t;
+
 static int vfs_page_sink_write(void* ctx, u32 offset, const u8* data, u32 len);
 static int vfs_file_flush(fd_entry_t* ent);
+
+static vfs_file_object_t* vfs_file_object(fd_entry_t* ent) {
+    if (!ent || ent->kind != PROCESS_HANDLE_KIND_FILE || !ent->aux_frame) return 0;
+    return (vfs_file_object_t*)paging_phys_to_kernel_virt(ent->aux_frame);
+}
+
+static void vfs_file_sync_entry(fd_entry_t* ent) {
+    vfs_file_object_t* obj = vfs_file_object(ent);
+    if (!ent || !obj) return;
+    ent->readable = obj->readable;
+    ent->writable = obj->writable;
+    ent->dirty = obj->dirty;
+    ent->is_dir = obj->is_dir;
+    ent->size = obj->size;
+    ent->offset = obj->offset;
+    ent->cache_page_count = obj->cache_page_count;
+    ent->cache_pages_frame = obj->cache_pages_frame;
+}
 
 static void vfs_zero_frame(u32 frame) {
     k_memset(paging_phys_to_kernel_virt(frame), 0, 4096u);
 }
 
 static int vfs_cache_page_frame(fd_entry_t* ent, u32 page_idx, u32* out_frame) {
-    if (!ent || !out_frame || !ent->cache_pages_frame ||
-        page_idx >= ent->cache_page_count) {
+    vfs_file_object_t* obj = vfs_file_object(ent);
+    if (!obj || !out_frame || !obj->cache_pages_frame ||
+        page_idx >= obj->cache_page_count) {
         return 0;
     }
 
-    u32* cache_pages = (u32*)paging_phys_to_kernel_virt(ent->cache_pages_frame);
+    u32* cache_pages = (u32*)paging_phys_to_kernel_virt(obj->cache_pages_frame);
     *out_frame = cache_pages[page_idx];
 
     return *out_frame ? 1 : 0;
 }
 
 static int vfs_set_cache_page_frame(fd_entry_t* ent, u32 page_idx, u32 frame) {
-    if (!ent || !ent->cache_pages_frame || page_idx >= PROCESS_FD_CACHE_PAGES) {
+    vfs_file_object_t* obj = vfs_file_object(ent);
+    if (!obj || !obj->cache_pages_frame || page_idx >= PROCESS_FD_CACHE_PAGES) {
         return 0;
     }
 
-    u32* cache_pages = (u32*)paging_phys_to_kernel_virt(ent->cache_pages_frame);
+    u32* cache_pages = (u32*)paging_phys_to_kernel_virt(obj->cache_pages_frame);
     cache_pages[page_idx] = frame;
 
     return 1;
@@ -49,9 +82,10 @@ static int vfs_set_cache_page_frame(fd_entry_t* ent, u32 page_idx, u32 frame) {
 
 static int vfs_copy_from_cache(fd_entry_t* ent, u32 offset, u8* out, u32 len) {
     u32 copied = 0;
+    vfs_file_object_t* obj = vfs_file_object(ent);
 
-    if (!ent || !out) return 0;
-    if (offset > ent->size || len > ent->size - offset) return 0;
+    if (!obj || !out) return 0;
+    if (offset > obj->size || len > obj->size - offset) return 0;
 
     while (copied < len) {
         u32 pos = offset + copied;
@@ -77,9 +111,10 @@ static int vfs_copy_from_cache(fd_entry_t* ent, u32 offset, u8* out, u32 len) {
 static int vfs_copy_to_cache(fd_entry_t* ent, u32 offset, const u8* data, u32 len) {
     u32 copied = 0;
     u32 capacity;
+    vfs_file_object_t* obj = vfs_file_object(ent);
 
-    if (!ent || !data) return 0;
-    capacity = ent->cache_page_count * 4096u;
+    if (!obj || !data) return 0;
+    capacity = obj->cache_page_count * 4096u;
     if (offset > capacity || len > capacity - offset) return 0;
 
     while (copied < len) {
@@ -104,65 +139,73 @@ static int vfs_copy_to_cache(fd_entry_t* ent, u32 offset, const u8* data, u32 le
 }
 
 static int vfs_file_ensure_page_table(fd_entry_t* ent) {
-    if (!ent) return 0;
-    if (ent->cache_pages_frame) return 1;
+    vfs_file_object_t* obj = vfs_file_object(ent);
+    if (!obj) return 0;
+    if (obj->cache_pages_frame) return 1;
 
     u32 frame = pmm_alloc_frame();
     if (!frame) {
         return 0;
     }
     vfs_zero_frame(frame);
-    ent->cache_pages_frame = frame;
+    obj->cache_pages_frame = frame;
+    vfs_file_sync_entry(ent);
     return 1;
 }
 
 static void vfs_file_cache_free(fd_entry_t* ent) {
-    if (!ent) return;
+    vfs_file_object_t* obj = vfs_file_object(ent);
+    if (!obj) return;
 
-    for (unsigned int i = 0; i < ent->cache_page_count; i++) {
+    for (unsigned int i = 0; i < obj->cache_page_count; i++) {
         u32 frame = 0;
         if (vfs_cache_page_frame(ent, i, &frame)) {
             pmm_free_frame(frame);
             vfs_set_cache_page_frame(ent, i, 0);
         }
     }
-    ent->cache_page_count = 0;
-    if (ent->cache_pages_frame) {
-        pmm_free_frame(ent->cache_pages_frame);
-        ent->cache_pages_frame = 0;
+    obj->cache_page_count = 0;
+    if (obj->cache_pages_frame) {
+        pmm_free_frame(obj->cache_pages_frame);
+        obj->cache_pages_frame = 0;
     }
+    vfs_file_sync_entry(ent);
 }
 
 static int vfs_file_ensure_capacity(fd_entry_t* ent, unsigned int bytes) {
     unsigned int needed_pages = (bytes + 4095u) / 4096u;
+    vfs_file_object_t* obj = vfs_file_object(ent);
+    if (!obj) return 0;
     if (needed_pages > PROCESS_FD_CACHE_PAGES) {
         return 0;
     }
     if (needed_pages > 0 && !vfs_file_ensure_page_table(ent)) {
         return 0;
     }
-    while (ent->cache_page_count < needed_pages) {
+    while (obj->cache_page_count < needed_pages) {
         u32 frame = pmm_alloc_frame();
         if (!frame) {
             return 0;
         }
         vfs_zero_frame(frame);
-        if (!vfs_set_cache_page_frame(ent, ent->cache_page_count, frame)) {
+        if (!vfs_set_cache_page_frame(ent, obj->cache_page_count, frame)) {
             pmm_free_frame(frame);
             return 0;
         }
-        ent->cache_page_count++;
+        obj->cache_page_count++;
     }
+    vfs_file_sync_entry(ent);
     return 1;
 }
 
 static int vfs_file_load_cache(fd_entry_t* ent) {
-    if (!ent) return 0;
-    if (ent->cache_page_count != 0) return 1;
-    if (ent->size == 0) return 1;
-    if (ent->size > VFS_FILE_CACHE_MAX_BYTES) return 0;
+    vfs_file_object_t* obj = vfs_file_object(ent);
+    if (!obj) return 0;
+    if (obj->cache_page_count != 0) return 1;
+    if (obj->size == 0) return 1;
+    if (obj->size > VFS_FILE_CACHE_MAX_BYTES) return 0;
 
-    if (!vfs_file_ensure_capacity(ent, ent->size)) {
+    if (!vfs_file_ensure_capacity(ent, obj->size)) {
         return 0;
     }
 
@@ -170,11 +213,11 @@ static int vfs_file_load_cache(fd_entry_t* ent) {
     vfs_page_sink_t page_sink = { ent };
     ext2_data_sink_t sink = { &page_sink, vfs_page_sink_write };
 
-    if (!ext2_read_path_to_sink(ent->name, &sink, &loaded_size)) {
+    if (!ext2_read_path_to_sink(obj->name, &sink, &loaded_size)) {
         vfs_file_cache_free(ent);
         return 0;
     }
-    if (loaded_size != ent->size) {
+    if (loaded_size != obj->size) {
         vfs_file_cache_free(ent);
         return 0;
     }
@@ -192,83 +235,90 @@ static int vfs_page_sink_write(void* ctx, u32 offset, const u8* data, u32 len) {
 
 static int vfs_file_read(fd_entry_t* ent, char* buf, unsigned int len) {
     u32 read_len = 0;
+    vfs_file_object_t* obj = vfs_file_object(ent);
 
-    if (!ent || !ent->valid || !ent->readable) return -EBADF;
-    if (ent->is_dir) return -EISDIR;
+    if (!ent || !ent->valid || !obj || !obj->readable) return -EBADF;
+    if (obj->is_dir) return -EISDIR;
     if (len == 0) return 0;
-    if (ent->offset >= ent->size) return 0;
+    if (obj->offset >= obj->size) return 0;
 
-    if (ent->size <= VFS_FILE_CACHE_MAX_BYTES) {
+    if (obj->size <= VFS_FILE_CACHE_MAX_BYTES) {
         unsigned int remaining;
         unsigned int to_copy;
         unsigned int src_off;
 
         if (!vfs_file_load_cache(ent)) return -EIO;
 
-        remaining = ent->size - ent->offset;
+        remaining = obj->size - obj->offset;
         to_copy = (len < remaining) ? len : remaining;
-        src_off = ent->offset;
+        src_off = obj->offset;
 
         if (!vfs_copy_from_cache(ent, src_off, (u8*)buf, to_copy)) return -EIO;
 
-        ent->offset += to_copy;
+        obj->offset += to_copy;
+        vfs_file_sync_entry(ent);
         return (int)to_copy;
     }
 
-    if (!ext2_read_at_path(ent->name, ent->offset, (u8*)buf, len, &read_len)) {
+    if (!ext2_read_at_path(obj->name, obj->offset, (u8*)buf, len, &read_len)) {
         return -EIO;
     }
 
-    ent->offset += read_len;
+    obj->offset += read_len;
+    vfs_file_sync_entry(ent);
     return (int)read_len;
 }
 
 static int vfs_file_write(fd_entry_t* ent, const char* buf, unsigned int len) {
-    if (!ent || !ent->valid || !ent->writable) return -EBADF;
-    if (ent->is_dir) return -EISDIR;
+    vfs_file_object_t* obj = vfs_file_object(ent);
+    if (!ent || !ent->valid || !obj || !obj->writable) return -EBADF;
+    if (obj->is_dir) return -EISDIR;
     if (len == 0) return 0;
 
-    unsigned int end = ent->offset + len;
-    if (end < ent->offset) return -EFBIG;
+    unsigned int end = obj->offset + len;
+    if (end < obj->offset) return -EFBIG;
 
-    if (end <= VFS_FILE_CACHE_MAX_BYTES && ent->size <= VFS_FILE_CACHE_MAX_BYTES) {
-        if (ent->size > 0 && ent->cache_page_count == 0 && !vfs_file_load_cache(ent)) {
+    if (end <= VFS_FILE_CACHE_MAX_BYTES && obj->size <= VFS_FILE_CACHE_MAX_BYTES) {
+        if (obj->size > 0 && obj->cache_page_count == 0 && !vfs_file_load_cache(ent)) {
             return -EIO;
         }
         if (!vfs_file_ensure_capacity(ent, end)) {
             return -EIO;
         }
-        if (!vfs_copy_to_cache(ent, ent->offset, (const u8*)buf, len)) {
+        if (!vfs_copy_to_cache(ent, obj->offset, (const u8*)buf, len)) {
             return -EIO;
         }
 
-        ent->offset = end;
-        if (end > ent->size) {
-            ent->size = end;
+        obj->offset = end;
+        if (end > obj->size) {
+            obj->size = end;
         }
-        ent->dirty = 1;
+        obj->dirty = 1;
+        vfs_file_sync_entry(ent);
         return (int)len;
     }
 
-    if (ent->dirty && !vfs_file_flush(ent)) {
+    if (obj->dirty && !vfs_file_flush(ent)) {
         return -EIO;
     }
-    if (!ext2_write_at_path(ent->name, ent->offset, (const u8*)buf, len, &ent->size, 1)) {
+    if (!ext2_write_at_path(obj->name, obj->offset, (const u8*)buf, len, &obj->size, 1)) {
         return -EIO;
     }
 
-    ent->offset = end;
+    obj->offset = end;
     vfs_file_cache_free(ent);
-    ent->dirty = 0;
+    obj->dirty = 0;
+    vfs_file_sync_entry(ent);
     return (int)len;
 }
 
 static int vfs_page_source_read(void* ctx, u32 offset, u8* out, u32 len) {
     vfs_page_source_t* source = (vfs_page_source_t*)ctx;
     fd_entry_t* ent = source ? source->ent : 0;
+    vfs_file_object_t* obj = vfs_file_object(ent);
 
-    if (!ent || !out) return 0;
-    if (offset > ent->size || len > ent->size - offset) return 0;
+    if (!obj || !out) return 0;
+    if (offset > obj->size || len > obj->size - offset) return 0;
 
     return vfs_copy_from_cache(ent, offset, out, len);
 }
@@ -276,22 +326,24 @@ static int vfs_page_source_read(void* ctx, u32 offset, u8* out, u32 len) {
 static int vfs_file_seek(fd_entry_t* ent, int offset, int whence) {
     unsigned int base;
     int new_off;
+    vfs_file_object_t* obj = vfs_file_object(ent);
 
-    if (!ent || !ent->valid) return -EBADF;
+    if (!ent || !ent->valid || !obj) return -EBADF;
 
     if (whence == 0) {
         base = 0;
     } else if (whence == 1) {
-        base = ent->offset;
+        base = obj->offset;
     } else if (whence == 2) {
-        base = ent->size;
+        base = obj->size;
     } else {
         return -EINVAL;
     }
 
     new_off = (int)base + offset;
     if (new_off < 0) return -EINVAL;
-    ent->offset = (unsigned int)new_off;
+    obj->offset = (unsigned int)new_off;
+    vfs_file_sync_entry(ent);
     return new_off;
 }
 
@@ -309,29 +361,47 @@ static short vfs_file_poll(fd_entry_t* ent, short events) {
 }
 
 static int vfs_file_flush(fd_entry_t* ent) {
-    if (!ent || !ent->valid || !ent->writable) {
-        return 0;
-    }
-    if (!ent->dirty) {
+    vfs_file_object_t* obj = vfs_file_object(ent);
+    if (!ent || !ent->valid || !obj || !obj->writable) {
         return 1;
     }
-    if (ent->size > VFS_FILE_CACHE_MAX_BYTES) {
+    if (!obj->dirty) {
+        return 1;
+    }
+    if (obj->size > VFS_FILE_CACHE_MAX_BYTES) {
         return 0;
     }
 
     vfs_page_source_t page_source = { ent };
     ext2_data_source_t source = { &page_source, vfs_page_source_read };
 
-    if (!ext2_write_path_from_source(ent->name, &source, ent->size)) {
+    if (!ext2_write_path_from_source(obj->name, &source, obj->size)) {
         return 0;
     }
-    ent->dirty = 0;
+    obj->dirty = 0;
+    vfs_file_sync_entry(ent);
     return 1;
 }
 
 static void vfs_file_close(fd_entry_t* ent) {
+    vfs_file_object_t* obj;
+    u32 obj_frame;
+
     if (!ent) return;
-    vfs_file_cache_free(ent);
+    obj = vfs_file_object(ent);
+    obj_frame = ent->aux_frame;
+    if (obj) {
+        if (obj->refs > 1u) {
+            obj->refs--;
+            k_memset(ent, 0, sizeof(*ent));
+            return;
+        }
+        if (obj->writable && obj->dirty) {
+            (void)vfs_file_flush(ent);
+        }
+        vfs_file_cache_free(ent);
+        pmm_free_frame(obj_frame);
+    }
     k_memset(ent, 0, sizeof(*ent));
 }
 
@@ -348,8 +418,15 @@ const process_handle_ops_t* vfs_file_ops(void) {
     return &s_file_ops;
 }
 
-void vfs_file_init(fd_entry_t* ent, const char* path, u32 size, int readable, int writable) {
-    if (!ent || !path) return;
+int vfs_file_init(fd_entry_t* ent, const char* path, u32 size, int readable, int writable) {
+    vfs_file_object_t* obj;
+    u32 frame;
+
+    if (!ent || !path) return -EINVAL;
+    frame = pmm_alloc_frame();
+    if (!frame) return -ENOMEM;
+    obj = (vfs_file_object_t*)paging_phys_to_kernel_virt(frame);
+    k_memset(obj, 0, PAGE_SIZE);
 
     ent->kind = PROCESS_HANDLE_KIND_FILE;
     ent->ops = &s_file_ops;
@@ -360,6 +437,46 @@ void vfs_file_init(fd_entry_t* ent, const char* path, u32 size, int readable, in
     ent->offset = 0;
     ent->cache_page_count = 0;
     k_memcpy(ent->name, path, (k_size_t)k_strlen(path) + 1u);
+
+    obj->refs = 1u;
+    obj->readable = ent->readable;
+    obj->writable = ent->writable;
+    obj->dirty = 0;
+    obj->is_dir = ent->is_dir;
+    obj->size = size;
+    obj->offset = 0;
+    obj->cache_page_count = 0;
+    obj->cache_pages_frame = 0;
+    k_memcpy(obj->name, path, (k_size_t)k_strlen(path) + 1u);
+    ent->aux_frame = frame;
+    return 0;
+}
+
+void vfs_file_retain(fd_entry_t* ent) {
+    vfs_file_object_t* obj = vfs_file_object(ent);
+    if (!obj) return;
+    obj->refs++;
+    vfs_file_sync_entry(ent);
+}
+
+void vfs_file_set_is_dir(fd_entry_t* ent, int is_dir) {
+    vfs_file_object_t* obj = vfs_file_object(ent);
+    if (!obj) {
+        if (ent) ent->is_dir = is_dir ? 1 : 0;
+        return;
+    }
+    obj->is_dir = is_dir ? 1 : 0;
+    vfs_file_sync_entry(ent);
+}
+
+int vfs_file_stat_fd(fd_entry_t* ent, u32* out_size, int* out_is_dir) {
+    vfs_file_object_t* obj = vfs_file_object(ent);
+    if (!ent || !ent->valid || ent->kind != PROCESS_HANDLE_KIND_FILE || !obj) {
+        return -EBADF;
+    }
+    if (out_size) *out_size = obj->is_dir ? 0u : obj->size;
+    if (out_is_dir) *out_is_dir = obj->is_dir ? 1 : 0;
+    return 0;
 }
 
 const u8* vfs_load_file(const char* path, u32* out_size) {

@@ -23,6 +23,7 @@
 
 static void print_command_list(void);
 static int run_app_command(command_t* cmd, const char* program);
+static int run_pipeline(command_t* cmd);
 static int resolve_app_command_path(const char* name, char* out, unsigned int out_size);
 static int resolve_shell_path_arg(const char* input, char* out, unsigned int out_size);
 static int command_name_has_path_sep(const char* name);
@@ -1085,6 +1086,8 @@ static void cmd_shelltest(command_t* cmd) {
     command_t help_cmd = { 1, { "help" } };
     command_t clear_cmd = { 1, { "clear" } };
     command_t echo_cmd = { 4, { "echo", "alpha", "beta", "gamma" } };
+    static command_t pipeline_cmd = { 4, { "echo", "pipeline-ok", "|", "cat" } };
+    static command_t pipeline3_cmd = { 6, { "echo", "pipeline3-ok", "|", "cat", "|", "cat" } };
     command_t about_cmd = { 1, { "about" } };
     command_t uptime_cmd = { 1, { "uptime" } };
     command_t meminfo_cmd = { 1, { "meminfo" } };
@@ -1165,6 +1168,8 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("help", cmd_help, &help_cmd);
     shelltest_call("clear", cmd_clear, &clear_cmd);
     shelltest_exec("echo", &echo_cmd);
+    shelltest_exec("pipeline", &pipeline_cmd);
+    shelltest_exec("pipeline3", &pipeline3_cmd);
     shelltest_exec("about", &about_cmd);
     shelltest_exec("uptime", &uptime_cmd);
     shelltest_call("meminfo", cmd_meminfo, &meminfo_cmd);
@@ -1327,6 +1332,10 @@ static void cmd_selftest(command_t* cmd) {
     static char* preempt_argv[] = { "usr/libexec/tests/preempt_test", "alpha", "beta", 0 };
     static char* crtprobe_argv[] = { "usr/libexec/tests/crtprobe.elf", "alpha", "nested/path", "longish-argument-0123456789abcdef", 0 };
     static char* inputprobe_argv[] = { "usr/libexec/tests/inputprobe", "alpha", "beta", 0 };
+    static char* pipeprobe_argv[] = { "usr/libexec/tests/pipeprobe", 0 };
+    static char* dupprobe_argv[] = { "usr/libexec/tests/dupprobe", 0 };
+    static char* forkprobe_argv[] = { "usr/libexec/tests/forkprobe", 0 };
+    static char* execveprobe_argv[] = { "usr/libexec/tests/execveprobe", 0 };
     static char* fault_ud_argv[] = { "usr/libexec/tests/fault", "ud", 0 };
     static char* fault_gp_argv[] = { "usr/libexec/tests/fault", "gp", 0 };
     static char* fault_de_argv[] = { "usr/libexec/tests/fault", "de", 0 };
@@ -1358,6 +1367,10 @@ static void cmd_selftest(command_t* cmd) {
         { "preempt_test","usr/libexec/tests/preempt_test",1, preempt_argv,     0 }, /* timer-preemption regression */
         { "crtprobe",    "usr/libexec/tests/crtprobe.elf",4, crtprobe_argv,    7 },
         { "inputprobe",  "usr/libexec/tests/inputprobe", 1, inputprobe_argv,   0 }, /* input event queue regression */
+        { "pipeprobe",   "usr/libexec/tests/pipeprobe",  1, pipeprobe_argv,    0 },
+        { "dupprobe",    "usr/libexec/tests/dupprobe",   1, dupprobe_argv,     0 },
+        { "forkprobe",   "usr/libexec/tests/forkprobe",  1, forkprobe_argv,    0 },
+        { "execveprobe", "usr/libexec/tests/execveprobe",1, execveprobe_argv,  0 },
         { "fault ud",    "usr/libexec/tests/fault",      2, fault_ud_argv,    6 },
         { "fault gp",    "usr/libexec/tests/fault",      2, fault_gp_argv,   13 },
         { "fault de",    "usr/libexec/tests/fault",      2, fault_de_argv,    0 },
@@ -1450,6 +1463,101 @@ const char* commands_name_at(unsigned int index) {
     return 0;
 }
 
+static void close_shell_fd(process_t* shell_proc, int fd) {
+    fd_entry_t* ent = process_fd_get(shell_proc, fd);
+    if (ent) {
+        process_fd_close(ent);
+    }
+}
+
+static int run_pipeline(command_t* cmd) {
+    enum { PIPELINE_MAX = 8 };
+    command_t stages[PIPELINE_MAX];
+    char paths[PIPELINE_MAX][SHELL_PATH_MAX];
+    process_t* procs[PIPELINE_MAX];
+    int pipes[PIPELINE_MAX - 1][2];
+    int stage_count = 0;
+    int arg_start = 0;
+    process_t* shell_proc = sched_current();
+
+    if (!shell_proc) return 0;
+    for (int i = 0; i < PIPELINE_MAX; i++) procs[i] = 0;
+    for (int i = 0; i < PIPELINE_MAX - 1; i++) {
+        pipes[i][0] = -1;
+        pipes[i][1] = -1;
+    }
+
+    for (int i = 0; i <= cmd->argc; i++) {
+        if (i == cmd->argc || k_strcmp(cmd->argv[i], "|")) {
+            int argc = i - arg_start;
+            if (argc <= 0 || stage_count >= PIPELINE_MAX) {
+                terminal_puts("pipeline: syntax error\n");
+                return 0;
+            }
+            stages[stage_count].argc = argc;
+            for (int j = 0; j < argc && j < MAX_ARGS; j++) {
+                stages[stage_count].argv[j] = cmd->argv[arg_start + j];
+            }
+            if (!resolve_app_command_path(stages[stage_count].argv[0],
+                                          paths[stage_count],
+                                          sizeof(paths[stage_count]))) {
+                terminal_puts("pipeline: command not found: ");
+                terminal_puts(stages[stage_count].argv[0]);
+                terminal_putc('\n');
+                return 0;
+            }
+            stage_count++;
+            arg_start = i + 1;
+        }
+    }
+
+    for (int i = 0; i < stage_count - 1; i++) {
+        if (process_fd_pipe(shell_proc, pipes[i], 0) < 0) {
+            terminal_puts("pipeline: pipe failed\n");
+            return 0;
+        }
+    }
+
+    __asm__ __volatile__("cli");
+    for (int i = 0; i < stage_count; i++) {
+        process_t* proc = elf_run_named(paths[i], stages[i].argc, stages[i].argv);
+        if (!proc) {
+            __asm__ __volatile__("sti");
+            terminal_puts("pipeline: launch failed: ");
+            terminal_puts(paths[i]);
+            terminal_putc('\n');
+            for (int p = 0; p < stage_count - 1; p++) {
+                if (pipes[p][0] >= 0) close_shell_fd(shell_proc, pipes[p][0]);
+                if (pipes[p][1] >= 0) close_shell_fd(shell_proc, pipes[p][1]);
+            }
+            return 0;
+        }
+        k_strncpy(proc->cwd, shell_get_cwd(), sizeof(proc->cwd));
+        process_claim_for_wait(proc);
+
+        if (i > 0) {
+            (void)process_fd_dup_from(proc, 0, shell_proc, pipes[i - 1][0], 0);
+        }
+        if (i < stage_count - 1) {
+            (void)process_fd_dup_from(proc, 1, shell_proc, pipes[i][1], 0);
+        }
+        procs[i] = proc;
+    }
+    __asm__ __volatile__("sti");
+
+    for (int i = 0; i < stage_count - 1; i++) {
+        close_shell_fd(shell_proc, pipes[i][0]);
+        close_shell_fd(shell_proc, pipes[i][1]);
+    }
+
+    for (int i = 0; i < stage_count; i++) {
+        if (procs[i]) {
+            process_wait(procs[i]);
+        }
+    }
+    return 1;
+}
+
 static void print_command_list(void) {
     for (unsigned int i = 0; i < commands_count(); i++) {
         const command_entry_t* entry = i < COMMAND_COUNT
@@ -1475,6 +1583,13 @@ static void print_command_list(void) {
 
 void commands_execute(command_t* cmd) {
     if (cmd->argc == 0) return;
+
+    for (int i = 0; i < cmd->argc; i++) {
+        if (k_strcmp(cmd->argv[i], "|")) {
+            run_pipeline(cmd);
+            return;
+        }
+    }
 
     for (unsigned int i = 0; i < COMMAND_COUNT; i++) {
         if (k_strcmp(cmd->argv[0], commands[i].name)) {

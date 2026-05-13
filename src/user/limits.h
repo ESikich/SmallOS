@@ -19,5 +19,6 @@
 #define ULLONG_MAX 18446744073709551615ull
 
 #define PATH_MAX 128
+#define PIPE_BUF 4096
 
 #endif /* USER_LIMITS_H */

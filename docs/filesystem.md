@@ -353,7 +353,7 @@ path helpers such as `touch`, `cp`, and `SYS_WRITEFILE_PATH`.
 The ext2 write path is intentionally narrow:
 
 - native ext2 filename matching
-- fd writes stream through ext2 write-at and update the descriptor size/offset
+- fd writes stream through ext2 write-at and update the shared file description size/offset
 - ext2 data reads can stream into a caller-provided sink callback
 - partial-block writes read/patch/write existing blocks so surrounding bytes are preserved
 - seek-past-EOF writes zero-fill the gap before writing new data

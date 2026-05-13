@@ -12,6 +12,75 @@
 
 typedef unsigned char u8;
 
+static u8* elf_user_ptr(process_t* proc, unsigned int va) {
+    u32* pd;
+    u32 pde;
+    u32* pt;
+    u32 pte;
+
+    if (!proc || !proc->pd) return 0;
+    pd = (u32*)paging_phys_to_kernel_virt((u32)proc->pd);
+    pde = pd[va >> 22];
+    if (!(pde & PAGE_PRESENT)) return 0;
+    pt = (u32*)paging_phys_to_kernel_virt(pde & ~0xFFFu);
+    pte = pt[(va >> 12) & 0x3FFu];
+    if (!(pte & PAGE_PRESENT)) return 0;
+    return (u8*)paging_phys_to_kernel_virt(pte & ~0xFFFu) + (va & 0xFFFu);
+}
+
+static int elf_copy_to_user(process_t* proc, unsigned int va, const void* src, unsigned int len) {
+    const u8* in = (const u8*)src;
+    unsigned int copied = 0;
+
+    while (copied < len) {
+        unsigned int cur = va + copied;
+        unsigned int page_off = cur & 0xFFFu;
+        unsigned int chunk = PAGE_SIZE - page_off;
+        u8* out;
+
+        if (chunk > len - copied) chunk = len - copied;
+        out = elf_user_ptr(proc, cur);
+        if (!out) return 0;
+        k_memcpy(out, in + copied, chunk);
+        copied += chunk;
+    }
+    return 1;
+}
+
+static int elf_setup_user_stack(process_t* proc, int argc, char** argv, unsigned int* out_esp) {
+    unsigned int sp = USER_STACK_TOP;
+    unsigned int user_argv_ptrs[PROCESS_MAX_ARGS + 1];
+
+    if (!proc || !out_esp) return 0;
+    if (argc < 0 || argc > PROCESS_MAX_ARGS) return 0;
+
+    for (int i = argc - 1; i >= 0; i--) {
+        unsigned int len = (unsigned int)k_strlen(argv[i]) + 1u;
+        sp -= len;
+        if (!elf_copy_to_user(proc, sp, argv[i], len)) return 0;
+        user_argv_ptrs[i] = sp;
+    }
+    user_argv_ptrs[argc] = 0;
+
+    sp &= ~3u;
+    sp -= (unsigned int)(argc + 1) * 4u;
+    if (!elf_copy_to_user(proc, sp, user_argv_ptrs, (unsigned int)(argc + 1) * 4u)) {
+        return 0;
+    }
+
+    {
+        unsigned int frame[3];
+        frame[0] = 0;
+        frame[1] = (unsigned int)argc;
+        frame[2] = sp;
+        sp -= sizeof(frame);
+        if (!elf_copy_to_user(proc, sp, frame, sizeof(frame))) return 0;
+    }
+
+    *out_esp = sp;
+    return 1;
+}
+
 static void elf_enter_ring3(unsigned int entry,
                             unsigned int user_esp,
                             int          argc,
@@ -248,6 +317,90 @@ process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
     return proc;
 }
 
+int elf_exec_image_into(process_t* proc,
+                        const unsigned char* image,
+                        int argc,
+                        char** argv,
+                        unsigned int* out_entry,
+                        unsigned int* out_user_esp) {
+    const Elf32_Ehdr* eh;
+    const Elf32_Phdr* ph;
+    u32* old_pd;
+    u32* new_pd;
+
+    if (!proc || !image || !out_entry || !out_user_esp) return 0;
+    eh = (const Elf32_Ehdr*)image;
+    if (eh->e_ident[0] != 0x7F || eh->e_ident[1] != 'E' ||
+        eh->e_ident[2] != 'L'  || eh->e_ident[3] != 'F') {
+        return 0;
+    }
+    if (argc < 0 || argc > PROCESS_MAX_ARGS) return 0;
+
+    old_pd = proc->pd;
+    new_pd = process_pd_create();
+    if (!new_pd) return 0;
+    proc->pd = new_pd;
+
+    ph = (const Elf32_Phdr*)(image + eh->e_phoff);
+    for (unsigned short i = 0; i < eh->e_phnum; i++) {
+        if (ph[i].p_type != PT_LOAD) continue;
+        if (ph[i].p_memsz == 0) continue;
+
+        u32 seg_start = ph[i].p_vaddr;
+        u32 seg_end   = ph[i].p_vaddr + ph[i].p_memsz;
+        u32 map_start = seg_start & ~(PAGE_SIZE - 1);
+        u32 map_end   = (seg_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+
+        for (u32 page = map_start; page < map_end; page += PAGE_SIZE) {
+            u32 frame = pmm_alloc_frame();
+            if (!frame) {
+                process_pd_destroy(new_pd);
+                proc->pd = old_pd;
+                return 0;
+            }
+            k_memset(paging_phys_to_kernel_virt(frame), 0, PAGE_SIZE);
+            paging_map_page(new_pd, page, frame, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+        }
+
+        if (!elf_copy_to_user(proc, seg_start, image + ph[i].p_offset, ph[i].p_filesz)) {
+            process_pd_destroy(new_pd);
+            proc->pd = old_pd;
+            return 0;
+        }
+    }
+
+    {
+        u32 stack_base = USER_STACK_TOP - USER_STACK_SIZE;
+        for (u32 off = 0; off < USER_STACK_SIZE; off += PAGE_SIZE) {
+            u32 frame = pmm_alloc_frame();
+            if (!frame) {
+                process_pd_destroy(new_pd);
+                proc->pd = old_pd;
+                return 0;
+            }
+            k_memset(paging_phys_to_kernel_virt(frame), 0, PAGE_SIZE);
+            paging_map_page(new_pd, stack_base + off, frame,
+                            PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+        }
+    }
+
+    if (process_set_args(proc, argc, argv) < 0 ||
+        !elf_setup_user_stack(proc, argc, argv, out_user_esp)) {
+        process_pd_destroy(new_pd);
+        proc->pd = old_pd;
+        return 0;
+    }
+
+    proc->user_entry = eh->e_entry;
+    proc->heap_base = USER_HEAP_BASE;
+    proc->heap_brk = USER_HEAP_BASE;
+    *out_entry = eh->e_entry;
+
+    paging_switch(new_pd);
+    if (old_pd) process_pd_destroy(old_pd);
+    return 1;
+}
+
 process_t* elf_run_named(const char* name, int argc, char** argv) {
     u32 size = 0;
     const u8* data = 0;
@@ -287,4 +440,40 @@ process_t* elf_run_named(const char* name, int argc, char** argv) {
     }
 
     return elf_run_image(data, argc, argv);
+}
+
+int elf_exec_named_into(process_t* proc,
+                        const char* name,
+                        int argc,
+                        char** argv,
+                        unsigned int* out_entry,
+                        unsigned int* out_user_esp) {
+    u32 size = 0;
+    const u8* data = 0;
+    char alt_name[40];
+
+    if (name) {
+        int has_dot = 0;
+        for (const char* p = name; *p; p++) {
+            if (*p == '.') {
+                has_dot = 1;
+                break;
+            }
+        }
+        if (!has_dot) {
+            u32 len = (u32)k_strlen(name);
+            if (len + 4u < sizeof(alt_name)) {
+                k_memcpy(alt_name, name, len);
+                k_memcpy(alt_name + len, ".elf", 5);
+                data = vfs_load_file(alt_name, &size);
+            }
+        }
+        if (!data) {
+            data = vfs_load_file(name, &size);
+        }
+    }
+
+    (void)size;
+    if (!data) return 0;
+    return elf_exec_image_into(proc, data, argc, argv, out_entry, out_user_esp);
 }

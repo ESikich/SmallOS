@@ -320,10 +320,12 @@ small process registry, and automatic zombie reaping:
 - interactive foreground input is tracked with `process_set_foreground(proc)` / `process_get_foreground()`, while terminal signals target `process_get_foreground_group()`
 - Ctrl+C is delivered to the current foreground process group as a terminal interrupt. Matching signalfds receive `SIGINT`; otherwise group members exit with status `130` and the waiting shell path is restored. Ctrl+C is not delivered as a byte from `SYS_READ`.
 - process destruction is explicit via `process_wait()` / `waitpid()` or automatic via `sched_reap_zombies()`
+- POSIX-shaped process replacement is available through `fork()` + `dup2()` +
+  `execve()` / `execvp()`; the legacy `SYS_EXEC` spawn path remains supported.
 
 ---
 
-# SYS_EXEC Current Reality
+# SYS_EXEC, Fork, And Execve
 
 `sys_exec_impl()` in `src/kernel/syscall.c` is **spawn-style**:
 
@@ -334,12 +336,20 @@ small process registry, and automatic zombie reaping:
 
 `elf_run_named()` follows the same scheduler-owned ELF launch path as shell commands: create the process, seed its bootstrap context, enqueue it, and return immediately.
 
+`SYS_FORK` clones the current user process with eager address-space copying and
+duplicates the fd table as shared descriptor entries. The parent receives the
+child pid, while the child resumes from the same syscall frame with return value
+`0`. `SYS_EXECVE` then replaces the current user image in-place, preserving pid,
+cwd, process group, and descriptors that do not have `FD_CLOEXEC` set.
+
 The file, console, and socket syscalls used by shell tools, TinyCC, and the
 FTP/TCP smoke apps now share the dynamic PMM-backed process handle table owned
 by `process.c`. Each handle has readable/writable/dirty state plus ops for
-`read`, `write`, `seek`, `poll`, `flush`, and `close`; socket handles point at
-kernel `socket_t` objects whose accept/read/write wait queues wake blocking
-socket syscalls and socket-backed poll/epoll waits. Timerfd/signalfd-style
+`read`, `write`, `seek`, `poll`, `flush`, and `close`; file, pipe, and socket
+descriptors are shared/refcounted where POSIX expects duplicated descriptors or
+fork-inherited descriptors to see the same underlying state. Socket handles
+point at kernel `socket_t` objects whose accept/read/write wait queues wake
+blocking socket syscalls and socket-backed poll/epoll waits. Timerfd/signalfd-style
 handles own read wait queues too, with expired timerfds woken from the timer IRQ
 path. Accepted TCP streams now live in a global 4-tuple TCP table, allocate a
 lazy 4 KiB PMM-backed RX ring on
@@ -579,7 +589,7 @@ The execution model is fully scheduler-owned.
 - scheduler-owned shell task
 - scheduler-owned reaper task — frees unclaimed zombie processes automatically
 - timer-driven preemption
-- `SYS_YIELD`, `SYS_EXEC`, `SYS_EXIT` all scheduler-owned
+- `SYS_YIELD`, `SYS_EXEC`, `SYS_FORK`, `SYS_EXECVE`, `SYS_EXIT` all scheduler-owned
 - ELF processes have real per-process page directories
-- foreground `runelf` waits with `process_wait()`; `runelf_nowait` children are reaped automatically; `SYS_EXEC` children are parent-waitable with `waitpid()`; `bg` / `runelf_bg` children are shell-owned jobs until `fg` or `kill`
+- foreground `runelf` waits with `process_wait()`; `runelf_nowait` children are reaped automatically; `SYS_EXEC` and `SYS_FORK` children are parent-waitable with `waitpid()`; `bg` / `runelf_bg` children are shell-owned jobs until `fg` or `kill`
 - no known zombie or frame leaks

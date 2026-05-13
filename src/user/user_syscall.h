@@ -410,6 +410,35 @@ static inline int sys_fcntl(int fd, int cmd, uint32_t arg) {
     return syscall3(SYS_FCNTL, (uint32_t)fd, (uint32_t)cmd, arg);
 }
 
+static inline int sys_pipe(int fds[2]) {
+    return syscall1(SYS_PIPE, (uint32_t)fds);
+}
+
+static inline int sys_pipe2(int fds[2], int flags) {
+    return syscall2(SYS_PIPE2, (uint32_t)fds, (uint32_t)flags);
+}
+
+static inline int sys_dup(int oldfd) {
+    return syscall1(SYS_DUP, (uint32_t)oldfd);
+}
+
+static inline int sys_dup2(int oldfd, int newfd) {
+    return syscall2(SYS_DUP2, (uint32_t)oldfd, (uint32_t)newfd);
+}
+
+static inline int sys_dup3(int oldfd, int newfd, int flags) {
+    return syscall3(SYS_DUP3, (uint32_t)oldfd, (uint32_t)newfd, (uint32_t)flags);
+}
+
+static inline int sys_fork(void) {
+    return syscall0(SYS_FORK);
+}
+
+static inline int sys_execve(const char* path, char* const argv[], char* const envp[]) {
+    (void)envp;
+    return syscall2(SYS_EXECVE, (uint32_t)path, (uint32_t)argv);
+}
+
 static inline int sys_epoll_create(int flags) {
     return syscall1(SYS_EPOLL_CREATE, (uint32_t)flags);
 }

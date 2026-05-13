@@ -87,7 +87,11 @@ Current runtime limits are intentionally small:
 
 # File Descriptors
 
-Every process has a fixed descriptor table in `process_t`.
+Every process has a dynamic descriptor table in `process_t`. Each fd entry is
+a descriptor that points at a shared open-file description for files, pipes,
+and sockets. `dup*()` and `fork()` copy descriptor entries while preserving the
+shared offset/status state; `FD_CLOEXEC` remains per descriptor and is honored
+by `execve()`.
 
 Descriptor layout:
 
@@ -95,7 +99,7 @@ Descriptor layout:
 0  stdin   console read
 1  stdout  console write
 2  stderr  console write
-3+ user-opened files or sockets
+3+ user-opened files, pipes, sockets, and event handles
 ```
 
 Interactive full-screen programs can use `sys_read_raw()` when they need
@@ -119,6 +123,10 @@ Socket descriptors point at kernel `socket_t` objects; blocking socket reads,
 accepts, and socket-backed `poll`/`epoll_wait` waits use socket-owned
 accept/read/write wait queues. Timerfd/signalfd-style handles have their own
 read wait queues, and expired timerfds wake waiters from the timer IRQ path.
+Pipe descriptors point at a refcounted one-page ring buffer. Reads block on
+empty pipes while writers exist, writes block on full pipes while readers
+exist, `PIPE_BUF` is 4096 bytes, and `poll`/`epoll` report pipe readability,
+writability, and hangup through the generic handle path.
 Accepted TCP streams are tracked in a global
 4-tuple TCP table, allocate a 64 KiB PMM-backed receive ring on first payload,
 and release it again after userland drains the buffer. Socket writes allocate a
@@ -136,8 +144,9 @@ ext2-backed file descriptors support:
 - close-time writeback
 
 The user-visible fd API is preserved while file writes stream directly through
-ext2 write-at. Small reads still use the kernel page cache; writes invalidate
-that read cache for the descriptor.
+ext2 write-at. File offsets, status flags, and cached read data live on the
+shared file description, so duplicated and fork-inherited regular-file
+descriptors share offsets as POSIX code expects.
 
 Current fd-backed regular files are bounded by ext2 free space and the ext2
 driver's safety limit for the 16 MB test volume. The older whole-file
@@ -153,6 +162,8 @@ The runtime provides a small POSIX-shaped surface:
 
 - `open`, `close`
 - `read`, `write`
+- `pipe`, `pipe2`
+- `dup`, `dup2`, `dup3`
 - `lseek`
 - `stat`, `lstat`, `fstat`
 - `access`
@@ -160,7 +171,7 @@ The runtime provides a small POSIX-shaped surface:
 - `rename`
 - `mkdir`, `rmdir`
 - `getcwd`, `chdir`
-- `getpid`, `waitpid`, `kill`
+- `getpid`, `fork`, `execve`, `execv`, `execvp`, `waitpid`, `kill`
 - `time`, `gettimeofday`, `clock_gettime`, `clock_settime`
 - socket, poll, epoll, timerfd, and signalfd wrappers used by guest services
 
@@ -311,6 +322,10 @@ Runtime coverage currently lives in guest ELF probes:
 - `errnoprobe` - wrapper `errno` behavior
 - `crtprobe` - `main(argc, argv)` via `user_crt0`, argv terminator, and return status
 - `waitprobe` - `SYS_EXEC` pid return, `waitpid`, `WNOHANG`, `kill`, and wait status macros
+- `pipeprobe` - pipe read/write, EOF, `EPIPE`, nonblocking behavior, `PIPE_BUF`, poll readiness, and blocking transfer wakeups
+- `dupprobe` - `dup`, `dup2`, shared file offsets/status flags, and independent `FD_CLOEXEC`
+- `forkprobe` - parent/child return values, copied memory independence, `waitpid`, and inherited shared file offsets
+- `execveprobe` - replacing `execve` image handoff and argv delivery
 
 Run the full acceptance suite with:
 

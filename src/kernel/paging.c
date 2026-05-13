@@ -240,6 +240,44 @@ u32* process_pd_create(void) {
     return (u32*)frame;
 }
 
+u32* process_pd_clone_user(u32* src_pd) {
+    if (!src_pd) return 0;
+
+    u32* dst_pd = process_pd_create();
+    if (!dst_pd) return 0;
+
+    u32* src = paging_pd_virt(src_pd);
+
+    for (u32 i = 0; i < PD_ENTRIES; i++) {
+        if (src[i] == kernel_page_directory[i]) continue;
+        if (!(src[i] & PAGE_PRESENT)) continue;
+
+        u32* src_pt = paging_pt_virt(src[i] & ~0xFFFu);
+        for (u32 j = 0; j < PT_ENTRIES; j++) {
+            if ((src_pt[j] & (PAGE_PRESENT | PAGE_USER)) != (PAGE_PRESENT | PAGE_USER)) {
+                continue;
+            }
+
+            u32 new_frame = pmm_alloc_frame();
+            if (!new_frame) {
+                process_pd_destroy(dst_pd);
+                return 0;
+            }
+
+            k_memcpy(paging_phys_to_kernel_virt(new_frame),
+                     paging_phys_to_kernel_virt(src_pt[j] & ~0xFFFu),
+                     PAGE_SIZE);
+
+            paging_map_page(dst_pd,
+                            (i << 22) | (j << 12),
+                            new_frame,
+                            src_pt[j] & 0xFFFu);
+        }
+    }
+
+    return dst_pd;
+}
+
 /*
  * process_pd_destroy(pd)
  *

@@ -23,8 +23,10 @@
 #include "vfs.h"
 #include "socket.h"
 #include "input.h"
+#include "wait.h"
 #include "../drivers/display.h"
 #include "../drivers/ext2.h"
+#include "gdt.h"
 
 #define SYSCALL_MAX_WRITE_LEN 4096u
 #define EXEC_NAME_MAX         PROCESS_FD_NAME_MAX
@@ -55,6 +57,16 @@ struct user_timespec {
     unsigned int tv_sec;
     long tv_nsec;
 };
+
+typedef struct syscall_iret_frame {
+    unsigned int eip;
+    unsigned int cs;
+    unsigned int eflags;
+    unsigned int user_esp;
+    unsigned int ss;
+} syscall_iret_frame_t;
+
+static int sys_close_impl(int fd);
 
 static int path_is_sep(char c) {
     return c == '/' || c == '\\';
@@ -506,6 +518,123 @@ static int sys_exec_impl(const char* name, int argc, char** argv) {
     return (int)child->pid;
 }
 
+static int sys_copy_argv(char** argv,
+                         int* out_argc,
+                         char* kargv_data,
+                         char** kargv) {
+    unsigned int used = 0;
+    int argc = 0;
+
+    if (!out_argc || !kargv_data || !kargv) return -EINVAL;
+    if (!argv) {
+        *out_argc = 0;
+        kargv[0] = 0;
+        return 0;
+    }
+
+    while (argc < PROCESS_MAX_ARGS) {
+        char* user_arg = 0;
+        int rc;
+
+        if (!user_buf_ok((unsigned int)&argv[argc], sizeof(char*))) {
+            return -EFAULT;
+        }
+        rc = copy_from_user(&user_arg, &argv[argc], sizeof(user_arg));
+        if (rc < 0) return rc;
+        if (!user_arg) break;
+
+        rc = copy_user_cstr(&kargv_data[used],
+                            PROCESS_ARG_BYTES - used,
+                            user_arg);
+        if (rc < 0) return rc == -ENAMETOOLONG ? -EINVAL : rc;
+        kargv[argc] = &kargv_data[used];
+        used += (unsigned int)rc;
+        argc++;
+    }
+
+    if (argc == PROCESS_MAX_ARGS) {
+        char* extra = 0;
+        if (!user_buf_ok((unsigned int)&argv[argc], sizeof(char*))) {
+            return -EFAULT;
+        }
+        if (copy_from_user(&extra, &argv[argc], sizeof(extra)) < 0) {
+            return -EFAULT;
+        }
+        if (extra) return -EINVAL;
+    }
+
+    kargv[argc] = 0;
+    *out_argc = argc;
+    return 0;
+}
+
+static int sys_pipe2_impl(int* user_fds, unsigned int flags) {
+    process_t* proc = (process_t*)sched_current();
+    int fds[2];
+    int rc;
+
+    if (!proc) return -EINVAL;
+    if (!user_buf_ok((unsigned int)user_fds, sizeof(fds))) return -EFAULT;
+    rc = process_fd_pipe(proc, fds, flags);
+    if (rc < 0) return rc;
+    if (copy_to_user(user_fds, fds, sizeof(fds)) < 0) {
+        sys_close_impl(fds[0]);
+        sys_close_impl(fds[1]);
+        return -EFAULT;
+    }
+    return 0;
+}
+
+static int sys_fork_impl(syscall_regs_t* regs) {
+    process_t* proc = (process_t*)sched_current();
+    process_t* child;
+    unsigned int top;
+
+    if (!proc || !proc->kernel_stack_frame) return -EINVAL;
+    top = (unsigned int)paging_phys_to_kernel_virt(proc->kernel_stack_frame) +
+          proc->kernel_stack_frames * PAGE_SIZE;
+    child = process_fork_from_syscall((unsigned int)regs, top);
+    if (!child) return -ENOMEM;
+    process_claim_for_wait(child);
+    return (int)child->pid;
+}
+
+static int sys_execve_impl(syscall_regs_t* regs, const char* name, char** argv) {
+    char kname[EXEC_NAME_MAX];
+    char kargv_data[PROCESS_ARG_BYTES];
+    char* kargv[PROCESS_MAX_ARGS + 1];
+    int argc;
+    int rc;
+    process_t* proc = (process_t*)sched_current();
+    unsigned int entry = 0;
+    unsigned int user_esp = 0;
+    syscall_iret_frame_t* iret;
+
+    if (!proc) return -EINVAL;
+    rc = copy_user_path_resolved(kname, sizeof(kname), name);
+    if (rc < 0) return rc;
+    rc = sys_copy_argv(argv, &argc, kargv_data, kargv);
+    if (rc < 0) return rc;
+
+    if (!elf_exec_named_into(proc, kname, argc, kargv, &entry, &user_esp)) {
+        return -ENOENT;
+    }
+
+    process_close_cloexec_fds(proc);
+    regs->gs = SEG_USER_DATA;
+    regs->fs = SEG_USER_DATA;
+    regs->es = SEG_USER_DATA;
+    regs->ds = SEG_USER_DATA;
+
+    iret = (syscall_iret_frame_t*)((unsigned char*)regs + sizeof(*regs));
+    iret->eip = entry;
+    iret->cs = SEG_USER_CODE;
+    iret->user_esp = user_esp;
+    iret->ss = SEG_USER_DATA;
+    iret->eflags |= 0x200u;
+    return 0;
+}
+
 static int wait_status_to_user(int status) {
     if (status >= 128 && status < 256) {
         return status - 128;
@@ -719,7 +848,7 @@ static int sys_open_impl(const char* name) {
 
     int fd = process_fd_open_file(proc, kname, file_size, 0);
     fd_entry_t* ent = process_fd_get(proc, fd);
-    if (ent) ent->is_dir = is_dir ? 1 : 0;
+    if (ent) vfs_file_set_is_dir(ent, is_dir);
     return fd;
 }
 
@@ -793,7 +922,7 @@ static int sys_open_mode_impl(const char* name, unsigned int mode) {
         sys_close_impl(fd);
         return -EBADF;
     }
-    ent->is_dir = (exists && is_dir) ? 1 : 0;
+    vfs_file_set_is_dir(ent, (exists && is_dir) ? 1 : 0);
 
     if (!exists || trunc) {
         if (!vfs_write_path(kname, 0, 0)) {
@@ -867,6 +996,10 @@ static int sys_socket_impl(int domain, int type, int protocol) {
         fd_entry_t* ent = process_fd_get(proc, fd);
         fd_flags |= SYS_FD_FLAG_NONBLOCK;
         (void)process_fd_set_flags(ent, fd_flags);
+    }
+    if ((type & SOCK_CLOEXEC) != 0) {
+        fd_entry_t* ent = process_fd_get(proc, fd);
+        (void)process_fd_set_fd_flags(ent, SYS_FD_FLAG_CLOEXEC);
     }
     return fd;
 }
@@ -968,6 +1101,9 @@ static int sys_accept_impl(syscall_regs_t* regs,
     new_ent->socket_conn = socket_conn_id(new_ent->socket);
     if ((flags & SOCK_NONBLOCK) != 0u) {
         new_ent->flags |= SYS_FD_FLAG_NONBLOCK;
+    }
+    if ((flags & SOCK_CLOEXEC) != 0u) {
+        new_ent->fd_flags |= SYS_FD_FLAG_CLOEXEC;
     }
 
     peer_ip = socket_peer_ip(new_ent->socket);
@@ -1206,11 +1342,13 @@ static int sys_poll_impl(syscall_regs_t* regs, struct pollfd* fds,
         unsigned int ready = sys_poll_snapshot(proc, fds, nfds);
         if (ready != 0u) {
             socket_wait_clear_process(proc);
+            wait_queue_remove_proc(proc);
             return (int)ready;
         }
 
         if (!infinite_wait && (int)(timer_get_ticks() - deadline) >= 0) {
             socket_wait_clear_process(proc);
+            wait_queue_remove_proc(proc);
             return 0;
         }
 
@@ -1222,6 +1360,7 @@ static int sys_poll_impl(syscall_regs_t* regs, struct pollfd* fds,
             if (wait_rc < 0) {
                 proc->state = PROCESS_STATE_RUNNING;
                 socket_wait_clear_process(proc);
+                wait_queue_remove_proc(proc);
                 return wait_rc;
             }
         }
@@ -1229,6 +1368,7 @@ static int sys_poll_impl(syscall_regs_t* regs, struct pollfd* fds,
         if (ready != 0u) {
             proc->state = PROCESS_STATE_RUNNING;
             socket_wait_clear_process(proc);
+            wait_queue_remove_proc(proc);
             return (int)ready;
         }
 
@@ -1236,6 +1376,7 @@ static int sys_poll_impl(syscall_regs_t* regs, struct pollfd* fds,
         sys_wait_until_current_running(proc);
 
         socket_wait_clear_process(proc);
+        wait_queue_remove_proc(proc);
     }
 }
 
@@ -1247,6 +1388,12 @@ static int sys_fcntl_impl(int fd, int cmd, unsigned int arg) {
     ent = process_fd_get(proc, fd);
     if (!ent) return -EBADF;
 
+    if (cmd == SYS_FCNTL_GETFD) {
+        return (int)process_fd_get_fd_flags(ent);
+    }
+    if (cmd == SYS_FCNTL_SETFD) {
+        return process_fd_set_fd_flags(ent, arg);
+    }
     if (cmd == SYS_FCNTL_GETFL) {
         return (int)process_fd_get_flags(ent);
     }
@@ -1290,6 +1437,9 @@ static int sys_epoll_create_impl(int flags) {
     if (fd < 0) return fd;
     ent = process_fd_get(proc, fd);
     if (!ent) return -EBADF;
+    if ((flags & EPOLL_CLOEXEC) != 0) {
+        (void)process_fd_set_fd_flags(ent, SYS_FD_FLAG_CLOEXEC);
+    }
     return fd;
 }
 
@@ -1451,11 +1601,13 @@ static int sys_epoll_wait_impl(syscall_regs_t* regs,
                                      : 0u;
         if (ready != 0u) {
             socket_wait_clear_process(proc);
+            wait_queue_remove_proc(proc);
             return (int)ready;
         }
 
         if (!infinite_wait && (int)(timer_get_ticks() - timeout_deadline) >= 0) {
             socket_wait_clear_process(proc);
+            wait_queue_remove_proc(proc);
             return 0;
         }
 
@@ -1477,6 +1629,7 @@ static int sys_epoll_wait_impl(syscall_regs_t* regs,
             if (wait_rc < 0) {
                 proc->state = PROCESS_STATE_RUNNING;
                 socket_wait_clear_process(proc);
+                wait_queue_remove_proc(proc);
                 return wait_rc;
             }
         }
@@ -1486,6 +1639,7 @@ static int sys_epoll_wait_impl(syscall_regs_t* regs,
         if (ready != 0u) {
             proc->state = PROCESS_STATE_RUNNING;
             socket_wait_clear_process(proc);
+            wait_queue_remove_proc(proc);
             return (int)ready;
         }
 
@@ -1493,6 +1647,7 @@ static int sys_epoll_wait_impl(syscall_regs_t* regs,
         sys_wait_until_current_running(proc);
 
         socket_wait_clear_process(proc);
+        wait_queue_remove_proc(proc);
     }
 }
 
@@ -1529,6 +1684,9 @@ static int sys_timerfd_create_impl(int clock_id, int flags) {
     ent = process_fd_get(proc, fd);
     if (ent) {
         (void)process_fd_set_flags(ent, flags);
+        if ((flags & SOCK_CLOEXEC) != 0) {
+            (void)process_fd_set_fd_flags(ent, SYS_FD_FLAG_CLOEXEC);
+        }
     }
     return fd;
 }
@@ -1658,6 +1816,9 @@ static int sys_signalfd_impl(int fd, const void* mask, int flags) {
         if (rc < 0) return rc;
     }
     (void)process_fd_set_flags(ent, flags);
+    if ((flags & SOCK_CLOEXEC) != 0) {
+        (void)process_fd_set_fd_flags(ent, SYS_FD_FLAG_CLOEXEC);
+    }
     return out_fd;
 }
 
@@ -1894,16 +2055,25 @@ static int sys_stat_impl(const char* path, unsigned int* out_size, int* out_is_d
 static int sys_fstat_impl(int fd, unsigned int* out_size, int* out_is_dir) {
     process_t* proc = (process_t*)sched_current();
     fd_entry_t* ent;
+    u32 size = 0;
+    int is_dir = 0;
 
     if (!proc) return -EINVAL;
     ent = process_fd_get(proc, fd);
     if (!ent) return -EBADF;
 
+    if (ent->kind == PROCESS_HANDLE_KIND_FILE) {
+        int rc = vfs_file_stat_fd(ent, &size, &is_dir);
+        if (rc < 0) return rc;
+    } else {
+        size = ent->is_dir ? 0u : ent->size;
+        is_dir = ent->is_dir ? 1 : 0;
+    }
+
     if (out_size) {
-        if (write_user_u32(out_size, ent->is_dir ? 0u : ent->size) < 0) return -EFAULT;
+        if (write_user_u32(out_size, size) < 0) return -EFAULT;
     }
     if (out_is_dir) {
-        int is_dir = ent->is_dir ? 1 : 0;
         if (copy_to_user(out_is_dir, &is_dir, sizeof(is_dir)) < 0) return -EFAULT;
     }
     return 0;
@@ -2381,6 +2551,59 @@ void syscall_handler_main(syscall_regs_t* regs) {
             regs->eax = (unsigned int)sys_fcntl_impl((int)regs->ebx,
                                                      (int)regs->ecx,
                                                      regs->edx);
+            break;
+
+        case SYS_PIPE:
+            regs->eax = (unsigned int)sys_pipe2_impl((int*)regs->ebx, 0);
+            break;
+
+        case SYS_PIPE2:
+            regs->eax = (unsigned int)sys_pipe2_impl((int*)regs->ebx, regs->ecx);
+            break;
+
+        case SYS_DUP:
+        {
+            process_t* proc = (process_t*)sched_current();
+            regs->eax = (unsigned int)process_fd_dup(proc, (int)regs->ebx, 0, 0);
+            break;
+        }
+
+        case SYS_DUP2:
+        {
+            process_t* proc = (process_t*)sched_current();
+            regs->eax = (unsigned int)process_fd_dup2(proc,
+                                                      (int)regs->ebx,
+                                                      (int)regs->ecx,
+                                                      0,
+                                                      0);
+            break;
+        }
+
+        case SYS_DUP3:
+        {
+            process_t* proc = (process_t*)sched_current();
+            unsigned int fd_flags = 0;
+            if ((regs->edx & ~SYS_FD_FLAG_CLOEXEC) != 0u) {
+                regs->eax = (unsigned int)-EINVAL;
+            } else {
+                if (regs->edx & SYS_FD_FLAG_CLOEXEC) fd_flags = SYS_FD_FLAG_CLOEXEC;
+                regs->eax = (unsigned int)process_fd_dup2(proc,
+                                                          (int)regs->ebx,
+                                                          (int)regs->ecx,
+                                                          fd_flags,
+                                                          1);
+            }
+            break;
+        }
+
+        case SYS_FORK:
+            regs->eax = (unsigned int)sys_fork_impl(regs);
+            break;
+
+        case SYS_EXECVE:
+            regs->eax = (unsigned int)sys_execve_impl(regs,
+                                                      (const char*)regs->ebx,
+                                                      (char**)regs->ecx);
             break;
 
         case SYS_EPOLL_CREATE:

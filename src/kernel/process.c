@@ -44,6 +44,19 @@ typedef struct special_wait_object {
     unsigned int pending_signals;
 } special_wait_object_t;
 
+#define PIPE_BUFFER_SIZE PAGE_SIZE
+
+typedef struct pipe_object {
+    wait_queue_t read_waiters;
+    wait_queue_t write_waiters;
+    u32 data_frame;
+    unsigned int read_pos;
+    unsigned int write_pos;
+    unsigned int count;
+    unsigned int read_refs;
+    unsigned int write_refs;
+} pipe_object_t;
+
 typedef struct kernel_signalfd_siginfo {
     u32 ssi_signo;
     u32 ssi_errno;
@@ -387,6 +400,24 @@ static int process_fd_alloc_entry(process_t* proc, fd_entry_t** out_ent) {
     }
 }
 
+static int process_fd_alloc_exact(process_t* proc, int fd, fd_entry_t** out_ent) {
+    int rc;
+
+    if (!proc || !out_ent) return -EINVAL;
+    if (fd < 0 || (unsigned int)fd >= proc->fd_limit) return -EBADF;
+
+    while ((unsigned int)fd >= proc->fd_capacity) {
+        rc = process_fd_table_grow(proc, (unsigned int)fd + 1u);
+        if (rc < 0) return rc;
+    }
+
+    if (proc->fds[fd].valid) {
+        process_fd_close(&proc->fds[fd]);
+    }
+    *out_ent = &proc->fds[fd];
+    return fd;
+}
+
 static int process_handle_console_read(fd_entry_t* ent, char* buf, unsigned int len);
 static int process_handle_console_write(fd_entry_t* ent, const char* buf, unsigned int len);
 static int process_handle_console_seek(fd_entry_t* ent, int offset, int whence);
@@ -404,6 +435,12 @@ static int process_handle_special_write(fd_entry_t* ent, const char* buf, unsign
 static int process_handle_special_seek(fd_entry_t* ent, int offset, int whence);
 static short process_handle_special_poll(fd_entry_t* ent, short events);
 static void process_handle_special_close(fd_entry_t* ent);
+
+static int process_handle_pipe_read(fd_entry_t* ent, char* buf, unsigned int len);
+static int process_handle_pipe_write(fd_entry_t* ent, const char* buf, unsigned int len);
+static int process_handle_pipe_seek(fd_entry_t* ent, int offset, int whence);
+static short process_handle_pipe_poll(fd_entry_t* ent, short events);
+static void process_handle_pipe_close(fd_entry_t* ent);
 
 static const process_handle_ops_t s_socket_handle_ops = {
     .read = process_handle_socket_read,
@@ -430,6 +467,15 @@ static const process_handle_ops_t s_console_handle_ops = {
     .poll = process_handle_console_poll,
     .flush = 0,
     .close = process_handle_console_close,
+};
+
+static const process_handle_ops_t s_pipe_handle_ops = {
+    .read = process_handle_pipe_read,
+    .write = process_handle_pipe_write,
+    .seek = process_handle_pipe_seek,
+    .poll = process_handle_pipe_poll,
+    .flush = 0,
+    .close = process_handle_pipe_close,
 };
 
 static void process_init_standard_fds(process_t* proc) {
@@ -474,7 +520,13 @@ int process_fd_open_file_mode(process_t* proc,
 
     k_memset(ent, 0, sizeof(*ent));
     ent->valid = 1;
-    vfs_file_init(ent, name, size, readable, writable);
+    {
+        int rc = vfs_file_init(ent, name, size, readable, writable);
+        if (rc < 0) {
+            k_memset(ent, 0, sizeof(*ent));
+            return rc;
+        }
+    }
     return fd;
 }
 
@@ -535,6 +587,187 @@ int process_fd_open_special(process_t* proc, int kind, const char* name) {
         k_memcpy(ent->name, name, (k_size_t)k_strlen(name) + 1u);
     }
     return fd;
+}
+
+static pipe_object_t* pipe_object_from_ent(fd_entry_t* ent) {
+    if (!ent || ent->kind != PROCESS_HANDLE_KIND_PIPE || !ent->aux_frame) return 0;
+    return (pipe_object_t*)paging_phys_to_kernel_virt(ent->aux_frame);
+}
+
+static char* pipe_data(pipe_object_t* pipe) {
+    if (!pipe || !pipe->data_frame) return 0;
+    return (char*)paging_phys_to_kernel_virt(pipe->data_frame);
+}
+
+static void process_fd_pipe_ref(fd_entry_t* ent) {
+    pipe_object_t* pipe;
+
+    if (!ent || !ent->valid || ent->kind != PROCESS_HANDLE_KIND_PIPE) return;
+    pipe = pipe_object_from_ent(ent);
+    if (!pipe) return;
+    if (ent->readable) pipe->read_refs++;
+    if (ent->writable) pipe->write_refs++;
+}
+
+static void process_fd_share_ref(fd_entry_t* ent) {
+    if (!ent || !ent->valid) return;
+    if (ent->kind == PROCESS_HANDLE_KIND_PIPE) {
+        process_fd_pipe_ref(ent);
+    } else if (ent->kind == PROCESS_HANDLE_KIND_SOCKET) {
+        socket_retain(ent->socket);
+    } else if (ent->kind == PROCESS_HANDLE_KIND_FILE) {
+        vfs_file_retain(ent);
+    } else if (ent->kind == PROCESS_HANDLE_KIND_EPOLL ||
+               ent->kind == PROCESS_HANDLE_KIND_TIMERFD ||
+               ent->kind == PROCESS_HANDLE_KIND_SIGNALFD) {
+        ent->aux_frame = 0;
+    }
+}
+
+int process_fd_pipe(process_t* proc, int fds[2], unsigned int flags) {
+    fd_entry_t* read_ent;
+    fd_entry_t* write_ent;
+    pipe_object_t* pipe;
+    u32 pipe_frame;
+    u32 data_frame;
+    int read_fd;
+    int write_fd;
+
+    if (!proc || !fds) return -EINVAL;
+    if ((flags & ~(SYS_FD_FLAG_NONBLOCK | SYS_FD_FLAG_CLOEXEC)) != 0u) {
+        return -EINVAL;
+    }
+
+    pipe_frame = pmm_alloc_frame();
+    if (!pipe_frame) return -ENOMEM;
+    data_frame = pmm_alloc_frame();
+    if (!data_frame) {
+        pmm_free_frame(pipe_frame);
+        return -ENOMEM;
+    }
+
+    pipe = (pipe_object_t*)paging_phys_to_kernel_virt(pipe_frame);
+    k_memset(pipe, 0, PAGE_SIZE);
+    k_memset(paging_phys_to_kernel_virt(data_frame), 0, PAGE_SIZE);
+    wait_queue_init(&pipe->read_waiters);
+    wait_queue_init(&pipe->write_waiters);
+    pipe->data_frame = data_frame;
+    pipe->read_refs = 1;
+    pipe->write_refs = 1;
+
+    read_fd = process_fd_alloc_entry(proc, &read_ent);
+    if (read_fd < 0) {
+        pmm_free_frame(data_frame);
+        pmm_free_frame(pipe_frame);
+        return read_fd;
+    }
+    read_ent->valid = 1;
+
+    write_fd = process_fd_alloc_entry(proc, &write_ent);
+    if (write_fd < 0) {
+        k_memset(read_ent, 0, sizeof(*read_ent));
+        pmm_free_frame(data_frame);
+        pmm_free_frame(pipe_frame);
+        return write_fd;
+    }
+
+    k_memset(read_ent, 0, sizeof(*read_ent));
+    read_ent->valid = 1;
+    read_ent->kind = PROCESS_HANDLE_KIND_PIPE;
+    read_ent->ops = &s_pipe_handle_ops;
+    read_ent->readable = 1;
+    read_ent->writable = 0;
+    read_ent->flags = flags & SYS_FD_FLAG_NONBLOCK;
+    read_ent->fd_flags = flags & SYS_FD_FLAG_CLOEXEC;
+    read_ent->aux_frame = pipe_frame;
+    k_memcpy(read_ent->name, "pipe:r", 7);
+
+    k_memset(write_ent, 0, sizeof(*write_ent));
+    write_ent->valid = 1;
+    write_ent->kind = PROCESS_HANDLE_KIND_PIPE;
+    write_ent->ops = &s_pipe_handle_ops;
+    write_ent->readable = 0;
+    write_ent->writable = 1;
+    write_ent->flags = flags & SYS_FD_FLAG_NONBLOCK;
+    write_ent->fd_flags = flags & SYS_FD_FLAG_CLOEXEC;
+    write_ent->aux_frame = pipe_frame;
+    k_memcpy(write_ent->name, "pipe:w", 7);
+
+    fds[0] = read_fd;
+    fds[1] = write_fd;
+    return 0;
+}
+
+int process_fd_dup(process_t* proc, int oldfd, int minfd, unsigned int fd_flags) {
+    fd_entry_t* old_ent;
+    fd_entry_t* new_ent;
+    int new_fd;
+
+    if (!proc) return -EINVAL;
+    if (minfd < 0 || (unsigned int)minfd >= proc->fd_limit) return -EBADF;
+    old_ent = process_fd_get(proc, oldfd);
+    if (!old_ent) return -EBADF;
+    if ((fd_flags & ~SYS_FD_FLAG_CLOEXEC) != 0u) return -EINVAL;
+
+    for (;;) {
+        while ((unsigned int)minfd >= proc->fd_capacity) {
+            int rc = process_fd_table_grow(proc, (unsigned int)minfd + 1u);
+            if (rc < 0) return rc;
+        }
+        for (unsigned int fd = (unsigned int)minfd; fd < proc->fd_capacity; fd++) {
+            if (!proc->fds[fd].valid) {
+                new_fd = (int)fd;
+                new_ent = &proc->fds[fd];
+                *new_ent = *old_ent;
+                new_ent->fd_flags = fd_flags;
+                process_fd_share_ref(new_ent);
+                return new_fd;
+            }
+        }
+        if (proc->fd_capacity >= proc->fd_limit) return -ENFILE;
+        minfd = (int)proc->fd_capacity;
+    }
+}
+
+int process_fd_dup2(process_t* proc, int oldfd, int newfd, unsigned int fd_flags, int reject_same) {
+    fd_entry_t* old_ent;
+    fd_entry_t* new_ent;
+    int rc;
+
+    if (!proc) return -EINVAL;
+    if ((fd_flags & ~SYS_FD_FLAG_CLOEXEC) != 0u) return -EINVAL;
+    old_ent = process_fd_get(proc, oldfd);
+    if (!old_ent) return -EBADF;
+    if (newfd < 0 || (unsigned int)newfd >= proc->fd_limit) return -EBADF;
+    if (oldfd == newfd) {
+        return reject_same ? -EINVAL : newfd;
+    }
+
+    rc = process_fd_alloc_exact(proc, newfd, &new_ent);
+    if (rc < 0) return rc;
+    *new_ent = *old_ent;
+    new_ent->fd_flags = fd_flags;
+    process_fd_share_ref(new_ent);
+    return newfd;
+}
+
+int process_fd_dup_from(process_t* dst, int newfd, process_t* src, int oldfd, unsigned int fd_flags) {
+    fd_entry_t* old_ent;
+    fd_entry_t* new_ent;
+    int rc;
+
+    if (!dst || !src) return -EINVAL;
+    if ((fd_flags & ~SYS_FD_FLAG_CLOEXEC) != 0u) return -EINVAL;
+    old_ent = process_fd_get(src, oldfd);
+    if (!old_ent) return -EBADF;
+    if (newfd < 0 || (unsigned int)newfd >= dst->fd_limit) return -EBADF;
+
+    rc = process_fd_alloc_exact(dst, newfd, &new_ent);
+    if (rc < 0) return rc;
+    *new_ent = *old_ent;
+    new_ent->fd_flags = fd_flags;
+    process_fd_share_ref(new_ent);
+    return newfd;
 }
 
 void process_fd_close(fd_entry_t* ent) {
@@ -781,6 +1014,191 @@ static short process_handle_console_poll(fd_entry_t* ent, short events) {
 
 static void process_handle_console_close(fd_entry_t* ent) {
     if (!ent) return;
+    k_memset(ent, 0, sizeof(*ent));
+}
+
+static int process_handle_pipe_read(fd_entry_t* ent, char* buf, unsigned int len) {
+    pipe_object_t* pipe;
+    char* data;
+    process_t* proc;
+    unsigned int done = 0u;
+
+    if (!ent || !ent->valid || !ent->readable) return -EBADF;
+    if (!buf) return -EFAULT;
+    if (len == 0) return 0;
+    pipe = pipe_object_from_ent(ent);
+    data = pipe_data(pipe);
+    if (!pipe || !data) return -EIO;
+
+    proc = sched_current();
+    while (pipe->count == 0u && pipe->write_refs != 0u) {
+        int wait_rc;
+        if ((ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u) {
+            return -EAGAIN;
+        }
+        if (!proc) {
+            __asm__ __volatile__("sti; hlt; cli");
+            continue;
+        }
+        proc->state = PROCESS_STATE_WAITING;
+        wait_rc = wait_queue_add(&pipe->read_waiters, proc);
+        if (wait_rc < 0) {
+            proc->state = PROCESS_STATE_RUNNING;
+            wait_queue_remove_proc(proc);
+            return wait_rc;
+        }
+        if (pipe->count != 0u || pipe->write_refs == 0u) {
+            proc->state = PROCESS_STATE_RUNNING;
+            break;
+        }
+        __asm__ __volatile__("sti");
+        while (proc->state != PROCESS_STATE_RUNNING) {
+            __asm__ __volatile__("hlt");
+        }
+        __asm__ __volatile__("cli");
+        wait_queue_remove_proc(proc);
+    }
+    wait_queue_remove_proc(proc);
+
+    while (done < len && pipe->count != 0u) {
+        buf[done++] = data[pipe->read_pos];
+        pipe->read_pos = (pipe->read_pos + 1u) % PIPE_BUFFER_SIZE;
+        pipe->count--;
+    }
+
+    if (done != 0u) {
+        wait_queue_wake_all(&pipe->write_waiters);
+    }
+    return (int)done;
+}
+
+static int process_handle_pipe_write(fd_entry_t* ent, const char* buf, unsigned int len) {
+    pipe_object_t* pipe;
+    char* data;
+    process_t* proc;
+    unsigned int done = 0u;
+    unsigned int atomic_len;
+
+    if (!ent || !ent->valid || !ent->writable) return -EBADF;
+    if (!buf) return -EFAULT;
+    if (len == 0) return 0;
+    pipe = pipe_object_from_ent(ent);
+    data = pipe_data(pipe);
+    if (!pipe || !data) return -EIO;
+
+    proc = sched_current();
+    atomic_len = (len <= SYS_PIPE_BUF) ? len : 0u;
+    while (done < len) {
+        unsigned int needed = atomic_len ? atomic_len : 1u;
+        if (pipe->read_refs == 0u) {
+            if (done != 0u) return (int)done;
+            if (proc) (void)process_signal_deliver(proc, PROCESS_SIGPIPE);
+            return -EPIPE;
+        }
+
+        while ((PIPE_BUFFER_SIZE - pipe->count) < needed && pipe->read_refs != 0u) {
+            int wait_rc;
+            if ((ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u) {
+                return done ? (int)done : -EAGAIN;
+            }
+            if (!proc) {
+                __asm__ __volatile__("sti; hlt; cli");
+                continue;
+            }
+            proc->state = PROCESS_STATE_WAITING;
+            wait_rc = wait_queue_add(&pipe->write_waiters, proc);
+            if (wait_rc < 0) {
+                proc->state = PROCESS_STATE_RUNNING;
+                wait_queue_remove_proc(proc);
+                return done ? (int)done : wait_rc;
+            }
+            if ((PIPE_BUFFER_SIZE - pipe->count) >= needed || pipe->read_refs == 0u) {
+                proc->state = PROCESS_STATE_RUNNING;
+                break;
+            }
+            __asm__ __volatile__("sti");
+            while (proc->state != PROCESS_STATE_RUNNING) {
+                __asm__ __volatile__("hlt");
+            }
+            __asm__ __volatile__("cli");
+            wait_queue_remove_proc(proc);
+        }
+        wait_queue_remove_proc(proc);
+
+        if (pipe->read_refs == 0u) {
+            if (done != 0u) return (int)done;
+            if (proc) (void)process_signal_deliver(proc, PROCESS_SIGPIPE);
+            return -EPIPE;
+        }
+
+        while (done < len && pipe->count < PIPE_BUFFER_SIZE) {
+            data[pipe->write_pos] = buf[done++];
+            pipe->write_pos = (pipe->write_pos + 1u) % PIPE_BUFFER_SIZE;
+            pipe->count++;
+        }
+        wait_queue_wake_all(&pipe->read_waiters);
+
+        if ((ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u) {
+            break;
+        }
+    }
+
+    return (int)done;
+}
+
+static int process_handle_pipe_seek(fd_entry_t* ent, int offset, int whence) {
+    (void)ent;
+    (void)offset;
+    (void)whence;
+    return -EINVAL;
+}
+
+static short process_handle_pipe_poll(fd_entry_t* ent, short events) {
+    pipe_object_t* pipe;
+    short revents = 0;
+
+    if (!ent || !ent->valid) return POLLERR;
+    pipe = pipe_object_from_ent(ent);
+    if (!pipe) return POLLERR;
+
+    if ((events & POLLIN) && ent->readable &&
+        (pipe->count != 0u || pipe->write_refs == 0u)) {
+        revents |= POLLIN;
+    }
+    if ((events & POLLOUT) && ent->writable &&
+        pipe->read_refs != 0u && pipe->count < PIPE_BUFFER_SIZE) {
+        revents |= POLLOUT;
+    }
+    if ((ent->readable && pipe->write_refs == 0u) ||
+        (ent->writable && pipe->read_refs == 0u)) {
+        revents |= POLLHUP;
+    }
+    return revents;
+}
+
+static void process_handle_pipe_close(fd_entry_t* ent) {
+    pipe_object_t* pipe;
+    u32 pipe_frame;
+    u32 data_frame;
+
+    if (!ent) return;
+    pipe = pipe_object_from_ent(ent);
+    pipe_frame = ent->aux_frame;
+    if (!pipe) {
+        k_memset(ent, 0, sizeof(*ent));
+        return;
+    }
+
+    if (ent->readable && pipe->read_refs > 0u) pipe->read_refs--;
+    if (ent->writable && pipe->write_refs > 0u) pipe->write_refs--;
+    wait_queue_wake_all(&pipe->read_waiters);
+    wait_queue_wake_all(&pipe->write_waiters);
+
+    data_frame = pipe->data_frame;
+    if (pipe->read_refs == 0u && pipe->write_refs == 0u) {
+        if (data_frame) pmm_free_frame(data_frame);
+        if (pipe_frame) pmm_free_frame(pipe_frame);
+    }
     k_memset(ent, 0, sizeof(*ent));
 }
 
@@ -1083,6 +1501,26 @@ int process_fd_wait(fd_entry_t* ent, process_t* proc, short events) {
         return rc;
     }
 
+    if (ent->kind == PROCESS_HANDLE_KIND_PIPE) {
+        pipe_object_t* pipe = pipe_object_from_ent(ent);
+        if (!pipe) return -EIO;
+        if ((events & POLLIN) && ent->readable) {
+            rc = wait_queue_add(&pipe->read_waiters, proc);
+            if (rc < 0) {
+                wait_queue_remove_proc(proc);
+                return rc;
+            }
+        }
+        if ((events & POLLOUT) && ent->writable) {
+            rc = wait_queue_add(&pipe->write_waiters, proc);
+            if (rc < 0) {
+                wait_queue_remove_proc(proc);
+                return rc;
+            }
+        }
+        return 0;
+    }
+
     return 0;
 }
 
@@ -1093,7 +1531,7 @@ int process_fd_seek(fd_entry_t* ent, int offset, int whence) {
 }
 
 int process_fd_flush(fd_entry_t* ent) {
-    if (!ent || !ent->ops || !ent->ops->flush) return 0;
+    if (!ent || !ent->ops || !ent->ops->flush) return 1;
     return ent->ops->flush(ent);
 }
 
@@ -1106,6 +1544,49 @@ int process_fd_set_flags(fd_entry_t* ent, unsigned int flags) {
 unsigned int process_fd_get_flags(fd_entry_t* ent) {
     if (!ent || !ent->valid) return 0;
     return ent->flags;
+}
+
+int process_fd_set_fd_flags(fd_entry_t* ent, unsigned int flags) {
+    if (!ent || !ent->valid) return -EBADF;
+    ent->fd_flags = flags & SYS_FD_FLAG_CLOEXEC;
+    return 0;
+}
+
+unsigned int process_fd_get_fd_flags(fd_entry_t* ent) {
+    if (!ent || !ent->valid) return 0;
+    return ent->fd_flags;
+}
+
+void process_close_cloexec_fds(process_t* proc) {
+    if (!proc || !proc->fds) return;
+    for (unsigned int i = 0; i < proc->fd_capacity; i++) {
+        fd_entry_t* ent = &proc->fds[i];
+        if (ent->valid && (ent->fd_flags & SYS_FD_FLAG_CLOEXEC) != 0u) {
+            process_fd_close(ent);
+        }
+    }
+}
+
+int process_copy_fd_table(process_t* dst, process_t* src) {
+    if (!dst || !src || !dst->fds || !src->fds) return -EINVAL;
+    while (dst->fd_capacity < src->fd_capacity) {
+        int rc = process_fd_table_grow(dst, src->fd_capacity);
+        if (rc < 0) return rc;
+    }
+
+    for (unsigned int i = 0; i < dst->fd_capacity; i++) {
+        if (dst->fds[i].valid) {
+            process_fd_close(&dst->fds[i]);
+        }
+    }
+    k_memset(dst->fds, 0, dst->fd_table_frames * PAGE_SIZE);
+
+    for (unsigned int i = 0; i < src->fd_capacity; i++) {
+        if (!src->fds[i].valid) continue;
+        dst->fds[i] = src->fds[i];
+        process_fd_share_ref(&dst->fds[i]);
+    }
+    return 0;
 }
 
 int process_fd_set_signalfd_mask(fd_entry_t* ent, unsigned int mask) {
@@ -1364,6 +1845,84 @@ process_t* process_create_kernel_task(const char* name, void (*entry)(void)) {
     return proc;
 }
 
+process_t* process_fork_from_syscall(unsigned int regs_esp, unsigned int frame_top) {
+    process_t* parent = sched_current();
+    process_t* child;
+    unsigned int frame_bytes;
+    unsigned int child_stack_top;
+    unsigned int copy_start;
+    unsigned int child_copy_start;
+    unsigned int child_regs_esp;
+
+    if (!parent || !parent->pd || !parent->kernel_stack_frame) return 0;
+    if (regs_esp < 8u || regs_esp >= frame_top) return 0;
+
+    child = process_create(parent->name);
+    if (!child) return 0;
+
+    child->pd = process_pd_clone_user(parent->pd);
+    if (!child->pd) {
+        process_destroy(child);
+        return 0;
+    }
+
+    child->kernel_stack_frames = parent->kernel_stack_frames ? parent->kernel_stack_frames
+                                                             : PROCESS_KERNEL_STACK_FRAMES;
+    child->kernel_stack_frame = pmm_alloc_contiguous_frames(child->kernel_stack_frames);
+    if (!child->kernel_stack_frame) {
+        process_destroy(child);
+        return 0;
+    }
+    k_memset(paging_phys_to_kernel_virt(child->kernel_stack_frame),
+             0,
+             child->kernel_stack_frames * PAGE_SIZE);
+
+    copy_start = regs_esp - 8u;
+    frame_bytes = frame_top - copy_start;
+    if (frame_bytes > child->kernel_stack_frames * PAGE_SIZE) {
+        process_destroy(child);
+        return 0;
+    }
+
+    child_stack_top = (unsigned int)paging_phys_to_kernel_virt(child->kernel_stack_frame) +
+                      child->kernel_stack_frames * PAGE_SIZE;
+    child_copy_start = child_stack_top - frame_bytes;
+    child_regs_esp = child_copy_start + 8u;
+    k_memcpy((void*)child_copy_start, (const void*)copy_start, frame_bytes);
+    ((unsigned int*)child_copy_start)[1] = child_regs_esp;
+    ((unsigned int*)child_regs_esp)[11] = 0u; /* saved eax: fork returns 0 in child */
+    child->sched_esp = child_copy_start;
+
+    child->heap_base = parent->heap_base;
+    child->heap_brk = parent->heap_brk;
+    child->pgid = parent->pgid;
+    child->user_entry = parent->user_entry;
+    child->user_argc = parent->user_argc;
+    k_memcpy(child->user_arg_data, parent->user_arg_data, sizeof(child->user_arg_data));
+    for (int i = 0; i <= PROCESS_MAX_ARGS; i++) {
+        if (parent->user_argv[i]) {
+            unsigned int off = (unsigned int)(parent->user_argv[i] - parent->user_arg_data);
+            child->user_argv[i] = child->user_arg_data + off;
+        } else {
+            child->user_argv[i] = 0;
+        }
+    }
+    k_memcpy(child->cwd, parent->cwd, sizeof(child->cwd));
+
+    if (process_copy_fd_table(child, parent) < 0) {
+        process_destroy(child);
+        return 0;
+    }
+
+    child->state = PROCESS_STATE_RUNNING;
+    if (!sched_enqueue(child)) {
+        process_destroy(child);
+        return 0;
+    }
+
+    return child;
+}
+
 void process_destroy(process_t* proc) {
     if (!proc) return;
 
@@ -1378,6 +1937,7 @@ void process_destroy(process_t* proc) {
     }
     input_forget_waiting_process(proc);
     socket_wait_clear_process(proc);
+    wait_queue_remove_proc(proc);
     display_release(proc);
 
     for (unsigned int i = 0; i < proc->fd_capacity; i++) {
