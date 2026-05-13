@@ -29,7 +29,7 @@ guest.
   display, input, sockets, polling, and timer/signalfd-style shims.
 - ATA disk driver and an ext2-backed VFS. The generated filesystem includes
   `/bin`, `/usr/bin`, `/usr/sbin`, `/usr/libexec/tests`, `/etc`, `/boot`,
-  `/var`, and `/tmp`.
+  `/var`, and `/tmp`, with boot diagnostics persisted at `/var/log/boot.log`.
 - Framebuffer terminal with VGA text fallback, graphical boot splash, PS/2
   keyboard and mouse input, and several graphics demos.
 - PCI and e1000 networking with ARP, IPv4, UDP/NTP clock sync, a compact TCP

@@ -18,10 +18,50 @@
 #include "e1000.h"
 #include "fb_console.h"
 #include "elf_loader.h"
+#include "vfs.h"
 #include "../drivers/tcp.h"
 #include "../drivers/ntp.h"
 
 extern unsigned char bss_end;
+
+#define BOOT_LOG_PATH "var/log/boot.log"
+#define BOOT_LOG_CAPACITY 8192u
+
+static char s_boot_log[BOOT_LOG_CAPACITY];
+static unsigned int s_boot_log_len = 0;
+static int s_boot_log_enabled = 1;
+static int s_boot_log_fs_ready = 0;
+
+static void boot_log_append_char(char ch) {
+    if (!s_boot_log_enabled) return;
+    if (s_boot_log_len + 1u >= BOOT_LOG_CAPACITY) return;
+    s_boot_log[s_boot_log_len++] = ch;
+    s_boot_log[s_boot_log_len] = '\0';
+}
+
+static void boot_log_append(const char* s) {
+    if (!s) return;
+    while (*s) {
+        boot_log_append_char(*s++);
+    }
+}
+
+static void boot_putc(char ch) {
+    terminal_putc(ch);
+    boot_log_append_char(ch);
+}
+
+static void boot_puts(const char* s) {
+    terminal_puts(s);
+    boot_log_append(s);
+}
+
+static void boot_log_save(void) {
+    if (!s_boot_log_fs_ready || s_boot_log_len == 0u) return;
+    if (!vfs_write_path(BOOT_LOG_PATH, (const u8*)s_boot_log, s_boot_log_len)) {
+        terminal_puts("boot: WARN var/log/boot.log write failed\n");
+    }
+}
 
 static unsigned short kernel_read_tr(void) {
     unsigned short tr;
@@ -43,18 +83,18 @@ static void boot_halt(void) {
 
 static void boot_splash_begin(void) {
     terminal_clear();
-    terminal_puts("============================================================\n");
-    terminal_puts(" SmallOS boot diagnostics\n");
-    terminal_puts(" protected-mode kernel startup\n");
-    terminal_puts("============================================================\n");
+    boot_puts("============================================================\n");
+    boot_puts(" SmallOS boot diagnostics\n");
+    boot_puts(" protected-mode kernel startup\n");
+    boot_puts("============================================================\n");
 }
 
 static void boot_splash_status(const char* status, const char* name) {
-    terminal_puts("boot: ");
-    terminal_puts(status);
-    terminal_putc(' ');
-    terminal_puts(name);
-    terminal_putc('\n');
+    boot_puts("boot: ");
+    boot_puts(status);
+    boot_putc(' ');
+    boot_puts(name);
+    boot_putc('\n');
 }
 
 static void boot_splash_pass(const char* name) {
@@ -76,10 +116,11 @@ static void boot_splash_warn(const char* name) {
 static void boot_splash_fail(const char* name, const char* detail) {
     boot_splash_status("FAIL", name);
     if (detail) {
-        terminal_puts("boot: ");
-        terminal_puts(detail);
-        terminal_putc('\n');
+        boot_puts("boot: ");
+        boot_puts(detail);
+        boot_putc('\n');
     }
+    boot_log_save();
     boot_halt();
 }
 
@@ -107,7 +148,7 @@ static void boot_put_uint_width(unsigned int value, unsigned int width) {
         buf[i++] = '0';
     }
     while (i > 0u) {
-        terminal_putc(buf[--i]);
+        boot_putc(buf[--i]);
     }
 }
 
@@ -135,25 +176,25 @@ static void boot_print_utc_time(unsigned int unix_time) {
         month++;
     }
 
-    terminal_puts("ntp: time ");
+    boot_puts("ntp: time ");
     boot_put_uint_width((unsigned int)year, 4u);
-    terminal_putc('-');
+    boot_putc('-');
     boot_put_uint_width(month + 1u, 2u);
-    terminal_putc('-');
+    boot_putc('-');
     boot_put_uint_width(days + 1u, 2u);
-    terminal_putc(' ');
+    boot_putc(' ');
     boot_put_uint_width(rem / 3600u, 2u);
-    terminal_putc(':');
+    boot_putc(':');
     boot_put_uint_width((rem / 60u) % 60u, 2u);
-    terminal_putc(':');
+    boot_putc(':');
     boot_put_uint_width(rem % 60u, 2u);
-    terminal_puts(" UTC\n");
+    boot_puts(" UTC\n");
 }
 
 static void boot_sync_clock(void) {
     unsigned int unix_time = 0;
 
-    terminal_puts("ntp: syncing clock\n");
+    boot_puts("ntp: syncing clock\n");
     __asm__ __volatile__("sti");
     if (ntp_sync(NTP_DEFAULT_SERVER_IP, &unix_time)) {
         timer_set_realtime_seconds(unix_time);
@@ -176,6 +217,21 @@ static void boot_splash_boot_info(void) {
     } else {
         boot_splash_warn("memory map: using fixed PMM range");
     }
+}
+
+static void boot_splash_replay_after_framebuffer(void) {
+    int old_log_enabled = s_boot_log_enabled;
+
+    s_boot_log_enabled = 0;
+    boot_splash_begin();
+    boot_splash_terminal_ready();
+    s_boot_log_enabled = old_log_enabled;
+
+    boot_splash_pass("terminal: framebuffer console");
+
+    s_boot_log_enabled = 0;
+    boot_splash_boot_info();
+    s_boot_log_enabled = old_log_enabled;
 }
 
 static void kernel_selfcheck(void) {
@@ -215,7 +271,8 @@ static void boot_sequence_task_main(void) {
         process_wait(splash_proc);
     }
 
-    terminal_puts("SmallOS ready\n");
+    boot_puts("SmallOS ready\n");
+    boot_log_save();
 
     process_t* shell_proc = process_create_kernel_task("shell", shell_task_main);
 
@@ -256,10 +313,7 @@ void kernel_main(void) {
     kernel_selfcheck();
 
     if (fb_console_init()) {
-        boot_splash_begin();
-        boot_splash_terminal_ready();
-        boot_splash_pass("terminal: framebuffer console");
-        boot_splash_boot_info();
+        boot_splash_replay_after_framebuffer();
     } else {
 #ifndef SMALLOS_FORCE_VGA_BACKEND
         boot_splash_warn("terminal: framebuffer unavailable, VGA text active");
@@ -336,6 +390,8 @@ void kernel_main(void) {
     boot_splash_expect(ext2_init(),
                        "ext2: volume mounted",
                        "ext2 volume failed superblock or partition validation");
+    s_boot_log_fs_ready = 1;
+    boot_log_save();
 
     process_t* boot_proc = process_create_kernel_task("bootseq", boot_sequence_task_main);
 
@@ -354,6 +410,7 @@ void kernel_main(void) {
     boot_splash_expect(process_start_reaper(),
                        "reaper: task queued",
                        "zombie reaper task could not be started");
+    boot_log_save();
 
     __asm__ __volatile__("sti");
     sched_start(boot_proc);

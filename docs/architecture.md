@@ -127,8 +127,8 @@ Inside `kernel_main()`:
 12. `e1000_init()` — bind the Intel 82540EM NIC and set up DMA rings
 13. `tcp_init()` — create and enqueue the TCP/network service kernel task
 14. `ntp_sync()` — briefly enables interrupts so PIT-backed timeout logic works, queries the default NTP server through UDP over the e1000 path, sets `CLOCK_REALTIME`, and prints the synchronized UTC time. Failure is a boot warning, not a halt.
-15. `ext2_init()` — read ATA sector 0, extract the ext2 start LBA from partition entry 1 in the MBR partition table, then read and validate the ext2 superblock at that runtime-discovered location
-16. `process_create_kernel_task("bootseq", ...)` — create the post-diagnostics boot sequence task. `bootseq` runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, prints `SmallOS ready`, and queues the shell. A future login task can replace the shell launch here without changing the early boot checks.
+15. `ext2_init()` — read ATA sector 0, extract the ext2 start LBA from partition entry 1 in the MBR partition table, then read and validate the ext2 superblock at that runtime-discovered location; after this succeeds, the accumulated boot log is saved to `/var/log/boot.log`
+16. `process_create_kernel_task("bootseq", ...)` — create the post-diagnostics boot sequence task. `bootseq` runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, prints `SmallOS ready`, refreshes `/var/log/boot.log`, and queues the shell. A future login task can replace the shell launch here without changing the early boot checks.
 17. `sched_enqueue(boot_proc)` — make the boot sequence task runnable
 18. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
 19. `sti` — enable interrupts

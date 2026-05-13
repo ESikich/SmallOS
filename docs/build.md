@@ -478,7 +478,10 @@ representative shape rather than the complete invocation.
 
 `mkext2` produces a raw ext2 volume containing the shipped apps under
 `bin/`, `usr/bin/`, `usr/libexec/tests/`, `usr/sbin/`, plus config/data
-trees such as `/etc/`, `/var/`, and `/tmp/`.
+trees such as `/etc/`, `/var/`, and `/tmp/`. The image also seeds
+`/var/log/boot.log` from `samples/boot.log`; the kernel overwrites that file
+with the current boot diagnostics after ext2 mounts and again when `bootseq`
+prints `SmallOS ready`.
 
 Shipped ext2 programs:
 - `bin/echo` - print command arguments

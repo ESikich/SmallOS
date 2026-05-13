@@ -56,14 +56,16 @@ kernel BSS, and PMM free-frame baseline. Later network diagnostics include a
 best-effort NTP clock sync after e1000/TCP initialization; success prints the
 synchronized UTC time, while failure is a warning and boot continues. If a
 hard startup invariant drifts, the kernel halts before the post-diagnostics
-boot sequence starts.
+boot sequence starts. Once ext2 is mounted, the collected boot diagnostics are
+written to `/var/log/boot.log`; the file is seeded into the guest image so boot
+can overwrite it without allocating a fresh inode.
 
 After diagnostics, `kernel_main()` queues the `bootseq` kernel task and the
 zombie reaper, then enters the scheduler on `bootseq`. The boot sequence task
 runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to exit, prints
-`SmallOS ready`, and then queues the shell. This keeps framebuffer splash
-rendering in userland and leaves one obvious place to swap shell startup for a
-future login flow.
+`SmallOS ready`, refreshes `/var/log/boot.log`, and then queues the shell. This
+keeps framebuffer splash rendering in userland and leaves one obvious place to
+swap shell startup for a future login flow.
 
 Descriptor slots are owned by `process.c`, not the syscall dispatcher. fd `0`,
 `1`, and `2` are real console handles created with each process; user-opened

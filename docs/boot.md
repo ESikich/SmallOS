@@ -13,7 +13,7 @@ BIOS
  → kernel.bin      (loaded to 0x1000)
  → protected mode
  → kernel_entry.asm  (zeros BSS, calls kernel_main)
- → kernel_main()
+ → kernel_main()     (diagnostics, ext2 mount, /var/log/boot.log save)
  → bootseq task      (userland splash, ready line, shell/login path)
 ```
 
@@ -495,10 +495,10 @@ Kernel   →  zero BSS
          →  keyboard, mouse, timer, idt, sched_init
          →  ata_init, pci_init, e1000_init, tcp_init
          →  ntp_sync (best-effort realtime clock sync)
-         →  ext2_init
+         →  ext2_init, save /var/log/boot.log
          →  create bootseq task and zombie reaper, sti, sched_start
 Bootseq  →  run /bin/bootsplash.elf boot/splash.bmp
-         →  print SmallOS ready
+         →  print SmallOS ready and refresh /var/log/boot.log
          →  create shell task (future login hook lives here)
 ```
 

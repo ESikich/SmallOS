@@ -122,7 +122,7 @@ decode 3-byte packet → accumulate dx/dy/buttons
 SYS_MOUSE_READ copies state to userland and clears dx/dy
 ```
 
-After kernel diagnostics, `kernel_main()` creates a `bootseq` kernel task and enters the scheduler on it. `bootseq` runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to exit, prints `SmallOS ready`, then creates and queues the shell task with `process_create_kernel_task("shell", shell_task_main)`. The future login path should replace that final shell launch inside `bootseq`.
+After kernel diagnostics, `kernel_main()` creates a `bootseq` kernel task and enters the scheduler on it. `bootseq` runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to exit, prints `SmallOS ready`, refreshes `/var/log/boot.log`, then creates and queues the shell task with `process_create_kernel_task("shell", shell_task_main)`. The future login path should replace that final shell launch inside `bootseq`.
 
 ---
 

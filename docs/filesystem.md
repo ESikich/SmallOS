@@ -42,7 +42,9 @@ The ext2 start LBA is **not** compiled into the kernel. The Makefile computes it
 
 `build/bin/ext2.seed.img` is built by `tools/mkext2.c` as a raw 16 MB ext2
 volume. Normal runs copy that seed to `.state/ext2.img`, which is the mutable
-volume appended to `os-image.bin`.
+volume appended to `os-image.bin`. The seed includes `/var/log/boot.log` from
+`samples/boot.log` so the kernel can persist boot diagnostics by overwriting an
+existing file after `ext2_init()`.
 
 ## Fixed geometry
 
