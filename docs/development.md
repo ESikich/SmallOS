@@ -441,7 +441,10 @@ Framebuffer apps should use `src/user/gfx.c` instead of calling the display
 syscalls directly. The helper owns acquire/release, full-screen backbuffer
 allocation, simple drawing primitives, and one-shot full-screen present.
 Interactive graphics can poll keyboard availability with `SYS_POLL` on fd `0`
-and poll relative mouse movement with `SYS_MOUSE_READ`.
+and poll relative mouse movement with `SYS_MOUSE_READ`. New code that wants
+keyboard and mouse together should prefer `SYS_INPUT_READ`, which drains the
+kernel input event queue and can either block for the next event or return
+immediately with `SYS_INPUT_FLAG_NONBLOCK`.
 
 ---
 

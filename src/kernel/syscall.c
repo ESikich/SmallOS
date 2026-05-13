@@ -21,6 +21,7 @@
 #include "../exec/elf_loader.h"
 #include "vfs.h"
 #include "socket.h"
+#include "input.h"
 #include "../drivers/display.h"
 #include "../drivers/ext2.h"
 
@@ -28,6 +29,7 @@
 #define EXEC_NAME_MAX         PROCESS_FD_NAME_MAX
 #define EPOLL_MAX_WATCHES     64u
 #define POLL_MAX_FDS          PROCESS_FD_LIMIT_HARD
+#define INPUT_READ_MAX_EVENTS 64u
 
 typedef struct epoll_watch {
     int used;
@@ -1833,6 +1835,57 @@ static int sys_mouse_read_impl(sys_mouse_state_t* out_state) {
     return 0;
 }
 
+static int sys_input_read_impl(syscall_regs_t* regs,
+                               sys_input_event_t* out_events,
+                               unsigned int max_events,
+                               unsigned int flags) {
+    unsigned int bytes;
+    unsigned int copied = 0;
+    process_t* proc;
+
+    (void)regs;
+
+    if ((flags & ~SYS_INPUT_FLAG_NONBLOCK) != 0u) return -EINVAL;
+    if (max_events == 0u) return 0;
+    if (max_events > INPUT_READ_MAX_EVENTS) return -EINVAL;
+    if (!user_count_bytes_ok((unsigned int)out_events,
+                             max_events,
+                             sizeof(sys_input_event_t),
+                             &bytes)) {
+        return -EFAULT;
+    }
+
+    proc = (process_t*)sched_current();
+    if (!proc) return -EINVAL;
+
+    while (1) {
+        __asm__ volatile ("cli");
+        if (input_available()) {
+            break;
+        }
+        if (flags & SYS_INPUT_FLAG_NONBLOCK) {
+            return 0;
+        }
+        proc->state = PROCESS_STATE_WAITING;
+        input_set_waiting_process(proc);
+        __asm__ volatile ("sti");
+        __asm__ volatile ("hlt");
+    }
+
+    while (copied < max_events) {
+        sys_input_event_t ev;
+        if (!input_pop_event(&ev)) {
+            break;
+        }
+        if (copy_to_user(&out_events[copied], &ev, sizeof(ev)) < 0) {
+            return -EFAULT;
+        }
+        copied++;
+    }
+
+    return (int)copied;
+}
+
 static int sys_fsinfo_impl(sys_fsinfo_t* out_info) {
     ext2_fsinfo_t info;
     sys_fsinfo_t user_info;
@@ -2254,6 +2307,14 @@ void syscall_handler_main(syscall_regs_t* regs) {
         case SYS_MOUSE_READ:
             regs->eax = (unsigned int)sys_mouse_read_impl(
                             (sys_mouse_state_t*)regs->ebx);
+            break;
+
+        case SYS_INPUT_READ:
+            regs->eax = (unsigned int)sys_input_read_impl(
+                            regs,
+                            (sys_input_event_t*)regs->ebx,
+                            regs->ecx,
+                            regs->edx);
             break;
 
         case SYS_FSINFO:

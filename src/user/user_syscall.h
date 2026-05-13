@@ -310,6 +310,12 @@ static inline int sys_mouse_read(sys_mouse_state_t* out_state) {
     return syscall1(SYS_MOUSE_READ, (uint32_t)out_state);
 }
 
+static inline int sys_input_read(sys_input_event_t* out_events,
+                                 uint32_t max_events,
+                                 uint32_t flags) {
+    return syscall3(SYS_INPUT_READ, (uint32_t)out_events, max_events, flags);
+}
+
 static inline int sys_socket(int domain, int type, int protocol) {
     return syscall3(SYS_SOCKET, (uint32_t)domain, (uint32_t)type, (uint32_t)protocol);
 }

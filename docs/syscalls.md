@@ -734,12 +734,36 @@ uses `SYS_MOUSE_BUTTON_LEFT`, `SYS_MOUSE_BUTTON_RIGHT`, and
 is decoded.
 
 Returns `0` on success, `-EFAULT` for an invalid output pointer, or `-EIO` when
-the mouse driver is unavailable. This is intentionally a small polling
-primitive for graphics demos; it is not a full event queue yet.
+the mouse driver is unavailable. This small polling primitive is kept for
+existing graphics demos.
 
 ---
 
-### SYS_FSINFO (59)
+### SYS_INPUT_READ (59)
+
+```c
+int sys_input_read(sys_input_event_t* out_events,
+                   unsigned int max_events,
+                   unsigned int flags);
+```
+
+Reads queued keyboard and mouse events into user memory and returns the number
+of events copied. Key events report key code, ASCII value when one exists,
+pressed/released state, modifier flags, tick count, and input sequence number.
+Mouse events report screen-space `dx`/`dy`, current buttons, changed buttons,
+tick count, and input sequence number.
+
+With `flags == 0`, the syscall blocks until at least one event is available.
+With `SYS_INPUT_FLAG_NONBLOCK`, it returns `0` immediately when the queue is
+empty. `max_events` must be between 1 and 64.
+
+Returns a positive event count, `0` for an empty nonblocking read or zero
+length request, `-EFAULT` for an invalid output buffer, or `-EINVAL` for
+unsupported flags or an oversized request.
+
+---
+
+### SYS_FSINFO (60)
 
 ```c
 int sys_fsinfo(sys_fsinfo_t* out_info);
@@ -754,7 +778,7 @@ the ext2 usage scan fails.
 
 ---
 
-### SYS_FSMAP (60)
+### SYS_FSMAP (61)
 
 ```c
 int sys_fsmap(sys_fsmap_request_t* req);

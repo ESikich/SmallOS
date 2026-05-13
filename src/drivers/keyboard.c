@@ -1,5 +1,6 @@
 #include "keyboard.h"
 #include "ports.h"
+#include "input.h"
 
 /* ------------------------------------------------------------------ */
 /* Process-input buffer                                               */
@@ -386,7 +387,13 @@ void keyboard_handle_irq(void) {
     unsigned char scancode = inb(0x60);
     key_event_t ev = decode_scancode(scancode);
 
-    if (ev.key == KEY_NONE || !ev.pressed) {
+    if (ev.key == KEY_NONE) {
+        return;
+    }
+
+    input_push_key_event(ev);
+
+    if (!ev.pressed) {
         return;
     }
 

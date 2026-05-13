@@ -125,8 +125,9 @@ enum {
     SYS_DISPLAY_ACQUIRE = 56, /* enter exclusive graphics drawing mode */
     SYS_DISPLAY_RELEASE = 57, /* leave graphics drawing mode */
     SYS_MOUSE_READ      = 58, /* read PS/2 mouse deltas/buttons */
-    SYS_FSINFO          = 59, /* write ext2 volume usage information */
-    SYS_FSMAP           = 60  /* write ext2 allocation-block states */
+    SYS_INPUT_READ      = 59, /* read queued keyboard/mouse input events */
+    SYS_FSINFO          = 60, /* write ext2 volume usage information */
+    SYS_FSMAP           = 61  /* write ext2 allocation-block states */
 };
 
 #endif

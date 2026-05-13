@@ -8,6 +8,7 @@
 #include "memory.h"
 #include "boot_info.h"
 #include "pmm.h"
+#include "input.h"
 #include "paging.h"
 #include "scheduler.h"
 #include "process.h"
@@ -147,9 +148,12 @@ void kernel_main(void) {
 #endif
     }
 
+    input_init();
     keyboard_init();
     boot_splash_expect(keyboard_buf_available() == 0 &&
-                       keyboard_get_waiting_process() == 0,
+                       keyboard_get_waiting_process() == 0 &&
+                       input_available() == 0 &&
+                       input_get_waiting_process() == 0,
                        "keyboard: input state reset",
                        "keyboard buffer or waiter slot was not reset");
     if (mouse_init()) {

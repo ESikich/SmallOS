@@ -324,6 +324,7 @@ Seeded ext2 layout:
 - `apps/tests/spinwkr` - helper used by the preemption regression
 - `apps/tests/preempt_test` - prove timer-driven preemption between runnable tasks
 - `apps/tests/crtprobe` - verify `main(argc, argv)` through `user_crt0`
+- `apps/tests/inputprobe` - verify queued keyboard input events and pointer validation
 - `apps/tests/fault` - fault probe (ud/gp/de/br/pf)
 - `tools/tcc.elf` in `tools/` - SmallOS-hosted TinyCC compiler binary
 - `samples/tccmath.c`, `samples/tccagg.c`, `samples/tcctree.c`, `samples/tccmini.c` at the image root for the guest compiler demo

@@ -15,6 +15,7 @@
 #include "socket.h"
 #include "wait.h"
 #include "../drivers/display.h"
+#include "input.h"
 
 typedef char process_t_must_fit_in_one_frame[(sizeof(process_t) <= 4096u) ? 1 : -1];
 
@@ -1190,6 +1191,7 @@ void process_destroy(process_t* proc) {
     if (keyboard_get_waiting_process() == (void*)proc) {
         keyboard_set_waiting_process(0);
     }
+    input_forget_waiting_process(proc);
     socket_wait_clear_process(proc);
     display_release(proc);
 
@@ -1249,6 +1251,7 @@ void process_set_foreground(process_t* proc) {
         keyboard_buf_clear();           /* discard any input that arrived before
                                            the process was ready to read it,
                                            e.g. the Enter that launched runelf */
+        input_clear_events();
         keyboard_set_consumer(process_key_consumer);
     } else {
         shell_register_consumer();
@@ -1328,6 +1331,7 @@ static int process_group_force_exit(u32 pgid,
         if (keyboard_get_waiting_process() == (void*)proc) {
             keyboard_set_waiting_process(0);
         }
+        input_forget_waiting_process(proc);
         socket_wait_clear_process(proc);
 
         if (proc == defer_current && mark_terminal_interrupt) {
@@ -1360,6 +1364,7 @@ void process_deliver_pending_terminal_interrupt(unsigned int esp) {
     if (keyboard_get_waiting_process() == (void*)proc) {
         keyboard_set_waiting_process(0);
     }
+    input_forget_waiting_process(proc);
     socket_wait_clear_process(proc);
     paging_switch(paging_get_kernel_pd());
     sched_kill(proc, esp);

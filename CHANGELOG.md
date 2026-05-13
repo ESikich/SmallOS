@@ -25,6 +25,9 @@
 
 ### Added
 
+* **Queued input event syscall** (`src/kernel/input.*`, `src/kernel/syscall.c`, `src/drivers/keyboard.c`, `src/drivers/mouse.c`, `src/user/inputprobe.c`)
+  * Added a kernel input queue above the raw keyboard and PS/2 mouse drivers, preserving the existing `SYS_MOUSE_READ` accumulator while exposing decoded key and mouse packet events through `SYS_INPUT_READ`.
+  * Added blocking and nonblocking reads, foreground queue clearing, stale waiter cleanup on process teardown/termination, and `inputprobe` regression coverage with host-injected keyboard input.
 * **Expanded syscall pointer regression coverage** (`src/user/badptrprobe.c`, `tests/elfs/badptrprobe.py`)
   * Added page-boundary probes for user buffers and output structs that begin in mapped user memory but cross into an unmapped page.
   * Covered read/write buffers, path strings, stat/terminal/directory/display/fs outputs, `poll()` / `epoll_*()` arrays, `timerfd_settime()` structs, and `signalfd()` masks.

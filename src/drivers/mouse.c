@@ -1,5 +1,6 @@
 #include "mouse.h"
 #include "ports.h"
+#include "input.h"
 
 #define PS2_DATA        0x60
 #define PS2_STATUS      0x64
@@ -178,6 +179,8 @@ void mouse_handle_irq(void) {
     unsigned char data;
     int dx;
     int dy;
+    int event_dy;
+    unsigned int old_buttons;
 
     if ((status & PS2_STATUS_OUT) == 0) {
         return;
@@ -207,10 +210,14 @@ void mouse_handle_irq(void) {
     if (s_packet[0] & 0x10u) dx -= 256;
     if (s_packet[0] & 0x20u) dy -= 256;
 
+    event_dy = -dy;
+    old_buttons = s_buttons;
+
     s_dx += dx;
-    s_dy -= dy;
+    s_dy += event_dy;
     s_buttons = s_packet[0] & 0x07u;
     s_sequence++;
+    input_push_mouse_event(dx, event_dy, s_buttons, old_buttons ^ s_buttons);
 }
 
 int mouse_read_state(sys_mouse_state_t* out) {
