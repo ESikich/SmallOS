@@ -234,6 +234,12 @@ expectations live under `tests/elfs/`.
 `make smoke-reboot` or `make smoke-halt` if you want to exercise one
 command at a time.
 
+The aggregate verification targets are layered so the fast path stays usable:
+`make verify` runs layout checks, the guest regression suite, and reboot/halt
+smoke; `make verify-display` runs the framebuffer/VGA visual checks;
+`make verify-network` runs the socket, FTP, and cserve smoke matrix; and
+`make verify-full` runs all of them.
+
 The PowerShell command keeps a GTK window visible while capturing guest output in the console and saving `qemu.log` plus `qemu-console.log` for later debugging.
 
 Use `-drive format=raw` (hard disk mode). Do not use `-fda` (floppy).
@@ -398,7 +404,7 @@ ext2_LBA = kernel_lba + kernel_sectors
 
 The resulting kernel and ext2 spans are written into the MBR partition table in sector 0 after image assembly.
 
-`make verify` runs the full preflight: boot-layout check, image-layout check, guest `test`, and `smoke`. Use `make boot-layout-check` or `make image-layout-check` when you want to isolate a specific layer.
+`make verify` runs the standard preflight: boot-layout check, image-layout check, guest `test`, and `smoke`. Use `make verify-display` for the visual framebuffer/VGA checks, `make verify-network` for the socket/FTP/cserve smoke matrix, or `make verify-full` before a broad handoff. Use `make boot-layout-check` or `make image-layout-check` when you want to isolate a specific layer.
 
 ---
 

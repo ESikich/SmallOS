@@ -31,6 +31,11 @@ during the full regression run.
 `make smoke-reboot` or `make smoke-halt` when you want to verify those
 commands without running the full guest suite.
 
+Use the verification ladder to match the risk of the change:
+`make verify` for the normal preflight, `make verify-display` for terminal or
+framebuffer work, `make verify-network` for socket/FTP/cserve work, and
+`make verify-full` before handing off broad changes.
+
 `make display-smoke` runs the framebuffer and forced-VGA visual smoke checks.
 The host harness still treats serial as truth: it waits for the shell prompt
 plus the expected boot marker before asking QEMU's monitor for `screendump`.

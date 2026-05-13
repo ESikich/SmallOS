@@ -127,7 +127,7 @@ This keeps the hand-rolled boot path explicit: the build fails before QEMU start
 
 `make image-layout-check` goes one step further and validates the finished `os-image.bin` itself. It checks the partition table entries, the loader and kernel placement, the ext2 start LBA, and the zero padding between the kernel and ext2 region.
 
-`make verify` runs the full preflight sequence: boot-layout check, image-layout check, guest `test`, and `smoke`.
+`make verify` runs the standard preflight sequence: boot-layout check, image-layout check, guest `test`, and `smoke`. Broader gates live behind `make verify-display`, `make verify-network`, and `make verify-full`.
 
 **Symptom of violation:** BIOS INT 0x13 hangs silently mid-transfer. The screen shows `Loading...` but never advances. No error is printed because the hang occurs inside the BIOS call.
 

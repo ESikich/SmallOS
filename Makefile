@@ -385,7 +385,7 @@ QEMUFLAGS=-drive format=raw,file=$(IMG_FILE) -boot c -m $(QEMU_MEMORY_MB) \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all dirs deps check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap test framebuffer-smoke vga-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify reset-disk tinycc-host tinycc-host-clean
+.PHONY: all dirs deps check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap test framebuffer-smoke vga-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean
 
 run: image-layout-check
 	$(QEMU) $(QEMUFLAGS) -display $(QEMU_DISPLAY)
@@ -542,6 +542,21 @@ verify:
 	$(MAKE) image-layout-check
 	$(MAKE) test
 	$(MAKE) smoke
+
+verify-display:
+	$(MAKE) display-smoke
+
+verify-network:
+	$(MAKE) socket-eof-smoke
+	$(MAKE) socket-parallel-smoke
+	$(MAKE) ftp-smoke
+	$(MAKE) ftp-loop-smoke
+	$(MAKE) cserve-smoke
+
+verify-full:
+	$(MAKE) verify
+	$(MAKE) verify-display
+	$(MAKE) verify-network
 
 clean:
 	rm -rf $(BUILD_DIR)

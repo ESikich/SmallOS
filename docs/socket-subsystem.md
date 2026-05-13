@@ -147,6 +147,7 @@ The rollout is covered by the normal build and smoke matrix:
 - `make ftp-smoke`
 - `make ftp-loop-smoke`
 - `make cserve-smoke`
+- `make verify-network`
 
 Coverage highlights:
 
@@ -160,6 +161,8 @@ Coverage highlights:
 - `make cserve-smoke` launches cserve, fetches the large static fixture, checks
   a 404, holds keep-alive clients, exercises a slow reader, and captures
   `netinfo`.
+- `make verify-network` runs the socket EOF, socket parallel, FTP, FTP loop,
+  and cserve smoke targets in sequence.
 
 ## Future Work
 

@@ -106,7 +106,11 @@ The default `DISPLAY_BACKEND=auto` image remains `build/img/os-image.bin`.
 Backend-specific forced-VGA builds write `build/img/vga/os-image.bin`, while
 their objects and binaries stay under `build/obj/vga` and `build/bin/vga`.
 
-`make verify` is the one-shot preflight target: it runs both layout checks, then `make test`, then `make smoke`.
+`make verify` is the standard preflight target: it runs both layout checks,
+then `make test`, then `make smoke`. The heavier suites are grouped
+separately: `make verify-display` runs the framebuffer/VGA visual smoke checks,
+`make verify-network` runs the socket, FTP, and cserve smoke matrix, and
+`make verify-full` runs all verification targets in sequence.
 
 Most freestanding test ELFs define `_start(argc, argv)` directly and link with
 the common user runtime objects. Hosted-ish programs define
@@ -141,6 +145,15 @@ wrappers, stdio, directory traversal, and TinyCC expectations.
 `make smoke` runs the dedicated reboot and halt smoke checks.  Use
 `make smoke-reboot` or `make smoke-halt` to exercise those shell
 commands on their own.
+
+Use the aggregate targets as the normal verification ladder:
+
+```bash
+make verify          # layout, guest selftest, reboot/halt smoke
+make verify-display  # framebuffer and forced-VGA screenshots
+make verify-network  # socket EOF/parallel, FTP, FTP loop, cserve
+make verify-full     # all of the above
+```
 
 `make framebuffer-smoke` boots the default display policy, waits for the
 serial framebuffer boot marker and shell prompt, asks the QEMU monitor for a

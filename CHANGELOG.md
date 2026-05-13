@@ -20,6 +20,8 @@
   * Updated shell/user-visible filesystem labels and QEMU expectations for native ext2 names.
 * **FTP upload path** (`third_party/ftp_server/src/ftp_data.c`)
   * Buffered STOR socket reads into 64 KiB file writes so uploads do not turn segment-sized TCP reads into repeated partial-block filesystem writes.
+* **Verification workflow** (`Makefile`, `README.md`, `docs/`)
+  * Added `verify-display`, `verify-network`, and `verify-full` aggregate targets so visual and network smoke suites can be run deliberately without bloating the standard `make verify` path.
 
 ### Added
 
