@@ -3,6 +3,7 @@
 
 #define TREE_MAX_ENTRIES 128
 #define TREE_PATH_MAX 256
+#define TREE_LINE_MAX (TREE_PATH_MAX + NAME_MAX + 32)
 #define TREE_VERT "\xE2\x94\x82"
 #define TREE_MID "\xE2\x94\x9C\xE2\x94\x80\xE2\x94\x80 "
 #define TREE_LAST "\xE2\x94\x94\xE2\x94\x80\xE2\x94\x80 "
@@ -148,6 +149,58 @@ static int build_child_prefix(char* out,
     return 1;
 }
 
+static int append_string(char* out, unsigned int out_size, unsigned int* pos, const char* s) {
+    if (!out || !pos || !s) {
+        return 0;
+    }
+
+    for (unsigned int i = 0; s[i]; i++) {
+        if (*pos + 1u >= out_size) {
+            return 0;
+        }
+        out[(*pos)++] = s[i];
+    }
+    out[*pos] = '\0';
+    return 1;
+}
+
+static int append_char(char* out, unsigned int out_size, unsigned int* pos, char ch) {
+    if (!out || !pos || *pos + 1u >= out_size) {
+        return 0;
+    }
+
+    out[(*pos)++] = ch;
+    out[*pos] = '\0';
+    return 1;
+}
+
+static int write_entry_line(const char* prefix, const tree_entry_t* entry, int is_last) {
+    char line[TREE_LINE_MAX];
+    unsigned int pos = 0;
+    uint32_t name_len;
+
+    line[0] = '\0';
+    if (prefix && !append_string(line, sizeof(line), &pos, prefix)) {
+        return 0;
+    }
+    if (!append_string(line, sizeof(line), &pos, is_last ? TREE_LAST : TREE_MID) ||
+        !append_string(line, sizeof(line), &pos, entry->name)) {
+        return 0;
+    }
+
+    name_len = str_len(entry->name);
+    if (entry->is_dir && (name_len == 0u || entry->name[name_len - 1u] != '/')) {
+        if (!append_char(line, sizeof(line), &pos, '/')) {
+            return 0;
+        }
+    }
+    if (!append_char(line, sizeof(line), &pos, '\n')) {
+        return 0;
+    }
+
+    return sys_write(line, pos) == (int)pos;
+}
+
 static int collect_entries(const char* path, tree_entry_t* entries, unsigned int* out_count) {
     DIR* dir = opendir(path);
     unsigned int count = 0;
@@ -203,21 +256,16 @@ static int print_tree(const char* path, const char* prefix) {
         tree_entry_t* entry = &entries[i];
         int is_last = (i + 1u == count);
 
-        if (prefix) {
-            u_puts(prefix);
+        if (!write_entry_line(prefix, entry, is_last)) {
+            free(entries);
+            u_puts("tree: line too long\n");
+            return 0;
         }
-        u_puts(is_last ? TREE_LAST : TREE_MID);
-        u_puts(entry->name);
         if (entry->is_dir) {
             char child_path[TREE_PATH_MAX];
             char child_prefix[TREE_PATH_MAX];
-            uint32_t name_len = str_len(entry->name);
 
             s_dir_count++;
-            if (name_len == 0u || entry->name[name_len - 1u] != '/') {
-                u_putc('/');
-            }
-            u_putc('\n');
             if (!join_path(child_path, sizeof(child_path), path, entry->name) ||
                 !build_child_prefix(child_prefix, sizeof(child_prefix), prefix, is_last)) {
                 free(entries);
@@ -230,7 +278,6 @@ static int print_tree(const char* path, const char* prefix) {
             }
         } else {
             s_file_count++;
-            u_putc('\n');
         }
     }
 

@@ -2,6 +2,7 @@
 #define VFS_H
 
 #include "process.h"
+#include "ext2.h"
 
 const process_handle_ops_t* vfs_file_ops(void);
 void vfs_file_init(fd_entry_t* ent, const char* path, u32 size, int readable, int writable);
@@ -21,5 +22,10 @@ int vfs_dirent_at(const char* path,
                   u32 out_name_size,
                   u32* out_size,
                   int* out_is_dir);
+int vfs_dirents_read(const char* path,
+                     u32 start_index,
+                     ext2_dirent_info_t* out,
+                     u32 max_entries,
+                     u32* out_count);
 
 #endif /* VFS_H */

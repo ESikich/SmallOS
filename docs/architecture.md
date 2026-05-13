@@ -763,7 +763,7 @@ preemptive round-robin scheduler — timer IRQ context switch, `SCHED_QUANTUM_MS
 ATA disk driver — 28-bit LBA reads/writes from primary IDE channel (0x1F0), with bus-master DMA and PIO fallback
 ext2 filesystem — ELF programs loaded from 16 MB ext2 partition on disk
 run/runimg infrastructure removed — `runelf` is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
-interactive shell with meminfo / memmap / ataread / fsls / tree / fsread / mkdir / rmdir / runelf commands
+interactive shell with meminfo / memmap / ataread / ls / tree / fsread / mkdir / rmdir / runelf commands
 guest TinyCC compiler path — `usr/bin/tcc.elf` runs inside SmallOS through `user_crt0` and TinyCC's normal `main`, then compiles guest C samples during `make test`
 ```
 

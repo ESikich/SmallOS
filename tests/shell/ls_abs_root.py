@@ -3,16 +3,16 @@ from .common import case
 
 CASES = [
     case(
-        name="fsls",
+        name="ls_abs_root",
         must_contain=[
-            "shelltest: fsls begin",
+            "shelltest: ls_abs_root begin",
             "ext2 root directory:",
             "bin/",
             "etc/",
             "tmp/",
             "usr/",
             "var/",
-            "shelltest: fsls end",
+            "shelltest: ls_abs_root end",
         ],
         timeout=60.0,
     )

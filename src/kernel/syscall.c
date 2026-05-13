@@ -30,6 +30,7 @@
 #define EPOLL_MAX_WATCHES     64u
 #define POLL_MAX_FDS          PROCESS_FD_LIMIT_HARD
 #define INPUT_READ_MAX_EVENTS 64u
+#define DIRLIST_BATCH_MAX     64u
 
 typedef struct epoll_watch {
     int used;
@@ -1685,6 +1686,54 @@ static int sys_dirlist_impl(const char* path, unsigned int index, uapi_dirent_t*
     return 1;
 }
 
+static int sys_dirlist_batch_impl(const char* path,
+                                  unsigned int index,
+                                  uapi_dirent_t* out,
+                                  unsigned int max_count) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    ext2_dirent_info_t* entries;
+    unsigned int entries_frame;
+    unsigned int entries_frames;
+    unsigned int entries_bytes;
+    unsigned int count = 0;
+    int path_rc;
+    int rc = 0;
+
+    if (max_count == 0) return 0;
+    if (max_count > DIRLIST_BATCH_MAX) max_count = DIRLIST_BATCH_MAX;
+    if (!out) return -EFAULT;
+    if (!user_buf_ok((unsigned int)out, sizeof(*out) * max_count)) return -EFAULT;
+
+    path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    if (path_rc < 0) return path_rc;
+
+    entries_bytes = sizeof(*entries) * max_count;
+    entries_frames = (entries_bytes + PMM_FRAME_SIZE - 1u) / PMM_FRAME_SIZE;
+    entries_frame = pmm_alloc_contiguous_frames(entries_frames);
+    if (!entries_frame) return -ENOMEM;
+    entries = (ext2_dirent_info_t*)paging_phys_to_kernel_virt(entries_frame);
+
+    if (!vfs_dirents_read(kpath, index, entries, max_count, &count)) {
+        pmm_free_contiguous_frames(entries_frame, entries_frames);
+        return 0;
+    }
+
+    for (unsigned int i = 0; i < count; i++) {
+        uapi_dirent_t kout;
+        k_memset(&kout, 0, sizeof(kout));
+        k_memcpy(kout.d_name, entries[i].name, sizeof(kout.d_name));
+        kout.d_size = entries[i].size;
+        kout.d_is_dir = entries[i].is_dir;
+        if (copy_to_user(&out[i], &kout, sizeof(kout)) < 0) {
+            rc = -EFAULT;
+            break;
+        }
+    }
+
+    pmm_free_contiguous_frames(entries_frame, entries_frames);
+    return rc < 0 ? rc : (int)count;
+}
+
 static int sys_setsockopt_impl(int fd, int level, int optname) {
     process_t* proc = (process_t*)sched_current();
     fd_entry_t* ent;
@@ -2243,6 +2292,13 @@ void syscall_handler_main(syscall_regs_t* regs) {
             regs->eax = (unsigned int)sys_dirlist_impl((const char*)regs->ebx,
                                                        regs->ecx,
                                                        (uapi_dirent_t*)regs->edx);
+            break;
+
+        case SYS_DIRLIST_BATCH:
+            regs->eax = (unsigned int)sys_dirlist_batch_impl((const char*)regs->ebx,
+                                                             regs->ecx,
+                                                             (uapi_dirent_t*)regs->edx,
+                                                             regs->esi);
             break;
 
         case SYS_SETSOCKOPT:

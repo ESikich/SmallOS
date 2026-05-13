@@ -1602,6 +1602,67 @@ int ext2_dirent_at(const char* path,
     return 0;
 }
 
+int ext2_dirents_read(const char* path,
+                      u32 start_index,
+                      ext2_dirent_info_t* out,
+                      u32 max_entries,
+                      u32* out_count) {
+    resolved_path_t resolved;
+    u32 copied = 0;
+    u32 seen = 0;
+
+    if (out_count) *out_count = 0;
+    if (!s_initialised || !out_count) return 0;
+    if (max_entries == 0) return 1;
+    if (!out) return 0;
+    if (!resolve_path(path, &resolved) || !inode_is_dir(&resolved.inode)) return 0;
+
+    u32 blocks = inode_block_count(&resolved.inode);
+    for (u32 logical = 0; logical < blocks; logical++) {
+        u32 block = 0;
+        if (!inode_get_data_block(&resolved.inode, logical, 0, &block)) return 0;
+        if (!block) continue;
+        if (!read_block(block, s_block)) return 0;
+        u32 off = 0;
+        while (off < EXT2_BLOCK_SIZE) {
+            ext2_dirent_t de;
+            if (!parse_dirent(s_block, off, &de)) return 0;
+            if (de.inode != 0) {
+                char tmp[256];
+                if (dirent_name_to_buf(&de, tmp, sizeof(tmp), 0) &&
+                    !(k_strcmp(tmp, ".") || k_strcmp(tmp, ".."))) {
+                    if (seen >= start_index) {
+                        ext2_inode_t child;
+                        if (!read_inode(de.inode, &child)) return 0;
+                        int is_dir = inode_is_dir(&child);
+                        u32 len = (u32)k_strlen(tmp);
+                        u32 need = len + (is_dir ? 1u : 0u) + 1u;
+                        if (need > sizeof(out[copied].name)) return 0;
+
+                        k_memset(&out[copied], 0, sizeof(out[copied]));
+                        k_memcpy(out[copied].name, tmp, len);
+                        if (is_dir) out[copied].name[len++] = '/';
+                        out[copied].name[len] = '\0';
+                        out[copied].size = child.size;
+                        out[copied].is_dir = is_dir ? 1 : 0;
+                        copied++;
+                        if (copied == max_entries) {
+                            *out_count = copied;
+                            return 1;
+                        }
+                        if (!read_block(block, s_block)) return 0;
+                    }
+                    seen++;
+                }
+            }
+            off += de.rec_len;
+        }
+    }
+
+    *out_count = copied;
+    return 1;
+}
+
 int ext2_copy(const char* src, const char* dst) {
     u32 size = 0;
     const u8* data = ext2_load(src, &size);

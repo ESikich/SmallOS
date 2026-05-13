@@ -95,10 +95,13 @@ struct fd_entry {
 #define PROCESS_MAX_ARGS  16
 #define PROCESS_ARG_BYTES 256
 #define PROCESS_CWD_MAX   PROCESS_FD_NAME_MAX
+#define PROCESS_KERNEL_STACK_FRAMES 8u
+#define PROCESS_KERNEL_STACK_BYTES  (PROCESS_KERNEL_STACK_FRAMES * PAGE_SIZE)
 
 typedef struct process {
     u32*            pd;                 /* PMM physical page-directory frame */
-    u32             kernel_stack_frame; /* PMM physical kernel-stack frame */
+    u32             kernel_stack_frame; /* first PMM physical kernel-stack frame */
+    u32             kernel_stack_frames;
     u32             pid;                /* kernel process id, unique until wrap */
     u32             parent_pid;         /* process that spawned this task, if any */
     u32             pgid;               /* lightweight process group id */

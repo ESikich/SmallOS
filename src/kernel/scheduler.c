@@ -28,7 +28,8 @@ static unsigned int sched_proc_esp0(process_t* proc) {
     if (!proc || proc->kernel_stack_frame == 0) {
         return KERNEL_BOOT_STACK_TOP;
     }
-    return (unsigned int)paging_phys_to_kernel_virt(proc->kernel_stack_frame) + PAGE_SIZE;
+    return (unsigned int)paging_phys_to_kernel_virt(proc->kernel_stack_frame) +
+           proc->kernel_stack_frames * PAGE_SIZE;
 }
 
 static int sched_find_next_runnable_from(int start_idx) {

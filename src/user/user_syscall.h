@@ -378,6 +378,14 @@ static inline int sys_dirlist(const char* path,
     return syscall3(SYS_DIRLIST, (uint32_t)path, index, (uint32_t)out);
 }
 
+static inline int sys_dirlist_batch(const char* path,
+                                    uint32_t index,
+                                    struct dirent* out,
+                                    uint32_t max_count) {
+    return syscall4(SYS_DIRLIST_BATCH, (uint32_t)path, index,
+                    (uint32_t)out, max_count);
+}
+
 static inline int sys_setsockopt(int fd, int level, int optname,
                                  const void* optval, socklen_t optlen) {
     (void)optval;

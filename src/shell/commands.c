@@ -28,9 +28,6 @@ static int resolve_shell_path_arg(const char* input, char* out, unsigned int out
 static int command_name_has_path_sep(const char* name);
 static int path_has_dot(const char* path);
 static int path_copy3(char* out, unsigned int out_size, const char* a, const char* b, const char* c);
-static int path_has_wildcards(const char* path);
-static int split_wildcard_path(const char* path, char* dir_out, unsigned int dir_out_size, const char** pattern_out);
-static void cmd_ls_path(const char* input);
 static void terminal_put_cwd(void);
 
 typedef struct {
@@ -704,99 +701,6 @@ static void cmd_ataread(command_t* cmd) {
     }
 }
 
-static void cmd_fsls(command_t* cmd) {
-    if (cmd->argc < 2) {
-        ext2_ls();
-        return;
-    }
-
-    cmd_ls_path(cmd->argv[1]);
-}
-
-static void cmd_ls(command_t* cmd) {
-    if (cmd->argc < 2) {
-        const char* cwd = shell_get_cwd();
-        if (!cwd || cwd[0] == '\0') {
-            ext2_ls();
-            return;
-        }
-
-        ext2_ls_path(cwd);
-        return;
-    }
-
-    cmd_ls_path(cmd->argv[1]);
-}
-
-static int path_has_wildcards(const char* path) {
-    if (!path) {
-        return 0;
-    }
-
-    for (const char* p = path; *p; p++) {
-        if (*p == '*' || *p == '?') {
-            return 1;
-        }
-    }
-
-    return 0;
-}
-
-static int split_wildcard_path(const char* path, char* dir_out, unsigned int dir_out_size, const char** pattern_out) {
-    if (!path || !dir_out || !pattern_out || dir_out_size == 0) {
-        return 0;
-    }
-
-    const char* last_sep = 0;
-    for (const char* p = path; *p; p++) {
-        if (*p == '/' || *p == '\\') {
-            last_sep = p;
-        }
-    }
-
-    if (!last_sep) {
-        if (path[0] != '\0' && 1u > dir_out_size) {
-            return 0;
-        }
-        dir_out[0] = '\0';
-        *pattern_out = path;
-        return 1;
-    }
-
-    unsigned int dir_len = (unsigned int)(last_sep - path);
-    if (dir_len + 1u > dir_out_size) {
-        return 0;
-    }
-
-    for (unsigned int i = 0; i < dir_len; i++) {
-        dir_out[i] = path[i];
-    }
-    dir_out[dir_len] = '\0';
-    *pattern_out = last_sep + 1;
-    return 1;
-}
-
-static void cmd_ls_path(const char* input) {
-    char path[SHELL_PATH_MAX];
-    if (!resolve_shell_path_arg(input, path, sizeof(path))) {
-        return;
-    }
-
-    if (!path_has_wildcards(path)) {
-        ext2_ls_path(path);
-        return;
-    }
-
-    char dir[SHELL_PATH_MAX];
-    const char* pattern = 0;
-    if (!split_wildcard_path(path, dir, sizeof(dir), &pattern)) {
-        terminal_puts("ls: failed\n");
-        return;
-    }
-
-    ext2_ls_path_filtered(dir, pattern);
-}
-
 static void cmd_fsread(command_t* cmd) {
     if (cmd->argc < 2) {
         terminal_puts("usage: fsread <n>\n");
@@ -1204,22 +1108,22 @@ static void cmd_shelltest(command_t* cmd) {
     static command_t ls_root_cmd = { 1, { "ls" } };
     static command_t ls_glob_cmd = { 2, { "ls", "*.elf" } };
     static command_t ataread_cmd = { 2, { "ataread", "0" } };
-    static command_t fsls_root_cmd = { 1, { "fsls" } };
-    static command_t fsls_path_cmd = { 2, { "fsls", "usr/bin" } };
+    static command_t ls_root_dir_cmd = { 2, { "ls", "/" } };
+    static command_t ls_path_cmd = { 2, { "ls", "usr/bin" } };
     static command_t tree_root_cmd = { 1, { "tree" } };
     static command_t tree_path_cmd = { 2, { "tree", "usr/bin" } };
     static command_t fsread_cmd = { 2, { "fsread", "usr/bin/hello.elf" } };
     static command_t fsread_path_cmd = { 2, { "fsread", "usr/bin/hello.elf" } };
     static command_t mkdir_cmd = { 2, { "mkdir", "TESTDIR" } };
-    static command_t fsls_newdir_cmd = { 2, { "fsls", "TESTDIR" } };
+    static command_t ls_newdir_cmd = { 2, { "ls", "TESTDIR" } };
     static command_t rmdir_cmd = { 2, { "rmdir", "TESTDIR" } };
-    static command_t fsls_removed_cmd = { 2, { "fsls", "TESTDIR" } };
+    static command_t ls_removed_cmd = { 2, { "ls", "TESTDIR" } };
     static command_t mkdir_nested_parent_cmd = { 2, { "mkdir", "NESTPARENT" } };
     static command_t mkdir_nested_child_cmd = { 2, { "mkdir", "NESTPARENT/CHILD" } };
-    static command_t fsls_nested_cmd = { 2, { "fsls", "NESTPARENT" } };
+    static command_t ls_nested_cmd = { 2, { "ls", "NESTPARENT" } };
     static command_t rmdir_nested_child_cmd = { 2, { "rmdir", "NESTPARENT/CHILD" } };
     static command_t rmdir_nested_parent_cmd = { 2, { "rmdir", "NESTPARENT" } };
-    static command_t fsls_nested_removed_cmd = { 2, { "fsls", "NESTPARENT" } };
+    static command_t ls_nested_removed_cmd = { 2, { "ls", "NESTPARENT" } };
     static command_t mkdir_var_tmp_cmd = { 2, { "mkdir", "var/tmp" } };
     static command_t mkdir_work_cmd = { 2, { "mkdir", "var/tmp/WORK" } };
     static command_t mkdir_samples_cmd = { 2, { "mkdir", "var/tmp/samples" } };
@@ -1227,7 +1131,7 @@ static void cmd_shelltest(command_t* cmd) {
     static command_t mv_tccagg_cmd = { 3, { "mv", "usr/share/examples/tinycc/tccagg.c", "var/tmp/samples" } };
     static command_t mv_tcctree_cmd = { 3, { "mv", "usr/share/examples/tinycc/tcctree.c", "var/tmp/samples" } };
     static command_t mv_tccmini_cmd = { 3, { "mv", "usr/share/examples/tinycc/tccmini.c", "var/tmp/samples" } };
-    static command_t fsls_samples_cmd = { 2, { "fsls", "var/tmp/samples" } };
+    static command_t ls_samples_cmd = { 2, { "ls", "var/tmp/samples" } };
     static command_t tccmath_build_cmd = { 6, { "runelf", "usr/bin/tcc.elf", "-nostdlib", "-o", "var/tmp/tccmath.elf", "var/tmp/samples/tccmath.c" } };
     static command_t tccmath_run_cmd = { 2, { "runelf", "var/tmp/tccmath" } };
     static command_t tccagg_build_cmd = { 6, { "runelf", "usr/bin/tcc.elf", "-nostdlib", "-o", "var/tmp/tccagg.elf", "var/tmp/samples/tccagg.c" } };
@@ -1272,8 +1176,8 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_call("ping", cmd_ping, &ping_cmd);
     shelltest_call("pinggw", cmd_pinggw, &pinggw_cmd);
     shelltest_call("ataread", cmd_ataread, &ataread_cmd);
-    shelltest_exec("fsls", &fsls_root_cmd);
-    shelltest_exec("fsls_path", &fsls_path_cmd);
+    shelltest_exec("ls_abs_root", &ls_root_dir_cmd);
+    shelltest_exec("ls_path", &ls_path_cmd);
     shelltest_exec("tree", &tree_root_cmd);
     shelltest_exec("tree_path", &tree_path_cmd);
     shelltest_exec("fsread", &fsread_cmd);
@@ -1282,15 +1186,15 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_exec("touch", &touch_cmd);
     shelltest_exec("fsread_touch", &fsread_touch_cmd);
     shelltest_exec("mkdir", &mkdir_cmd);
-    shelltest_exec("fsls_newdir", &fsls_newdir_cmd);
+    shelltest_exec("ls_newdir", &ls_newdir_cmd);
     shelltest_exec("rmdir", &rmdir_cmd);
-    shelltest_exec("fsls_removed", &fsls_removed_cmd);
+    shelltest_exec("ls_removed", &ls_removed_cmd);
     shelltest_exec("mkdir_nested_parent", &mkdir_nested_parent_cmd);
     shelltest_exec("mkdir_nested_child", &mkdir_nested_child_cmd);
-    shelltest_exec("fsls_nested", &fsls_nested_cmd);
+    shelltest_exec("ls_nested", &ls_nested_cmd);
     shelltest_exec("rmdir_nested_child", &rmdir_nested_child_cmd);
     shelltest_exec("rmdir_nested_parent", &rmdir_nested_parent_cmd);
-    shelltest_exec("fsls_nested_removed", &fsls_nested_removed_cmd);
+    shelltest_exec("ls_nested_removed", &ls_nested_removed_cmd);
     shelltest_call("compiler_demo", cmd_runelf, &compiler_demo_cmd);
     shelltest_call("tinycc", cmd_runelf, &tinycc_cmd);
     shelltest_exec("mkdir_var_tmp", &mkdir_var_tmp_cmd);
@@ -1300,7 +1204,7 @@ static void cmd_shelltest(command_t* cmd) {
     shelltest_exec("mv_tccagg", &mv_tccagg_cmd);
     shelltest_exec("mv_tcctree", &mv_tcctree_cmd);
     shelltest_exec("mv_tccmini", &mv_tccmini_cmd);
-    shelltest_exec("fsls_samples", &fsls_samples_cmd);
+    shelltest_exec("ls_samples", &ls_samples_cmd);
     shelltest_call("tccmath_build", cmd_runelf, &tccmath_build_cmd);
     shelltest_call("tccmath_run", cmd_runelf, &tccmath_run_cmd);
     shelltest_call("tccagg_build", cmd_runelf, &tccagg_build_cmd);
@@ -1515,7 +1419,6 @@ static command_entry_t app_commands[] = {
     { "uptime",        "show tick and second counts via ELF", 0 },
     { "pwd",           "print the shell working directory", 0 },
     { "ls",            "list an ext2 directory",       0 },
-    { "fsls",          "list an ext2 directory",       0 },
     { "tree",          "print an ext2 directory tree", 0 },
     { "fsread",        "dump ext2 file bytes",         0 },
     { "cat",           "print an ext2 file",           0 },

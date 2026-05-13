@@ -417,7 +417,7 @@ Useful signals:
 1. `make clean && make` — fix compile errors
 2. Boot — confirm shell appears and `ext2: ok` prints
 3. `ataread 0` — confirm `sig: 0x55 0xAA` and the correct ext2 partition LBA value
-4. `fsls` — confirm ext2 root directory lists correctly
+4. `ls /` — confirm ext2 root directory lists correctly
 5. `tree` — confirm recursive directory traversal works from the ext2 root
 6. `mkdir TESTDIR` / `rmdir TESTDIR` — confirm directory creation and removal
 7. `fsread usr/bin/hello.elf` — confirm `7F 45 4C 46` (ELF magic)

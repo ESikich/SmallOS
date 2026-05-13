@@ -429,3 +429,11 @@ int vfs_dirent_at(const char* path,
     return ext2_dirent_at(path, index, out_name, out_name_size,
                           out_size, out_is_dir);
 }
+
+int vfs_dirents_read(const char* path,
+                     u32 start_index,
+                     ext2_dirent_info_t* out,
+                     u32 max_entries,
+                     u32* out_count) {
+    return ext2_dirents_read(path, start_index, out, max_entries, out_count);
+}

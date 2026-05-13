@@ -1339,12 +1339,16 @@ process_t* process_create_kernel_task(const char* name, void (*entry)(void)) {
     process_t* proc = process_create(name);
     if (!proc) return 0;
 
-    proc->kernel_stack_frame = pmm_alloc_frame();
+    proc->kernel_stack_frames = PROCESS_KERNEL_STACK_FRAMES;
+    proc->kernel_stack_frame = pmm_alloc_contiguous_frames(proc->kernel_stack_frames);
     if (!proc->kernel_stack_frame) {
         terminal_puts("process: out of frames for kernel stack\n");
         process_destroy(proc);
         return 0;
     }
+    k_memset(paging_phys_to_kernel_virt(proc->kernel_stack_frame),
+             0,
+             proc->kernel_stack_frames * PAGE_SIZE);
 
     proc->pd = 0;
     proc->kernel_entry = entry;
@@ -1352,7 +1356,8 @@ process_t* process_create_kernel_task(const char* name, void (*entry)(void)) {
 
     {
         unsigned int* stack_top =
-            (unsigned int*)((u8*)paging_phys_to_kernel_virt(proc->kernel_stack_frame) + PAGE_SIZE);
+            (unsigned int*)((u8*)paging_phys_to_kernel_virt(proc->kernel_stack_frame) +
+                            proc->kernel_stack_frames * PAGE_SIZE);
         stack_top--;
         *stack_top = (unsigned int)process_kernel_task_bootstrap;
         proc->sched_esp = (unsigned int)stack_top;
@@ -1390,8 +1395,10 @@ void process_destroy(process_t* proc) {
     }
 
     if (proc->kernel_stack_frame) {
-        pmm_free_frame(proc->kernel_stack_frame);
+        u32 frames = proc->kernel_stack_frames ? proc->kernel_stack_frames : 1u;
+        pmm_free_contiguous_frames(proc->kernel_stack_frame, frames);
         proc->kernel_stack_frame = 0;
+        proc->kernel_stack_frames = 0;
     }
 
     if (s_foreground_reader == proc) {

@@ -199,7 +199,7 @@ The current ext2 driver is intentionally narrow.
 - read access to root-directory and nested-directory files
 - raw file display via `cat`; CRLF text relies on terminal `\r` handling instead of file-content normalization
 - shell working-directory navigation via `cd` / `pwd`
-- directory listing by path with `ext2_ls_path(path)` and `fsls [path]`
+- directory listing by path with `ext2_ls_path(path)` and `ls [path]`
 - wildcard shell listing with `ls [pattern]`
 - recursive directory display with `tree [path]`, including UTF-8 branch glyphs on the terminal path
 - directory creation/removal by path with `ext2_mkdir(path)` / `ext2_rmdir(path)`

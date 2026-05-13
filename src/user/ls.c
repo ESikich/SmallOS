@@ -2,6 +2,7 @@
 #include "user_lib.h"
 
 #define LS_MAX_ENTRIES 128
+#define LS_LINE_MAX (NAME_MAX + 32)
 
 typedef struct {
     char name[NAME_MAX + 1];
@@ -84,6 +85,42 @@ static void sort_entries(ls_entry_t* entries, unsigned int count) {
     }
 }
 
+static int append_string(char* out, unsigned int out_size, unsigned int* pos, const char* s) {
+    if (!out || !pos || !s) return 0;
+    for (unsigned int i = 0; s[i]; i++) {
+        if (*pos + 1u >= out_size) return 0;
+        out[(*pos)++] = s[i];
+    }
+    out[*pos] = '\0';
+    return 1;
+}
+
+static int append_char(char* out, unsigned int out_size, unsigned int* pos, char ch) {
+    if (!out || !pos || *pos + 1u >= out_size) return 0;
+    out[(*pos)++] = ch;
+    out[*pos] = '\0';
+    return 1;
+}
+
+static int append_uint(char* out, unsigned int out_size, unsigned int* pos, unsigned int value) {
+    char tmp[16];
+    unsigned int n = 0;
+
+    if (value == 0) {
+        return append_char(out, out_size, pos, '0');
+    }
+
+    while (value > 0 && n < sizeof(tmp)) {
+        tmp[n++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    }
+
+    while (n > 0) {
+        if (!append_char(out, out_size, pos, tmp[--n])) return 0;
+    }
+    return 1;
+}
+
 static int split_wildcard(const char* path,
                           char* dir,
                           unsigned int dir_size,
@@ -115,20 +152,29 @@ static int split_wildcard(const char* path,
     return 1;
 }
 
-static void print_entry(const ls_entry_t* ent) {
-    u_puts("  ");
-    u_puts(ent->name);
+static int print_entry(const ls_entry_t* ent) {
+    char line[LS_LINE_MAX];
+    unsigned int pos = 0;
+
+    line[0] = '\0';
+    if (!append_string(line, sizeof(line), &pos, "  ") ||
+        !append_string(line, sizeof(line), &pos, ent->name)) {
+        return 0;
+    }
     if (ent->is_dir && ent->name[str_len(ent->name) - 1] != '/') {
-        u_putc('/');
+        if (!append_char(line, sizeof(line), &pos, '/')) return 0;
     }
-    u_puts("  ");
+    if (!append_string(line, sizeof(line), &pos, "  ")) return 0;
     if (ent->is_dir) {
-        u_puts("0-");
+        if (!append_string(line, sizeof(line), &pos, "0-")) return 0;
     } else {
-        u_put_uint(ent->size);
-        u_puts(" B");
+        if (!append_uint(line, sizeof(line), &pos, ent->size) ||
+            !append_string(line, sizeof(line), &pos, " B")) {
+            return 0;
+        }
     }
-    u_putc('\n');
+    if (!append_char(line, sizeof(line), &pos, '\n')) return 0;
+    return sys_write(line, pos) == (int)pos;
 }
 
 static int list_path(const char* path, const char* pattern) {
@@ -186,7 +232,10 @@ static int list_path(const char* path, const char* pattern) {
 
     sort_entries(s_entries, count);
     for (unsigned int i = 0; i < count; i++) {
-        print_entry(&s_entries[i]);
+        if (!print_entry(&s_entries[i])) {
+            u_puts("ls: line too long\n");
+            return 1;
+        }
     }
     return 0;
 }

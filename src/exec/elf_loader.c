@@ -86,7 +86,7 @@ static void elf_user_task_bootstrap(void) {
     }
 
     tss_set_kernel_stack((unsigned int)paging_phys_to_kernel_virt(proc->kernel_stack_frame) +
-                         PAGE_SIZE);
+                         proc->kernel_stack_frames * PAGE_SIZE);
     paging_switch(proc->pd);
 
     elf_enter_ring3(proc->user_entry,
@@ -112,7 +112,8 @@ static int elf_seed_sched_context(process_t* proc,
 
     {
         unsigned int* stack_top =
-            (unsigned int*)((u8*)paging_phys_to_kernel_virt(proc->kernel_stack_frame) + PAGE_SIZE);
+            (unsigned int*)((u8*)paging_phys_to_kernel_virt(proc->kernel_stack_frame) +
+                            proc->kernel_stack_frames * PAGE_SIZE);
         stack_top--;
         *stack_top = (unsigned int)elf_user_task_bootstrap;
         proc->sched_esp = (unsigned int)stack_top;
@@ -221,12 +222,16 @@ process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
         }
     }
 
-    proc->kernel_stack_frame = pmm_alloc_frame();
+    proc->kernel_stack_frames = PROCESS_KERNEL_STACK_FRAMES;
+    proc->kernel_stack_frame = pmm_alloc_contiguous_frames(proc->kernel_stack_frames);
     if (!proc->kernel_stack_frame) {
         terminal_puts("elf: out of frames (kernel stack)\n");
         process_destroy(proc);
         return 0;
     }
+    k_memset(paging_phys_to_kernel_virt(proc->kernel_stack_frame),
+             0,
+             proc->kernel_stack_frames * PAGE_SIZE);
 
     if (!elf_seed_sched_context(proc, eh->e_entry, argc, argv)) {
         process_destroy(proc);

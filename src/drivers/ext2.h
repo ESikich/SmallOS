@@ -30,6 +30,12 @@ typedef struct {
     u32 free_clusters;
 } ext2_fsinfo_t;
 
+typedef struct {
+    char name[256];
+    u32 size;
+    int is_dir;
+} ext2_dirent_info_t;
+
 int ext2_init(void);
 
 void ext2_ls(void);
@@ -69,6 +75,11 @@ int ext2_dirent_at(const char* path,
                    u32 out_name_size,
                    u32* out_size,
                    int* out_is_dir);
+int ext2_dirents_read(const char* path,
+                      u32 start_index,
+                      ext2_dirent_info_t* out,
+                      u32 max_entries,
+                      u32* out_count);
 int ext2_copy(const char* src, const char* dst);
 int ext2_move(const char* src, const char* dst);
 int ext2_fsinfo(ext2_fsinfo_t* out);

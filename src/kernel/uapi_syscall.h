@@ -132,7 +132,8 @@ enum {
     SYS_FSMAP           = 61, /* write ext2 allocation-block states */
     SYS_GETPID          = 62, /* return current process id */
     SYS_WAITPID         = 63, /* wait for a child pid and copy wait status */
-    SYS_KILL            = 64  /* signal/terminate a process by pid */
+    SYS_KILL            = 64, /* signal/terminate a process by pid */
+    SYS_DIRLIST_BATCH   = 65  /* copy a range of directory entries */
 };
 
 #endif
