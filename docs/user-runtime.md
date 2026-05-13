@@ -161,11 +161,29 @@ The runtime provides a small POSIX-shaped surface:
 - `mkdir`, `rmdir`
 - `getcwd`, `chdir`
 - `getpid`, `waitpid`, `kill`
+- `time`, `gettimeofday`, `clock_gettime`, `clock_settime`
 - socket, poll, epoll, timerfd, and signalfd wrappers used by guest services
 
 `access(path, mode)` validates mode bits and checks existence through
 `SYS_STAT`. SmallOS does not currently model Unix permission bits, so `R_OK`,
 `W_OK`, and `X_OK` are existence/type checks rather than permission checks.
+
+---
+
+# Time
+
+The runtime exposes `CLOCK_MONOTONIC` as uptime and `CLOCK_REALTIME` as a
+settable wall clock. The kernel stores realtime as an offset from uptime, so
+the clock continues advancing after boot-time or manual synchronization.
+
+Boot performs a best-effort NTP sync through the e1000/IPv4/UDP path before the
+shell starts. `/bin/date` prints the current UTC realtime value, and
+`date -s [server-ip]` asks the kernel NTP helper to synchronize again. The
+default server is `129.6.15.28`.
+
+`time()` and `gettimeofday()` use `CLOCK_REALTIME`. `clock_gettime()` accepts
+`CLOCK_REALTIME` and `CLOCK_MONOTONIC`; `clock_settime()` accepts
+`CLOCK_REALTIME`.
 
 ---
 

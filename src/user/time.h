@@ -28,6 +28,7 @@ struct tm* localtime(const time_t* timep);
 struct tm* gmtime_r(const time_t* timep, struct tm* result);
 size_t strftime(char* s, size_t max, const char* format, const struct tm* tm);
 int clock_gettime(int clock_id, struct timespec* ts);
+int clock_settime(int clock_id, const struct timespec* ts);
 char* strptime(const char* buf, const char* fmt, struct tm* tm);
 time_t timegm(struct tm* tm);
 

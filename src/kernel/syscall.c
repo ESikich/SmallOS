@@ -9,6 +9,7 @@
 #include "system.h"
 #include "klib.h"
 #include "../drivers/tcp.h"
+#include "../drivers/ntp.h"
 #include "../drivers/mouse.h"
 #include "uapi_poll.h"
 #include "uapi_errno.h"
@@ -48,6 +49,11 @@ struct user_itimerspec {
         unsigned int tv_sec;
         long tv_nsec;
     } it_value;
+};
+
+struct user_timespec {
+    unsigned int tv_sec;
+    long tv_nsec;
 };
 
 static int path_is_sep(char c) {
@@ -1529,6 +1535,53 @@ static int sys_timerfd_create_impl(int clock_id, int flags) {
     return fd;
 }
 
+static int sys_clock_gettime_impl(int clock_id, struct user_timespec* ts) {
+    struct user_timespec out;
+    unsigned int ticks;
+    unsigned int rem;
+
+    if (!ts) return -EFAULT;
+    if (clock_id != CLOCK_REALTIME && clock_id != CLOCK_MONOTONIC) return -EINVAL;
+
+    ticks = timer_get_ticks();
+    rem = ticks % timer_get_hz();
+    out.tv_sec = (clock_id == CLOCK_REALTIME)
+               ? timer_get_realtime_seconds()
+               : timer_get_seconds();
+    out.tv_nsec = (long)(rem * (SMALLOS_NS_PER_SECOND / timer_get_hz()));
+    return copy_to_user(ts, &out, sizeof(out));
+}
+
+static int sys_clock_settime_impl(int clock_id, const struct user_timespec* ts) {
+    struct user_timespec in;
+
+    if (!ts) return -EFAULT;
+    if (clock_id != CLOCK_REALTIME) return -EINVAL;
+    if (copy_from_user(&in, ts, sizeof(in)) < 0) return -EFAULT;
+    if (in.tv_nsec < 0 || in.tv_nsec >= (long)SMALLOS_NS_PER_SECOND) return -EINVAL;
+
+    timer_set_realtime_seconds(in.tv_sec);
+    return 0;
+}
+
+static int sys_ntp_sync_impl(unsigned int server_ip, struct user_timespec* out_ts) {
+    struct user_timespec out;
+    unsigned int unix_time;
+
+    __asm__ __volatile__("sti");
+    if (!ntp_sync(server_ip, &unix_time)) {
+        return -ETIMEDOUT;
+    }
+
+    timer_set_realtime_seconds(unix_time);
+    if (out_ts) {
+        out.tv_sec = unix_time;
+        out.tv_nsec = 0;
+        return copy_to_user(out_ts, &out, sizeof(out));
+    }
+    return 0;
+}
+
 static int sys_timerfd_settime_impl(int fd,
                                     int flags,
                                     const struct user_itimerspec* new_value,
@@ -2445,6 +2498,24 @@ void syscall_handler_main(syscall_regs_t* regs) {
         case SYS_FSMAP:
             regs->eax = (unsigned int)sys_fsmap_impl(
                             (sys_fsmap_request_t*)regs->ebx);
+            break;
+
+        case SYS_CLOCK_GETTIME:
+            regs->eax = (unsigned int)sys_clock_gettime_impl(
+                            (int)regs->ebx,
+                            (struct user_timespec*)regs->ecx);
+            break;
+
+        case SYS_CLOCK_SETTIME:
+            regs->eax = (unsigned int)sys_clock_settime_impl(
+                            (int)regs->ebx,
+                            (const struct user_timespec*)regs->ecx);
+            break;
+
+        case SYS_NTP_SYNC:
+            regs->eax = (unsigned int)sys_ntp_sync_impl(
+                            regs->ebx,
+                            (struct user_timespec*)regs->ecx);
             break;
 
         default:

@@ -430,6 +430,18 @@ static inline int sys_timerfd_settime(int fd, int flags, const void* new_value, 
     return syscall4(SYS_TIMERFD_SETTIME, (uint32_t)fd, (uint32_t)flags, (uint32_t)new_value, (uint32_t)old_value);
 }
 
+static inline int sys_clock_gettime(int clock_id, void* ts) {
+    return syscall2(SYS_CLOCK_GETTIME, (uint32_t)clock_id, (uint32_t)ts);
+}
+
+static inline int sys_clock_settime(int clock_id, const void* ts) {
+    return syscall2(SYS_CLOCK_SETTIME, (uint32_t)clock_id, (uint32_t)ts);
+}
+
+static inline int sys_ntp_sync(uint32_t server_ip, void* out_ts) {
+    return syscall2(SYS_NTP_SYNC, server_ip, (uint32_t)out_ts);
+}
+
 static inline int sys_signalfd(int fd, const void* mask, int flags) {
     return syscall3(SYS_SIGNALFD, (uint32_t)fd, (uint32_t)mask, (uint32_t)flags);
 }

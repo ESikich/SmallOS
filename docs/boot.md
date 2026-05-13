@@ -492,7 +492,9 @@ Kernel   →  zero BSS
          →  terminal_init, gdt_init, paging_init
          →  memory_init(page-aligned bss_end), pmm_init
          →  keyboard, mouse, timer, idt, sched_init
-         →  ata_init, ext2_init
+         →  ata_init, pci_init, e1000_init, tcp_init
+         →  ntp_sync (best-effort realtime clock sync)
+         →  ext2_init
          →  create shell task, sti, sched_start
 ```
 

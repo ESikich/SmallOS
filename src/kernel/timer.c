@@ -3,6 +3,7 @@
 
 static volatile unsigned int timer_ticks = 0;
 static unsigned int timer_hz = SMALLOS_TIMER_HZ;
+static unsigned int realtime_base_seconds = 0;
 
 void timer_init(unsigned int frequency) {
     if (frequency == 0) {
@@ -31,6 +32,14 @@ unsigned int timer_get_seconds(void) {
         return 0;
     }
     return timer_ticks / timer_hz;
+}
+
+unsigned int timer_get_realtime_seconds(void) {
+    return realtime_base_seconds + timer_get_seconds();
+}
+
+void timer_set_realtime_seconds(unsigned int seconds) {
+    realtime_base_seconds = seconds - timer_get_seconds();
 }
 
 unsigned int timer_get_hz(void) {

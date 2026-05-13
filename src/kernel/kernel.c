@@ -18,6 +18,7 @@
 #include "e1000.h"
 #include "fb_console.h"
 #include "../drivers/tcp.h"
+#include "../drivers/ntp.h"
 
 extern unsigned char bss_end;
 
@@ -79,6 +80,81 @@ static void boot_splash_expect(int cond, const char* name, const char* detail) {
     }
 
     boot_splash_pass(name);
+}
+
+static int boot_is_leap_year(int year) {
+    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+}
+
+static void boot_put_uint_width(unsigned int value, unsigned int width) {
+    char buf[10];
+    unsigned int i = 0;
+
+    do {
+        buf[i++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    } while (value > 0u && i < sizeof(buf));
+    while (i < width && i < sizeof(buf)) {
+        buf[i++] = '0';
+    }
+    while (i > 0u) {
+        terminal_putc(buf[--i]);
+    }
+}
+
+static void boot_print_utc_time(unsigned int unix_time) {
+    static const unsigned int month_days[] = {
+        31u, 28u, 31u, 30u, 31u, 30u, 31u, 31u, 30u, 31u, 30u, 31u
+    };
+    unsigned int days = unix_time / 86400u;
+    unsigned int rem = unix_time % 86400u;
+    int year = 1970;
+    unsigned int month = 0;
+
+    while (1) {
+        unsigned int yd = boot_is_leap_year(year) ? 366u : 365u;
+        if (days < yd) break;
+        days -= yd;
+        year++;
+    }
+
+    while (month < 12u) {
+        unsigned int md = month_days[month];
+        if (month == 1u && boot_is_leap_year(year)) md++;
+        if (days < md) break;
+        days -= md;
+        month++;
+    }
+
+    terminal_puts("ntp: time ");
+    boot_put_uint_width((unsigned int)year, 4u);
+    terminal_putc('-');
+    boot_put_uint_width(month + 1u, 2u);
+    terminal_putc('-');
+    boot_put_uint_width(days + 1u, 2u);
+    terminal_putc(' ');
+    boot_put_uint_width(rem / 3600u, 2u);
+    terminal_putc(':');
+    boot_put_uint_width((rem / 60u) % 60u, 2u);
+    terminal_putc(':');
+    boot_put_uint_width(rem % 60u, 2u);
+    terminal_puts(" UTC\n");
+}
+
+static void boot_sync_clock(void) {
+    unsigned int unix_time = 0;
+
+    terminal_puts("ntp: syncing clock\n");
+    __asm__ __volatile__("sti");
+    if (ntp_sync(NTP_DEFAULT_SERVER_IP, &unix_time)) {
+        timer_set_realtime_seconds(unix_time);
+        __asm__ __volatile__("cli");
+        boot_splash_pass("ntp: clock synchronized");
+        boot_print_utc_time(unix_time);
+    } else {
+        __asm__ __volatile__("cli");
+        boot_splash_warn("ntp: clock sync failed");
+    }
 }
 
 static void boot_splash_boot_info(void) {
@@ -208,6 +284,8 @@ void kernel_main(void) {
     boot_splash_expect(tcp_init(),
                        "tcp: service task queued",
                        "TCP service task could not be created");
+
+    boot_sync_clock();
 
     /*
      * ext2 filesystem — discovers the partition from MBR entry 1 and

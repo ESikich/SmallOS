@@ -803,6 +803,53 @@ Returns `0` on success, `-EFAULT` for invalid request or output buffers, or
 
 ---
 
+### SYS_CLOCK_GETTIME (66)
+
+```c
+int sys_clock_gettime(int clock_id, struct timespec* ts);
+```
+
+Writes a seconds/nanoseconds timestamp into `ts`. `CLOCK_MONOTONIC` reports
+uptime, while `CLOCK_REALTIME` reports the settable wall clock maintained as
+an offset from uptime.
+
+Returns `0` on success, `-EINVAL` for an unsupported clock id, or `-EFAULT`
+for an invalid output pointer.
+
+---
+
+### SYS_CLOCK_SETTIME (67)
+
+```c
+int sys_clock_settime(int clock_id, const struct timespec* ts);
+```
+
+Sets `CLOCK_REALTIME`. `CLOCK_MONOTONIC` is read-only. Nanoseconds must be in
+the normal `[0, 1000000000)` range; the current implementation stores seconds
+precision.
+
+Returns `0` on success, `-EINVAL` for an unsupported clock id or invalid
+nanoseconds, or `-EFAULT` for an invalid input pointer.
+
+---
+
+### SYS_NTP_SYNC (68)
+
+```c
+int sys_ntp_sync(uint32_t server_ip, struct timespec* out_ts);
+```
+
+Queries an IPv4 NTP server through the kernel's tiny UDP/NTP path, sets
+`CLOCK_REALTIME` from the response transmit timestamp, and optionally writes
+the synchronized time to `out_ts`. `server_ip` is in the same host-order IPv4
+form used internally by the network drivers, for example `0x81060F1C` for
+`129.6.15.28`.
+
+Returns `0` on success, `-ETIMEDOUT` when ARP/send/reply waiting fails, or
+`-EFAULT` for an invalid output pointer.
+
+---
+
 ### SYS_WRITEFILE (12)
 
 ```c
@@ -1036,6 +1083,9 @@ sys_epoll_ctl(epfd, op, fd, event)
 sys_epoll_wait(epfd, events, maxevents, timeout)
 sys_timerfd_create(clock_id, flags)
 sys_timerfd_settime(fd, flags, new_value, old_value)
+sys_clock_gettime(clock_id, ts)
+sys_clock_settime(clock_id, ts)
+sys_ntp_sync(server_ip, out_ts)
 sys_signalfd(fd, mask, flags)
 sys_accept4(fd, addr, addrlen, flags)
 sys_shutdown(fd, how)

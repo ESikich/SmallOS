@@ -3,6 +3,7 @@
 #include "arp.h"
 #include "e1000.h"
 #include "ipv4.h"
+#include "ntp.h"
 #include "tcp.h"
 #include "../kernel/types.h"
 
@@ -10,6 +11,7 @@
 #define NET_ETHERTYPE_IPV4 0x0800u
 #define NET_IPV4_PROTO_ICMP 1u
 #define NET_IPV4_PROTO_TCP  6u
+#define NET_IPV4_PROTO_UDP  17u
 #define NET_MAX_FRAME 1600u
 
 static u8 s_net_frame[NET_MAX_FRAME];
@@ -41,6 +43,8 @@ int net_poll_once(void) {
             (void)ipv4_handle_frame(s_net_frame, len);
         } else if (s_net_frame[23] == NET_IPV4_PROTO_TCP) {
             (void)tcp_handle_ipv4_frame(s_net_frame, len);
+        } else if (s_net_frame[23] == NET_IPV4_PROTO_UDP) {
+            (void)ntp_handle_ipv4_frame(s_net_frame, len);
         }
         return 1;
     }

@@ -68,6 +68,7 @@ Important current-state facts:
   compiler-style tools and small network services
 - the shipped `usr/bin/tcc.elf` compiler binary links the generic SmallOS `user_crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from ext2, write the results back to disk, and then those generated ELFs can be executed immediately
 - QEMU user networking is still the default for `make run` / `make test`, but `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT
+- Boot performs a best-effort NTP sync through the e1000 path before the shell starts. On success, `CLOCK_REALTIME` is set and the boot log prints the UTC time; on failure, boot continues with a warning.
 - `pinggw` and `ping 10.0.2.2` are the supported QEMU user-network checks; public ICMP is often unsupported by user-mode networking, so `pingpublic` is only a best-effort probe
 - `netcheck` prints the gateway steps separately from the public ICMP probe so a `1.1.1.1` timeout does not imply the local NAT path is broken
 - `usr/sbin/tcpecho.elf`, `usr/sbin/sockeof.elf`, and `usr/sbin/ftpd.elf` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
@@ -138,7 +139,7 @@ They:
 - do not switch page directories
 - do not create a new `process_t`
 
-If a command name is not in the kernel command table, the shell looks for a matching app ELF. Bare names are resolved through `bin/<name>.elf` first, then `<name>.elf` in the current filesystem namespace. Path-like command names are resolved relative to the shell cwd and may omit the `.elf` suffix. Commands like `echo`, `about`, `uptime`, `halt`, `reboot`, `pwd`, `cat`, `fsread`, `ls`, `tree`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, and `edit` are shipped this way under `/bin/`.
+If a command name is not in the kernel command table, the shell looks for a matching app ELF. Bare names are resolved through `bin/<name>.elf` first, then `<name>.elf` in the current filesystem namespace. Path-like command names are resolved relative to the shell cwd and may omit the `.elf` suffix. Commands like `echo`, `about`, `uptime`, `halt`, `reboot`, `date`, `pwd`, `cat`, `fsread`, `ls`, `tree`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, and `edit` are shipped this way under `/bin/`.
 
 When the shell launches an app command, it copies the current shell cwd into the child process before waiting. That preserves shell-style relative path behavior even though the command itself is a normal ring-3 ELF.
 

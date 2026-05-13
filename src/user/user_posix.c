@@ -525,7 +525,14 @@ ssize_t sendfile(int out_fd, int in_fd, off_t* offset, size_t count) {
 }
 
 time_t time(time_t* out) {
-    time_t now = (time_t)(sys_get_ticks() / SMALLOS_TIMER_HZ);
+    struct timespec ts;
+    time_t now;
+
+    if (clock_gettime(CLOCK_REALTIME, &ts) < 0) {
+        now = (time_t)(sys_get_ticks() / SMALLOS_TIMER_HZ);
+    } else {
+        now = ts.tv_sec;
+    }
     if (out) {
         *out = now;
     }
@@ -535,22 +542,22 @@ time_t time(time_t* out) {
 struct tm* localtime(const time_t* timep) {
     static struct tm t;
     time_t v = timep ? *timep : time(0);
-    memset(&t, 0, sizeof(t));
-    t.tm_year = 70 + (int)(v / 31536000u);
-    t.tm_mon = 0;
-    t.tm_mday = 1;
+    gmtime_r(&v, &t);
     return &t;
 }
 
 int gettimeofday(struct timeval* tv, struct timezone* tz) {
+    struct timespec ts;
+
     if (!tv) {
         set_errno(EFAULT);
         return -1;
     }
-    unsigned int ticks = sys_get_ticks();
-    tv->tv_sec = (long)(ticks / SMALLOS_TIMER_HZ);
-    tv->tv_usec = (long)((ticks % SMALLOS_TIMER_HZ) *
-                         (SMALLOS_US_PER_SECOND / SMALLOS_TIMER_HZ));
+    if (clock_gettime(CLOCK_REALTIME, &ts) < 0) {
+        return -1;
+    }
+    tv->tv_sec = (long)ts.tv_sec;
+    tv->tv_usec = ts.tv_nsec / 1000L;
     if (tz) {
         tz->tz_minuteswest = 0;
         tz->tz_dsttime = 0;
@@ -559,17 +566,26 @@ int gettimeofday(struct timeval* tv, struct timezone* tz) {
 }
 
 int clock_gettime(int clock_id, struct timespec* ts) {
-    unsigned int ticks;
-    unsigned int rem;
-
-    if (!ts || (clock_id != CLOCK_REALTIME && clock_id != CLOCK_MONOTONIC)) {
+    if (!ts) {
+        set_errno(EFAULT);
+        return -1;
+    }
+    if (clock_id != CLOCK_REALTIME && clock_id != CLOCK_MONOTONIC) {
         set_errno(EINVAL);
         return -1;
     }
 
-    ticks = sys_get_ticks();
-    rem = ticks % SMALLOS_TIMER_HZ;
-    ts->tv_sec = (time_t)(ticks / SMALLOS_TIMER_HZ);
-    ts->tv_nsec = (long)(rem * (SMALLOS_NS_PER_SECOND / SMALLOS_TIMER_HZ));
-    return 0;
+    return errno_from_raw(sys_clock_gettime(clock_id, ts)) < 0 ? -1 : 0;
+}
+
+int clock_settime(int clock_id, const struct timespec* ts) {
+    if (!ts) {
+        set_errno(EFAULT);
+        return -1;
+    }
+    if (clock_id != CLOCK_REALTIME) {
+        set_errno(EINVAL);
+        return -1;
+    }
+    return errno_from_raw(sys_clock_settime(clock_id, ts)) < 0 ? -1 : 0;
 }

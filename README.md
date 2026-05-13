@@ -24,6 +24,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Framebuffer-backed terminal with VGA text-mode fallback/debug output
 * PCI bus scan at boot — discovery layer for the e1000 NIC path
 * e1000 NIC bring-up — PCI discovery, MMIO mapping, and DMA ring setup
+* Boot-time NTP clock sync — a tiny UDP/NTP client sets `CLOCK_REALTIME` and prints the synchronized UTC time during startup diagnostics
 * Shell with line editing, history, and command parsing
 * Shell input processing decoupled from IRQ1 via a small event queue
 * PS/2 mouse packet decoding with a small user syscall for relative deltas/buttons
@@ -39,6 +40,7 @@ It boots from a raw disk image, switches to 32-bit protected mode, enables pagin
 * Syscall layer via `int 0x80` (DPL=3 gate): console, process, heap, cwd, file, directory, and socket calls shared by the kernel and user runtime headers
 * Small VFS boundary for ext2-backed file handles and path operations; `process.c` owns fd lifetime while `vfs.c` owns file behavior
 * Socket/poll ABI via `int 0x80`: passive TCP sockets, `accept4`, basic TCP half-close via `shutdown`, `getsockname`/`getpeername`, `poll`, `epoll`, `timerfd`, and `signalfd` shims for guest services
+* Realtime clock ABI via `int 0x80`: `clock_gettime`, `clock_settime`, and NTP sync syscalls used by boot and `/bin/date`
 * `sys_exit()` is scheduler-owned: it switches to the kernel page directory, marks the current task `PROCESS_STATE_ZOMBIE`, and switches to the next runnable task
 * Shell now runs as an explicit kernel task scheduled by `scheduler.c`
 * **Preemptive round-robin scheduler** — PIT timer IRQ at `SMALLOS_TIMER_HZ`, with a named 20 ms scheduler quantum
@@ -257,6 +259,7 @@ about
 halt
 reboot              reboot the machine
 uptime
+date [-s [ip]]      print UTC time, or sync from NTP first
 meminfo
 ataread <lba>        dump first 32 bytes of a disk sector
 
@@ -299,7 +302,7 @@ editing; F2 saves, and F3 or Esc exits. If there are unsaved changes, F2 saves
 and exits, F3 discards, and Esc cancels the quit prompt.
 
 Seeded ext2 layout:
-- command-style apps live under `/bin/` (`echo`, `about`, `uptime`, `halt`, `reboot`, `pwd`, `cat`, `fsread`, `ls`, `tree`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, `edit`, `diskview`)
+- command-style apps live under `/bin/` (`echo`, `about`, `uptime`, `halt`, `reboot`, `date`, `pwd`, `cat`, `fsread`, `ls`, `tree`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, `edit`, `diskview`)
 - `bin/bmpview` - load a BMP, render it through the userland graphics backbuffer, and present it to the framebuffer
 - `bin/diskview` - show ext2 used/free space as a framebuffer allocation map
 - `usr/bin/hello` - print argc/argv and tick count
@@ -364,6 +367,7 @@ kernel_main()
  → pci_init()            scan PCI devices and log discovered network controllers
  → e1000_init()          bind the QEMU 82540EM NIC and set up DMA rings
  → tcp_init()            start the TCP/network service kernel task
+ → ntp_sync()            set CLOCK_REALTIME and print synchronized UTC time
  → ext2_init()          read MBR entry 1, validate ext2 superblock
  → create shell task     explicit kernel task with its own stack
  → process_start_reaper() create and enqueue the zombie reaper task

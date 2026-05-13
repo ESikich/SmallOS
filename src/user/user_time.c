@@ -10,15 +10,45 @@ static const char* s_weekdays[] = {
     "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
 };
 
+static int is_leap(int year);
+
 struct tm* gmtime_r(const time_t* timep, struct tm* result) {
+    static const int month_days[] = {
+        31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+    };
     time_t v = timep ? *timep : time(0);
+    unsigned int days = v / 86400u;
+    unsigned int rem = v % 86400u;
+    unsigned int yday;
+    int year = 1970;
+    int mon = 0;
+
     memset(result, 0, sizeof(*result));
-    result->tm_year = 70 + (int)(v / 31536000u);
-    result->tm_mon = 0;
-    result->tm_mday = 1;
-    result->tm_hour = (int)((v / 3600u) % 24u);
-    result->tm_min = (int)((v / 60u) % 60u);
-    result->tm_sec = (int)(v % 60u);
+    result->tm_hour = (int)(rem / 3600u);
+    result->tm_min = (int)((rem / 60u) % 60u);
+    result->tm_sec = (int)(rem % 60u);
+    result->tm_wday = (int)((days + 4u) % 7u);
+
+    while (1) {
+        unsigned int yd = is_leap(year) ? 366u : 365u;
+        if (days < yd) break;
+        days -= yd;
+        year++;
+    }
+
+    yday = days;
+    while (mon < 12) {
+        unsigned int md = (unsigned int)month_days[mon];
+        if (mon == 1 && is_leap(year)) md++;
+        if (days < md) break;
+        days -= md;
+        mon++;
+    }
+
+    result->tm_year = year - 1900;
+    result->tm_mon = mon;
+    result->tm_mday = (int)days + 1;
+    result->tm_yday = (int)yday;
     return result;
 }
 
@@ -173,6 +203,9 @@ size_t strftime(char* s, size_t max, const char* format, const struct tm* tm) {
             break;
         case 'b':
             append_str(s, max, &pos, s_months[(tm->tm_mon >= 0 && tm->tm_mon < 12) ? tm->tm_mon : 0]);
+            break;
+        case 'a':
+            append_str(s, max, &pos, s_weekdays[(tm->tm_wday >= 0 && tm->tm_wday < 7) ? tm->tm_wday : 0]);
             break;
         case 'd':
             append_u32(s, max, &pos, (unsigned int)tm->tm_mday, 2);

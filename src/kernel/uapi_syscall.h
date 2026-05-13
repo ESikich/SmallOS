@@ -133,7 +133,10 @@ enum {
     SYS_GETPID          = 62, /* return current process id */
     SYS_WAITPID         = 63, /* wait for a child pid and copy wait status */
     SYS_KILL            = 64, /* signal/terminate a process by pid */
-    SYS_DIRLIST_BATCH   = 65  /* copy a range of directory entries */
+    SYS_DIRLIST_BATCH   = 65, /* copy a range of directory entries */
+    SYS_CLOCK_GETTIME   = 66, /* copy realtime/monotonic timespec */
+    SYS_CLOCK_SETTIME   = 67, /* set CLOCK_REALTIME seconds/nanoseconds */
+    SYS_NTP_SYNC        = 68  /* query NTP server and set CLOCK_REALTIME */
 };
 
 #endif

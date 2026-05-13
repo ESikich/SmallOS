@@ -51,6 +51,7 @@ kernel_main()
   pci_init()        ← scan PCI config space and log network controllers
   e1000_init()      ← bind the Intel 82540EM NIC and set up DMA rings
   tcp_init()        ← start TCP/network service task
+  ntp_sync()        ← set CLOCK_REALTIME and print synchronized UTC time
   ext2_init()      ← read MBR entry 1, validate ext2 superblock and geometry
   create shell task ← explicit kernel task with dedicated stack
   process_start_reaper() ← create and enqueue zombie reaper task
@@ -125,12 +126,13 @@ Inside `kernel_main()`:
 11. `pci_init()` — scan PCI config space and log discovered network controllers
 12. `e1000_init()` — bind the Intel 82540EM NIC and set up DMA rings
 13. `tcp_init()` — create and enqueue the TCP/network service kernel task
-14. `ext2_init()` — read ATA sector 0, extract the ext2 start LBA from partition entry 1 in the MBR partition table, then read and validate the ext2 superblock at that runtime-discovered location
-15. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
-16. `sched_enqueue(shell_proc)` — make the shell runnable
-17. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
-18. `sti` — enable interrupts
-19. `sched_start(shell_proc)` — switch from the boot stack into the shell task
+14. `ntp_sync()` — briefly enables interrupts so PIT-backed timeout logic works, queries the default NTP server through UDP over the e1000 path, sets `CLOCK_REALTIME`, and prints the synchronized UTC time. Failure is a boot warning, not a halt.
+15. `ext2_init()` — read ATA sector 0, extract the ext2 start LBA from partition entry 1 in the MBR partition table, then read and validate the ext2 superblock at that runtime-discovered location
+16. `process_create_kernel_task("shell", shell_task_main)` — create the shell as an explicit kernel task
+17. `sched_enqueue(shell_proc)` — make the shell runnable
+18. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
+19. `sti` — enable interrupts
+20. `sched_start(shell_proc)` — switch from the boot stack into the shell task
 
 `sched_init()` must still be called before `sti`, and `sched_start()` must happen only after the first runnable task has been created.
 
@@ -757,6 +759,7 @@ SYS_BRK / user heap — per-process heap break managed in user space through `SY
 SYS_OPEN_WRITE / SYS_WRITEFD / SYS_LSEEK / SYS_FSYNC / SYS_UNLINK / SYS_RENAME / SYS_STAT — VFS-backed writable file handles plus path metadata and file management for compiler-style tools; dirty writable handles flush on close, append/read-write modes preserve existing bytes, and stdout/stderr writes also use fd-backed console handles
 SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_ACCEPT4 / SYS_CONNECT / SYS_SEND / SYS_RECV / SYS_SHUTDOWN / SYS_GETSOCKNAME / SYS_GETPEERNAME — socket ABI for passive TCP servers, FTP userland, and client-style active opens; fd handles point at kernel socket objects, TCP streams are backed by a global 4-tuple TCP table plus lazy 4 KiB RX rings and 16 KiB TX rings, basic `shutdown()` half-close state is implemented, and socket readiness plugs into the same handle poll path
 SYS_FCNTL / SYS_POLL / SYS_EPOLL_* / SYS_TIMERFD_* / SYS_SIGNALFD — descriptor flags and event-loop shims for cserve-style guest services; socket waits register on socket wait queues, timerfd handles register read waiters that timer IRQs can wake when timerfds expire, and signalfd handles can be woken by kernel SIGINT/SIGTERM delivery
+SYS_CLOCK_GETTIME / SYS_CLOCK_SETTIME / SYS_NTP_SYNC — realtime clock syscalls; `CLOCK_MONOTONIC` reports uptime, `CLOCK_REALTIME` is maintained as an offset from uptime and can be set directly or by the tiny NTP client
 TCP service task — drains NIC RX, dispatches ARP/IPv4/TCP frames, advertises receive windows from per-connection RX rings, services retransmit/idle timers for control handshakes, buffered TX payloads, active-open SYNs, and FIN paths, handles duplicate peer-FIN ACKs and close-driven final writes, and wakes socket wait queues
 page-aware copy-from-user validation — syscall pointer arguments are checked against user address space [USER_CODE_BASE, USER_STACK_TOP), mapped user pages, page-crossing buffers/structs, and wrapped variable-length byte counts before dereference
 preemptive round-robin scheduler — timer IRQ context switch, `SCHED_QUANTUM_MS` quantum

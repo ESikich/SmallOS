@@ -35,6 +35,10 @@
 
 ### Added
 
+* **Date command and NTP clock sync** (`src/drivers/ntp.*`, `src/kernel/timer.*`, `src/kernel/syscall.c`, `src/user/date.c`, `Makefile`, `docs/`)
+  * Added a tiny UDP/NTP client path for QEMU user networking, with boot-time clock synchronization from `129.6.15.28` and a boot diagnostic that prints the synchronized UTC time.
+  * Added `/bin/date.elf`; `date` prints the current UTC clock, while `date -s [server-ip]` synchronizes the realtime clock from NTP.
+  * Added realtime clock syscalls (`SYS_CLOCK_GETTIME`, `SYS_CLOCK_SETTIME`, `SYS_NTP_SYNC`) and updated `time()`, `gettimeofday()`, and `clock_gettime(CLOCK_REALTIME)` to use the settable clock instead of raw uptime.
 * **Userland child process lifecycle** (`src/kernel/process.*`, `src/kernel/syscall.c`, `src/user/user_posix.c`, `src/user/waitprobe.c`)
   * Added a process registry above the scheduler table so exited children can be found by pid after they leave the run queue.
   * Changed `SYS_EXEC` to return the spawned child pid on success and claim the child for parent-side `SYS_WAITPID` collection.

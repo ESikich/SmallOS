@@ -447,6 +447,7 @@ $(TOOLS_DIR)/mkext2: tools/mkext2.c | dirs
 ```bash
 build/tools/mkext2 build/bin/auto/ext2.seed.img \
     bin/echo.elf=build/bin/auto/echo.elf \
+    bin/date.elf=build/bin/auto/date.elf \
     usr/bin/hello.elf=build/bin/auto/hello.elf \
     usr/bin/plasma.elf=build/bin/auto/plasma.elf \
     usr/bin/mandel.elf=build/bin/auto/mandel.elf \
@@ -471,6 +472,7 @@ Shipped ext2 programs:
 - `bin/uptime` - print tick and second counts
 - `bin/halt` - halt the machine
 - `bin/reboot` - reboot the machine
+- `bin/date` - print UTC realtime, or `date -s [server-ip]` to sync from NTP
 - `bin/pwd` - print the process cwd inherited from the shell
 - `bin/cat` - print an ext2 file
 - `bin/fsread` - dump ext2 file metadata and first bytes
