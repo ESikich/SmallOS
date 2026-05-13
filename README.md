@@ -2,535 +2,243 @@
 
 ![SmallOS boot splash](assets/boot_splash.jpg)
 
-SmallOS is a BIOS-based x86 hobby operating system built with:
+SmallOS is a BIOS-booted 32-bit x86 hobby operating system. It builds a raw
+hard-disk image, boots through a two-stage loader, enters protected mode,
+enables paging, mounts an ext2 filesystem, and runs a small shell plus ring-3
+ELF programs.
 
-* `nasm`
-* `i686-elf-gcc`
-* `i686-elf-ld`
-* `QEMU`
+The project is intentionally small enough to understand end to end, but it now
+has real subsystems: process scheduling, user/kernel syscalls, persistent disk
+state, framebuffer graphics, TCP services, and a hosted TinyCC build inside the
+guest.
 
-It boots from a raw disk image, switches to 32-bit protected mode, enables paging, loads user programs from an ext2 partition on disk, and runs a C kernel with a terminal shell, ring-3 ELF program execution, a preemptive round-robin scheduler, voluntary yielding, inter-process exec, and ATA disk access.
+## Highlights
 
----
+- BIOS boot from a raw disk image:
+  stage 1 loads stage 2 with CHS, stage 2 uses LBA reads for the kernel.
+- 32-bit protected-mode C kernel with its own GDT, IDT, TSS, paging setup, and
+  page-fault handling.
+- E820-aware physical memory manager plus a simple kernel heap for permanent
+  kernel allocations.
+- Preemptive round-robin scheduler with kernel tasks, ring-3 ELF processes,
+  per-process address spaces, per-process kernel stacks, `exec`, `waitpid`,
+  `yield`, zombie reaping, and user-fault isolation.
+- `int 0x80` syscall ABI for console I/O, files, directories, cwd, process
+  control, heap growth, time, framebuffer display, input, sockets, polling, and
+  timer/signalfd-style shims.
+- ATA disk driver and an ext2-backed VFS. The generated filesystem includes
+  `/bin`, `/usr/bin`, `/usr/sbin`, `/usr/libexec/tests`, `/etc`, `/boot`,
+  `/var`, and `/tmp`.
+- Framebuffer terminal with VGA text fallback, graphical boot splash, PS/2
+  keyboard and mouse input, and several graphics demos.
+- PCI and e1000 networking with ARP, IPv4, UDP/NTP clock sync, a compact TCP
+  service task, passive sockets, `poll`/`epoll` readiness, FTP, echo, and HTTP
+  server smoke paths.
+- Guest userland includes familiar commands such as `ls`, `tree`, `cat`,
+  `pwd`, `touch`, `mkdir`, `rm`, `cp`, `mv`, `edit`, `date`, `uptime`,
+  `halt`, and `reboot`, plus diagnostics and demos.
+- TinyCC is built as `usr/bin/tcc.elf` and can compile sample C programs inside
+  SmallOS.
 
-## Current Features
+## Requirements
 
-* Two-stage BIOS bootloader (real mode → protected mode)
-* LBA extended disk reads (INT 0x13 AH=0x42) — no CHS track limit
-* Kernel-owned GDT with ring-3 user segments and TSS
-* x86 paging — identity-mapped first 8 MB
-* BSS zeroing in kernel entry before paging is enabled
-* IDT with PIT timer (IRQ0), keyboard (IRQ1), PS/2 mouse (IRQ12), and syscalls (INT 0x80)
-* Page-fault handler that logs `CR2`, the error code, and user-vs-kernel context; user faults terminate only the offending process
-* COM1 serial driver — optional terminal mirroring for headless testing and debug logs
-* Framebuffer-backed terminal with VGA text-mode fallback/debug output and batched bulk writes
-* PCI bus scan at boot — discovery layer for the e1000 NIC path
-* e1000 NIC bring-up — PCI discovery, MMIO mapping, and DMA ring setup
-* Boot-time NTP clock sync — a tiny UDP/NTP client sets `CLOCK_REALTIME` and prints the synchronized UTC time during startup diagnostics
-* Post-diagnostics graphical boot splash — `/bin/bootsplash.elf` presents `/boot/splash.bmp` before `SmallOS ready` and the shell prompt
-* Shell with line editing, history, and command parsing
-* Shell input processing decoupled from IRQ1 via a small event queue
-* PS/2 mouse packet decoding with a small user syscall for relative deltas/buttons
-* Bump allocator (`kmalloc`) for permanent kernel structures
-* Physical memory manager (`pmm`) — bitmap allocator for reclaimable frames
-  * Manages usable E820 RAM in `0x200000`–`0x7FFFFFF` (126 MB, 32256-frame bitmap)
-  * All process frames reclaimed on exit — no leak after `runelf`
-* ELF loader — validates, loads segments, zeroes BSS, launches in ring 3
-* `process_t` abstraction — per-process struct (PD, kernel stack, scheduler state, argv storage, name); fully PMM-allocated and reclaimed on exit
-* Per-process page directories — address space isolation; PD itself freed on exit
-* Ring 3 user mode — hardware-enforced privilege separation
-* Per-process kernel stacks — dedicated PMM frame per process; TSS ESP0 set from it; freed on exit
-* Syscall layer via `int 0x80` (DPL=3 gate): console, process, heap, cwd, file, directory, and socket calls shared by the kernel and user runtime headers
-* Small VFS boundary for ext2-backed file handles and path operations; `process.c` owns fd lifetime while `vfs.c` owns file behavior
-* Socket/poll ABI via `int 0x80`: passive TCP sockets, `accept4`, basic TCP half-close via `shutdown`, `getsockname`/`getpeername`, `poll`, `epoll`, `timerfd`, and `signalfd` shims for guest services
-* Realtime clock ABI via `int 0x80`: `clock_gettime`, `clock_settime`, and NTP sync syscalls used by boot and `/bin/date`
-* `sys_exit()` is scheduler-owned: it switches to the kernel page directory, marks the current task `PROCESS_STATE_ZOMBIE`, and switches to the next runnable task
-* Shell now runs as an explicit kernel task scheduled by `scheduler.c`
-* **Preemptive round-robin scheduler** — PIT timer IRQ at `SMALLOS_TIMER_HZ`, with a named 20 ms scheduler quantum
-* **`SYS_YIELD`** — voluntary preemption; process surrenders its remaining quantum immediately
-* **`SYS_EXEC` / `SYS_WAITPID`** — user process asynchronously spawns a named child ELF, receives its pid, and can collect exit/signal status
-* **`SYS_WRITEFILE`** — user process creates or overwrites a root-directory ext2 file in one shot
-* **`SYS_WRITEFILE_PATH`** — user process creates or overwrites an ext2 file at any nested path
-* **ATA disk driver** — polls the primary IDE channel (`0x1F0`) and enables PCI IDE bus-master DMA when available, with PIO fallback for compatibility
-* **ext2 partition** — 16 MB ext2 volume appended to the disk image containing `/bin`, `/etc`, `/tmp`, `/usr`, and `/var`; built by `tools/mkext2.c` with no external dependencies; readable with nested directory paths and writable at runtime through the kernel VFS shim
-* **TCP service task** — kernel task that drains e1000 RX, dispatches ARP/IPv4/TCP frames, owns passive listeners plus a PMM-backed global 4-tuple connection table, manages lazy PMM-backed RX/TX rings for accepted streams, handles control, buffered-payload, and passive-FIN retransmit/idle timers, and wakes socket wait queues; socket readiness also drains queued NIC descriptors so user-space services are not paced by timer ticks
-* **Guest TCP apps** — `usr/sbin/tcpecho.elf` handles parallel echo clients for socket stress, `usr/sbin/sockeof.elf` pins down peer-close/read EOF semantics, `usr/sbin/ftpd.elf` runs the FTP server package session logic, and `usr/sbin/cserve.elf` runs the cserver HTTP package as normal user-space ELFs
-
----
-
-## Project Structure
+Build tools:
 
 ```text
-.
-├── assets/         boot splash source/rendered assets
-├── docs/           documentation
-├── src/
-│   ├── boot/       boot.asm, loader2.asm, kernel_entry.asm
-│   ├── kernel/     kernel.c, gdt, idt, paging, memory, pmm, process,
-│   │               scheduler, sched_switch.asm, syscall, timer, system, setjmp, vfs
-│   ├── drivers/    keyboard, mouse, screen, terminal, ata, ext2
-│   ├── shell/      shell, line_editor, parse, commands
-│   ├── exec/       elf_loader
-│   └── user/       hello.c, ticks.c, args.c, readline.c, exec_test.c,
-│                   bmpview.c, bootsplash.c, diskview.c, plasma.c, mandel.c, gfx.c,
-│                   compiler_demo.c, fault.c, sleep_test.c, user_lib.h,
-│                   user_syscall.h
-├── tools/
-│   ├── mkext2.c
-│   └── mkimage.c
-├── third_party/    git submodules for external package sources
-├── build/
-├── Makefile
-├── linker.ld
+nasm
+i686-elf-gcc
+i686-elf-ld
+i686-elf-objcopy
+gcc
+python3
+qemu-system-i386
 ```
 
-The seeded ext2 image keeps core command ELFs under `/bin/`, user-facing apps
-and TinyCC under `/usr/bin/`, regression ELFs under `/usr/libexec/tests/`,
-services under `/usr/sbin/`, sample TinyCC inputs under
-`/usr/share/examples/tinycc/`, config under `/etc/`, and mutable runtime
-artifacts under `/var/tmp/`. `usr/bin/tcc.elf` is built from the TinyCC
-submodule sources, links the generic SmallOS CRT adapter, and runs TinyCC's
-normal `main(argc, argv)` path inside the freestanding guest runtime.
-
----
-
-## Build & Run
-
-Clone with third-party package submodules:
+Third-party package sources are git submodules:
 
 ```bash
 git clone --recurse-submodules <repo-url>
 cd SmallOS
 ```
 
-If you already cloned without submodules, fetch them with:
+If the repository was cloned without submodules, run:
 
 ```bash
 make deps
 ```
 
+## Build And Run
+
+Build the default disk image:
+
 ```bash
 make clean && make
 ```
 
-**Interactive (VGA in terminal):**
+The normal image is written to `build/img/os-image.bin`. The mutable ext2
+partition lives in `.state/ext2.img`, so files created inside SmallOS survive
+normal rebuilds. Reset it from the current seed image with:
+
 ```bash
-make run          # requires a terminal that supports curses
-make run-gtk      # use QEMU's GTK display backend
-make run-sdl      # use QEMU's SDL display backend
+make reset-disk
 ```
 
-`make run` defaults to `QEMU_DISPLAY=curses`. If typing feels sluggish through
-WSL, Windows Terminal, or another terminal bridge, try `make run-gtk` or
-`make run QEMU_DISPLAY=gtk` to bypass the curses display path. Mouse-driven
-graphics demos also need a graphical backend and a grabbed QEMU window.
+Interactive runs:
 
-**Headless (background, serial log):**
 ```bash
-make run-headless SERIAL_CONSOLE=1  # starts QEMU as a daemon with COM1 logs
-make run-headless DISPLAY_BACKEND=vga SERIAL_CONSOLE=1  # force VGA text mode
-tail -f /tmp/smallos-serial.log   # read all kernel output
+make run       # QEMU curses display, default
+make run-gtk   # graphical GTK display
+make run-sdl   # graphical SDL display
 ```
 
-**TAP / bridge networking:**
+`make run` uses QEMU user-network NAT with an e1000 NIC. If terminal input
+feels sluggish through curses, use `make run-gtk` or `make run QEMU_DISPLAY=gtk`.
+Mouse-driven graphics demos need a graphical QEMU backend and a grabbed QEMU
+window.
+
+Headless run with serial logging:
+
+```bash
+make run-headless SERIAL_CONSOLE=1
+tail -f /tmp/smallos-serial.log
+```
+
+Headless QEMU writes its PID and monitor socket to:
+
+```text
+/tmp/smallos.pid
+/tmp/smallos-monitor.sock
+```
+
+Use `QEMU_MEMORY_MB=128` to exercise more of the PMM-managed memory range.
+
+## Networking
+
+The default run and test paths use QEMU user-network NAT. Host forwarding can
+be passed through `QEMU_NET_HOSTFWD`; for example, this forwards host port
+2323 to the guest echo service port:
+
+```bash
+make run-headless SERIAL_CONSOLE=1 \
+  QEMU_NET_HOSTFWD=',hostfwd=tcp::2323-:2323'
+```
+
+Inside the guest, start a service from the shell:
+
+```text
+bg usr/sbin/tcpecho
+bg usr/sbin/ftpd
+bg usr/sbin/cserve --config /etc/cserve.ini
+```
+
+Shell job control supports `jobs`, `fg <jobid>`, Ctrl+Z, and `kill <jobid>`.
+
+For TAP networking, create and configure the TAP interface on the host first,
+then run:
+
 ```bash
 make run-tap QEMU_NET_IFACE=tap0
+make run-headless-tap QEMU_NET_IFACE=tap0 SERIAL_CONSOLE=1
 ```
 
-`run-tap` tells QEMU to attach the e1000 NIC to a host TAP device instead of
-using the built-in user-network NAT. The TAP interface must already exist on
-the host; if you want the guest to reach your LAN or the internet, bridge that
-TAP device into your host network stack first.
+One simple Linux TAP setup is:
 
-One common Linux setup is:
 ```bash
 sudo ip tuntap add dev tap0 mode tap user "$USER"
 sudo ip link set tap0 up
 sudo ip addr add 192.168.100.1/24 dev tap0
 ```
 
-To put the guest on a real bridged network, connect `tap0` to an existing host
-bridge or routing setup that already has upstream access.
+Bridge or route that interface if the guest should reach beyond the host.
 
-On Windows, QEMU's TAP mode depends on a separate TAP driver; the standard
-QEMU for Windows packages do not include it. If you are staying on Windows and
-do not want to install extra networking drivers, keep using the default
-`make run` / `make test` user-network NAT path.
+## Verification
 
-**Windows / PowerShell debug run:**
-```powershell
-qemu-system-i386 -drive format=raw,file=build/img-serial/os-image.bin -m 32 -serial stdio -d int,cpu_reset,guest_errors -D qemu.log -display gtk 2>&1 | Tee-Object -FilePath qemu-console.log
-```
-
-Build that image first with `make SERIAL_CONSOLE=1`. For normal interactive
-GTK runs that do not need COM1 logs, use `build/img/os-image.bin` and omit
-`-serial`.
-
-`run-headless` daemonizes QEMU and writes a PID to `/tmp/smallos.pid`.
-Build with `SERIAL_CONSOLE=1` when you want terminal output mirrored to
-`/tmp/smallos-serial.log` via COM1; normal interactive builds leave serial
-mirroring off so text output is not throttled by the UART. Use the QEMU monitor socket at
-`/tmp/smallos-monitor.sock` to send keystrokes (`sendkey`) or take
-screenshots (`screendump`).
-
-The Makefile defaults QEMU to 32 MB. Use `QEMU_MEMORY_MB=128` when you want
-to exercise the expanded E820-backed PMM cap.
-
-`make display-smoke` runs the display-only visual smoke checks. It boots the
-default framebuffer path, captures `build/smoke/framebuffer.ppm`, verifies a
-nonblank 1024x768 screenshot, then repeats with `DISPLAY_BACKEND=vga` to prove
-the forced VGA text fallback boots visibly without switching to the framebuffer.
-The smoke target uses QEMU's VNC display backend so screenshots are rendered
-while the VM still runs daemonized.
-
-The normal auto/framebuffer disk image is `build/img/os-image.bin`. Forced-VGA
-builds use their own image at `build/img/vga/os-image.bin`, so running
-`make vga-smoke` no longer leaves the default image in VGA mode.
-Serial-enabled builds use `build/img-serial/os-image.bin`, keeping COM1 debug
-images separate from the fast default image.
-
-The mutable ext2 disk state now lives in `.state/ext2.img`, so normal
-rebuilds keep your files.  Use `make reset-disk` if you want to restore
-the seeded filesystem from the latest build.
-
-For the TCP smoke path, launch the guest with host forwarding for the
-service port you want to exercise. For example:
+Fast regression path:
 
 ```bash
-qemu-system-i386 \
-  -drive format=raw,file=build/img/os-image.bin \
-  -boot c -m 32 \
-  -nic user,model=e1000,mac=52:54:00:12:34:56,hostfwd=tcp::2462-:2323,hostfwd=tcp::2463-:2463,hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000 \
-  -display none \
-  -monitor unix:/tmp/smallos-monitor.sock,server,nowait \
-  -daemonize -pidfile /tmp/smallos.pid
+make test
 ```
 
-If you need a serial transcript for that manual launch, build with
-`SERIAL_CONSOLE=1`, use `build/img-serial/os-image.bin`, and add
-`-serial file:/tmp/smallos-serial.log`.
+`make test` boots headlessly, checks the boot diagnostics, runs the shell
+selftest, drives the interactive `readline` prompt, and verifies shipped ELFs
+against expectations under `tests/shell/` and `tests/elfs/`.
 
-Then run `bg usr/sbin/tcpecho`, `bg usr/sbin/sockeof`, or
-`bg usr/sbin/ftpd` in the guest shell and connect from the host to the
-forwarded service port. Use `jobs` to list reattachable background programs,
-`fg <jobid>` to wait on one in the foreground, Ctrl+Z to return a foregrounded
-job to the background, and `kill <jobid>` to stop a long-running service.
-FTP passive transfers also need the passive data port, currently guest
-`30000`, forwarded to the host.
+Useful verification targets:
 
-`make socket-eof-smoke` boots QEMU with host forwarding for
-`usr/sbin/sockeof`, sends a 3072-byte multi-segment payload plus a TCP
-half-close from the host, and verifies that guest `poll()`/`read()` observe EOF
-after the payload before the guest writes back `PASS`, shuts down its write
-side, and rejects later writes.
+```bash
+make verify          # layout checks, guest regression suite, reboot/halt smoke
+make verify-display  # framebuffer and forced-VGA screenshot checks
+make verify-network  # socket EOF/parallel, FTP, FTP loop, cserve
+make verify-full     # all verification targets
+```
 
-`make socket-parallel-smoke` boots QEMU with host forwarding for
-`usr/sbin/tcpecho`, opens 8 parallel host clients by default, verifies
-echoed payloads, and captures `netinfo` before, during, and after the run.
+Focused smoke targets are also available:
 
-`make ftp-smoke` runs the FTP path end to end: it boots QEMU with control and
-passive-data host forwarding, starts `usr/sbin/ftpd`, logs in as
-`ftp`/`ftp`, checks negative replies, and verifies `LIST`, `RETR`, `STOR`
-readback, `DELE`, nested directory cleanup, and `RMD`.
+```bash
+make smoke
+make smoke-reboot
+make smoke-halt
+make display-smoke
+make socket-eof-smoke
+make socket-parallel-smoke
+make ftp-smoke
+make ftp-loop-smoke
+make cserve-smoke
+```
 
-`make ftp-loop-smoke` keeps `ftpd` running and repeats fresh FTP control
-sessions through passive `LIST`, `RETR`, and `STOR` cycles.
-
-`make cserve-smoke` boots QEMU with host forwarding for
-`usr/sbin/cserve.elf --config /etc/cserve.ini`, fetches the static fixture with browser-shaped
-HTTP requests, holds 32 keep-alive clients by default, exercises one slow
-reader, checks a 404, and captures `netinfo`.
-
-`make test` boots the image headlessly, verifies the boot diagnostics
-splash markers, runs the shell `selftest` command, feeds the interactive
-`readline` prompt, and checks every shipped ELF in one pass.  The built-in
-shell command expectations live under `tests/shell/` and the ELF
-expectations live under `tests/elfs/`.
-
-`make smoke` runs the dedicated reboot and halt smoke checks.  Use
-`make smoke-reboot` or `make smoke-halt` if you want to exercise one
-command at a time.
-
-The aggregate verification targets are layered so the fast path stays usable:
-`make verify` runs layout checks, the guest regression suite, and reboot/halt
-smoke; `make verify-display` runs the framebuffer/VGA visual checks;
-`make verify-network` runs the socket, FTP, and cserve smoke matrix; and
-`make verify-full` runs all of them.
-
-The PowerShell command keeps a GTK window visible while capturing guest output in the console and saving `qemu.log` plus `qemu-console.log` for later debugging.
-
-Use `-drive format=raw` (hard disk mode). Do not use `-fda` (floppy).
-
----
-
-## Commands
+## Repository Layout
 
 ```text
-help
-clear
-echo [args...]
-about
-halt
-reboot              reboot the machine
-uptime
-date [-s [ip]]      print UTC time, or sync from NTP first
-meminfo
-ataread <lba>        dump first 32 bytes of a disk sector
-
-ls [path|pattern]  list an ext2 directory, with `*` and `?` globbing
-tree [path]        print an ext2 directory tree with Unicode branches
-fsread <name>      dump first 16 bytes of an ext2 file
-cat <path>          print an ext2 file
-cd <path>           change the shell working directory
-pwd                 print the shell working directory
-netinfo             show PCI NIC status
-netsend             queue a test Ethernet frame
-netrecv             poll and dispatch one Ethernet frame
-arpgw               resolve the QEMU gateway via ARP
-ping <ip>           ping an IPv4 address
-pinggw              ping the QEMU gateway
-pingpublic          try public ICMP (often unsupported by QEMU user net)
-netcheck            check gateway and public connectivity
-mkdir <path>       create an ext2 directory
-rmdir <path>       remove an empty ext2 directory
-rm <path>          remove an ext2 file
-touch <path>       create or truncate an ext2 file
-cp <src> <dst>     copy an ext2 file
-mv <src> <dst>     move or rename an ext2 entry
-edit <path>        full-screen edit an ext2 text file
-runelf <name> [args] load and run an ELF from the ext2 partition
-runelf_nowait <name> [args] enqueue an ELF and return immediately
-bg <name> [args]       run a reattachable background ELF
-runelf_bg <name> [args] run a reattachable background ELF
-jobs                 list reattachable background jobs
-fg <jobid>           reattach and wait for a background job
-Ctrl+Z               return a foregrounded job to the background
-kill <jobid>         terminate a background job
-selftest            run all shipped ELF self-tests
-shelltest           run built-in shell command tests
+.
+├── assets/          boot splash source/rendered assets
+├── docs/            subsystem notes and deeper design docs
+├── patches/         third-party patches applied in build-local copies
+├── samples/         files seeded into the guest filesystem
+├── src/
+│   ├── boot/        BIOS stage 1, stage 2, kernel entry, ELF embedding helper
+│   ├── drivers/     display, input, disk, ext2, PCI, e1000, net/TCP/NTP
+│   ├── exec/        ELF loader
+│   ├── kernel/      memory, paging, process, scheduler, syscall, VFS, time
+│   ├── shell/       shell, parser, line editor, built-in commands
+│   └── user/        user commands, demos, tests, runtime headers and libc-ish code
+├── tests/           guest shell and ELF expectation files
+├── third_party/     TinyCC, FTP packages, and cserver submodules
+├── tools/           image builders, layout checks, QEMU test harnesses
+├── Makefile
+└── linker.ld
 ```
 
-`edit <path>` opens a full-screen text editor for ext2 files. It uses the
-cursor keys, Home/End, PageUp/PageDown, Enter, Backspace, and Delete for
-editing; F2 saves, and F3 or Esc exits. If there are unsaved changes, F2 saves
-and exits, F3 discards, and Esc cancels the quit prompt.
+Generated artifacts live under `build/`. Persistent guest disk state lives
+under `.state/`.
 
-Seeded ext2 layout:
-- command-style apps live under `/bin/` (`echo`, `about`, `uptime`, `halt`, `reboot`, `date`, `pwd`, `cat`, `fsread`, `ls`, `tree`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, `edit`, `diskview`)
-- `bin/bmpview` - load a BMP, render it through the userland graphics backbuffer, and present it to the framebuffer
-- `bin/bootsplash` - show `/boot/splash.bmp` for the post-diagnostics graphical startup splash
-- `bin/diskview` - show ext2 used/free space as a framebuffer allocation map
-- `boot/splash.bmp` - framebuffer boot splash asset seeded from `assets/boot_splash.bmp`
-- `usr/bin/hello` - print argc/argv and tick count
-- `usr/bin/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
-- `usr/bin/mandel` - interactive framebuffer Mandelbrot demo with keyboard pan/zoom and PS/2 mouse cursor movement
-- `usr/libexec/tests/ticks` - print the current tick count
-- `usr/libexec/tests/args` - print argc and argv
-- `usr/libexec/tests/runelf_test` - verify ELF loading, syscalls, and stack setup
-- `usr/libexec/tests/readline` - interactive SYS_READ demo
-- `usr/libexec/tests/exec_test` - exercise SYS_EXEC semantics
-- `usr/libexec/tests/waitprobe` - exercise userland getpid/waitpid/kill lifecycle
-- `usr/libexec/tests/fileread` - exercise VFS-backed file handles via SYS_OPEN / SYS_FREAD / SYS_CLOSE
-- `usr/libexec/tests/compiler_demo` - exercise SYS_WRITEFILE, SYS_WRITEFILE_PATH, and readback under `/var/tmp`
-- `usr/libexec/tests/heapprobe` - exercise malloc/free/realloc/calloc
-- `usr/libexec/tests/statprobe` - exercise SYS_STAT and path probing
-- `usr/libexec/tests/fileprobe` - exercise small file wrapper helpers
-- `usr/libexec/tests/cwdprobe` - exercise process cwd and relative path syscalls
-- `usr/libexec/tests/stdioprobe` - exercise stdio EOF/error state and fflush
-- `usr/libexec/tests/dirprobe` - exercise opendir/readdir/closedir
-- `usr/libexec/tests/errnoprobe` - exercise raw syscall errors and POSIX errno wrappers
-- `usr/libexec/tests/badptrprobe` - exercise unmapped user pointers, page-crossing buffers/structs, and wrapped syscall byte counts
-- `usr/libexec/tests/sleep_test` - exercise SYS_SLEEP semantics
-- `usr/libexec/tests/ptrguard` - exercise syscall pointer validation
-- `usr/libexec/tests/spinwkr` - helper used by the preemption regression
-- `usr/libexec/tests/preempt_test` - prove timer-driven preemption between runnable tasks
-- `usr/libexec/tests/crtprobe` - verify `main(argc, argv)` through `user_crt0`
-- `usr/libexec/tests/inputprobe` - verify queued keyboard input events and pointer validation
-- `usr/libexec/tests/fault` - fault probe (ud/gp/de/br/pf)
-- `usr/bin/tcc.elf` - SmallOS-hosted TinyCC compiler binary
-- `usr/share/examples/tinycc/tccmath.c`, `tccagg.c`, `tcctree.c`, `tccmini.c` - guest compiler demo inputs
+## Documentation
 
-`help` renders the shell command list from the command table with the same short descriptions.
+The README is meant to be the front door. The detailed notes live in `docs/`:
 
-The terminal does not automatically pause long output. POSIX-style paging is
-expected to live in userland, e.g. a future `more`/`less` command or explicit
-program options, so `write()` remains predictable and fast.
+- [Build system](docs/build.md)
+- [Boot process](docs/boot.md)
+- [Architecture](docs/architecture.md)
+- [Execution and scheduling](docs/execution.md)
+- [Memory](docs/memory.md)
+- [Filesystem](docs/filesystem.md)
+- [Syscalls](docs/syscalls.md)
+- [User runtime](docs/user-runtime.md)
+- [Socket subsystem](docs/socket-subsystem.md)
+- [Interrupts](docs/interrupts.md)
+- [Development notes](docs/development.md)
 
-`pinggw` and `ping 10.0.2.2` are the supported checks for QEMU user networking.
-`pingpublic` still tries an echo request through the QEMU gateway, but public
-ICMP is often unsupported by user-mode networking, especially outside Linux.
-`netcheck` prints the gateway steps separately from that best-effort public
-probe.
+## Disk Image Shape
 
----
-
-## Architecture Overview
+The final image is assembled as:
 
 ```text
-BIOS
- → boot.asm              load loader2 (CHS, 8 sectors) to `0x40000`
- → loader2.asm           load kernel (LBA), apply display policy → protected mode
- → kernel_entry.asm      zero BSS → kernel_main()
-
-kernel_main()
- → terminal_init()       VGA fallback + optional serial terminal output
- → boot splash           PASS/WARN/FAIL startup diagnostics
- → gdt_init()            GDT: null, k-code, k-data, u-code, u-data, TSS
- → paging_init()         enable paging, identity-map 8 MB
- → memory_init()         bump allocator after high kernel BSS
- → pmm_init()            E820-filtered bitmap allocator at 0x200000–0x7FFFFFF
- → kernel_selfcheck()    report TSS, stack, heap, and PMM baseline checks
- → fb_console_init()     switch terminal to 1024x768x32 framebuffer when VBE boot info is valid
- → keyboard/mouse/timer/idt drivers and interrupt table
- → sched_init()          initialise runnable task table
- → ata_init()            initialise ATA primary channel
- → pci_init()            scan PCI devices and log discovered network controllers
- → e1000_init()          bind the QEMU 82540EM NIC and set up DMA rings
- → tcp_init()            start the TCP/network service kernel task
- → ntp_sync()            set CLOCK_REALTIME and print synchronized UTC time
- → ext2_init()          read MBR entry 1, validate ext2 superblock
- → create bootseq task   post-diagnostics startup coordinator
- → process_start_reaper() create and enqueue the zombie reaper task
- → sti
- → sched_start(bootseq)  run splash, print ready, then queue shell/login path
-
-runelf usr/bin/hello
- → process_create()      allocate process_t from PMM
- → process_pd_create()   fresh page directory (PMM), kernel entries shared
- → map ELF + stack       pmm_alloc_frame() per page
- → alloc kernel stack    per-process ring-0 stack for syscalls / interrupts
- → seed sched context    proc->sched_esp returns into elf_user_task_bootstrap()
- → sched_enqueue(proc)   child becomes a real runnable task
- → process_wait(proc)    shell blocks in a safe wait loop
- → scheduler enters child via elf_user_task_bootstrap()
- → elf_enter_ring3()     iret into ring 3 with IF set in EFLAGS
- → sys_exit()            switch to kernel PD, mark ZOMBIE, switch away
- → shell wakes, process_destroy() reclaims PMM frames
+LBA 0       boot sector / MBR
+LBA 1-8     stage-2 loader
+LBA 9+      sector-padded kernel
+after that  mutable ext2 partition
 ```
 
----
-
-## Disk Image Layout
-
-```text
-LBA 0           boot.bin              (512 bytes)
-LBA 1–8         loader2.bin           (currently 4096 bytes)
-LBA 9+          padded kernel region  (sector-aligned)
-LBA 9+ks
-               ext2 partition        (16 MB volume inside the image)
-```
-
-`MBR_PARTITION_TABLE_OFFSET` and `MBR_PARTITION_ENTRY_SIZE` are declared in `src/boot/boot.asm`. Stage 2 reads the kernel range from partition entry 0, and the kernel discovers the ext2 partition from entry 1.
-
-During image assembly, the Makefile reads those declarations and passes them to `mkimage`, which computes:
-
-```text
-kernel_lba = 1 + loader2_sectors
-ext2_LBA = kernel_lba + kernel_sectors
-```
-
-The resulting kernel and ext2 spans are written into the MBR partition table in sector 0 after image assembly.
-
-`make verify` runs the standard preflight: boot-layout check, image-layout check, guest `test`, and `smoke`. Use `make verify-display` for the visual framebuffer/VGA checks, `make verify-network` for the socket/FTP/cserve smoke matrix, or `make verify-full` before a broad handoff. Use `make boot-layout-check` or `make image-layout-check` when you want to isolate a specific layer.
-
----
-
-## Build Tools
-
-```text
-mkext2   builds the seeded ext2 volume from `[dest=]source` entries
-mkimage   assembles the final bootable disk image
-```
-
----
-
-## Physical Memory Layout
-
-```text
-0x00007C00   bootloader stage 1
-0x00040000   loader2 stage 2
-0x00001000   kernel image
-0x00090000   loader-written boot info
-0x00091000   copied BIOS font
-0x00100000   kernel .bss start (NOLOAD; zeroed at kernel entry)
-~0x00190000  kernel .bss end (depends on static buffers)
-~0x00190000  bump allocator — permanent kernel structures
-0x001FF000   kernel stack top (boot / shell context)
-0x00200000   PMM — reclaimable frames
-               process_t structs, process PDs, ELF frames,
-               user stack frames, all process-private PTs, kernel stack frames
-0x08000000   PMM ceiling (128 MB cap; E820 decides usable frames)
-0x00400000   USER_CODE_BASE (per-process ELF mapping)
-0xBFFFF000   user stack (per-process mapping)
-```
-
----
-
-## Scheduler
-
-Round-robin, preemptive, timer-driven at `SMALLOS_TIMER_HZ` with a named 20 ms quantum.
-
-The scheduler uses a fixed-capacity table:
-
-    s_table[SCHED_MAX_PROCS]
-
-This table is a **plain dynamic array**, not a structured layout:
-
-- There is **no special slot 0**
-- There is **no sentinel process_t**
-- Entries are appended by `sched_enqueue()` and compacted by `sched_dequeue()`
-- `sched_start()` searches for the requested process instead of assuming a fixed position
-
-The `pd == 0` rule still exists, but it is **not a table-layout concept**. It is interpreted at runtime:
-
-- `pd == 0` → use kernel page directory
-- otherwise → use process page directory
-
-Today, the scheduler owns both kernel tasks such as the shell and ELF user programs. `runelf` waits for the child with `process_wait()`, `runelf_nowait` returns immediately after enqueue, and `bg` / `runelf_bg` keep a claimed process handle in the shell job table for later `jobs`, `fg`, or `kill`.
-
----
-
-## Context Switch Path
-
-```text
-timer interrupt
-  ↓
-irq0_stub
-  ↓
-irq0_handler_main(esp)
-  ↓
-sched_tick(esp - 8)
-  ↓
-sched_switch(&cur->sched_esp, nxt->sched_esp, next_cr3, next_esp0)
-  ↓
-tss_set_kernel_stack(next_esp0)
-  ↓
-CR3 switch
-  ↓
-ESP switch
-  ↓
-ret → resumed context
-```
-
-This path no longer relies on a cached pointer into the packed TSS structure.
-
----
-
-## Notes
-
-* Launch as a hard disk, not a floppy
-* User programs are linked at `0x400000`
-* `ext2_load()` uses a static load buffer, so repeated `runelf` calls do not grow the heap
-* The scheduler switch path updates TSS.ESP0 through `tss_set_kernel_stack()`, not by caching a pointer into the TSS
-
----
-
-## Current Direction
-
-The scheduler-owned execution model is complete:
-
-* the **shell** is a scheduler-owned kernel task
-* **ELF user programs** are scheduler-owned tasks entered through `elf_user_task_bootstrap()`
-* `runelf` blocks by waiting for `PROCESS_STATE_ZOMBIE` via `process_wait()`
-* `runelf_nowait` children are automatically reaped by the **reaper kernel task** (`sched_reap_zombies()`); `SYS_EXEC` children are claimed for their parent until `waitpid()` collects them or the parent exits
-* `bg` / `runelf_bg` children are claimed by the shell job table so they can be reattached with `fg <jobid>` or stopped with `kill <jobid>`
+The boot sector stores MBR-style entries for the kernel region and the ext2
+partition. Stage 2 reads the kernel location from the image metadata; the
+kernel reads the ext2 location during mount. `make boot-layout-check` and
+`make image-layout-check` keep those contracts honest before QEMU runs.
