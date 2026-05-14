@@ -16,12 +16,16 @@ int elf_exec_image_into(process_t* proc,
                         const unsigned char* image,
                         int argc,
                         char** argv,
+                        int envc,
+                        char** envp,
                         unsigned int* out_entry,
                         unsigned int* out_user_esp);
 int elf_exec_named_into(process_t* proc,
                         const char* name,
                         int argc,
                         char** argv,
+                        int envc,
+                        char** envp,
                         unsigned int* out_entry,
                         unsigned int* out_user_esp);
 

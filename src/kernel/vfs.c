@@ -479,6 +479,46 @@ int vfs_file_stat_fd(fd_entry_t* ent, u32* out_size, int* out_is_dir) {
     return 0;
 }
 
+static void vfs_copy_ext2_stat(sys_stat_info_t* out, const ext2_stat_info_t* in) {
+    if (!out || !in) return;
+    k_memset(out, 0, sizeof(*out));
+    out->dev = 1;
+    out->ino = in->ino;
+    out->mode = in->mode;
+    out->nlink = in->links_count;
+    out->uid = in->uid;
+    out->gid = in->gid;
+    out->size = in->size;
+    out->blksize = 4096u;
+    out->blocks = in->blocks_512;
+    out->atime = in->atime;
+    out->mtime = in->mtime;
+    out->ctime = in->ctime;
+    out->is_dir = in->is_dir ? 1u : 0u;
+}
+
+int vfs_file_stat_info_fd(fd_entry_t* ent, sys_stat_info_t* out) {
+    vfs_file_object_t* obj = vfs_file_object(ent);
+    ext2_stat_info_t info;
+
+    if (!ent || !ent->valid || ent->kind != PROCESS_HANDLE_KIND_FILE || !obj || !out) {
+        return -EBADF;
+    }
+    if (ext2_stat_info(obj->name, &info)) {
+        vfs_copy_ext2_stat(out, &info);
+        return 0;
+    }
+
+    k_memset(out, 0, sizeof(*out));
+    out->mode = (obj->is_dir ? 0040000u : 0100000u) | (obj->is_dir ? 0755u : 0644u);
+    out->nlink = obj->is_dir ? 2u : 1u;
+    out->size = obj->is_dir ? 0u : obj->size;
+    out->blksize = 4096u;
+    out->blocks = (out->size + 511u) / 512u;
+    out->is_dir = obj->is_dir ? 1u : 0u;
+    return 0;
+}
+
 const u8* vfs_load_file(const char* path, u32* out_size) {
     return ext2_load(path, out_size);
 }
@@ -506,6 +546,15 @@ int vfs_stat(const char* path, u32* out_size, int* out_is_dir) {
     if (out_is_dir) {
         *out_is_dir = 1;
     }
+    return 1;
+}
+
+int vfs_stat_info(const char* path, sys_stat_info_t* out) {
+    ext2_stat_info_t info;
+
+    if (!out) return 0;
+    if (!ext2_stat_info(path, &info)) return 0;
+    vfs_copy_ext2_stat(out, &info);
     return 1;
 }
 

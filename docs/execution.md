@@ -539,19 +539,20 @@ The entry point receives a normal C-style `(int argc, char** argv)` call frame.
 This is the launch contract for every user ELF:
 
 - the kernel enters the ELF symbol selected by `-e`, normally `_start`
-- the low-level entry ABI is `void _start(int argc, char** argv)`
+- the low-level entry ABI is `void _start(int argc, char** argv, char** envp)`
 - `argv[argc]` is `NULL`
-- `argv` strings and the pointer array live on the initial user stack
-- `process_set_args()` owns the process-side argc/argv copy before ring-3 entry
-- there is no `envp` yet
+- `envp` is NULL-terminated
+- `argv` / `envp` strings and pointer arrays live on the initial user stack
+- `process_set_args()` and `process_set_env()` own the process-side copies before ring-3 entry
 - returning from `_start` is unsupported unless a CRT layer converts the return value into `sys_exit`
 
 `src/user/user_crt0.c` is that CRT layer for hosted-ish programs. It keeps the
-kernel ABI at `_start(argc, argv)`, calls `main(argc, argv)`, and exits with
-the returned status. TinyCC is linked this way so its upstream `main` path can
-run normally. Direct `_start(argc, argv)` programs remain supported for
-low-level probes and freestanding tests; new hosted-ish programs should prefer
-`int main(int argc, char** argv)` plus `user_crt0`.
+kernel ABI at `_start(argc, argv, envp)`, sets `environ`, calls
+`main(argc, argv, envp)`, and exits with the returned status. TinyCC is linked
+this way so its upstream `main` path can run normally. Direct
+`_start(argc, argv)` programs remain supported for low-level probes and
+freestanding tests; new hosted-ish programs should prefer
+`int main(int argc, char** argv, char** envp)` plus `user_crt0`.
 
 ---
 

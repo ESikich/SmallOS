@@ -506,17 +506,17 @@ Both paths store accumulated `dx`/`dy` plus button bits. User programs can call
 Entry point convention:
 
 ```c
-void _start(int argc, char** argv)
+void _start(int argc, char** argv, char** envp)
 ```
 
-That convention remains the low-level kernel launch ABI. Hosted-style user programs can
-instead link `src/user/user_crt0.c`, define `main(int argc, char** argv)`, and
-let the CRT adapter call `sys_exit(main(argc, argv))`.
+That convention is the low-level kernel launch ABI. Hosted-style user programs
+can instead link `src/user/user_crt0.c`, define
+`main(int argc, char** argv, char** envp)`, and let the CRT adapter set
+`environ` before calling `sys_exit(main(argc, argv, envp))`.
 
 Direct `_start(argc, argv)` programs remain supported for low-level probes and
-freestanding tests. There is no `envp` argument today; a future runtime can add
-`main(argc, argv, envp)` above the same kernel entry ABI when the environment
-model exists.
+freestanding tests; the extra cdecl argument is ignored by two-argument
+callees.
 
 Programs are linked at fixed virtual address `0x400000`, loaded into private user mappings, and entered through `iret` into CPL=3. They use the `int 0x80` syscall ABI for kernel services.
 

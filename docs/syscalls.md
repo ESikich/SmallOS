@@ -1104,10 +1104,13 @@ int sys_execve(const char* path, char* const argv[], char* const envp[]);
 
 Replaces the current user image with a named ELF while preserving the process
 pid, cwd, process group, and descriptors that do not have `FD_CLOEXEC` set.
-The kernel validates and copies `path` and `argv` from user memory, closes
-close-on-exec descriptors, installs the new ELF address space, and returns to
-the new program entry point. `envp` is accepted for API shape but environment
-delivery is not modeled yet.
+The kernel validates and copies `path`, `argv`, and `envp` from user memory,
+closes close-on-exec descriptors, installs the new ELF address space, and
+returns to the new program entry point. Passing `NULL` for `envp` inherits the
+caller's current environment.
+
+The new program is entered as `_start(argc, argv, envp)`. `argv[argc]` and the
+environment vector are both NULL-terminated.
 
 ### SYS_WAITPID_FG (76)
 
@@ -1285,6 +1288,8 @@ sys_waitpid_foreground(pid, status)
 sys_exec_foreground(name, argc, argv)
 sys_pty_open(fds, master_flags)
 sys_pty_set_size(fd, rows, cols)
+sys_stat_full(path, out_info)
+sys_fstat_full(fd, out_info)
 ```
 
 `user_lib.h` higher-level wrappers:

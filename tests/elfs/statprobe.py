@@ -11,6 +11,7 @@ CASES = [
             "demo_dir: ok size=0 dir=1",
             "demo_hello: ok size=",
             "statprobe posix dir: PASS",
+            "statprobe metadata: PASS",
             "statprobe access: PASS",
             "statprobe PASS",
         ],

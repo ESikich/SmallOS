@@ -33,6 +33,7 @@
 #define SYS_OPEN_MODE_CREATE 0x04u
 #define SYS_OPEN_MODE_TRUNC  0x08u
 #define SYS_OPEN_MODE_APPEND 0x10u
+#define SYS_OPEN_MODE_EXCL   0x20u
 
 #define SYS_FD_FLAG_NONBLOCK 0x00000800u
 #define SYS_FD_FLAG_CLOEXEC  0x00080000u
@@ -129,6 +130,23 @@ typedef struct sys_net_op_request {
     unsigned char mac[6];
 } sys_net_op_request_t;
 
+typedef struct sys_stat_info {
+    unsigned int dev;
+    unsigned int ino;
+    unsigned int mode;
+    unsigned int nlink;
+    unsigned int uid;
+    unsigned int gid;
+    unsigned int rdev;
+    unsigned int size;
+    unsigned int blksize;
+    unsigned int blocks;
+    unsigned int atime;
+    unsigned int mtime;
+    unsigned int ctime;
+    unsigned int is_dir;
+} sys_stat_info_t;
+
 enum {
     SYS_WRITE     = 1,
     SYS_EXIT      = 2,
@@ -222,7 +240,9 @@ enum {
     SYS_ATA_READ_SECTOR = 81, /* copy one ATA sector into a user buffer */
     SYS_EXEC_FG         = 82, /* spawn an ELF in its own foreground job group */
     SYS_PTY_OPEN        = 83, /* create master/slave pseudo-terminal fds */
-    SYS_PTY_SET_SIZE    = 84  /* set pseudo-terminal rows/cols */
+    SYS_PTY_SET_SIZE    = 84, /* set pseudo-terminal rows/cols */
+    SYS_STAT_FULL       = 85, /* copy full POSIX-shaped stat info for path */
+    SYS_FSTAT_FULL      = 86  /* copy full POSIX-shaped stat info for fd */
 };
 
 #endif

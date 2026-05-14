@@ -8,6 +8,8 @@ CASES = [
         must_contain=[
             "=== crtprobe PASS ===",
             "crtprobe argv terminator: PASS",
+            "crtprobe envp: PASS",
+            "crtprobe PATH: PASS",
         ],
     )
 ]

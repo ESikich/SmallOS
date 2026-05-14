@@ -561,10 +561,12 @@ static int sys_exec_fg_impl(const char* name, int argc, char** argv) {
     return sys_exec_spawn_impl(name, argc, argv, 1);
 }
 
-static int sys_copy_argv(char** argv,
-                         int* out_argc,
-                         char* kargv_data,
-                         char** kargv) {
+static int sys_copy_user_strv(char** argv,
+                              int max_entries,
+                              unsigned int data_bytes,
+                              int* out_argc,
+                              char* kargv_data,
+                              char** kargv) {
     unsigned int used = 0;
     int argc = 0;
 
@@ -575,7 +577,7 @@ static int sys_copy_argv(char** argv,
         return 0;
     }
 
-    while (argc < PROCESS_MAX_ARGS) {
+    while (argc < max_entries) {
         char* user_arg = 0;
         int rc;
 
@@ -587,7 +589,7 @@ static int sys_copy_argv(char** argv,
         if (!user_arg) break;
 
         rc = copy_user_cstr(&kargv_data[used],
-                            PROCESS_ARG_BYTES - used,
+                            data_bytes - used,
                             user_arg);
         if (rc < 0) return rc == -ENAMETOOLONG ? -EINVAL : rc;
         kargv[argc] = &kargv_data[used];
@@ -595,7 +597,7 @@ static int sys_copy_argv(char** argv,
         argc++;
     }
 
-    if (argc == PROCESS_MAX_ARGS) {
+    if (argc == max_entries) {
         char* extra = 0;
         if (!user_buf_ok((unsigned int)&argv[argc], sizeof(char*))) {
             return -EFAULT;
@@ -608,6 +610,54 @@ static int sys_copy_argv(char** argv,
 
     kargv[argc] = 0;
     *out_argc = argc;
+    return 0;
+}
+
+static int sys_copy_argv(char** argv,
+                         int* out_argc,
+                         char* kargv_data,
+                         char** kargv) {
+    return sys_copy_user_strv(argv,
+                              PROCESS_MAX_ARGS,
+                              PROCESS_ARG_BYTES,
+                              out_argc,
+                              kargv_data,
+                              kargv);
+}
+
+static int sys_copy_envp(process_t* proc,
+                         char** envp,
+                         int* out_envc,
+                         char* kenv_data,
+                         char** kenvp) {
+    unsigned int used = 0;
+    int envc;
+
+    if (envp) {
+        return sys_copy_user_strv(envp,
+                                  PROCESS_MAX_ENVS,
+                                  PROCESS_ENV_BYTES,
+                                  out_envc,
+                                  kenv_data,
+                                  kenvp);
+    }
+
+    if (!proc || !out_envc || !kenv_data || !kenvp) return -EINVAL;
+    envc = proc->user_envc;
+    if (envc < 0 || envc > PROCESS_MAX_ENVS) return -EINVAL;
+
+    for (int i = 0; i < envc; i++) {
+        int len = proc->user_envp[i] ? k_strlen(proc->user_envp[i]) + 1 : 0;
+        if (len <= 0 || used + (unsigned int)len > PROCESS_ENV_BYTES) {
+            return -EINVAL;
+        }
+        kenvp[i] = &kenv_data[used];
+        k_memcpy(kenvp[i], proc->user_envp[i], (k_size_t)len);
+        used += (unsigned int)len;
+    }
+
+    kenvp[envc] = 0;
+    *out_envc = envc;
     return 0;
 }
 
@@ -665,11 +715,14 @@ static int sys_fork_impl(syscall_regs_t* regs) {
     return (int)child->pid;
 }
 
-static int sys_execve_impl(syscall_regs_t* regs, const char* name, char** argv) {
+static int sys_execve_impl(syscall_regs_t* regs, const char* name, char** argv, char** envp) {
     char kname[EXEC_NAME_MAX];
     char kargv_data[PROCESS_ARG_BYTES];
+    char kenv_data[PROCESS_ENV_BYTES];
     char* kargv[PROCESS_MAX_ARGS + 1];
+    char* kenvp[PROCESS_MAX_ENVS + 1];
     int argc;
+    int envc;
     int rc;
     process_t* proc = (process_t*)sched_current();
     unsigned int entry = 0;
@@ -681,8 +734,10 @@ static int sys_execve_impl(syscall_regs_t* regs, const char* name, char** argv) 
     if (rc < 0) return rc;
     rc = sys_copy_argv(argv, &argc, kargv_data, kargv);
     if (rc < 0) return rc;
+    rc = sys_copy_envp(proc, envp, &envc, kenv_data, kenvp);
+    if (rc < 0) return rc;
 
-    if (!elf_exec_named_into(proc, kname, argc, kargv, &entry, &user_esp)) {
+    if (!elf_exec_named_into(proc, kname, argc, kargv, envc, kenvp, &entry, &user_esp)) {
         return -ENOENT;
     }
 
@@ -994,12 +1049,13 @@ static int sys_open_mode_impl(const char* name, unsigned int mode) {
     char kname[PROCESS_FD_NAME_MAX];
     unsigned int supported = SYS_OPEN_MODE_READ | SYS_OPEN_MODE_WRITE |
                              SYS_OPEN_MODE_CREATE | SYS_OPEN_MODE_TRUNC |
-                             SYS_OPEN_MODE_APPEND;
+                             SYS_OPEN_MODE_APPEND | SYS_OPEN_MODE_EXCL;
     int readable = (mode & SYS_OPEN_MODE_READ) != 0;
     int writable = (mode & SYS_OPEN_MODE_WRITE) != 0;
     int create = (mode & SYS_OPEN_MODE_CREATE) != 0;
     int trunc = (mode & SYS_OPEN_MODE_TRUNC) != 0;
     int append = (mode & SYS_OPEN_MODE_APPEND) != 0;
+    int excl = (mode & SYS_OPEN_MODE_EXCL) != 0;
     u32 file_size = 0;
     int is_dir = 0;
     int exists;
@@ -1012,6 +1068,7 @@ static int sys_open_mode_impl(const char* name, unsigned int mode) {
     if (path_rc < 0) return path_rc;
 
     exists = vfs_stat(kname, &file_size, &is_dir);
+    if (exists && create && excl) return -EEXIST;
     if (exists && is_dir && writable) return -EISDIR;
     if (!exists && !create) return path_lookup_errno(kname);
     if (!exists || trunc) file_size = 0;
@@ -2184,6 +2241,43 @@ static int sys_fstat_impl(int fd, unsigned int* out_size, int* out_is_dir) {
     return 0;
 }
 
+static int sys_stat_full_impl(const char* path, sys_stat_info_t* out) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    sys_stat_info_t info;
+    int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+
+    if (path_rc < 0) return path_rc;
+    if (!out) return -EFAULT;
+    if (!vfs_stat_info(kpath, &info)) return path_lookup_errno(kpath);
+    if (copy_to_user(out, &info, sizeof(info)) < 0) return -EFAULT;
+    return 0;
+}
+
+static int sys_fstat_full_impl(int fd, sys_stat_info_t* out) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+    sys_stat_info_t info;
+
+    if (!proc) return -EINVAL;
+    if (!out) return -EFAULT;
+    ent = process_fd_get(proc, fd);
+    if (!ent) return -EBADF;
+
+    if (ent->kind == PROCESS_HANDLE_KIND_FILE) {
+        int rc = vfs_file_stat_info_fd(ent, &info);
+        if (rc < 0) return rc;
+    } else {
+        k_memset(&info, 0, sizeof(info));
+        info.mode = 0020000u | 0600u;
+        info.nlink = 1u;
+        info.blksize = 4096u;
+        info.size = ent->size;
+    }
+
+    if (copy_to_user(out, &info, sizeof(info)) < 0) return -EFAULT;
+    return 0;
+}
+
 static int sys_terminal_size_impl(unsigned int* out_rows, unsigned int* out_cols) {
     process_t* proc;
     fd_entry_t* stdin_ent;
@@ -2852,6 +2946,16 @@ void syscall_handler_main(syscall_regs_t* regs) {
                                                             regs->edx);
             break;
 
+        case SYS_STAT_FULL:
+            regs->eax = (unsigned int)sys_stat_full_impl((const char*)regs->ebx,
+                                                         (sys_stat_info_t*)regs->ecx);
+            break;
+
+        case SYS_FSTAT_FULL:
+            regs->eax = (unsigned int)sys_fstat_full_impl((int)regs->ebx,
+                                                          (sys_stat_info_t*)regs->ecx);
+            break;
+
         case SYS_DUP:
         {
             process_t* proc = (process_t*)sched_current();
@@ -2894,7 +2998,8 @@ void syscall_handler_main(syscall_regs_t* regs) {
         case SYS_EXECVE:
             regs->eax = (unsigned int)sys_execve_impl(regs,
                                                       (const char*)regs->ebx,
-                                                      (char**)regs->ecx);
+                                                      (char**)regs->ecx,
+                                                      (char**)regs->edx);
             break;
 
         case SYS_EPOLL_CREATE:

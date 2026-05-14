@@ -15,8 +15,11 @@
 #include "unistd.h"
 #include "errno.h"
 #include "signal.h"
+#include "stdlib.h"
 
 int errno = 0;
+char* __smallos_empty_env[] = { 0 };
+char** environ = __smallos_empty_env;
 
 static int errno_from_raw(int raw) {
     if (raw < 0) {
@@ -50,6 +53,9 @@ static uint32_t open_flags_to_mode(int flags) {
     }
     if (flags & O_APPEND) {
         mode |= SYS_OPEN_MODE_APPEND;
+    }
+    if (flags & O_EXCL) {
+        mode |= SYS_OPEN_MODE_EXCL;
     }
 
     return mode;
@@ -110,49 +116,55 @@ int rmdir(const char* path) {
 }
 
 int stat(const char* path, struct stat* st) {
-    uint32_t size = 0;
-    int is_dir = 0;
+    sys_stat_info_t info;
     if (!st) {
         set_errno(EFAULT);
         return -1;
     }
-    if (errno_from_raw(sys_stat(path, &size, &is_dir)) < 0) {
+    if (errno_from_raw(sys_stat_full(path, &info)) < 0) {
         return -1;
     }
     memset(st, 0, sizeof(*st));
-    st->st_size = (long)size;
-    st->st_mode = is_dir ? S_IFDIR : S_IFREG;
+    st->st_dev = info.dev;
+    st->st_ino = info.ino;
+    st->st_nlink = info.nlink;
+    st->st_mode = info.mode;
+    st->st_uid = info.uid;
+    st->st_gid = info.gid;
+    st->st_rdev = info.rdev;
+    st->st_size = (long)info.size;
+    st->st_blksize = (long)info.blksize;
+    st->st_blocks = (long)info.blocks;
+    st->st_atime = (time_t)info.atime;
+    st->st_mtime = (time_t)info.mtime;
+    st->st_ctime = (time_t)info.ctime;
     return 0;
 }
 
 int fstat(int fd, struct stat* st) {
-    uint32_t size = 0;
-    int is_dir = 0;
-    int cur;
-    int end;
+    sys_stat_info_t info;
 
     if (!st) {
         set_errno(EFAULT);
         return -1;
     }
     memset(st, 0, sizeof(*st));
-    if (errno_from_raw(sys_fstat(fd, &size, &is_dir)) < 0) {
+    if (errno_from_raw(sys_fstat_full(fd, &info)) < 0) {
         return -1;
     }
-    st->st_mode = is_dir ? S_IFDIR : S_IFREG;
-    st->st_size = (long)size;
-    if (is_dir) {
-        return 0;
-    }
-
-    cur = sys_lseek(fd, 0, SEEK_CUR);
-    if (cur >= 0) {
-        end = sys_lseek(fd, 0, SEEK_END);
-        if (end >= 0) {
-            st->st_size = end;
-            (void)sys_lseek(fd, cur, SEEK_SET);
-        }
-    }
+    st->st_dev = info.dev;
+    st->st_ino = info.ino;
+    st->st_nlink = info.nlink;
+    st->st_mode = info.mode;
+    st->st_uid = info.uid;
+    st->st_gid = info.gid;
+    st->st_rdev = info.rdev;
+    st->st_size = (long)info.size;
+    st->st_blksize = (long)info.blksize;
+    st->st_blocks = (long)info.blocks;
+    st->st_atime = (time_t)info.atime;
+    st->st_mtime = (time_t)info.mtime;
+    st->st_ctime = (time_t)info.ctime;
     return 0;
 }
 
@@ -203,7 +215,7 @@ int execve(const char* path, char* const argv[], char* const envp[]) {
 }
 
 int execv(const char* path, char* const argv[]) {
-    return execve(path, argv, 0);
+    return execve(path, argv, environ);
 }
 
 static int path_has_sep_user(const char* path) {
@@ -235,7 +247,7 @@ static int join_exec_path(char* out, unsigned int out_size, const char* dir, con
 }
 
 int execvp(const char* file, char* const argv[]) {
-    static const char* dirs[] = { "", "bin", "usr/bin", "usr/sbin" };
+    const char* path_env = getenv("PATH");
     char path[128];
     int last_errno = ENOENT;
 
@@ -246,20 +258,39 @@ int execvp(const char* file, char* const argv[]) {
     if (path_has_sep_user(file)) {
         return execve(file, argv, 0);
     }
-    for (unsigned int i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++) {
-        if (dirs[i][0] == '\0') {
+    if (!path_env || !path_env[0]) {
+        path_env = ":/bin:/usr/bin:/usr/sbin";
+    }
+
+    while (1) {
+        char dir[64];
+        unsigned int dlen = 0;
+
+        while (path_env[dlen] && path_env[dlen] != ':') {
+            if (dlen + 1 >= sizeof(dir)) {
+                set_errno(ENAMETOOLONG);
+                return -1;
+            }
+            dir[dlen] = path_env[dlen];
+            dlen++;
+        }
+        dir[dlen] = '\0';
+
+        if (dir[0] == '\0') {
             if (strlen(file) + 1u > sizeof(path)) {
                 set_errno(ENAMETOOLONG);
                 return -1;
             }
             strcpy(path, file);
-        } else if (!join_exec_path(path, sizeof(path), dirs[i], file)) {
+        } else if (!join_exec_path(path, sizeof(path), dir, file)) {
             set_errno(ENAMETOOLONG);
             return -1;
         }
-        execve(path, argv, 0);
+        execve(path, argv, environ);
         last_errno = errno;
         if (last_errno != ENOENT) break;
+        if (path_env[dlen] == '\0') break;
+        path_env += dlen + 1;
     }
     set_errno(last_errno);
     return -1;

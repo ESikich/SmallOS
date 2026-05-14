@@ -54,9 +54,14 @@
 
 typedef struct {
     u16 mode;
+    u16 uid;
+    u16 gid;
     u32 size;
     u16 links_count;
     u32 blocks_512;
+    u32 atime;
+    u32 ctime;
+    u32 mtime;
     u32 block[EXT2_N_BLOCKS];
 } ext2_inode_t;
 
@@ -233,7 +238,12 @@ static int read_inode(u32 ino, ext2_inode_t* out) {
 
     if (!read_block(block, s_block)) return 0;
     out->mode = read_u16_le(s_block, off + INODE_MODE);
+    out->uid = read_u16_le(s_block, off + INODE_UID);
     out->size = read_u32_le(s_block, off + INODE_SIZE);
+    out->atime = read_u32_le(s_block, off + INODE_ATIME);
+    out->ctime = read_u32_le(s_block, off + INODE_CTIME);
+    out->mtime = read_u32_le(s_block, off + INODE_MTIME);
+    out->gid = read_u16_le(s_block, off + INODE_GID);
     out->links_count = read_u16_le(s_block, off + INODE_LINKS);
     out->blocks_512 = read_u32_le(s_block, off + INODE_BLOCKS);
     for (u32 i = 0; i < EXT2_N_BLOCKS; i++) {
@@ -252,13 +262,13 @@ static int write_inode(u32 ino, const ext2_inode_t* in) {
 
     if (!read_block(block, s_block)) return 0;
     write_u16_le(s_block, off + INODE_MODE, in->mode);
-    write_u16_le(s_block, off + INODE_UID, 0);
+    write_u16_le(s_block, off + INODE_UID, in->uid);
     write_u32_le(s_block, off + INODE_SIZE, in->size);
-    write_u32_le(s_block, off + INODE_ATIME, 0);
-    write_u32_le(s_block, off + INODE_CTIME, 0);
-    write_u32_le(s_block, off + INODE_MTIME, 0);
+    write_u32_le(s_block, off + INODE_ATIME, in->atime);
+    write_u32_le(s_block, off + INODE_CTIME, in->ctime);
+    write_u32_le(s_block, off + INODE_MTIME, in->mtime);
     write_u32_le(s_block, off + INODE_DTIME, 0);
-    write_u16_le(s_block, off + INODE_GID, 0);
+    write_u16_le(s_block, off + INODE_GID, in->gid);
     write_u16_le(s_block, off + INODE_LINKS, in->links_count);
     write_u32_le(s_block, off + INODE_BLOCKS, in->blocks_512);
     write_u32_le(s_block, off + INODE_FLAGS, 0);
@@ -1375,6 +1385,29 @@ int ext2_stat(const char* path, u32* out_size) {
         return 0;
     }
     if (out_size) *out_size = resolved.inode.size;
+    return 1;
+}
+
+int ext2_stat_info(const char* path, ext2_stat_info_t* out) {
+    resolved_path_t resolved;
+
+    if (!s_initialised || !out) return 0;
+    if (!path || path[0] == '\0') path = "/";
+    if (!resolve_path(path, &resolved) || !resolved.has_entry) return 0;
+    if (!inode_is_file(&resolved.inode) && !inode_is_dir(&resolved.inode)) return 0;
+
+    k_memset(out, 0, sizeof(*out));
+    out->ino = resolved.ino;
+    out->mode = resolved.inode.mode;
+    out->uid = resolved.inode.uid;
+    out->gid = resolved.inode.gid;
+    out->links_count = resolved.inode.links_count;
+    out->size = resolved.inode.size;
+    out->blocks_512 = resolved.inode.blocks_512;
+    out->atime = resolved.inode.atime;
+    out->ctime = resolved.inode.ctime;
+    out->mtime = resolved.inode.mtime;
+    out->is_dir = inode_is_dir(&resolved.inode) ? 1 : 0;
     return 1;
 }
 

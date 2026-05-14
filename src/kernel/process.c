@@ -2222,6 +2222,47 @@ int process_set_args(process_t* proc, int argc, char** argv) {
     return 0;
 }
 
+int process_set_env(process_t* proc, int envc, char** envp) {
+    unsigned int used = 0;
+
+    if (!proc) return -EINVAL;
+    if (envc < 0 || envc > PROCESS_MAX_ENVS) return -EINVAL;
+    if (envc > 0 && !envp) return -EFAULT;
+
+    proc->user_envc = 0;
+    proc->user_envp[0] = 0;
+    proc->user_env_data[0] = '\0';
+
+    for (int i = 0; i < envc; i++) {
+        if (!envp[i]) return -EFAULT;
+
+        int len = k_strlen(envp[i]) + 1;
+        if (used + (unsigned int)len > PROCESS_ENV_BYTES) {
+            return -EINVAL;
+        }
+
+        proc->user_envp[i] = &proc->user_env_data[used];
+        k_memcpy(proc->user_envp[i], envp[i], (k_size_t)len);
+        used += (unsigned int)len;
+    }
+
+    proc->user_envc = envc;
+    proc->user_envp[envc] = 0;
+    return 0;
+}
+
+int process_set_default_env(process_t* proc) {
+    char* envp[] = {
+        "PATH=/bin:/usr/bin:/usr/sbin",
+        "HOME=/",
+        "SHELL=/bin/shell.elf",
+        "TMPDIR=/tmp",
+        0
+    };
+
+    return process_set_env(proc, 4, envp);
+}
+
 /* ------------------------------------------------------------------ */
 /* Kernel-task bootstrap                                              */
 /* ------------------------------------------------------------------ */
@@ -2278,6 +2319,7 @@ process_t* process_create(const char* name) {
         return 0;
     }
     process_init_standard_fds(proc);
+    (void)process_set_default_env(proc);
     if (name) {
         str_copy_n(proc->name, name, PROCESS_NAME_MAX);
     }
@@ -2382,6 +2424,16 @@ process_t* process_fork_from_syscall(unsigned int regs_esp, unsigned int frame_t
             child->user_argv[i] = child->user_arg_data + off;
         } else {
             child->user_argv[i] = 0;
+        }
+    }
+    child->user_envc = parent->user_envc;
+    k_memcpy(child->user_env_data, parent->user_env_data, sizeof(child->user_env_data));
+    for (int i = 0; i <= PROCESS_MAX_ENVS; i++) {
+        if (parent->user_envp[i]) {
+            unsigned int off = (unsigned int)(parent->user_envp[i] - parent->user_env_data);
+            child->user_envp[i] = child->user_env_data + off;
+        } else {
+            child->user_envp[i] = 0;
         }
     }
     k_memcpy(child->cwd, parent->cwd, sizeof(child->cwd));

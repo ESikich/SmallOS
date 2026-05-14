@@ -36,6 +36,20 @@ typedef struct {
     int is_dir;
 } ext2_dirent_info_t;
 
+typedef struct {
+    u32 ino;
+    u16 mode;
+    u16 uid;
+    u16 gid;
+    u16 links_count;
+    u32 size;
+    u32 blocks_512;
+    u32 atime;
+    u32 ctime;
+    u32 mtime;
+    int is_dir;
+} ext2_stat_info_t;
+
 int ext2_init(void);
 
 void ext2_ls(void);
@@ -43,6 +57,7 @@ void ext2_ls_path(const char* path);
 void ext2_ls_path_filtered(const char* path, const char* pattern);
 
 int ext2_stat(const char* path, u32* out_size);
+int ext2_stat_info(const char* path, ext2_stat_info_t* out);
 const u8* ext2_load(const char* path, u32* out_size);
 int ext2_read_path_to_sink(const char* path,
                            const ext2_data_sink_t* sink,

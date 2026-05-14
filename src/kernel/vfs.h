@@ -3,15 +3,18 @@
 
 #include "process.h"
 #include "ext2.h"
+#include "uapi_syscall.h"
 
 const process_handle_ops_t* vfs_file_ops(void);
 int vfs_file_init(fd_entry_t* ent, const char* path, u32 size, int readable, int writable);
 void vfs_file_retain(fd_entry_t* ent);
 void vfs_file_set_is_dir(fd_entry_t* ent, int is_dir);
 int vfs_file_stat_fd(fd_entry_t* ent, u32* out_size, int* out_is_dir);
+int vfs_file_stat_info_fd(fd_entry_t* ent, sys_stat_info_t* out);
 
 const u8* vfs_load_file(const char* path, u32* out_size);
 int vfs_stat(const char* path, u32* out_size, int* out_is_dir);
+int vfs_stat_info(const char* path, sys_stat_info_t* out);
 int vfs_is_dir(const char* path);
 int vfs_write_root(const char* name, const u8* data, u32 size);
 int vfs_write_path(const char* path, const u8* data, u32 size);

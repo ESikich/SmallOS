@@ -453,15 +453,16 @@ Useful signals:
 
 ## Adding a New User Program
 
-1. Prefer `int main(int argc, char** argv)` for hosted-ish programs, and link `src/user/user_crt0.c`
+1. Prefer `int main(int argc, char** argv, char** envp)` for hosted-ish programs, and link `src/user/user_crt0.c`
 2. Use direct `void _start(int argc, char** argv)` plus `sys_exit(status)` only for low-level probes
 3. Add `myprog` to `USER_PROGS` in Makefile - automatically included in the ext2 image
 4. If the program needs extra user objects, add a custom link rule like `bmpview.elf` or `plasma.elf`
 5. `make clean && make`
 6. `runelf myprog`
 
-The launch ABI guarantees `argv[argc] == NULL`. SmallOS does not provide
-`envp` yet.
+The launch ABI enters `_start(argc, argv, envp)` and guarantees both
+`argv[argc] == NULL` and a NULL-terminated environment vector. Two-argument
+`main(argc, argv)` and direct `_start(argc, argv)` programs continue to work.
 
 Framebuffer apps should use `src/user/gfx.c` instead of calling the display
 syscalls directly. The helper owns acquire/release, full-screen backbuffer

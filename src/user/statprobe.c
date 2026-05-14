@@ -36,6 +36,21 @@ void _start(int argc, char** argv) {
             sys_exit(1);
         }
     }
+    {
+        struct stat st;
+        if (stat("usr/bin/hello.elf", &st) == 0 &&
+            S_ISREG(st.st_mode) &&
+            st.st_ino != 0 &&
+            st.st_nlink >= 1 &&
+            st.st_blksize == 4096 &&
+            st.st_blocks >= 1 &&
+            (st.st_mode & 0777) == 0644) {
+            u_puts("statprobe metadata: PASS\n");
+        } else {
+            u_puts("statprobe metadata: FAIL\n");
+            sys_exit(1);
+        }
+    }
     if (access("usr/bin/hello.elf", R_OK) == 0 && access("usr/bin/nope.elf", F_OK) < 0) {
         u_puts("statprobe access: PASS\n");
     } else {

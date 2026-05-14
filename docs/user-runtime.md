@@ -177,12 +177,23 @@ The runtime provides a small POSIX-shaped surface:
 - `mkdir`, `rmdir`
 - `getcwd`, `chdir`
 - `getpid`, `fork`, `execve`, `execv`, `execvp`, `waitpid`, `kill`
+- `environ`, `getenv`, and `main(argc, argv, envp)` through `user_crt0`
 - `time`, `gettimeofday`, `clock_gettime`, `clock_settime`
 - socket, poll, epoll, timerfd, and signalfd wrappers used by guest services
 
 `access(path, mode)` validates mode bits and checks existence through
 `SYS_STAT`. SmallOS does not currently model Unix permission bits, so `R_OK`,
 `W_OK`, and `X_OK` are existence/type checks rather than permission checks.
+
+`stat`, `lstat`, and `fstat` use the full stat syscalls and fill inode number,
+mode bits, link count, uid/gid, size, block size, block count, and ext2
+timestamps. Newly created ext2 files and directories currently default to
+`0644` and `0755` respectively.
+
+`execve(path, argv, envp)` copies both argument and environment vectors into
+kernel-owned storage before replacing the image. Passing `NULL` for `envp`
+inherits the caller's current environment. `execv` and `execvp` use `environ`,
+and `execvp` searches `PATH`, falling back to `/bin:/usr/bin:/usr/sbin`.
 
 ---
 
@@ -308,10 +319,14 @@ SmallOS user programs:
 int main(int argc, char** argv);
 ```
 
-The kernel still launches `void _start(int argc, char** argv)`. `user_crt0`
-provides that symbol, calls `main(argc, argv)`, and passes the return value to
-`sys_exit`. Direct `_start(argc, argv)` remains available for low-level probes.
-`argv[argc]` is guaranteed to be `NULL`; there is no `envp` yet.
+The kernel launches `void _start(int argc, char** argv, char** envp)`.
+`user_crt0` provides that symbol, sets global `environ`, calls
+`main(argc, argv, envp)`, and passes the return value to `sys_exit`.
+Two-argument `main(argc, argv)` programs continue to work because the extra
+cdecl argument is ignored by callees that do not declare it. Direct
+`_start(argc, argv)` remains available for low-level probes; the extra stack
+argument is harmless there as well. `argv[argc]` and the environment vector are
+both guaranteed to be `NULL` terminated.
 
 ---
 

@@ -1,11 +1,14 @@
 #include "user_lib.h"
 
-int main(int argc, char** argv);
+extern char** environ;
+int main(int argc, char** argv, char** envp);
 
 /*
- * Generic hosted-ish adapter: the kernel still enters _start(argc, argv),
- * while user programs can define main(argc, argv) and return an exit status.
+ * Generic hosted-ish adapter. The kernel enters _start(argc, argv, envp);
+ * two-argument main() definitions still work because the extra cdecl argument
+ * is ignored by callees that do not declare it.
  */
-void _start(int argc, char** argv) {
-    sys_exit(main(argc, argv));
+void _start(int argc, char** argv, char** envp) {
+    environ = envp;
+    sys_exit(main(argc, argv, envp));
 }

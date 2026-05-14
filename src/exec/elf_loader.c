@@ -47,12 +47,29 @@ static int elf_copy_to_user(process_t* proc, unsigned int va, const void* src, u
     return 1;
 }
 
-static int elf_setup_user_stack(process_t* proc, int argc, char** argv, unsigned int* out_esp) {
+static int elf_setup_user_stack(process_t* proc,
+                                int argc,
+                                char** argv,
+                                int envc,
+                                char** envp,
+                                unsigned int* out_esp) {
     unsigned int sp = USER_STACK_TOP;
     unsigned int user_argv_ptrs[PROCESS_MAX_ARGS + 1];
+    unsigned int user_envp_ptrs[PROCESS_MAX_ENVS + 1];
+    unsigned int user_argv = 0;
+    unsigned int user_envp = 0;
 
     if (!proc || !out_esp) return 0;
     if (argc < 0 || argc > PROCESS_MAX_ARGS) return 0;
+    if (envc < 0 || envc > PROCESS_MAX_ENVS) return 0;
+
+    for (int i = envc - 1; i >= 0; i--) {
+        unsigned int len = (unsigned int)k_strlen(envp[i]) + 1u;
+        sp -= len;
+        if (!elf_copy_to_user(proc, sp, envp[i], len)) return 0;
+        user_envp_ptrs[i] = sp;
+    }
+    user_envp_ptrs[envc] = 0;
 
     for (int i = argc - 1; i >= 0; i--) {
         unsigned int len = (unsigned int)k_strlen(argv[i]) + 1u;
@@ -63,16 +80,24 @@ static int elf_setup_user_stack(process_t* proc, int argc, char** argv, unsigned
     user_argv_ptrs[argc] = 0;
 
     sp &= ~3u;
+    sp -= (unsigned int)(envc + 1) * 4u;
+    user_envp = sp;
+    if (!elf_copy_to_user(proc, sp, user_envp_ptrs, (unsigned int)(envc + 1) * 4u)) {
+        return 0;
+    }
+
     sp -= (unsigned int)(argc + 1) * 4u;
+    user_argv = sp;
     if (!elf_copy_to_user(proc, sp, user_argv_ptrs, (unsigned int)(argc + 1) * 4u)) {
         return 0;
     }
 
     {
-        unsigned int frame[3];
+        unsigned int frame[4];
         frame[0] = 0;
         frame[1] = (unsigned int)argc;
-        frame[2] = sp;
+        frame[2] = user_argv;
+        frame[3] = user_envp;
         sp -= sizeof(frame);
         if (!elf_copy_to_user(proc, sp, frame, sizeof(frame))) return 0;
     }
@@ -84,10 +109,21 @@ static int elf_setup_user_stack(process_t* proc, int argc, char** argv, unsigned
 static void elf_enter_ring3(unsigned int entry,
                             unsigned int user_esp,
                             int          argc,
-                            char**       argv)
+                            char**       argv,
+                            int          envc,
+                            char**       envp)
 {
     char* sp = (char*)user_esp;
     char* user_argv_ptrs[32];
+    char* user_envp_ptrs[PROCESS_MAX_ENVS + 1];
+
+    for (int i = envc - 1; i >= 0; i--) {
+        int len = k_strlen(envp[i]) + 1;
+        sp -= len;
+        k_memcpy(sp, envp[i], (k_size_t)len);
+        user_envp_ptrs[i] = sp;
+    }
+    user_envp_ptrs[envc] = 0;
 
     for (int i = argc - 1; i >= 0; i--) {
         int len = k_strlen(argv[i]) + 1;
@@ -98,6 +134,13 @@ static void elf_enter_ring3(unsigned int entry,
 
     sp = (char*)((unsigned int)sp & ~3u);
 
+    sp -= (envc + 1) * 4;
+    unsigned int* user_envp = (unsigned int*)sp;
+    for (int i = 0; i < envc; i++) {
+        user_envp[i] = (unsigned int)user_envp_ptrs[i];
+    }
+    user_envp[envc] = 0;
+
     sp -= (argc + 1) * 4;
     unsigned int* user_argv = (unsigned int*)sp;
     for (int i = 0; i < argc; i++) {
@@ -106,11 +149,12 @@ static void elf_enter_ring3(unsigned int entry,
     user_argv[argc] = 0;
 
     unsigned int* frame = (unsigned int*)sp;
-    frame[-1] = (unsigned int)user_argv;
-    frame[-2] = (unsigned int)argc;
-    frame[-3] = 0;   /* fake return address */
+    frame[-1] = (unsigned int)user_envp;
+    frame[-2] = (unsigned int)user_argv;
+    frame[-3] = (unsigned int)argc;
+    frame[-4] = 0;   /* fake return address */
 
-    unsigned int final_esp = (unsigned int)frame - 12;
+    unsigned int final_esp = (unsigned int)frame - 16;
     unsigned int user_cs   = SEG_USER_CODE;
     unsigned int user_ds   = SEG_USER_DATA;
 
@@ -161,7 +205,9 @@ static void elf_user_task_bootstrap(void) {
     elf_enter_ring3(proc->user_entry,
                     USER_STACK_TOP,
                     proc->user_argc,
-                    proc->user_argv);
+                    proc->user_argv,
+                    proc->user_envc,
+                    proc->user_envp);
 }
 
 static int elf_seed_sched_context(process_t* proc,
@@ -195,6 +241,7 @@ static void elf_inherit_launch_context(process_t* proc, process_t* parent) {
     if (!proc || !parent) return;
 
     k_memcpy(proc->cwd, parent->cwd, sizeof(proc->cwd));
+    (void)process_set_env(proc, parent->user_envc, parent->user_envp);
 
     for (int fd = 0; fd <= 2; fd++) {
         fd_entry_t* parent_ent = process_fd_get(parent, fd);
@@ -350,6 +397,8 @@ int elf_exec_image_into(process_t* proc,
                         const unsigned char* image,
                         int argc,
                         char** argv,
+                        int envc,
+                        char** envp,
                         unsigned int* out_entry,
                         unsigned int* out_user_esp) {
     const Elf32_Ehdr* eh;
@@ -364,6 +413,7 @@ int elf_exec_image_into(process_t* proc,
         return 0;
     }
     if (argc < 0 || argc > PROCESS_MAX_ARGS) return 0;
+    if (envc < 0 || envc > PROCESS_MAX_ENVS) return 0;
 
     old_pd = proc->pd;
     new_pd = process_pd_create();
@@ -414,7 +464,8 @@ int elf_exec_image_into(process_t* proc,
     }
 
     if (process_set_args(proc, argc, argv) < 0 ||
-        !elf_setup_user_stack(proc, argc, argv, out_user_esp)) {
+        process_set_env(proc, envc, envp) < 0 ||
+        !elf_setup_user_stack(proc, argc, argv, envc, envp, out_user_esp)) {
         process_pd_destroy(new_pd);
         proc->pd = old_pd;
         return 0;
@@ -486,6 +537,8 @@ int elf_exec_named_into(process_t* proc,
                         const char* name,
                         int argc,
                         char** argv,
+                        int envc,
+                        char** envp,
                         unsigned int* out_entry,
                         unsigned int* out_user_esp) {
     u32 size = 0;
@@ -515,5 +568,5 @@ int elf_exec_named_into(process_t* proc,
 
     (void)size;
     if (!data) return 0;
-    return elf_exec_image_into(proc, data, argc, argv, out_entry, out_user_esp);
+    return elf_exec_image_into(proc, data, argc, argv, envc, envp, out_entry, out_user_esp);
 }

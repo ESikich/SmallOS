@@ -1236,7 +1236,19 @@ __attribute__((noreturn)) void exit(int code) {
 }
 
 char* getenv(const char* name) {
-    (void)name;
+    extern char** environ;
+    size_t name_len;
+
+    if (!name || !name[0] || !environ) {
+        return 0;
+    }
+
+    name_len = strlen(name);
+    for (unsigned int i = 0; environ[i]; i++) {
+        if (strncmp(environ[i], name, name_len) == 0 && environ[i][name_len] == '=') {
+            return environ[i] + name_len + 1;
+        }
+    }
     return 0;
 }
 

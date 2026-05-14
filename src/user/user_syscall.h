@@ -280,6 +280,14 @@ static inline int sys_fstat(int fd, uint32_t* out_size, int* out_is_dir) {
     return syscall3(SYS_FSTAT, (uint32_t)fd, (uint32_t)out_size, (uint32_t)out_is_dir);
 }
 
+static inline int sys_stat_full(const char* path, sys_stat_info_t* out) {
+    return syscall2(SYS_STAT_FULL, (uint32_t)path, (uint32_t)out);
+}
+
+static inline int sys_fstat_full(int fd, sys_stat_info_t* out) {
+    return syscall2(SYS_FSTAT_FULL, (uint32_t)fd, (uint32_t)out);
+}
+
 static inline int sys_fsinfo(sys_fsinfo_t* out_info) {
     return syscall1(SYS_FSINFO, (uint32_t)out_info);
 }
@@ -471,8 +479,7 @@ static inline int sys_fork(void) {
 }
 
 static inline int sys_execve(const char* path, char* const argv[], char* const envp[]) {
-    (void)envp;
-    return syscall2(SYS_EXECVE, (uint32_t)path, (uint32_t)argv);
+    return syscall3(SYS_EXECVE, (uint32_t)path, (uint32_t)argv, (uint32_t)envp);
 }
 
 static inline int sys_epoll_create(int flags) {

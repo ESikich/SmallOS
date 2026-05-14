@@ -98,6 +98,8 @@ struct fd_entry {
 #define PROCESS_NAME_MAX  32
 #define PROCESS_MAX_ARGS  16
 #define PROCESS_ARG_BYTES 256
+#define PROCESS_MAX_ENVS  16
+#define PROCESS_ENV_BYTES 512
 #define PROCESS_CWD_MAX   PROCESS_FD_NAME_MAX
 #define PROCESS_KERNEL_STACK_FRAMES 8u
 #define PROCESS_KERNEL_STACK_BYTES  (PROCESS_KERNEL_STACK_FRAMES * PAGE_SIZE)
@@ -119,6 +121,9 @@ typedef struct process {
     int             user_argc;
     char*           user_argv[PROCESS_MAX_ARGS + 1];
     char            user_arg_data[PROCESS_ARG_BYTES];
+    int             user_envc;
+    char*           user_envp[PROCESS_MAX_ENVS + 1];
+    char            user_env_data[PROCESS_ENV_BYTES];
     unsigned int    heap_base;
     unsigned int    heap_brk;
     char            cwd[PROCESS_CWD_MAX];  /* canonical path without leading slash */
@@ -185,6 +190,8 @@ int        process_wait_pid(process_t* parent,
 int        process_kill_pid(int pid, int status, unsigned int esp);
 int        process_reap_unclaimed_zombies(void);
 int        process_set_args(process_t* proc, int argc, char** argv);
+int        process_set_env(process_t* proc, int envc, char** envp);
+int        process_set_default_env(process_t* proc);
 
 process_t* process_get_current(void);
 

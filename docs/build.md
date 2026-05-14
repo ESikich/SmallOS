@@ -229,9 +229,10 @@ separately: `make verify-display` runs the framebuffer/VGA visual smoke checks,
 
 Most freestanding test ELFs define `_start(argc, argv)` directly and link with
 the common user runtime objects. Hosted-ish programs define
-`main(argc, argv)` and link `src/user/user_crt0.c`, which supplies `_start` and
-exits with `main`'s return value. `usr/bin/tcc.elf` and `usr/libexec/tests/crtprobe.elf`
-use that CRT path; there is no TinyCC-specific startup wrapper.
+`main(argc, argv, envp)` and link `src/user/user_crt0.c`, which supplies
+`_start`, sets `environ`, and exits with `main`'s return value. `usr/bin/tcc.elf`
+and `usr/libexec/tests/crtprobe.elf` use that CRT path; there is no
+TinyCC-specific startup wrapper.
 
 ## Automated Guest Test
 
@@ -950,5 +951,4 @@ fails.
 
 * Broader DHCP coverage such as renewal and lease expiry handling
 * Broader TCP close-state fuzzing beyond the focused EOF smoke
-* Richer filesystem metadata such as long filenames or permission bits
-* Environment-variable support for the hosted `main(argc, argv)` runtime path
+* Richer filesystem metadata such as long filenames, chmod, or ownership

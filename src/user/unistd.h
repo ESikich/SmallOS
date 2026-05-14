@@ -19,6 +19,8 @@ typedef int ssize_t;
 #define STDOUT_FILENO 1
 #define STDERR_FILENO 2
 
+extern char** environ;
+
 int close(int fd);
 int read(int fd, void* buf, unsigned int len);
 int write(int fd, const void* buf, unsigned int len);
