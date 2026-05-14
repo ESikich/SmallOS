@@ -76,9 +76,12 @@ Build the default disk image:
 make clean && make
 ```
 
-The normal image is written to `build/img/os-image.bin`. The mutable ext2
-partition lives in `.state/ext2.img`, so files created inside SmallOS survive
-normal rebuilds. Reset it from the current seed image with:
+The normal image is written to `build/img/os-image.bin`. The seeded ext2 image
+is built under `build/bin/<backend>/ext2.seed.img`, then copied to the mutable
+runtime partition at `.state/ext2.img`. Guest-created files survive normal
+rebuilds, while the `.state/ext2.img.stamp` dependency lets Make refresh the
+runtime partition when userland binaries in the seed change. Reset it from the
+current seed image with:
 
 ```bash
 make reset-disk

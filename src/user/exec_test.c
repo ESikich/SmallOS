@@ -55,6 +55,82 @@ static void write_result_line(const char* prefix, int value) {
     sys_write(buf, pos);
 }
 
+static int buffer_contains(const char* haystack, int haystack_len, const char* needle) {
+    uint32_t needle_len = str_len(needle);
+
+    if (needle_len == 0u) return 1;
+    if (haystack_len < 0 || (uint32_t)haystack_len < needle_len) return 0;
+
+    for (uint32_t i = 0; i + needle_len <= (uint32_t)haystack_len; i++) {
+        uint32_t j = 0;
+        while (j < needle_len && haystack[i + j] == needle[j]) {
+            j++;
+        }
+        if (j == needle_len) return 1;
+    }
+
+    return 0;
+}
+
+static int check_foreground_exec_stdout_inheritance(void) {
+    const char* path = "var/tmp/exec_stdio.tmp";
+    char buf[256];
+    char* av[] = { "usr/bin/hello", "stdio-check", 0 };
+    int saved_stdout;
+    int out;
+    int pid = -1;
+    int status = -1;
+    int ok = 1;
+    int n = -1;
+
+    sys_unlink(path);
+
+    saved_stdout = sys_dup(1);
+    if (saved_stdout < 0) return 0;
+
+    out = sys_open_mode(path,
+                        SYS_OPEN_MODE_WRITE |
+                        SYS_OPEN_MODE_CREATE |
+                        SYS_OPEN_MODE_TRUNC);
+    if (out < 0) {
+        sys_close(saved_stdout);
+        return 0;
+    }
+
+    if (sys_dup2(out, 1) != 1) {
+        ok = 0;
+    } else {
+        pid = sys_exec_foreground("usr/bin/hello", 2, av);
+        if (pid <= 0 || sys_waitpid_foreground(pid, &status) != pid || status != 0) {
+            ok = 0;
+        }
+        sys_fsync(1);
+    }
+
+    if (sys_dup2(saved_stdout, 1) != 1) {
+        ok = 0;
+    }
+    sys_close(saved_stdout);
+    sys_close(out);
+
+    if (ok) {
+        int in = sys_open(path);
+        if (in >= 0) {
+            n = sys_fread(in, buf, sizeof(buf) - 1u);
+            sys_close(in);
+        }
+        if (n < 0) {
+            ok = 0;
+        } else {
+            buf[n] = '\0';
+            ok = buffer_contains(buf, n, "hello from elf via int 0x80");
+        }
+    }
+
+    sys_unlink(path);
+    return ok;
+}
+
 void _start(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -90,6 +166,14 @@ void _start(int argc, char** argv) {
     int r3 = sys_exec("usr/bin/hello", 17, av);
     write_result_line("[7] too many args returned ", r3);
     if (r3 != -EINVAL) {
+        ok = 0;
+    }
+
+    u_puts("[8] checking foreground exec stdout inheritance\n");
+    if (check_foreground_exec_stdout_inheritance()) {
+        u_puts("[8b] foreground exec stdout inheritance PASS\n");
+    } else {
+        u_puts("[8b] foreground exec stdout inheritance FAIL\n");
         ok = 0;
     }
 

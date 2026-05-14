@@ -44,7 +44,9 @@ typedef enum {
     PROCESS_HANDLE_KIND_EPOLL = 4,
     PROCESS_HANDLE_KIND_TIMERFD = 5,
     PROCESS_HANDLE_KIND_SIGNALFD = 6,
-    PROCESS_HANDLE_KIND_PIPE = 7
+    PROCESS_HANDLE_KIND_PIPE = 7,
+    PROCESS_HANDLE_KIND_PTY_MASTER = 8,
+    PROCESS_HANDLE_KIND_PTY_SLAVE = 9
 } process_handle_kind_t;
 
 typedef enum {
@@ -148,6 +150,11 @@ int        process_fd_open_file_mode(process_t* proc,
 int        process_fd_open_socket(process_t* proc, const char* name);
 int        process_fd_open_special(process_t* proc, int kind, const char* name);
 int        process_fd_pipe(process_t* proc, int fds[2], unsigned int flags);
+int        process_fd_pty(process_t* proc, int fds[2], unsigned int master_flags);
+int        process_fd_pty_set_size(fd_entry_t* ent, unsigned int rows, unsigned int cols);
+int        process_fd_terminal_size(fd_entry_t* ent, unsigned int* out_rows, unsigned int* out_cols);
+int        process_fd_pty_set_foreground(fd_entry_t* ent, u32 pgid);
+u32        process_fd_pty_get_foreground(fd_entry_t* ent);
 int        process_fd_dup(process_t* proc, int oldfd, int minfd, unsigned int fd_flags);
 int        process_fd_dup2(process_t* proc, int oldfd, int newfd, unsigned int fd_flags, int reject_same);
 int        process_fd_dup_from(process_t* dst, int newfd, process_t* src, int oldfd, unsigned int fd_flags);
@@ -191,6 +198,7 @@ process_t* process_get_current(void);
  */
 void       process_init_user_group(process_t* proc);
 void       process_set_foreground(process_t* proc);
+void       process_set_foreground_preserve_input(process_t* proc);
 process_t* process_get_foreground(void);
 u32        process_get_foreground_group(void);
 int        process_signal_deliver(process_t* proc, int signum);
@@ -215,6 +223,7 @@ void       process_deliver_pending_terminal_interrupt(unsigned int esp);
  */
 int        process_wait(process_t* proc);
 int        process_wait_detachable(process_t* proc, int* detached);
+int        process_wait_restore_foreground(process_t* proc, process_t* restore_proc);
 
 /*
  * process_start_reaper()

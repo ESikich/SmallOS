@@ -191,8 +191,28 @@ static int elf_seed_sched_context(process_t* proc,
     return 1;
 }
 
-process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
+static void elf_inherit_launch_context(process_t* proc, process_t* parent) {
+    if (!proc || !parent) return;
+
+    k_memcpy(proc->cwd, parent->cwd, sizeof(proc->cwd));
+
+    for (int fd = 0; fd <= 2; fd++) {
+        fd_entry_t* parent_ent = process_fd_get(parent, fd);
+        unsigned int fd_flags;
+
+        if (!parent_ent) continue;
+
+        fd_flags = process_fd_get_fd_flags(parent_ent);
+        (void)process_fd_dup_from(proc, fd, parent, fd, fd_flags);
+    }
+}
+
+static process_t* elf_run_image_with_group(const unsigned char* image,
+                                           int argc,
+                                           char** argv,
+                                           int new_process_group) {
     const Elf32_Ehdr* eh = (const Elf32_Ehdr*)image;
+    process_t* parent;
 
     if (*(const unsigned int*)eh->e_ident != ELF_MAGIC) {
         terminal_puts("elf: bad magic\n");
@@ -202,6 +222,11 @@ process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
     process_t* proc = process_create("elf");
     if (!proc) return 0;
     process_init_user_group(proc);
+    if (new_process_group) {
+        proc->pgid = proc->pid;
+    }
+    parent = sched_current();
+    elf_inherit_launch_context(proc, parent);
 
     proc->pd = process_pd_create();
     if (!proc->pd) {
@@ -317,6 +342,10 @@ process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
     return proc;
 }
 
+process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
+    return elf_run_image_with_group(image, argc, argv, 0);
+}
+
 int elf_exec_image_into(process_t* proc,
                         const unsigned char* image,
                         int argc,
@@ -401,7 +430,10 @@ int elf_exec_image_into(process_t* proc,
     return 1;
 }
 
-process_t* elf_run_named(const char* name, int argc, char** argv) {
+static process_t* elf_run_named_with_group(const char* name,
+                                           int argc,
+                                           char** argv,
+                                           int new_process_group) {
     u32 size = 0;
     const u8* data = 0;
     char alt_name[40];
@@ -439,7 +471,15 @@ process_t* elf_run_named(const char* name, int argc, char** argv) {
         return 0;
     }
 
-    return elf_run_image(data, argc, argv);
+    return elf_run_image_with_group(data, argc, argv, new_process_group);
+}
+
+process_t* elf_run_named(const char* name, int argc, char** argv) {
+    return elf_run_named_with_group(name, argc, argv, 0);
+}
+
+process_t* elf_run_named_new_group(const char* name, int argc, char** argv) {
+    return elf_run_named_with_group(name, argc, argv, 1);
 }
 
 int elf_exec_named_into(process_t* proc,

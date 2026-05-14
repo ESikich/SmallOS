@@ -130,11 +130,11 @@ Inside `kernel_main()`:
 14. `tcp_init()` — create and enqueue the TCP/network service kernel task
 15. `ntp_sync()` — briefly enables interrupts so PIT-backed timeout logic works, queries the default NTP server through UDP over the e1000 path and DHCP gateway, sets `CLOCK_REALTIME`, and prints the synchronized UTC time. Failure is a boot warning, not a halt.
 16. `ext2_init()` — read ATA sector 0, extract the ext2 start LBA from partition entry 1 in the MBR partition table, then read and validate the ext2 superblock at that runtime-discovered location; after this succeeds, the accumulated boot log is saved to `/var/log/boot.log`
-17. `process_create_kernel_task("bootseq", ...)` — create the post-diagnostics boot sequence task. `bootseq` runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, prints `SmallOS ready`, refreshes `/var/log/boot.log`, and queues the shell. A future login task can replace the shell launch here without changing the early boot checks.
+17. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, prints `SmallOS ready`, refreshes `/var/log/boot.log`, and launches `/bin/shell.elf` as the default user shell. If that fails or exits, it queues the kernel shell fallback.
 18. `sched_enqueue(boot_proc)` — make the boot sequence task runnable
 19. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
 20. `sti` — enable interrupts
-21. `sched_start(shell_proc)` — switch from the boot stack into the shell task
+21. `sched_start(boot_proc)` - switch from the boot stack into the boot sequence task
 
 `sched_init()` must still be called before `sti`, and `sched_start()` must happen only after the first runnable task has been created.
 
@@ -190,10 +190,12 @@ storage rather than on the stack. That avoids trampling `process_t` state during
 the longest regression paths.
 
 The handle table is generic rather than file-specific now. `process_create()`
-pre-opens fd `0`, `1`, and `2` as console handles for stdin/stdout/stderr.
-User-opened files and sockets start at fd `3`. The table starts with 16 slots,
-grows from PMM-backed contiguous frames on demand, and defaults to a 128-fd
-process limit with a 256-fd hard cap.
+pre-opens fd `0`, `1`, and `2` as console handles for stdin/stdout/stderr;
+GUI-launched shells replace those descriptors with a PTY slave so child
+programs render inside the shell window. User-opened files and sockets start
+at fd `3`. The table starts with 16 slots, grows from PMM-backed contiguous
+frames on demand, and defaults to a 128-fd process limit with a 256-fd hard
+cap.
 
 Each handle slot carries its own kind and ops table:
 
@@ -219,7 +221,9 @@ state is split between the
 socket object and TCP stream so `SHUT_RD` reports local EOF and `SHUT_WR`
 drains queued TX before sending FIN, with FIN retransmission and late cleanup
 on the passive close path. Console handles own terminal writes and
-keyboard-buffer reads.
+keyboard-buffer reads. PTY handles provide the same fd-facing read/write shape
+for GUI shell sessions, with the GUI process holding the master side and the
+user shell inheriting the slave side on fd `0`/`1`/`2`.
 `syscall.c` therefore stays focused on user-pointer validation and dispatch
 instead of knowing the internals of each resource type.
 
@@ -476,13 +480,17 @@ keyboard IRQ → keyboard_handle_irq()
 ```
 
 The active consumer is managed by `keyboard_set_consumer()`:
-- `shell_init()` registers `shell_key_consumer` at boot
+- `shell_init()` registers `shell_key_consumer` for the kernel fallback shell
 - `process_set_foreground(proc)` clears `kb_buf` (discarding any stale input, e.g. the Enter that launched `runelf`), records the foreground process group, then registers `process_key_consumer` when a user process takes the foreground
 - `process_key_consumer` pushes ASCII into `kb_buf`; after each push it checks `keyboard_get_waiting_process()` and, if a process is parked in `PROCESS_STATE_WAITING`, sets it back to `PROCESS_STATE_RUNNING` and clears the waiter slot so the scheduler picks it up
 - Ctrl+C is handled by `process_key_consumer` as a terminal interrupt for the foreground process group. Matching signalfds receive `SIGINT`; otherwise the group gets exit status `130`, pending console/socket waits are cleared, and any actively running member is switched away from the IRQ1 frame.
 - `process_set_foreground(0)` calls `shell_register_consumer()` to restore the shell consumer on exit
 
 The keyboard driver makes no routing decisions. It decodes scancodes and calls whoever is registered.
+
+The boot sequence launches `/bin/shell.elf` as the normal interactive shell.
+The kernel shell path above remains available as a fallback/debug monitor if
+the user shell exits or fails to load.
 
 Mouse input is intentionally lower-level today. `mouse.c` initializes the PS/2
 auxiliary port, decodes 3-byte relative-motion packets on IRQ12, and also
@@ -696,6 +704,10 @@ This is async spawn, not blocking foreground execution. POSIX-shaped userland
 uses `fork()` to clone the current process, `dup2()` to wire pipe ends or other
 descriptors, and `execve()` / `execvp()` to replace the child image while
 preserving pid, cwd, process group, and non-`FD_CLOEXEC` descriptors.
+The user shell uses `SYS_EXEC_FG` plus `SYS_WAITPID_FG` for foreground
+external commands: the child starts in a new process group, inherits cwd and fd
+`0`/`1`/`2`, becomes the foreground terminal owner while it runs, and then
+returns control to the shell.
 
 ---
 

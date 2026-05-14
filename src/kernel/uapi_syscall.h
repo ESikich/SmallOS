@@ -64,6 +64,71 @@ typedef struct sys_fsmap_request {
     unsigned int out_clusters;
 } sys_fsmap_request_t;
 
+typedef struct sys_meminfo {
+    unsigned int heap_base;
+    unsigned int heap_top;
+    unsigned int pmm_free_frames;
+    unsigned int pmm_total_frames;
+    unsigned int e820_valid;
+    unsigned int e820_count;
+} sys_meminfo_t;
+
+typedef struct sys_e820_entry {
+    unsigned long long base;
+    unsigned long long length;
+    unsigned int type;
+    unsigned int attr;
+} sys_e820_entry_t;
+
+typedef struct sys_netinfo {
+    unsigned int e1000_link_up;
+    unsigned char mac[6];
+    unsigned int ipv4_configured;
+    unsigned int ip;
+    unsigned int netmask;
+    unsigned int gateway;
+    unsigned int dns;
+    unsigned int lease_seconds;
+    unsigned int max_sockets;
+    unsigned int used_sockets;
+    unsigned int tcp_sockets;
+    unsigned int open_sockets;
+    unsigned int bound_sockets;
+    unsigned int listening_sockets;
+    unsigned int connected_sockets;
+    unsigned int tcp_listeners;
+    unsigned int tcp_max_listeners;
+    unsigned int tcp_connections;
+    unsigned int tcp_max_connections;
+    unsigned int tcp_established_connections;
+    unsigned int tcp_accepted_connections;
+    unsigned int tcp_pending_connections;
+    unsigned int tcp_syn_recv_connections;
+    unsigned int tcp_fin_wait_connections;
+    unsigned int tcp_rx_rings;
+    unsigned int tcp_tx_rings;
+    unsigned int tcp_rx_bytes;
+    unsigned int tcp_tx_bytes;
+    unsigned int tcp_rx_buffer_bytes;
+    unsigned int tcp_tx_buffer_bytes;
+    unsigned int tcp_max_rx_buffer_bytes;
+    unsigned int tcp_max_tx_buffer_bytes;
+} sys_netinfo_t;
+
+#define SYS_NET_OP_SEND_TEST_FRAME 1u
+#define SYS_NET_OP_POLL_ONCE       2u
+#define SYS_NET_OP_ARP             3u
+#define SYS_NET_OP_PING            4u
+#define SYS_NET_OP_DHCP            5u
+
+typedef struct sys_net_op_request {
+    unsigned int op;
+    unsigned int target_ip;
+    unsigned int sender_ip;
+    unsigned int next_hop_ip;
+    unsigned char mac[6];
+} sys_net_op_request_t;
+
 enum {
     SYS_WRITE     = 1,
     SYS_EXIT      = 2,
@@ -148,7 +213,16 @@ enum {
     SYS_DUP2            = 72, /* duplicate fd to exact fd */
     SYS_DUP3            = 73, /* dup2 plus O_CLOEXEC */
     SYS_FORK            = 74, /* clone current process */
-    SYS_EXECVE          = 75  /* replace current process image */
+    SYS_EXECVE          = 75, /* replace current process image */
+    SYS_WAITPID_FG      = 76, /* wait for child as foreground terminal owner */
+    SYS_MEMINFO         = 77, /* write kernel memory diagnostic summary */
+    SYS_E820_ENTRY      = 78, /* copy one E820 entry; returns total entries */
+    SYS_NETINFO         = 79, /* write NIC/IP/socket/TCP diagnostic summary */
+    SYS_NET_OP          = 80, /* perform narrow network diagnostic action */
+    SYS_ATA_READ_SECTOR = 81, /* copy one ATA sector into a user buffer */
+    SYS_EXEC_FG         = 82, /* spawn an ELF in its own foreground job group */
+    SYS_PTY_OPEN        = 83, /* create master/slave pseudo-terminal fds */
+    SYS_PTY_SET_SIZE    = 84  /* set pseudo-terminal rows/cols */
 };
 
 #endif

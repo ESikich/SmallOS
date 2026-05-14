@@ -57,6 +57,25 @@ typedef struct pipe_object {
     unsigned int write_refs;
 } pipe_object_t;
 
+typedef struct pty_buffer {
+    wait_queue_t read_waiters;
+    wait_queue_t write_waiters;
+    u32 data_frame;
+    unsigned int read_pos;
+    unsigned int write_pos;
+    unsigned int count;
+} pty_buffer_t;
+
+typedef struct pty_object {
+    pty_buffer_t master_to_slave;
+    pty_buffer_t slave_to_master;
+    unsigned int master_refs;
+    unsigned int slave_refs;
+    unsigned int rows;
+    unsigned int cols;
+    u32 foreground_pgid;
+} pty_object_t;
+
 typedef struct kernel_signalfd_siginfo {
     u32 ssi_signo;
     u32 ssi_errno;
@@ -442,6 +461,12 @@ static int process_handle_pipe_seek(fd_entry_t* ent, int offset, int whence);
 static short process_handle_pipe_poll(fd_entry_t* ent, short events);
 static void process_handle_pipe_close(fd_entry_t* ent);
 
+static int process_handle_pty_read(fd_entry_t* ent, char* buf, unsigned int len);
+static int process_handle_pty_write(fd_entry_t* ent, const char* buf, unsigned int len);
+static int process_handle_pty_seek(fd_entry_t* ent, int offset, int whence);
+static short process_handle_pty_poll(fd_entry_t* ent, short events);
+static void process_handle_pty_close(fd_entry_t* ent);
+
 static const process_handle_ops_t s_socket_handle_ops = {
     .read = process_handle_socket_read,
     .write = process_handle_socket_write,
@@ -476,6 +501,15 @@ static const process_handle_ops_t s_pipe_handle_ops = {
     .poll = process_handle_pipe_poll,
     .flush = 0,
     .close = process_handle_pipe_close,
+};
+
+static const process_handle_ops_t s_pty_handle_ops = {
+    .read = process_handle_pty_read,
+    .write = process_handle_pty_write,
+    .seek = process_handle_pty_seek,
+    .poll = process_handle_pty_poll,
+    .flush = 0,
+    .close = process_handle_pty_close,
 };
 
 static void process_init_standard_fds(process_t* proc) {
@@ -599,6 +633,20 @@ static char* pipe_data(pipe_object_t* pipe) {
     return (char*)paging_phys_to_kernel_virt(pipe->data_frame);
 }
 
+static pty_object_t* pty_object_from_ent(fd_entry_t* ent) {
+    if (!ent || !ent->aux_frame) return 0;
+    if (ent->kind != PROCESS_HANDLE_KIND_PTY_MASTER &&
+        ent->kind != PROCESS_HANDLE_KIND_PTY_SLAVE) {
+        return 0;
+    }
+    return (pty_object_t*)paging_phys_to_kernel_virt(ent->aux_frame);
+}
+
+static char* pty_buffer_data(pty_buffer_t* buffer) {
+    if (!buffer || !buffer->data_frame) return 0;
+    return (char*)paging_phys_to_kernel_virt(buffer->data_frame);
+}
+
 static void process_fd_pipe_ref(fd_entry_t* ent) {
     pipe_object_t* pipe;
 
@@ -609,10 +657,23 @@ static void process_fd_pipe_ref(fd_entry_t* ent) {
     if (ent->writable) pipe->write_refs++;
 }
 
+static void process_fd_pty_ref(fd_entry_t* ent) {
+    pty_object_t* pty;
+
+    if (!ent || !ent->valid) return;
+    pty = pty_object_from_ent(ent);
+    if (!pty) return;
+    if (ent->kind == PROCESS_HANDLE_KIND_PTY_MASTER) pty->master_refs++;
+    if (ent->kind == PROCESS_HANDLE_KIND_PTY_SLAVE) pty->slave_refs++;
+}
+
 static void process_fd_share_ref(fd_entry_t* ent) {
     if (!ent || !ent->valid) return;
     if (ent->kind == PROCESS_HANDLE_KIND_PIPE) {
         process_fd_pipe_ref(ent);
+    } else if (ent->kind == PROCESS_HANDLE_KIND_PTY_MASTER ||
+               ent->kind == PROCESS_HANDLE_KIND_PTY_SLAVE) {
+        process_fd_pty_ref(ent);
     } else if (ent->kind == PROCESS_HANDLE_KIND_SOCKET) {
         socket_retain(ent->socket);
     } else if (ent->kind == PROCESS_HANDLE_KIND_FILE) {
@@ -696,6 +757,122 @@ int process_fd_pipe(process_t* proc, int fds[2], unsigned int flags) {
     fds[0] = read_fd;
     fds[1] = write_fd;
     return 0;
+}
+
+int process_fd_pty(process_t* proc, int fds[2], unsigned int master_flags) {
+    fd_entry_t* master_ent;
+    fd_entry_t* slave_ent;
+    pty_object_t* pty;
+    u32 pty_frame;
+    u32 m2s_frame;
+    u32 s2m_frame;
+    int master_fd;
+    int slave_fd;
+
+    if (!proc || !fds) return -EINVAL;
+    if ((master_flags & ~(SYS_FD_FLAG_NONBLOCK | SYS_FD_FLAG_CLOEXEC)) != 0u) {
+        return -EINVAL;
+    }
+
+    pty_frame = pmm_alloc_frame();
+    if (!pty_frame) return -ENOMEM;
+    m2s_frame = pmm_alloc_frame();
+    if (!m2s_frame) {
+        pmm_free_frame(pty_frame);
+        return -ENOMEM;
+    }
+    s2m_frame = pmm_alloc_frame();
+    if (!s2m_frame) {
+        pmm_free_frame(m2s_frame);
+        pmm_free_frame(pty_frame);
+        return -ENOMEM;
+    }
+
+    pty = (pty_object_t*)paging_phys_to_kernel_virt(pty_frame);
+    k_memset(pty, 0, PAGE_SIZE);
+    k_memset(paging_phys_to_kernel_virt(m2s_frame), 0, PAGE_SIZE);
+    k_memset(paging_phys_to_kernel_virt(s2m_frame), 0, PAGE_SIZE);
+    wait_queue_init(&pty->master_to_slave.read_waiters);
+    wait_queue_init(&pty->master_to_slave.write_waiters);
+    wait_queue_init(&pty->slave_to_master.read_waiters);
+    wait_queue_init(&pty->slave_to_master.write_waiters);
+    pty->master_to_slave.data_frame = m2s_frame;
+    pty->slave_to_master.data_frame = s2m_frame;
+    pty->master_refs = 1;
+    pty->slave_refs = 1;
+    pty->rows = 25;
+    pty->cols = 80;
+
+    master_fd = process_fd_alloc_entry(proc, &master_ent);
+    if (master_fd < 0) {
+        pmm_free_frame(s2m_frame);
+        pmm_free_frame(m2s_frame);
+        pmm_free_frame(pty_frame);
+        return master_fd;
+    }
+    master_ent->valid = 1;
+
+    slave_fd = process_fd_alloc_entry(proc, &slave_ent);
+    if (slave_fd < 0) {
+        k_memset(master_ent, 0, sizeof(*master_ent));
+        pmm_free_frame(s2m_frame);
+        pmm_free_frame(m2s_frame);
+        pmm_free_frame(pty_frame);
+        return slave_fd;
+    }
+
+    k_memset(master_ent, 0, sizeof(*master_ent));
+    master_ent->valid = 1;
+    master_ent->kind = PROCESS_HANDLE_KIND_PTY_MASTER;
+    master_ent->ops = &s_pty_handle_ops;
+    master_ent->readable = 1;
+    master_ent->writable = 1;
+    master_ent->flags = master_flags & SYS_FD_FLAG_NONBLOCK;
+    master_ent->fd_flags = master_flags & SYS_FD_FLAG_CLOEXEC;
+    master_ent->aux_frame = pty_frame;
+    k_memcpy(master_ent->name, "pty:master", 11);
+
+    k_memset(slave_ent, 0, sizeof(*slave_ent));
+    slave_ent->valid = 1;
+    slave_ent->kind = PROCESS_HANDLE_KIND_PTY_SLAVE;
+    slave_ent->ops = &s_pty_handle_ops;
+    slave_ent->readable = 1;
+    slave_ent->writable = 1;
+    slave_ent->aux_frame = pty_frame;
+    k_memcpy(slave_ent->name, "pty:slave", 10);
+
+    fds[0] = master_fd;
+    fds[1] = slave_fd;
+    return 0;
+}
+
+int process_fd_pty_set_size(fd_entry_t* ent, unsigned int rows, unsigned int cols) {
+    pty_object_t* pty = pty_object_from_ent(ent);
+    if (!pty) return -ENOTTY;
+    if (rows == 0u || cols == 0u || rows > 200u || cols > 240u) return -EINVAL;
+    pty->rows = rows;
+    pty->cols = cols;
+    return 0;
+}
+
+int process_fd_terminal_size(fd_entry_t* ent, unsigned int* out_rows, unsigned int* out_cols) {
+    pty_object_t* pty = pty_object_from_ent(ent);
+    if (!pty || !out_rows || !out_cols) return -ENOTTY;
+    *out_rows = pty->rows ? pty->rows : 25u;
+    *out_cols = pty->cols ? pty->cols : 80u;
+    return 0;
+}
+
+int process_fd_pty_set_foreground(fd_entry_t* ent, u32 pgid) {
+    pty_object_t* pty = pty_object_from_ent(ent);
+    if (!pty) return -ENOTTY;
+    pty->foreground_pgid = pgid;
+    return 0;
+}
+
+u32 process_fd_pty_get_foreground(fd_entry_t* ent) {
+    pty_object_t* pty = pty_object_from_ent(ent);
+    return pty ? pty->foreground_pgid : 0u;
 }
 
 int process_fd_dup(process_t* proc, int oldfd, int minfd, unsigned int fd_flags) {
@@ -1202,6 +1379,273 @@ static void process_handle_pipe_close(fd_entry_t* ent) {
     k_memset(ent, 0, sizeof(*ent));
 }
 
+static int pty_buffer_read(pty_buffer_t* buffer,
+                           char* buf,
+                           unsigned int len,
+                           unsigned int* writer_refs,
+                           unsigned int flags) {
+    char* data;
+    process_t* proc;
+    unsigned int done = 0u;
+
+    if (!buffer || !buf) return -EFAULT;
+    if (len == 0) return 0;
+    data = pty_buffer_data(buffer);
+    if (!data) return -EIO;
+
+    proc = sched_current();
+    while (buffer->count == 0u && (!writer_refs || *writer_refs != 0u)) {
+        int wait_rc;
+        if ((flags & SYS_FD_FLAG_NONBLOCK) != 0u) {
+            return -EAGAIN;
+        }
+        if (!proc) {
+            __asm__ __volatile__("sti; hlt; cli");
+            continue;
+        }
+        proc->state = PROCESS_STATE_WAITING;
+        wait_rc = wait_queue_add(&buffer->read_waiters, proc);
+        if (wait_rc < 0) {
+            proc->state = PROCESS_STATE_RUNNING;
+            wait_queue_remove_proc(proc);
+            return wait_rc;
+        }
+        if (buffer->count != 0u || (writer_refs && *writer_refs == 0u)) {
+            proc->state = PROCESS_STATE_RUNNING;
+            break;
+        }
+        __asm__ __volatile__("sti");
+        while (proc->state != PROCESS_STATE_RUNNING) {
+            __asm__ __volatile__("hlt");
+        }
+        __asm__ __volatile__("cli");
+        wait_queue_remove_proc(proc);
+    }
+    wait_queue_remove_proc(proc);
+
+    while (done < len && buffer->count != 0u) {
+        buf[done++] = data[buffer->read_pos];
+        buffer->read_pos = (buffer->read_pos + 1u) % PIPE_BUFFER_SIZE;
+        buffer->count--;
+    }
+    if (done != 0u) wait_queue_wake_all(&buffer->write_waiters);
+    return (int)done;
+}
+
+static int pty_buffer_write(pty_buffer_t* buffer,
+                            const char* buf,
+                            unsigned int len,
+                            unsigned int* reader_refs,
+                            unsigned int flags) {
+    char* data;
+    process_t* proc;
+    unsigned int done = 0u;
+
+    if (!buffer || !buf) return -EFAULT;
+    if (len == 0) return 0;
+    data = pty_buffer_data(buffer);
+    if (!data) return -EIO;
+
+    proc = sched_current();
+    while (done < len) {
+        if (reader_refs && *reader_refs == 0u) {
+            return done ? (int)done : -EIO;
+        }
+
+        while (buffer->count >= PIPE_BUFFER_SIZE && (!reader_refs || *reader_refs != 0u)) {
+            int wait_rc;
+            if ((flags & SYS_FD_FLAG_NONBLOCK) != 0u) {
+                return done ? (int)done : -EAGAIN;
+            }
+            if (!proc) {
+                __asm__ __volatile__("sti; hlt; cli");
+                continue;
+            }
+            proc->state = PROCESS_STATE_WAITING;
+            wait_rc = wait_queue_add(&buffer->write_waiters, proc);
+            if (wait_rc < 0) {
+                proc->state = PROCESS_STATE_RUNNING;
+                wait_queue_remove_proc(proc);
+                return done ? (int)done : wait_rc;
+            }
+            if (buffer->count < PIPE_BUFFER_SIZE || (reader_refs && *reader_refs == 0u)) {
+                proc->state = PROCESS_STATE_RUNNING;
+                break;
+            }
+            __asm__ __volatile__("sti");
+            while (proc->state != PROCESS_STATE_RUNNING) {
+                __asm__ __volatile__("hlt");
+            }
+            __asm__ __volatile__("cli");
+            wait_queue_remove_proc(proc);
+        }
+        wait_queue_remove_proc(proc);
+
+        if (reader_refs && *reader_refs == 0u) return done ? (int)done : -EIO;
+
+        while (done < len && buffer->count < PIPE_BUFFER_SIZE) {
+            data[buffer->write_pos] = buf[done++];
+            buffer->write_pos = (buffer->write_pos + 1u) % PIPE_BUFFER_SIZE;
+            buffer->count++;
+        }
+        wait_queue_wake_all(&buffer->read_waiters);
+
+        if ((flags & SYS_FD_FLAG_NONBLOCK) != 0u) break;
+    }
+    return (int)done;
+}
+
+static int process_handle_pty_read_common(fd_entry_t* ent,
+                                          char* buf,
+                                          unsigned int len,
+                                          int echo) {
+    pty_object_t* pty;
+    pty_buffer_t* in;
+    pty_buffer_t* out;
+    unsigned int done = 0u;
+
+    if (!ent || !ent->valid || !ent->readable) return -EBADF;
+    if (!buf) return -EFAULT;
+    if (len == 0) return 0;
+    pty = pty_object_from_ent(ent);
+    if (!pty) return -EIO;
+
+    if (ent->kind == PROCESS_HANDLE_KIND_PTY_MASTER) {
+        return pty_buffer_read(&pty->slave_to_master, buf, len,
+                               &pty->slave_refs, ent->flags);
+    }
+
+    in = &pty->master_to_slave;
+    out = &pty->slave_to_master;
+    while (done < len) {
+        int rc = pty_buffer_read(in, &buf[done], 1u, &pty->master_refs, ent->flags);
+        if (rc <= 0) return done ? (int)done : rc;
+        if (echo) {
+            (void)pty_buffer_write(out, &buf[done], 1u, &pty->master_refs, 0);
+        }
+        done++;
+        if (buf[done - 1] == '\n') break;
+    }
+    return (int)done;
+}
+
+static int process_handle_pty_read(fd_entry_t* ent, char* buf, unsigned int len) {
+    return process_handle_pty_read_common(ent, buf, len, 1);
+}
+
+static int process_handle_pty_write(fd_entry_t* ent, const char* buf, unsigned int len) {
+    pty_object_t* pty;
+
+    if (!ent || !ent->valid || !ent->writable) return -EBADF;
+    if (!buf) return -EFAULT;
+    if (len == 0) return 0;
+    pty = pty_object_from_ent(ent);
+    if (!pty) return -EIO;
+
+    if (ent->kind == PROCESS_HANDLE_KIND_PTY_MASTER) {
+        for (unsigned int i = 0; i < len; i++) {
+            u32 interrupt_pgid = pty->foreground_pgid
+                               ? pty->foreground_pgid
+                               : s_foreground_pgid;
+            if ((unsigned char)buf[i] == 3u && interrupt_pgid != 0u) {
+                char interrupt_text[] = "^C\n";
+                if (!process_group_signal_deliver(interrupt_pgid, PROCESS_SIGINT)) {
+                    (void)process_group_kill(interrupt_pgid,
+                                             PROCESS_TERMINATED_BY_CTRL_C);
+                }
+                (void)pty_buffer_write(&pty->slave_to_master,
+                                       interrupt_text,
+                                       sizeof(interrupt_text) - 1u,
+                                       &pty->master_refs,
+                                       0);
+                if (i > 0) {
+                    return (int)i;
+                }
+                return 1;
+            }
+        }
+        return pty_buffer_write(&pty->master_to_slave, buf, len,
+                                &pty->slave_refs, ent->flags);
+    }
+    return pty_buffer_write(&pty->slave_to_master, buf, len,
+                            &pty->master_refs, ent->flags);
+}
+
+static int process_handle_pty_seek(fd_entry_t* ent, int offset, int whence) {
+    (void)ent;
+    (void)offset;
+    (void)whence;
+    return -EINVAL;
+}
+
+static short process_handle_pty_poll(fd_entry_t* ent, short events) {
+    pty_object_t* pty;
+    pty_buffer_t* read_buf;
+    pty_buffer_t* write_buf;
+    unsigned int peer_refs;
+    short revents = 0;
+
+    if (!ent || !ent->valid) return POLLERR;
+    pty = pty_object_from_ent(ent);
+    if (!pty) return POLLERR;
+
+    if (ent->kind == PROCESS_HANDLE_KIND_PTY_MASTER) {
+        read_buf = &pty->slave_to_master;
+        write_buf = &pty->master_to_slave;
+        peer_refs = pty->slave_refs;
+    } else {
+        read_buf = &pty->master_to_slave;
+        write_buf = &pty->slave_to_master;
+        peer_refs = pty->master_refs;
+    }
+
+    if ((events & POLLIN) && ent->readable &&
+        (read_buf->count != 0u || peer_refs == 0u)) {
+        revents |= POLLIN;
+    }
+    if ((events & POLLOUT) && ent->writable &&
+        peer_refs != 0u && write_buf->count < PIPE_BUFFER_SIZE) {
+        revents |= POLLOUT;
+    }
+    if (peer_refs == 0u) revents |= POLLHUP;
+    return revents;
+}
+
+static void process_handle_pty_close(fd_entry_t* ent) {
+    pty_object_t* pty;
+    u32 pty_frame;
+    u32 m2s_frame;
+    u32 s2m_frame;
+
+    if (!ent) return;
+    pty = pty_object_from_ent(ent);
+    pty_frame = ent->aux_frame;
+    if (!pty) {
+        k_memset(ent, 0, sizeof(*ent));
+        return;
+    }
+
+    if (ent->kind == PROCESS_HANDLE_KIND_PTY_MASTER && pty->master_refs > 0u) {
+        pty->master_refs--;
+    }
+    if (ent->kind == PROCESS_HANDLE_KIND_PTY_SLAVE && pty->slave_refs > 0u) {
+        pty->slave_refs--;
+    }
+    wait_queue_wake_all(&pty->master_to_slave.read_waiters);
+    wait_queue_wake_all(&pty->master_to_slave.write_waiters);
+    wait_queue_wake_all(&pty->slave_to_master.read_waiters);
+    wait_queue_wake_all(&pty->slave_to_master.write_waiters);
+
+    m2s_frame = pty->master_to_slave.data_frame;
+    s2m_frame = pty->slave_to_master.data_frame;
+    if (pty->master_refs == 0u && pty->slave_refs == 0u) {
+        if (m2s_frame) pmm_free_frame(m2s_frame);
+        if (s2m_frame) pmm_free_frame(s2m_frame);
+        if (pty_frame) pmm_free_frame(pty_frame);
+    }
+    k_memset(ent, 0, sizeof(*ent));
+}
+
 static void process_handle_socket_close(fd_entry_t* ent) {
     if (!ent) return;
     socket_release(ent->socket);
@@ -1468,6 +1912,9 @@ int process_fd_read_raw(fd_entry_t* ent, char* buf, unsigned int len) {
     if (ent->kind == PROCESS_HANDLE_KIND_CONSOLE) {
         return process_handle_console_read_common(ent, buf, len, 0);
     }
+    if (ent->kind == PROCESS_HANDLE_KIND_PTY_SLAVE) {
+        return process_handle_pty_read_common(ent, buf, len, 0);
+    }
     return process_fd_read(ent, buf, len);
 }
 
@@ -1513,6 +1960,36 @@ int process_fd_wait(fd_entry_t* ent, process_t* proc, short events) {
         }
         if ((events & POLLOUT) && ent->writable) {
             rc = wait_queue_add(&pipe->write_waiters, proc);
+            if (rc < 0) {
+                wait_queue_remove_proc(proc);
+                return rc;
+            }
+        }
+        return 0;
+    }
+
+    if (ent->kind == PROCESS_HANDLE_KIND_PTY_MASTER ||
+        ent->kind == PROCESS_HANDLE_KIND_PTY_SLAVE) {
+        pty_object_t* pty = pty_object_from_ent(ent);
+        pty_buffer_t* read_buf;
+        pty_buffer_t* write_buf;
+        if (!pty) return -EIO;
+        if (ent->kind == PROCESS_HANDLE_KIND_PTY_MASTER) {
+            read_buf = &pty->slave_to_master;
+            write_buf = &pty->master_to_slave;
+        } else {
+            read_buf = &pty->master_to_slave;
+            write_buf = &pty->slave_to_master;
+        }
+        if ((events & POLLIN) && ent->readable) {
+            rc = wait_queue_add(&read_buf->read_waiters, proc);
+            if (rc < 0) {
+                wait_queue_remove_proc(proc);
+                return rc;
+            }
+        }
+        if ((events & POLLOUT) && ent->writable) {
+            rc = wait_queue_add(&write_buf->write_waiters, proc);
             if (rc < 0) {
                 wait_queue_remove_proc(proc);
                 return rc;
@@ -2008,6 +2485,18 @@ void process_set_foreground(process_t* proc) {
     }
 }
 
+void process_set_foreground_preserve_input(process_t* proc) {
+    s_foreground_reader = proc;
+    s_foreground_pgid = proc ? proc->pgid : 0;
+    s_detach_requested = 0;
+    keyboard_reset_modifiers();
+    if (proc) {
+        keyboard_set_consumer(process_key_consumer);
+    } else {
+        shell_register_consumer();
+    }
+}
+
 process_t* process_get_foreground(void) {
     return s_foreground_reader;
 }
@@ -2156,6 +2645,25 @@ int process_wait(process_t* proc) {
 
 int process_wait_detachable(process_t* proc, int* detached) {
     return process_wait_impl(proc, 1, detached);
+}
+
+int process_wait_restore_foreground(process_t* proc, process_t* restore_proc) {
+    int status;
+
+    if (!proc) return -1;
+
+    s_detach_allowed = 0;
+    process_set_foreground(proc);
+    process_claim_for_wait(proc);
+
+    while (proc->state != PROCESS_STATE_ZOMBIE) {
+        __asm__ __volatile__("sti; hlt");
+    }
+
+    process_set_foreground_preserve_input(restore_proc);
+    status = proc->exit_status;
+    process_destroy(proc);
+    return status;
 }
 
 /* ------------------------------------------------------------------ */

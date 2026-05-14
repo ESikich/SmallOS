@@ -6,8 +6,16 @@
 #include "scheduler.h"
 #include "process.h"
 #include "pmm.h"
+#include "memory.h"
+#include "boot_info.h"
 #include "system.h"
 #include "klib.h"
+#include "../drivers/ata.h"
+#include "../drivers/e1000.h"
+#include "../drivers/net.h"
+#include "../drivers/dhcp.h"
+#include "../drivers/arp.h"
+#include "../drivers/ipv4.h"
 #include "../drivers/tcp.h"
 #include "../drivers/ntp.h"
 #include "../drivers/mouse.h"
@@ -342,17 +350,32 @@ static int path_lookup_errno(const char* path) {
 /* ------------------------------------------------------------------ */
 
 static int sys_write_impl(const char* buf, unsigned int len) {
+    process_t* proc;
+    fd_entry_t* stdout_ent;
+
     if (len == 0) return 0;
     if (len > SYSCALL_MAX_WRITE_LEN) return -EFBIG;
     if (!user_buf_ok((unsigned int)buf, len)) return -EFAULT;
 
-    terminal_write(buf, len);
-    return (int)len;
+    proc = (process_t*)sched_current();
+    stdout_ent = proc ? process_fd_get(proc, 1) : 0;
+    if (!stdout_ent) {
+        terminal_write(buf, len);
+        return (int)len;
+    }
+    return process_fd_write(stdout_ent, buf, len);
 }
 
 static int sys_putc_impl(unsigned int ch) {
-    terminal_putc((char)ch);
-    return 1;
+    char c = (char)ch;
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* stdout_ent = proc ? process_fd_get(proc, 1) : 0;
+
+    if (!stdout_ent) {
+        terminal_putc(c);
+        return 1;
+    }
+    return process_fd_write(stdout_ent, &c, 1);
 }
 
 static void sys_exit_impl(syscall_regs_t* regs) {
@@ -482,12 +505,16 @@ static int sys_read_raw_impl(char* buf, unsigned int len) {
  * Returns 0 on success or a negative errno if validation fails or the
  * program was not found.
  */
-static int sys_exec_impl(const char* name, int argc, char** argv) {
+static int sys_exec_spawn_impl(const char* name,
+                               int argc,
+                               char** argv,
+                               int new_process_group) {
     char kname[EXEC_NAME_MAX];
     char kargv_data[PROCESS_ARG_BYTES];
     char* kargv[PROCESS_MAX_ARGS + 1];
     unsigned int used = 0;
     process_t* child;
+    process_t* parent;
 
     int name_rc = copy_user_path_resolved(kname, sizeof(kname), name);
     if (name_rc < 0) return name_rc;
@@ -512,10 +539,26 @@ static int sys_exec_impl(const char* name, int argc, char** argv) {
     }
     kargv[argc] = 0;
 
-    child = elf_run_named(kname, argc, kargv);
+    child = new_process_group ? elf_run_named_new_group(kname, argc, kargv)
+                              : elf_run_named(kname, argc, kargv);
     if (!child) return -ENOENT;
+    if (new_process_group) {
+        parent = (process_t*)sched_current();
+        if (process_fd_pty_set_foreground(parent ? process_fd_get(parent, 0) : 0,
+                                          child->pgid) < 0) {
+            process_set_foreground(child);
+        }
+    }
     process_claim_for_wait(child);
     return (int)child->pid;
+}
+
+static int sys_exec_impl(const char* name, int argc, char** argv) {
+    return sys_exec_spawn_impl(name, argc, argv, 0);
+}
+
+static int sys_exec_fg_impl(const char* name, int argc, char** argv) {
+    return sys_exec_spawn_impl(name, argc, argv, 1);
 }
 
 static int sys_copy_argv(char** argv,
@@ -583,6 +626,29 @@ static int sys_pipe2_impl(int* user_fds, unsigned int flags) {
         return -EFAULT;
     }
     return 0;
+}
+
+static int sys_pty_open_impl(int* user_fds, unsigned int master_flags) {
+    process_t* proc = (process_t*)sched_current();
+    int fds[2];
+    int rc;
+
+    if (!proc) return -EINVAL;
+    if (!user_buf_ok((unsigned int)user_fds, sizeof(fds))) return -EFAULT;
+    rc = process_fd_pty(proc, fds, master_flags);
+    if (rc < 0) return rc;
+    if (copy_to_user(user_fds, fds, sizeof(fds)) < 0) {
+        sys_close_impl(fds[0]);
+        sys_close_impl(fds[1]);
+        return -EFAULT;
+    }
+    return 0;
+}
+
+static int sys_pty_set_size_impl(int fd, unsigned int rows, unsigned int cols) {
+    process_t* proc = (process_t*)sched_current();
+    if (!proc) return -EINVAL;
+    return process_fd_pty_set_size(process_fd_get(proc, fd), rows, cols);
 }
 
 static int sys_fork_impl(syscall_regs_t* regs) {
@@ -670,6 +736,45 @@ static int sys_waitpid_impl(int pid, int* user_status, int options) {
     }
 
     return out_pid;
+}
+
+static int sys_waitpid_fg_impl(int pid, int* user_status) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* stdin_ent;
+    process_t* child;
+    int raw_status;
+    int out_pid = 0;
+    int wait_rc;
+
+    if (!proc) return -EINVAL;
+    if (pid <= 0) return -EINVAL;
+    if (user_status && !user_buf_ok((unsigned int)user_status, sizeof(int))) {
+        return -EFAULT;
+    }
+
+    child = process_find_by_pid((u32)pid);
+    if (!child || child->parent_pid != proc->pid) {
+        return -ECHILD;
+    }
+
+    child->pgid = child->pid;
+    stdin_ent = process_fd_get(proc, 0);
+    if (process_fd_pty_set_foreground(stdin_ent, child->pgid) == 0) {
+        process_claim_for_wait(child);
+        wait_rc = process_wait_pid(proc, pid, 0, &out_pid, &raw_status);
+        (void)process_fd_pty_set_foreground(stdin_ent, proc->pgid);
+        if (wait_rc < 0) return wait_rc;
+    } else {
+        raw_status = process_wait_restore_foreground(child, proc);
+    }
+    if (user_status) {
+        int encoded = wait_status_to_user(raw_status);
+        if (copy_to_user(user_status, &encoded, sizeof(encoded)) < 0) {
+            return -EFAULT;
+        }
+    }
+
+    return pid;
 }
 
 static int sys_kill_impl(syscall_regs_t* regs, int pid, int signum) {
@@ -2080,9 +2185,20 @@ static int sys_fstat_impl(int fd, unsigned int* out_size, int* out_is_dir) {
 }
 
 static int sys_terminal_size_impl(unsigned int* out_rows, unsigned int* out_cols) {
+    process_t* proc;
+    fd_entry_t* stdin_ent;
+    unsigned int rows = 0;
+    unsigned int cols = 0;
+
     if (!out_rows || !out_cols) return -EFAULT;
-    if (write_user_u32(out_rows, (unsigned int)terminal_rows()) < 0) return -EFAULT;
-    if (write_user_u32(out_cols, (unsigned int)terminal_cols()) < 0) return -EFAULT;
+    proc = (process_t*)sched_current();
+    stdin_ent = proc ? process_fd_get(proc, 0) : 0;
+    if (process_fd_terminal_size(stdin_ent, &rows, &cols) < 0) {
+        rows = (unsigned int)terminal_rows();
+        cols = (unsigned int)terminal_cols();
+    }
+    if (write_user_u32(out_rows, rows) < 0) return -EFAULT;
+    if (write_user_u32(out_cols, cols) < 0) return -EFAULT;
     return 0;
 }
 
@@ -2240,6 +2356,158 @@ static int sys_fsmap_impl(sys_fsmap_request_t* user_req) {
     return 0;
 }
 
+static int sys_meminfo_impl(sys_meminfo_t* out_info) {
+    sys_meminfo_t info;
+
+    if (!out_info) return -EFAULT;
+
+    info.heap_base = memory_get_heap_base();
+    info.heap_top = memory_get_heap_top();
+    info.pmm_free_frames = pmm_free_count();
+    info.pmm_total_frames = PMM_NUM_FRAMES;
+    info.e820_valid = boot_info_e820_valid() ? 1u : 0u;
+    info.e820_count = info.e820_valid ? boot_info_e820_count() : 0u;
+
+    if (copy_to_user(out_info, &info, sizeof(info)) < 0) return -EFAULT;
+    return 0;
+}
+
+static int sys_e820_entry_impl(unsigned int index, sys_e820_entry_t* out_entry) {
+    const boot_info_t* info;
+    sys_e820_entry_t entry;
+
+    if (!out_entry) return -EFAULT;
+    if (!boot_info_e820_valid()) return 0;
+
+    info = boot_info_get();
+    if (index >= info->e820_count) return -EINVAL;
+
+    entry.base = info->e820[index].base;
+    entry.length = info->e820[index].length;
+    entry.type = info->e820[index].type;
+    entry.attr = info->e820[index].attr;
+    if (copy_to_user(out_entry, &entry, sizeof(entry)) < 0) return -EFAULT;
+    return (int)info->e820_count;
+}
+
+static int sys_netinfo_impl(sys_netinfo_t* out_info) {
+    sys_netinfo_t info;
+    const u8* mac;
+    const net_ipv4_config_t* cfg;
+    socket_stats_t socket_stats;
+    tcp_stats_t tcp_stats;
+
+    if (!out_info) return -EFAULT;
+    k_memset(&info, 0, sizeof(info));
+
+    info.e1000_link_up = e1000_link_up() ? 1u : 0u;
+    mac = e1000_mac();
+    if (mac) {
+        for (unsigned int i = 0; i < 6u; i++) info.mac[i] = mac[i];
+    }
+
+    cfg = net_ipv4_config();
+    if (cfg) {
+        info.ipv4_configured = cfg->configured ? 1u : 0u;
+        info.ip = cfg->ip;
+        info.netmask = cfg->netmask;
+        info.gateway = cfg->gateway;
+        info.dns = cfg->dns;
+        info.lease_seconds = cfg->lease_seconds;
+    }
+
+    socket_get_stats(&socket_stats);
+    info.max_sockets = socket_stats.max_sockets;
+    info.used_sockets = socket_stats.used_sockets;
+    info.tcp_sockets = socket_stats.tcp_sockets;
+    info.open_sockets = socket_stats.open_sockets;
+    info.bound_sockets = socket_stats.bound_sockets;
+    info.listening_sockets = socket_stats.listening_sockets;
+    info.connected_sockets = socket_stats.connected_sockets;
+
+    tcp_get_stats(&tcp_stats);
+    info.tcp_listeners = tcp_stats.listeners;
+    info.tcp_max_listeners = tcp_stats.max_listeners;
+    info.tcp_connections = tcp_stats.connections;
+    info.tcp_max_connections = tcp_stats.max_connections;
+    info.tcp_established_connections = tcp_stats.established_connections;
+    info.tcp_accepted_connections = tcp_stats.accepted_connections;
+    info.tcp_pending_connections = tcp_stats.pending_connections;
+    info.tcp_syn_recv_connections = tcp_stats.syn_recv_connections;
+    info.tcp_fin_wait_connections = tcp_stats.fin_wait_connections;
+    info.tcp_rx_rings = tcp_stats.rx_rings;
+    info.tcp_tx_rings = tcp_stats.tx_rings;
+    info.tcp_rx_bytes = tcp_stats.rx_bytes;
+    info.tcp_tx_bytes = tcp_stats.tx_bytes;
+    info.tcp_rx_buffer_bytes = tcp_stats.rx_buffer_bytes;
+    info.tcp_tx_buffer_bytes = tcp_stats.tx_buffer_bytes;
+    info.tcp_max_rx_buffer_bytes = tcp_stats.max_rx_buffer_bytes;
+    info.tcp_max_tx_buffer_bytes = tcp_stats.max_tx_buffer_bytes;
+
+    if (copy_to_user(out_info, &info, sizeof(info)) < 0) return -EFAULT;
+    return 0;
+}
+
+static int sys_net_route_for_target(u32 target_ip, u32* out_sender_ip, u32* out_next_hop) {
+    u32 sender_ip = net_ipv4_local_ip();
+    u32 netmask = net_ipv4_netmask();
+    u32 gateway = net_ipv4_gateway();
+    u32 next_hop = target_ip;
+
+    if (!net_ipv4_is_configured() || sender_ip == 0u) return -ENETUNREACH;
+    if (netmask != 0u && (target_ip & netmask) != (sender_ip & netmask)) {
+        if (gateway == 0u) return -ENETUNREACH;
+        next_hop = gateway;
+    }
+
+    if (out_sender_ip) *out_sender_ip = sender_ip;
+    if (out_next_hop) *out_next_hop = next_hop;
+    return 0;
+}
+
+static int sys_net_op_impl(sys_net_op_request_t* user_req) {
+    sys_net_op_request_t req;
+    int rc;
+
+    if (!user_req) return -EFAULT;
+    if (copy_from_user(&req, user_req, sizeof(req)) < 0) return -EFAULT;
+
+    switch (req.op) {
+    case SYS_NET_OP_SEND_TEST_FRAME:
+        return e1000_send_test_frame() ? 1 : -EIO;
+    case SYS_NET_OP_POLL_ONCE:
+        return net_poll_once() ? 1 : 0;
+    case SYS_NET_OP_DHCP:
+        return dhcp_configure() ? 1 : 0;
+    case SYS_NET_OP_ARP:
+        if (req.target_ip == 0u) req.target_ip = net_ipv4_gateway();
+        rc = sys_net_route_for_target(req.target_ip, &req.sender_ip, &req.next_hop_ip);
+        if (rc < 0) return rc;
+        if (copy_to_user(user_req, &req, sizeof(req)) < 0) return -EFAULT;
+        if (!arp_resolve(req.sender_ip, req.next_hop_ip, req.mac)) return 0;
+        if (copy_to_user(user_req, &req, sizeof(req)) < 0) return -EFAULT;
+        return 1;
+    case SYS_NET_OP_PING:
+        if (req.target_ip == 0u) req.target_ip = net_ipv4_gateway();
+        rc = sys_net_route_for_target(req.target_ip, &req.sender_ip, &req.next_hop_ip);
+        if (rc < 0) return rc;
+        if (copy_to_user(user_req, &req, sizeof(req)) < 0) return -EFAULT;
+        return ipv4_ping_via_gateway(req.sender_ip, req.target_ip, req.next_hop_ip) ? 1 : 0;
+    default:
+        return -EINVAL;
+    }
+}
+
+static int sys_ata_read_sector_impl(unsigned int lba, void* user_buf) {
+    unsigned char sector[512];
+
+    if (!user_buf) return -EFAULT;
+    if (!user_buf_ok((unsigned int)user_buf, sizeof(sector))) return -EFAULT;
+    if (!ata_read_sectors(lba, 1, sector)) return -EIO;
+    if (copy_to_user(user_buf, sector, sizeof(sector)) < 0) return -EFAULT;
+    return 0;
+}
+
 static int sys_getcwd_impl(char* buf, unsigned int size) {
     process_t* proc = (process_t*)sched_current();
     unsigned int pos = 0;
@@ -2362,6 +2630,13 @@ void syscall_handler_main(syscall_regs_t* regs) {
                             (char**)regs->edx);
             break;
 
+        case SYS_EXEC_FG:
+            regs->eax = (unsigned int)sys_exec_fg_impl(
+                            (const char*)regs->ebx,
+                            (int)regs->ecx,
+                            (char**)regs->edx);
+            break;
+
         case SYS_GETPID:
             regs->eax = (unsigned int)sys_getpid_impl();
             break;
@@ -2371,6 +2646,12 @@ void syscall_handler_main(syscall_regs_t* regs) {
                             (int)regs->ebx,
                             (int*)regs->ecx,
                             (int)regs->edx);
+            break;
+
+        case SYS_WAITPID_FG:
+            regs->eax = (unsigned int)sys_waitpid_fg_impl(
+                            (int)regs->ebx,
+                            (int*)regs->ecx);
             break;
 
         case SYS_KILL:
@@ -2561,6 +2842,16 @@ void syscall_handler_main(syscall_regs_t* regs) {
             regs->eax = (unsigned int)sys_pipe2_impl((int*)regs->ebx, regs->ecx);
             break;
 
+        case SYS_PTY_OPEN:
+            regs->eax = (unsigned int)sys_pty_open_impl((int*)regs->ebx, regs->ecx);
+            break;
+
+        case SYS_PTY_SET_SIZE:
+            regs->eax = (unsigned int)sys_pty_set_size_impl((int)regs->ebx,
+                                                            regs->ecx,
+                                                            regs->edx);
+            break;
+
         case SYS_DUP:
         {
             process_t* proc = (process_t*)sched_current();
@@ -2719,6 +3010,33 @@ void syscall_handler_main(syscall_regs_t* regs) {
         case SYS_FSMAP:
             regs->eax = (unsigned int)sys_fsmap_impl(
                             (sys_fsmap_request_t*)regs->ebx);
+            break;
+
+        case SYS_MEMINFO:
+            regs->eax = (unsigned int)sys_meminfo_impl(
+                            (sys_meminfo_t*)regs->ebx);
+            break;
+
+        case SYS_E820_ENTRY:
+            regs->eax = (unsigned int)sys_e820_entry_impl(
+                            regs->ebx,
+                            (sys_e820_entry_t*)regs->ecx);
+            break;
+
+        case SYS_NETINFO:
+            regs->eax = (unsigned int)sys_netinfo_impl(
+                            (sys_netinfo_t*)regs->ebx);
+            break;
+
+        case SYS_NET_OP:
+            regs->eax = (unsigned int)sys_net_op_impl(
+                            (sys_net_op_request_t*)regs->ebx);
+            break;
+
+        case SYS_ATA_READ_SECTOR:
+            regs->eax = (unsigned int)sys_ata_read_sector_impl(
+                            regs->ebx,
+                            (void*)regs->ecx);
             break;
 
         case SYS_CLOCK_GETTIME:

@@ -27,6 +27,7 @@
 #define EPIPE         32
 #define ENOSYS        38
 #define ENOTEMPTY     39
+#define ENOTTY        25
 #define EPROTO        71
 #define EOVERFLOW     75
 #define EMSGSIZE      90

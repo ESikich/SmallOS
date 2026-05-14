@@ -96,9 +96,9 @@ by `execve()`.
 Descriptor layout:
 
 ```text
-0  stdin   console read
-1  stdout  console write
-2  stderr  console write
+0  stdin   console or PTY read
+1  stdout  console or PTY write
+2  stderr  console or PTY write
 3+ user-opened files, pipes, sockets, and event handles
 ```
 
@@ -107,6 +107,11 @@ keyboard input without kernel echo. Foreground process input reports ordinary
 characters plus ANSI-style special-key sequences for arrows, Home/End,
 Delete, PageUp/PageDown, and function keys; `edit` uses this path together
 with normal fd-backed writes to edit ext2 text files.
+
+PTY-backed GUI shells use the same descriptor contract. The GUI owns the PTY
+master, the shell process inherits the slave on fd `0`/`1`/`2`, and child
+programs launched by the shell inherit those descriptors unless marked
+close-on-exec.
 
 Graphics programs that need mouse motion can call `sys_mouse_read()` from
 `user_syscall.h`. It returns accumulated PS/2 relative movement and button

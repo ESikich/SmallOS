@@ -288,6 +288,16 @@ static void boot_sequence_task_main(void) {
     boot_puts("SmallOS ready\n");
     boot_log_save();
 
+    char* user_shell_argv[] = { "shell", 0 };
+    process_t* user_shell_proc = elf_run_named("bin/shell", 1, user_shell_argv);
+    if (user_shell_proc) {
+        boot_puts("Launching user shell\n");
+        process_wait(user_shell_proc);
+        boot_puts("User shell exited; starting kernel shell fallback\n");
+    } else {
+        boot_puts("User shell unavailable; starting kernel shell fallback\n");
+    }
+
     process_t* shell_proc = process_create_kernel_task("shell", shell_task_main);
 
     if (!shell_proc) {

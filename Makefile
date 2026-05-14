@@ -54,6 +54,8 @@ THIRD_PARTY_CSERVER_SENTINEL=$(CSERVER_DIR)/src/main.c
 THIRD_PARTY_FTP_CLIENT_SENTINEL=$(CURDIR)/third_party/ftp_client/include/ftp_client.h
 THIRD_PARTY_FTP_SERVER_SENTINEL=$(CURDIR)/third_party/ftp_server/include/ftp_server.h
 STATE_DIR=.state
+STATE_EXT2_IMG=$(STATE_DIR)/ext2.img
+STATE_EXT2_STAMP=$(STATE_DIR)/ext2.img.stamp
 
 BOOT_SECTOR_SIZE := $(shell awk '/^BOOT_SECTOR_SIZE[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 BOOT_SECTOR_MASK := $(shell echo $$(( $(BOOT_SECTOR_SIZE) - 1 )))
@@ -140,7 +142,7 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/ext2.c \
 	$(DRIVERS_DIR)/serial.c
 
-USER_PROGS=echo about uptime halt reboot date pwd cat more fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui hello ticks args runelf_test readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe plasma mandel tcpecho sockeof ftpd
+USER_PROGS=echo about uptime halt reboot date pwd cat more fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell hello ticks args runelf_test readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe plasma mandel tcpecho sockeof ftpd
 USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
 USER_RUNTIME_SRCS=$(USER_DIR)/user_alloc.c $(USER_DIR)/user_stdio.c $(USER_DIR)/user_posix.c $(USER_DIR)/user_time.c $(USER_DIR)/user_dirent.c $(USER_DIR)/user_crypt.c $(USER_DIR)/setjmp.asm
 CSERVER_SRCS=\
@@ -155,7 +157,7 @@ CSERVER_SRCS=\
 	$(CSERVER_DIR)/src/config.c \
 	$(CSERVER_DIR)/src/util.c
 CSERVER_OBJS=$(patsubst $(CSERVER_DIR)/src/%.c,$(CSERVER_OBJ_DIR)/%.o,$(CSERVER_SRCS))
-EXT2_BIN_ENTRIES=bin/echo.elf=$(BIN_DIR)/echo.elf bin/about.elf=$(BIN_DIR)/about.elf bin/uptime.elf=$(BIN_DIR)/uptime.elf bin/halt.elf=$(BIN_DIR)/halt.elf bin/reboot.elf=$(BIN_DIR)/reboot.elf bin/date.elf=$(BIN_DIR)/date.elf bin/pwd.elf=$(BIN_DIR)/pwd.elf bin/cat.elf=$(BIN_DIR)/cat.elf bin/more.elf=$(BIN_DIR)/more.elf bin/fsread.elf=$(BIN_DIR)/fsread.elf bin/ls.elf=$(BIN_DIR)/ls.elf bin/tree.elf=$(BIN_DIR)/tree.elf bin/touch.elf=$(BIN_DIR)/touch.elf bin/rm.elf=$(BIN_DIR)/rm.elf bin/mkdir.elf=$(BIN_DIR)/mkdir.elf bin/rmdir.elf=$(BIN_DIR)/rmdir.elf bin/cp.elf=$(BIN_DIR)/cp.elf bin/mv.elf=$(BIN_DIR)/mv.elf bin/edit.elf=$(BIN_DIR)/edit.elf bin/bmpview.elf=$(BIN_DIR)/bmpview.elf bin/bootsplash.elf=$(BIN_DIR)/bootsplash.elf bin/diskview.elf=$(BIN_DIR)/diskview.elf bin/gui.elf=$(BIN_DIR)/gui.elf
+EXT2_BIN_ENTRIES=bin/echo.elf=$(BIN_DIR)/echo.elf bin/about.elf=$(BIN_DIR)/about.elf bin/uptime.elf=$(BIN_DIR)/uptime.elf bin/halt.elf=$(BIN_DIR)/halt.elf bin/reboot.elf=$(BIN_DIR)/reboot.elf bin/date.elf=$(BIN_DIR)/date.elf bin/pwd.elf=$(BIN_DIR)/pwd.elf bin/cat.elf=$(BIN_DIR)/cat.elf bin/more.elf=$(BIN_DIR)/more.elf bin/fsread.elf=$(BIN_DIR)/fsread.elf bin/ls.elf=$(BIN_DIR)/ls.elf bin/tree.elf=$(BIN_DIR)/tree.elf bin/touch.elf=$(BIN_DIR)/touch.elf bin/rm.elf=$(BIN_DIR)/rm.elf bin/mkdir.elf=$(BIN_DIR)/mkdir.elf bin/rmdir.elf=$(BIN_DIR)/rmdir.elf bin/cp.elf=$(BIN_DIR)/cp.elf bin/mv.elf=$(BIN_DIR)/mv.elf bin/edit.elf=$(BIN_DIR)/edit.elf bin/bmpview.elf=$(BIN_DIR)/bmpview.elf bin/bootsplash.elf=$(BIN_DIR)/bootsplash.elf bin/diskview.elf=$(BIN_DIR)/diskview.elf bin/gui.elf=$(BIN_DIR)/gui.elf bin/shell.elf=$(BIN_DIR)/shell.elf
 EXT2_DEMO_ENTRIES=usr/bin/hello.elf=$(BIN_DIR)/hello.elf usr/bin/plasma.elf=$(BIN_DIR)/plasma.elf usr/bin/mandel.elf=$(BIN_DIR)/mandel.elf
 EXT2_TEST_ENTRIES=usr/libexec/tests/ticks.elf=$(BIN_DIR)/ticks.elf usr/libexec/tests/args.elf=$(BIN_DIR)/args.elf usr/libexec/tests/runelf_test.elf=$(BIN_DIR)/runelf_test.elf usr/libexec/tests/readline.elf=$(BIN_DIR)/readline.elf usr/libexec/tests/exec_test.elf=$(BIN_DIR)/exec_test.elf usr/libexec/tests/waitprobe.elf=$(BIN_DIR)/waitprobe.elf usr/libexec/tests/fileread.elf=$(BIN_DIR)/fileread.elf usr/libexec/tests/compiler_demo.elf=$(BIN_DIR)/compiler_demo.elf usr/libexec/tests/heapprobe.elf=$(BIN_DIR)/heapprobe.elf usr/libexec/tests/statprobe.elf=$(BIN_DIR)/statprobe.elf usr/libexec/tests/fileprobe.elf=$(BIN_DIR)/fileprobe.elf usr/libexec/tests/cwdprobe.elf=$(BIN_DIR)/cwdprobe.elf usr/libexec/tests/stdioprobe.elf=$(BIN_DIR)/stdioprobe.elf usr/libexec/tests/dirprobe.elf=$(BIN_DIR)/dirprobe.elf usr/libexec/tests/errnoprobe.elf=$(BIN_DIR)/errnoprobe.elf usr/libexec/tests/badptrprobe.elf=$(BIN_DIR)/badptrprobe.elf usr/libexec/tests/fault.elf=$(BIN_DIR)/fault.elf usr/libexec/tests/sleep_test.elf=$(BIN_DIR)/sleep_test.elf usr/libexec/tests/timerfdprobe.elf=$(BIN_DIR)/timerfdprobe.elf usr/libexec/tests/signalfdprobe.elf=$(BIN_DIR)/signalfdprobe.elf usr/libexec/tests/connectprobe.elf=$(BIN_DIR)/connectprobe.elf usr/libexec/tests/ptrguard.elf=$(BIN_DIR)/ptrguard.elf usr/libexec/tests/spinwkr.elf=$(BIN_DIR)/spinwkr.elf usr/libexec/tests/pgrpprobe.elf=$(BIN_DIR)/pgrpprobe.elf usr/libexec/tests/preempt_test.elf=$(BIN_DIR)/preempt_test.elf usr/libexec/tests/crtprobe.elf=$(BIN_DIR)/crtprobe.elf usr/libexec/tests/displayprobe.elf=$(BIN_DIR)/displayprobe.elf usr/libexec/tests/inputprobe.elf=$(BIN_DIR)/inputprobe.elf usr/libexec/tests/pipeprobe.elf=$(BIN_DIR)/pipeprobe.elf usr/libexec/tests/dupprobe.elf=$(BIN_DIR)/dupprobe.elf usr/libexec/tests/forkprobe.elf=$(BIN_DIR)/forkprobe.elf usr/libexec/tests/execveprobe.elf=$(BIN_DIR)/execveprobe.elf
 EXT2_APP_ENTRIES=$(EXT2_BIN_ENTRIES) $(EXT2_DEMO_ENTRIES) $(EXT2_TEST_ENTRIES)
@@ -169,6 +171,8 @@ KERNEL_OBJS=$(patsubst $(SRC_DIR)/%.asm,$(OBJ_DIR)/%.o,$(KERNEL_ASM_SRCS)) \
             $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(KERNEL_C_SRCS))
 
 USER_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(USER_SRCS))
+GUI_OBJS=$(OBJ_DIR)/user/gui/app.o $(OBJ_DIR)/user/gui/shell_window.o
+USER_SHELL_OBJS=$(OBJ_DIR)/user/shell/app.o
 USER_RUNTIME_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(filter $(USER_DIR)/%.c,$(USER_RUNTIME_SRCS))) \
                  $(patsubst $(USER_DIR)/%.asm,$(OBJ_DIR)/user/%.o,$(filter $(USER_DIR)/%.asm,$(USER_RUNTIME_SRCS)))
 USER_CRT0_OBJ=$(OBJ_DIR)/user/user_crt0.o
@@ -177,6 +181,8 @@ USER_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_PROGS)))
 OBJ_SUBDIRS=$(sort \
 	$(dir $(KERNEL_OBJS)) \
 	$(dir $(USER_OBJS)) \
+	$(dir $(GUI_OBJS)) \
+	$(dir $(USER_SHELL_OBJS)) \
 )
 
 BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(dir $(IMG_FILE)) $(ESXI_VMDK_DIR) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
@@ -227,6 +233,12 @@ $(OBJ_DIR)/exec/%.o: $(EXEC_DIR)/%.c | dirs
 $(OBJ_DIR)/user/%.o: $(USER_DIR)/%.c | dirs
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
+$(OBJ_DIR)/user/gui/%.o: $(USER_DIR)/gui/%.c | dirs
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(OBJ_DIR)/user/shell/%.o: $(USER_DIR)/shell/%.c | dirs
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
 $(OBJ_DIR)/user/%.o: $(USER_DIR)/%.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
@@ -273,7 +285,10 @@ $(BIN_DIR)/bootsplash.elf: $(OBJ_DIR)/user/bootsplash.o $(OBJ_DIR)/user/image_bm
 $(BIN_DIR)/diskview.elf: $(OBJ_DIR)/user/diskview.o $(OBJ_DIR)/user/gfx.o $(USER_RUNTIME_OBJS) | dirs
 	$(LD) $(USER_LDFLAGS) $^ -o $@
 
-$(BIN_DIR)/gui.elf: $(OBJ_DIR)/user/gui.o $(OBJ_DIR)/user/gfx.o $(USER_RUNTIME_OBJS) | dirs
+$(BIN_DIR)/gui.elf: $(OBJ_DIR)/user/gui.o $(GUI_OBJS) $(OBJ_DIR)/user/gfx.o $(USER_RUNTIME_OBJS) | dirs
+	$(LD) $(USER_LDFLAGS) $^ -o $@
+
+$(BIN_DIR)/shell.elf: $(OBJ_DIR)/user/shell.o $(USER_SHELL_OBJS) $(USER_RUNTIME_OBJS) | dirs
 	$(LD) $(USER_LDFLAGS) $^ -o $@
 
 $(BIN_DIR)/plasma.elf: $(OBJ_DIR)/user/plasma.o $(OBJ_DIR)/user/gfx.o $(USER_RUNTIME_OBJS) | dirs
@@ -302,15 +317,20 @@ $(TOOLS_DIR)/mkimage: tools/mkimage.c | dirs
 $(BIN_DIR)/ext2.seed.img: $(USER_ELFS) $(CSERVER_BIN) $(TOOLS_DIR)/mkext2 $(EXT2_EXTRA_FILES) Makefile | dirs
 	$(TOOLS_DIR)/mkext2 $@ $(EXT2_APP_ENTRIES) $(EXT2_EXTRA_ENTRIES) $(EXT2_EXTRA_DIRS)
 
-$(STATE_DIR)/ext2.img: $(BIN_DIR)/ext2.seed.img | dirs
-	cp $< $@
+$(STATE_EXT2_STAMP): $(BIN_DIR)/ext2.seed.img | dirs
+	cp $< $(STATE_EXT2_IMG)
+	touch $@
+
+$(STATE_EXT2_IMG): $(STATE_EXT2_STAMP) | dirs
+	@if [ ! -f $@ ]; then cp $(BIN_DIR)/ext2.seed.img $@; fi
 
 $(TINYCC_CONFIG_STAMP): check-third-party tools/build_tinycc.sh | dirs
 	./tools/build_tinycc.sh $(CURDIR) $(TINYCC_DIR) $(CURDIR)/third_party/tinycc
 	touch $@
 
 reset-disk: $(BIN_DIR)/ext2.seed.img | dirs
-	cp $< $(STATE_DIR)/ext2.img
+	cp $< $(STATE_EXT2_IMG)
+	touch $(STATE_EXT2_STAMP)
 
 tinycc-host: $(TINYCC_CONFIG_STAMP)
 
@@ -359,12 +379,12 @@ boot-layout-check: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(GEN_DIR)/loader2
 # the kernel image and ext2 partition, so stage 2 and the kernel can
 # discover disk locations directly from the image itself.
 #
-$(IMG_FILE): boot-layout-check $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(STATE_DIR)/ext2.img $(TOOLS_DIR)/mkimage | dirs
+$(IMG_FILE): boot-layout-check $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(STATE_EXT2_IMG) $(STATE_EXT2_STAMP) $(TOOLS_DIR)/mkimage | dirs
 	$(TOOLS_DIR)/mkimage \
 		--boot $(BIN_DIR)/boot.bin \
 		--loader $(BIN_DIR)/loader2.bin \
 		--kernel $(BIN_DIR)/kernel.bin \
-		--fs $(STATE_DIR)/ext2.img \
+		--fs $(STATE_EXT2_IMG) \
 		--out $@ \
 		--sector-size $(BOOT_SECTOR_SIZE) \
 		--loader-size $(LOADER2_SIZE_BYTES) \
@@ -410,6 +430,7 @@ esxi-smoke:
 
 -include $(wildcard $(OBJ_DIR)/*.d)
 -include $(wildcard $(OBJ_DIR)/*/*.d)
+-include $(wildcard $(OBJ_DIR)/*/*/*.d)
 
 QEMU=qemu-system-i386
 SERIAL_LOG=/tmp/smallos-serial.log

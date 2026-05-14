@@ -521,7 +521,8 @@ Kernel   →  zero BSS
          →  create bootseq task and zombie reaper, sti, sched_start
 Bootseq  →  run /bin/bootsplash.elf boot/splash.bmp
          →  print SmallOS ready and refresh /var/log/boot.log
-         →  create shell task (future login hook lives here)
+         →  launch /bin/shell.elf
+         →  create kernel shell fallback if the user shell exits or fails
 ```
 
 Boot code is the most fragile part of the system. Failures here are often silent — no terminal, no debug output, just a reboot loop or a hung screen.

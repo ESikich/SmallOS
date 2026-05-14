@@ -19,10 +19,12 @@ It reflects the current code in:
 
 # Overview
 
-There are currently **two external program paths**:
+ELF programs are scheduler-owned user processes. The boot path launches the
+user shell from `/bin/shell.elf`, and both the kernel fallback shell and the
+user shell use the same loader machinery for child programs:
 
 ```text
-shell command
+user shell command or kernel fallback command
   → runelf <name> [args]
   → vfs_load_file()
   → elf_run_image()
@@ -34,14 +36,14 @@ shell command
   → sys_exit() → sched_exit_current()
   → child becomes ZOMBIE, waiter destroys it
 
-shell command
+user shell command or kernel fallback command
   → runelf_nowait <name> [args]
   → vfs_load_file()
   → elf_run_image()
   → sched_enqueue(proc)
   → return immediately
 
-shell command
+user shell command or kernel fallback command
   → bg <name> [args] / runelf_bg <name> [args]
   → vfs_load_file()
   → elf_run_image()
@@ -53,19 +55,24 @@ shell command
 
 Important current-state facts:
 
-- the **shell** is a scheduler-owned kernel task created at boot
+- the default **shell** is `/bin/shell.elf`, a scheduler-owned ring-3 user
+  process launched by `bootseq`; the older kernel shell is kept as a fallback
+  and debug monitor if the user shell exits or cannot be loaded
 - **keyboard IRQ1** decodes scancodes and calls a registered `keyboard_consumer_fn` — it makes no routing decisions itself
-- the **shell consumer** (`shell_key_consumer` in `shell.c`) enqueues `shell_event_t` entries; the shell task drains them in `shell_poll()` outside IRQ context
+- the **kernel fallback shell consumer** (`shell_key_consumer` in `shell.c`) enqueues `shell_event_t` entries; the shell task drains them in `shell_poll()` outside IRQ context
 - the **process consumer** (`process_key_consumer` in `process.c`) pushes ASCII into `kb_buf`; terminal signals such as Ctrl+C target the foreground process group
-- consumer ownership transfers via `process_set_foreground()` — shell consumer at boot, process consumer while a user process holds the foreground reader/group, shell consumer restored on exit
+- consumer ownership transfers via `process_set_foreground()` - process consumer while the user shell or another user process owns the foreground reader/group, kernel shell consumer restored only for the fallback shell
 - **Mouse IRQ12** decodes PS/2 relative packets or VMware absolute-pointer events into accumulated `dx`/`dy` and button state; user graphics code polls that state with `SYS_MOUSE_READ`
 - **ELF user programs** are loaded into their own page directory and do execute in ring 3
 - ELF launch and exit are now scheduler-owned: `elf_run_image()` seeds a bootstrap context, enqueues the task, and returns `process_t*`
 - the scheduler supports kernel tasks, ELF tasks, voluntary yielding, timer-driven sleeping, and timer-driven switching; `runelf` blocks with `process_wait()`, `runelf_nowait` returns immediately, and `bg` / `runelf_bg` return while keeping a reattachable shell job
-- user ELFs now have a small freestanding runtime layer with a heap allocator,
+- user ELFs have a small freestanding runtime layer with a heap allocator,
   fd-backed console streams, streaming VFS-backed file handles,
   `stat`/`rename`/`unlink`, `lseek`, and socket wrappers, which is enough for
   compiler-style tools and small network services
+- GUI shell windows allocate a PTY pair, fork a user shell with the slave on fd
+  `0`/`1`/`2`, and keep the master in the GUI process so foreground commands
+  draw inside the window instead of the global console
 - the shipped `usr/bin/tcc.elf` compiler binary links the generic SmallOS `user_crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from ext2, write the results back to disk, and then those generated ELFs can be executed immediately
 - QEMU user networking is still the default for `make run` / `make test`, but the guest now learns its IPv4 address, netmask, gateway, DNS server, and lease time through DHCP instead of assuming QEMU's NAT addresses. `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT.
 - Boot performs a best-effort NTP sync through the e1000 path before the shell starts. On success, `CLOCK_REALTIME` is set and the boot log prints the UTC time; on failure, boot continues with a warning.
@@ -78,7 +85,7 @@ Important current-state facts:
 
 ---
 
-# Command Flow
+# Kernel Fallback Command Flow
 
 ```text
 keyboard IRQ1
@@ -122,7 +129,12 @@ decode PS/2 packet or VMware event → accumulate dx/dy/buttons
 SYS_MOUSE_READ copies state to userland and clears dx/dy
 ```
 
-After kernel diagnostics, `kernel_main()` creates a `bootseq` kernel task and enters the scheduler on it. `bootseq` runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to exit, prints `SmallOS ready`, refreshes `/var/log/boot.log`, then creates and queues the shell task with `process_create_kernel_task("shell", shell_task_main)`. The future login path should replace that final shell launch inside `bootseq`.
+After kernel diagnostics, `kernel_main()` creates a `bootseq` kernel task and
+enters the scheduler on it. `bootseq` runs `/bin/bootsplash.elf
+boot/splash.bmp`, waits for it to exit, prints `SmallOS ready`, refreshes
+`/var/log/boot.log`, then launches `/bin/shell.elf` as the default user shell.
+If that user shell exits or cannot be loaded, `bootseq` creates and queues the
+older kernel shell task as a fallback/debug monitor.
 
 ---
 
@@ -130,7 +142,9 @@ After kernel diagnostics, `kernel_main()` creates a `bootseq` kernel task and en
 
 ## 1. Shell commands and app commands
 
-Commands like `help`, `clear`, `meminfo`, `memmap`, `cd`, `ataread`, `runelf`, `runelf_nowait`, and the low-level network diagnostics are normal kernel C functions dispatched by `commands_execute()`.
+In the kernel fallback shell, commands like `help`, `clear`, `meminfo`,
+`memmap`, `cd`, `ataread`, `runelf`, `runelf_nowait`, and the low-level network
+diagnostics are normal kernel C functions dispatched by `commands_execute()`.
 
 They:
 
@@ -139,9 +153,18 @@ They:
 - do not switch page directories
 - do not create a new `process_t`
 
-If a command name is not in the kernel command table, the shell looks for a matching app ELF. Bare names are resolved through `bin/<name>.elf` first, then `<name>.elf` in the current filesystem namespace. Path-like command names are resolved relative to the shell cwd and may omit the `.elf` suffix. Commands like `echo`, `about`, `uptime`, `halt`, `reboot`, `date`, `pwd`, `cat`, `fsread`, `ls`, `tree`, `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, and `edit` are shipped this way under `/bin/`.
+The user shell resolves bare command names through `/bin/<name>.elf` and then
+the current filesystem namespace. Path-like command names are resolved relative
+to the shell cwd and may omit the `.elf` suffix. Commands like `echo`, `about`,
+`uptime`, `halt`, `reboot`, `date`, `pwd`, `cat`, `fsread`, `ls`, `tree`,
+`touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, and `edit` are shipped this way
+under `/bin/`. The kernel fallback shell keeps a similar app fallback after
+checking its built-in command table.
 
-When the shell launches an app command, it copies the current shell cwd into the child process before waiting. That preserves shell-style relative path behavior even though the command itself is a normal ring-3 ELF.
+When the shell launches an app command, the child inherits the current shell
+cwd and standard descriptors before it becomes runnable. That preserves
+relative path behavior and lets GUI-launched children write back through the
+same PTY-backed shell window.
 
 `edit` is a normal foreground ELF, not a kernel shell mode. It uses raw
 console reads and ANSI-style cursor control to run as a full-screen text
@@ -434,11 +457,11 @@ kernel_main()
   sched_init()
   ata_init()
   ext2_init()
-  create shell kernel task
-  sched_enqueue(shell_proc)
+  create bootseq kernel task
+  sched_enqueue(boot_proc)
   process_start_reaper()    ← creates and enqueues reaper task
   sti
-  sched_start(shell_proc)
+  sched_start(boot_proc)
 ```
 
 ## What the scheduler owns

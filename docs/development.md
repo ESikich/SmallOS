@@ -63,16 +63,19 @@ can overwrite it without allocating a fresh inode.
 After diagnostics, `kernel_main()` queues the `bootseq` kernel task and the
 zombie reaper, then enters the scheduler on `bootseq`. The boot sequence task
 runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to exit, prints
-`SmallOS ready`, refreshes `/var/log/boot.log`, and then queues the shell. This
-keeps framebuffer splash rendering in userland and leaves one obvious place to
-swap shell startup for a future login flow.
+`SmallOS ready`, refreshes `/var/log/boot.log`, and then launches
+`/bin/shell.elf` as the default user shell. If that user shell exits or fails
+to load, `bootseq` queues the kernel shell fallback. This keeps framebuffer
+splash rendering and normal interactive shell work in userland while preserving
+a low-level debug monitor.
 
 Descriptor slots are owned by `process.c`, not the syscall dispatcher. fd `0`,
-`1`, and `2` are real console handles created with each process; user-opened
-files and sockets start at fd `3`. ext2-backed file handles and path helpers
-live behind `vfs.c`; socket objects and accept/read/write wait queues live
-behind `socket.c`; passive TCP listeners, the global 4-tuple connection table,
-and lazy RX/TX rings live behind `tcp.c`; and `process.c` keeps the generic fd
+`1`, and `2` are real console handles created with each process and may be
+replaced with PTY slave handles for GUI shell sessions; user-opened files and
+sockets start at fd `3`. ext2-backed file handles and path helpers live behind
+`vfs.c`; socket objects and accept/read/write wait queues live behind
+`socket.c`; passive TCP listeners, the global 4-tuple connection table, and
+lazy RX/TX rings live behind `tcp.c`; and `process.c` keeps the generic fd
 lifetime and dispatch rules. If we add a new resource type later, it should get
 a handle kind and ops table for `read`, `write`, `seek`, `poll`, `flush`, and
 `close` so resource behavior stays local to the owning module.
@@ -134,8 +137,10 @@ Use it for basic string and memory primitives that would normally come from libc
 
 `keyboard.c` decodes scancodes and calls the registered `keyboard_consumer_fn`. That is its entire job.
 
-Routing decisions — whether input goes to the shell or a user process — belong to the consumer, not the driver. The consumer is registered via `keyboard_set_consumer()`:
-- `shell_init()` registers `shell_key_consumer`
+Routing decisions - whether input goes to the kernel fallback shell or a user
+process - belong to the consumer, not the driver. The consumer is registered
+via `keyboard_set_consumer()`:
+- `shell_init()` registers `shell_key_consumer` for the kernel fallback shell
 - `process_set_foreground(proc)` registers `process_key_consumer` and records the foreground process group for terminal signals
 - `process_set_foreground(0)` restores the shell consumer via `shell_register_consumer()`
 
@@ -288,9 +293,9 @@ meminfo              ← still identical after second run
 
 ## Scheduler Rules
 
-`sched_init()` must be called **after `idt_init()` and before `sti`**. It initialises the scheduler table. The shell is not registered here; `kernel_main()` queues the `bootseq` task, and `bootseq` queues the shell after the post-diagnostics splash. If `sched_init()` is called after `sti`, the first timer tick may fire with an uninitialised scheduler state.
+`sched_init()` must be called **after `idt_init()` and before `sti`**. It initialises the scheduler table. The shell is not registered here; `kernel_main()` queues the `bootseq` task, and `bootseq` launches the user shell after the post-diagnostics splash. If the user shell exits or fails to load, `bootseq` queues the kernel shell fallback. If `sched_init()` is called after `sti`, the first timer tick may fire with an uninitialised scheduler state.
 
-`sched_enqueue(proc)` — call after `proc->state = RUNNING` when handing a task to the scheduler. The boot sequence task follows this path in `kernel_main()`, the shell follows it from `bootseq`, and ELF launches do as well.
+`sched_enqueue(proc)` — call after `proc->state = RUNNING` when handing a task to the scheduler. The boot sequence task follows this path in `kernel_main()`, kernel fallback shell launch follows it from `bootseq`, and ELF launches do as well.
 
 `sched_dequeue(proc)` is for scheduler-owned tasks. In the current tree it is used from `sched_exit_current()`. It removes the process from the run queue, compacts the table, and adjusts scheduler indices so round-robin execution can continue over the remaining runnable entries.
 

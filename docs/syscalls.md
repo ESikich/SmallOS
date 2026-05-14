@@ -101,8 +101,9 @@ array counts.
 int sys_write(const char* buf, uint32_t len);
 ```
 
-Writes `len` bytes from `buf` to terminal. Returns bytes written or a negative
-errno value.
+Writes `len` bytes from `buf` to fd `1` for the calling process, falling back
+to the kernel terminal only when no current stdout handle is available. Returns
+bytes written or a negative errno value.
 Terminal control characters are interpreted by the shared terminal path:
 `\n` advances to the next line, `\r` returns to column 0, and `\b` erases the
 previous VGA cell when possible.
@@ -113,10 +114,9 @@ issuing one write per rendered row.
 The terminal does not implement automatic page prompts; long-output paging is
 provided by userland commands such as `more` so `write()` never unexpectedly
 blocks on terminal input.
-This remains available as the low-level terminal write primitive used by
-`u_puts()` and early/simple user helpers. The normal POSIX/stdio path now
-writes `stdout` and `stderr` through fd-backed console handles via
-`SYS_WRITEFD`.
+This remains available as the low-level write primitive used by `u_puts()` and
+early/simple user helpers. The normal POSIX/stdio path writes `stdout` and
+`stderr` through fd-backed console or PTY handles via `SYS_WRITEFD`.
 
 ---
 
@@ -146,7 +146,8 @@ Returns PIT tick count since boot.
 int sys_putc(char c);
 ```
 
-Writes a single character. Returns 1.
+Writes a single character to fd `1` for the calling process, with the same
+terminal fallback as `SYS_WRITE`. Returns 1 on success.
 
 ---
 
@@ -158,7 +159,18 @@ int sys_read(char* buf, uint32_t len);
 
 Blocks until keyboard input is available, echoing each character. Terminates early on newline (included in returned data). Returns bytes read or a negative errno value.
 
-`SYS_READ` is now implemented as a read from fd `0`, which is initialized as a console handle in every user process. The console handle uses true scheduler-aware blocking: when `kb_buf` is empty it sets the process state to `PROCESS_STATE_WAITING` and registers it as the keyboard waiter via `keyboard_set_waiting_process()`, then executes `hlt`. The timer IRQ fires normally; `sched_tick` sees the task is `WAITING`, skips it, and switches to another runnable task. When a keypress arrives, `process_key_consumer()` pushes the character into `kb_buf`, sets the waiting process back to `PROCESS_STATE_RUNNING`, and clears the waiter slot. On the next scheduler pass the process is selected, resumes after the `hlt`, and drains the buffer normally.
+`SYS_READ` is implemented as a read from fd `0`, which is initialized as a
+console handle in every user process and may later be inherited as a PTY slave
+by GUI-launched shells and their children. The console handle uses true
+scheduler-aware blocking: when `kb_buf` is empty it sets the process state to
+`PROCESS_STATE_WAITING` and registers it as the keyboard waiter via
+`keyboard_set_waiting_process()`, then executes `hlt`. The timer IRQ fires
+normally; `sched_tick` sees the task is `WAITING`, skips it, and switches to
+another runnable task. When a keypress arrives, `process_key_consumer()` pushes
+the character into `kb_buf`, sets the waiting process back to
+`PROCESS_STATE_RUNNING`, and clears the waiter slot. On the next scheduler pass
+the process is selected, resumes after the `hlt`, and drains the buffer
+normally.
 
 `sti` is issued before the first `hlt` so IRQ1 can fire during the wait. `cli` is restored before returning, matching the IF=0 postcondition expected by the syscall gate.
 
@@ -780,7 +792,9 @@ int sys_terminal_size(uint32_t* out_rows, uint32_t* out_cols);
 ```
 
 Writes the active terminal backend dimensions. Full-screen user programs such
-as `edit` use this instead of assuming a legacy fixed-size text layout.
+as `edit` use this instead of assuming a legacy fixed-size text layout. If the
+calling process reads from a PTY slave, the PTY's current rows and columns are
+reported.
 
 ---
 
@@ -1095,6 +1109,46 @@ close-on-exec descriptors, installs the new ELF address space, and returns to
 the new program entry point. `envp` is accepted for API shape but environment
 delivery is not modeled yet.
 
+### SYS_WAITPID_FG (76)
+
+```c
+int sys_waitpid_foreground(int pid, int* status);
+```
+
+Waits for a direct child while temporarily making the child's process group the
+foreground owner of its terminal. This is the shell-facing wait path for
+interactive foreground jobs.
+
+### SYS_EXEC_FG (82)
+
+```c
+int sys_exec_foreground(const char* name, int argc, char** argv);
+```
+
+Legacy spawn-style process creation for foreground commands. It launches the
+named ELF in a new process group, inherits the caller's cwd and fd `0`/`1`/`2`,
+claims the child for waiting, and returns the child pid.
+
+### SYS_PTY_OPEN (83)
+
+```c
+int sys_pty_open(int fds[2], int master_flags);
+```
+
+Creates a pseudo-terminal pair. `fds[0]` receives the master fd and `fds[1]`
+receives the slave fd. GUI shell windows keep the master and dup the slave onto
+the child shell's standard descriptors.
+
+### SYS_PTY_SET_SIZE (84)
+
+```c
+int sys_pty_set_size(int fd, uint32_t rows, uint32_t cols);
+```
+
+Updates the terminal dimensions associated with a PTY master or slave. Programs
+that call `SYS_TERMINAL_SIZE` through the PTY slave observe these rows and
+columns.
+
 ---
 
 ## Kernel Entry Point
@@ -1227,6 +1281,10 @@ sys_dup2(oldfd, newfd)
 sys_dup3(oldfd, newfd, flags)
 sys_fork()
 sys_execve(path, argv, envp)
+sys_waitpid_foreground(pid, status)
+sys_exec_foreground(name, argc, argv)
+sys_pty_open(fds, master_flags)
+sys_pty_set_size(fd, rows, cols)
 ```
 
 `user_lib.h` higher-level wrappers:
@@ -1255,7 +1313,7 @@ u_stat(...)        query path metadata
 * `SYS_YIELD` and the timer path use the same stub layout, but the real scheduler resume ESP is `esp - 8`, not raw `esp`
 * EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`; IRQ12 sends EOI to both PICs before decoding PS/2 mouse bytes or draining VMware mouse events
 * The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.
-* fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`); user-opened files, pipes, sockets, and event handles start at fd 3. The descriptor table is PMM-backed process state: it starts at 16 slots, grows up to the default 128-fd process limit, and has a kernel hard cap of 256. Every handle carries readable/writable state plus an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`. File, pipe, and socket resources are shared/refcounted when descriptors are duplicated or inherited across `fork()`, while `FD_CLOEXEC` is per descriptor. `process.c` owns fd lifetime and dispatch, `vfs.c` owns ext2-backed file behavior, `socket.c` owns kernel socket objects plus accept/read/write wait queues, and `tcp.c` owns passive TCP listeners, the global 4-tuple connection table, and the lazy RX/TX rings behind connected sockets.
+* fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`) and may be replaced by inherited PTY slave handles for GUI shell sessions; user-opened files, pipes, sockets, and event handles start at fd 3. The descriptor table is PMM-backed process state: it starts at 16 slots, grows up to the default 128-fd process limit, and has a kernel hard cap of 256. Every handle carries readable/writable state plus an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`. File, pipe, PTY, and socket resources are shared/refcounted when descriptors are duplicated or inherited across `fork()`, while `FD_CLOEXEC` is per descriptor. `process.c` owns fd lifetime and dispatch, `vfs.c` owns ext2-backed file behavior, `socket.c` owns kernel socket objects plus accept/read/write wait queues, and `tcp.c` owns passive TCP listeners, the global 4-tuple connection table, and the lazy RX/TX rings behind connected sockets.
 * `SYS_WRITEFILE` is the simplest root-only persistence path for user tools that want to emit a generated artifact without managing an fd-based write stream.
 * `SYS_WRITEFILE_PATH` is the preferred path-aware persistence primitive for compilers and build tools, especially when writing into nested directories.
 

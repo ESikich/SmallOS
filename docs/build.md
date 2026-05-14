@@ -71,8 +71,11 @@ build/
 ```
 
 The generated seed image lives at `build/bin/<backend>/ext2.seed.img`; normal
-runs use the mutable copy at `.state/ext2.img` so guest writes survive rebuilds
-until `make reset-disk`.
+runs use the mutable copy at `.state/ext2.img` so guest writes survive ordinary
+rebuilds. Make tracks that copy with `.state/ext2.img.stamp`, so rebuilding
+userland refreshes the runtime partition from the latest seed instead of
+leaving stale ELFs in place. Use `make reset-disk` when you want to discard
+guest writes explicitly.
 
 ---
 
@@ -486,7 +489,11 @@ This keeps the boot-stage source files and filesystem tool as the single source 
 
 # User Programs (ELF)
 
-User programs are compiled separately and packed into the ext2 image. Adding or changing a program rebuilds the ext2 image and final disk image, but does not require relinking `kernel.elf` or regenerating `kernel.bin` unless kernel sources also change.
+User programs are compiled separately and packed into the ext2 seed image.
+Adding or changing a program rebuilds the seed, refreshes the tracked mutable
+copy at `.state/ext2.img`, and rebuilds the final disk image, but does not
+require relinking `kernel.elf` or regenerating `kernel.bin` unless kernel
+sources also change.
 
 ## Source files
 

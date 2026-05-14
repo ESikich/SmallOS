@@ -1,12 +1,11 @@
 #include "user_lib.h"
 
 void _start(int argc, char** argv) {
-    if (argc < 2) {
-        u_puts("usage: cat <path>\n");
-        sys_exit(1);
-    }
+    int fd = 0;
 
-    int fd = sys_open(argv[1]);
+    if (argc >= 2) {
+        fd = sys_open(argv[1]);
+    }
     if (fd < 0) {
         u_puts("cat: failed\n");
         sys_exit(1);
@@ -30,6 +29,6 @@ void _start(int argc, char** argv) {
         }
     }
 
-    sys_close(fd);
+    if (fd != 0) sys_close(fd);
     sys_exit(0);
 }

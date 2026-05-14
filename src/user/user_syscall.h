@@ -140,12 +140,20 @@ static inline int sys_exec(const char* name, int argc, char** argv) {
     return syscall3(SYS_EXEC, (uint32_t)name, (uint32_t)argc, (uint32_t)argv);
 }
 
+static inline int sys_exec_foreground(const char* name, int argc, char** argv) {
+    return syscall3(SYS_EXEC_FG, (uint32_t)name, (uint32_t)argc, (uint32_t)argv);
+}
+
 static inline int sys_getpid(void) {
     return syscall0(SYS_GETPID);
 }
 
 static inline int sys_waitpid(int pid, int* status, int options) {
     return syscall3(SYS_WAITPID, (uint32_t)pid, (uint32_t)status, (uint32_t)options);
+}
+
+static inline int sys_waitpid_foreground(int pid, int* status) {
+    return syscall2(SYS_WAITPID_FG, (uint32_t)pid, (uint32_t)status);
 }
 
 static inline int sys_kill(int pid, int signum) {
@@ -278,6 +286,26 @@ static inline int sys_fsinfo(sys_fsinfo_t* out_info) {
 
 static inline int sys_fsmap(sys_fsmap_request_t* req) {
     return syscall1(SYS_FSMAP, (uint32_t)req);
+}
+
+static inline int sys_meminfo(sys_meminfo_t* out_info) {
+    return syscall1(SYS_MEMINFO, (uint32_t)out_info);
+}
+
+static inline int sys_e820_entry(uint32_t index, sys_e820_entry_t* out_entry) {
+    return syscall2(SYS_E820_ENTRY, index, (uint32_t)out_entry);
+}
+
+static inline int sys_netinfo(sys_netinfo_t* out_info) {
+    return syscall1(SYS_NETINFO, (uint32_t)out_info);
+}
+
+static inline int sys_net_op(sys_net_op_request_t* req) {
+    return syscall1(SYS_NET_OP, (uint32_t)req);
+}
+
+static inline int sys_ata_read_sector(uint32_t lba, void* buf) {
+    return syscall2(SYS_ATA_READ_SECTOR, lba, (uint32_t)buf);
 }
 
 static inline int sys_terminal_size(uint32_t* out_rows, uint32_t* out_cols) {
@@ -416,6 +444,14 @@ static inline int sys_pipe(int fds[2]) {
 
 static inline int sys_pipe2(int fds[2], int flags) {
     return syscall2(SYS_PIPE2, (uint32_t)fds, (uint32_t)flags);
+}
+
+static inline int sys_pty_open(int fds[2], int master_flags) {
+    return syscall2(SYS_PTY_OPEN, (uint32_t)fds, (uint32_t)master_flags);
+}
+
+static inline int sys_pty_set_size(int fd, uint32_t rows, uint32_t cols) {
+    return syscall3(SYS_PTY_SET_SIZE, (uint32_t)fd, rows, cols);
 }
 
 static inline int sys_dup(int oldfd) {
