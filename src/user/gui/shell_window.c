@@ -176,6 +176,23 @@ static void terminal_clear_line(gui_shell_window_t* shell, int mode) {
     terminal_terminate_line(shell, shell->cursor_row);
 }
 
+static int terminal_visible_base(gui_shell_window_t* shell) {
+    int rows = shell->term_rows;
+    int base;
+    if (rows <= 0 || rows > GUI_SHELL_LINES) rows = GUI_SHELL_LINES;
+    base = shell->line_count - rows;
+    return base > 0 ? base : 0;
+}
+
+static int terminal_visible_end(gui_shell_window_t* shell) {
+    int rows = shell->term_rows;
+    int end;
+    if (rows <= 0 || rows > GUI_SHELL_LINES) rows = GUI_SHELL_LINES;
+    end = terminal_visible_base(shell) + rows;
+    if (end > GUI_SHELL_LINES) end = GUI_SHELL_LINES;
+    return end;
+}
+
 static void terminal_clear_screen(gui_shell_window_t* shell) {
     for (int r = 0; r < GUI_SHELL_LINES; r++) terminal_blank_line(shell, r);
     shell->line_count = shell->term_rows > 0 ? shell->term_rows : 1;
@@ -183,6 +200,33 @@ static void terminal_clear_screen(gui_shell_window_t* shell) {
     shell->cursor_row = 0;
     shell->cursor_col = 0;
     shell->scroll = 0;
+}
+
+static void terminal_clear_screen_mode(gui_shell_window_t* shell, int mode) {
+    int base;
+    int end;
+
+    if (mode == 2 || mode == 3) {
+        terminal_clear_screen(shell);
+        return;
+    }
+
+    base = terminal_visible_base(shell);
+    end = terminal_visible_end(shell);
+    terminal_ensure_row(shell, shell->cursor_row);
+
+    if (mode == 1) {
+        for (int r = base; r < shell->cursor_row && r < end; r++) {
+            terminal_blank_line(shell, r);
+        }
+        terminal_clear_line(shell, 1);
+        return;
+    }
+
+    terminal_clear_line(shell, 0);
+    for (int r = shell->cursor_row + 1; r < end; r++) {
+        terminal_blank_line(shell, r);
+    }
 }
 
 static void terminal_move_relative(gui_shell_window_t* shell, int dr, int dc) {
@@ -199,22 +243,48 @@ static void terminal_move_relative(gui_shell_window_t* shell, int dr, int dc) {
     terminal_ensure_row(shell, shell->cursor_row);
 }
 
-static void terminal_move_absolute(gui_shell_window_t* shell, int row, int col) {
-    int base = shell->line_count - shell->term_rows;
-    if (base < 0) base = 0;
-    if (row < 0) row = 0;
+static void terminal_move_column(gui_shell_window_t* shell, int col) {
+    int cols = shell->term_cols;
+    if (cols <= 0 || cols > GUI_SHELL_COLS) cols = GUI_SHELL_COLS;
     if (col < 0) col = 0;
-    shell->cursor_row = base + row;
+    if (col >= cols) col = cols - 1;
     shell->cursor_col = col;
-    if (shell->cursor_row >= GUI_SHELL_LINES) shell->cursor_row = GUI_SHELL_LINES - 1;
-    if (shell->cursor_col >= shell->term_cols) shell->cursor_col = shell->term_cols - 1;
-    if (shell->cursor_col < 0) shell->cursor_col = 0;
     terminal_ensure_row(shell, shell->cursor_row);
+}
+
+static void terminal_move_to(gui_shell_window_t* shell, int row, int col) {
+    shell->cursor_row = row;
+    shell->cursor_col = 0;
+    if (shell->cursor_row < 0) shell->cursor_row = 0;
+    if (shell->cursor_row >= GUI_SHELL_LINES) shell->cursor_row = GUI_SHELL_LINES - 1;
+    terminal_ensure_row(shell, shell->cursor_row);
+    terminal_move_column(shell, col);
+}
+
+static void terminal_move_absolute(gui_shell_window_t* shell, int row, int col) {
+    int base = terminal_visible_base(shell);
+    if (row < 0) row = 0;
+    terminal_move_to(shell, base + row, col);
+}
+
+static void terminal_save_cursor(gui_shell_window_t* shell) {
+    shell->saved_cursor_row = shell->cursor_row;
+    shell->saved_cursor_col = shell->cursor_col;
+}
+
+static void terminal_restore_cursor(gui_shell_window_t* shell) {
+    if (shell->saved_cursor_row < 0) return;
+    terminal_move_to(shell, shell->saved_cursor_row, shell->saved_cursor_col);
 }
 
 static void terminal_reset(gui_shell_window_t* shell) {
     if (shell->term_rows <= 0) shell->term_rows = 25;
     if (shell->term_cols <= 0) shell->term_cols = GUI_SHELL_COLS;
+    shell->saved_cursor_row = -1;
+    shell->saved_cursor_col = 0;
+    shell->esc_state = 0;
+    shell->utf8_len = 0;
+    shell->utf8_need = 0;
     terminal_clear_screen(shell);
 }
 
@@ -278,6 +348,22 @@ static void terminal_csi_dispatch(gui_shell_window_t* shell, char cmd) {
         if (shell->backend == GUI_SHELL_BACKEND_PTY_CHILD) terminal_move_relative(shell, -n, 0);
     } else if (cmd == 'B') {
         if (shell->backend == GUI_SHELL_BACKEND_PTY_CHILD) terminal_move_relative(shell, n, 0);
+    } else if (cmd == 'E') {
+        if (shell->backend == GUI_SHELL_BACKEND_PTY_CHILD) {
+            terminal_move_relative(shell, n, 0);
+            shell->cursor_col = 0;
+        }
+    } else if (cmd == 'F') {
+        if (shell->backend == GUI_SHELL_BACKEND_PTY_CHILD) {
+            terminal_move_relative(shell, -n, 0);
+            shell->cursor_col = 0;
+        } else {
+            shell->pending_cursor = 0;
+        }
+    } else if (cmd == 'G') {
+        if (shell->backend == GUI_SHELL_BACKEND_PTY_CHILD) {
+            terminal_move_column(shell, (arg0 ? arg0 : 1) - 1);
+        }
     } else if (cmd == 'K') {
         if (shell->backend == GUI_SHELL_BACKEND_PTY_CHILD) {
             terminal_clear_line(shell, arg0);
@@ -290,7 +376,7 @@ static void terminal_csi_dispatch(gui_shell_window_t* shell, char cmd) {
         }
     } else if (cmd == 'J') {
         if (shell->backend == GUI_SHELL_BACKEND_PTY_CHILD) {
-            if (arg0 == 0 || arg0 == 2) terminal_clear_screen(shell);
+            terminal_clear_screen_mode(shell, arg0);
         } else {
             if (!shell->csi_has_value || shell->csi_value == 2) {
                 shell->line_count = 0;
@@ -304,9 +390,16 @@ static void terminal_csi_dispatch(gui_shell_window_t* shell, char cmd) {
         } else {
             shell->pending_cursor = 0;
         }
-    } else if (cmd == 'F') {
-        if (cmd == 'H') shell->pending_cursor = 0;
-        else shell->pending_cursor = shell->pending_len;
+    } else if (cmd == 'd') {
+        if (shell->backend == GUI_SHELL_BACKEND_PTY_CHILD) {
+            terminal_move_absolute(shell, (arg0 ? arg0 : 1) - 1, shell->cursor_col);
+        }
+    } else if (cmd == 's') {
+        if (shell->backend == GUI_SHELL_BACKEND_PTY_CHILD) terminal_save_cursor(shell);
+    } else if (cmd == 'u') {
+        if (shell->backend == GUI_SHELL_BACKEND_PTY_CHILD) terminal_restore_cursor(shell);
+    } else if (cmd == 'm' || cmd == 'h' || cmd == 'l' || cmd == 'n') {
+        /* SGR, private mode changes, and device-status reports are accepted no-ops. */
     }
 }
 
@@ -328,6 +421,39 @@ static int terminal_handle_escape(gui_shell_window_t* shell, char ch) {
             shell->csi_private = 0;
             for (int i = 0; i < GUI_SHELL_CSI_ARGS; i++) shell->csi_args[i] = 0;
             return 1;
+        }
+        if (shell->backend == GUI_SHELL_BACKEND_PTY_CHILD) {
+            if (ch == '7') {
+                terminal_save_cursor(shell);
+                shell->esc_state = 0;
+                return 1;
+            }
+            if (ch == '8') {
+                terminal_restore_cursor(shell);
+                shell->esc_state = 0;
+                return 1;
+            }
+            if (ch == 'c') {
+                terminal_reset(shell);
+                shell->esc_state = 0;
+                return 1;
+            }
+            if (ch == 'D') {
+                terminal_newline(shell);
+                shell->esc_state = 0;
+                return 1;
+            }
+            if (ch == 'E') {
+                terminal_newline(shell);
+                shell->cursor_col = 0;
+                shell->esc_state = 0;
+                return 1;
+            }
+            if (ch == 'M') {
+                terminal_move_relative(shell, -1, 0);
+                shell->esc_state = 0;
+                return 1;
+            }
         }
         shell->esc_state = 0;
         return 1;
@@ -1087,6 +1213,8 @@ void gui_shell_open(gui_shell_window_t* shell) {
     s_copy(shell->cwd, "/", sizeof(shell->cwd));
     shell->term_rows = 25;
     shell->term_cols = GUI_SHELL_COLS;
+    shell->saved_cursor_row = -1;
+    shell->saved_cursor_col = 0;
     shell->backend = GUI_SHELL_BACKEND_PIPE_CHILD;
     shell->pid = -1;
     shell->stdin_fd = GUI_SHELL_NO_FD;

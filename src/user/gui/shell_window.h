@@ -30,6 +30,8 @@ typedef struct {
     int term_cols;
     int cursor_row;
     int cursor_col;
+    int saved_cursor_row;
+    int saved_cursor_col;
     char pending[GUI_SHELL_COLS + 1];
     int pending_len;
     int pending_cursor;

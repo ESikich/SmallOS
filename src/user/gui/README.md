@@ -28,10 +28,12 @@ The user shell owns command dispatch, history, completion, pipelines, and
 external program launch; the kernel shell remains a fallback/debug monitor.
 
 The terminal renderer stores fixed-width rows, not C strings, so spaces and
-short redraws from line editing remain visible. It handles the small CSI subset
-used by the shell editor (`\r`, `\n`, erase-to-end-of-line, and horizontal
-cursor motion) and maps UTF-8 box-drawing output from tools such as `tree` into
-ASCII cells for the bitmap text renderer.
+short redraws from line editing remain visible. It handles the CSI/ESC controls
+used by the shell editor and simple full-screen tools: carriage return,
+newline, cursor up/down/left/right, absolute row/column moves, erase in line,
+erase in display, save/restore cursor, reset, and no-op acceptance for SGR and
+private mode toggles. UTF-8 box-drawing output from tools such as `tree` is
+mapped into ASCII cells for the bitmap text renderer.
 
 The `backend` field in `gui_shell_window_t` records the active connection:
 `GUI_SHELL_BACKEND_PTY_CHILD` is the default, `GUI_SHELL_BACKEND_PIPE_CHILD`

@@ -1458,7 +1458,12 @@ static int sh_builtin(int argc, char* argv[], int* should_exit) {
         return 1;
     }
     if (sh_streq(argv[0], "cd")) {
-        const char* target = argc < 2 ? "/" : argv[1];
+        const char* target;
+        if (argc < 2) {
+            u_puts("usage: cd <path>\n");
+            return 1;
+        }
+        target = argv[1];
         if (sys_chdir(target) < 0) {
             u_puts("cd: failed\n");
         } else {
