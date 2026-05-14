@@ -10,6 +10,21 @@ under this folder so the GUI can grow into separate modules.
   the embedded command runner if child launch fails.
 - `gui.h`: user-program entrypoint shared by the tiny wrapper and the desktop.
 
+## Files Window
+
+The Files window is a live ext2 directory browser. Directory rows open in place,
+including the synthesized `..` parent row for non-root paths. File rows use a
+double-click launcher:
+
+- `.elf` files run directly as foreground programs.
+- `.bmp` files run through `/bin/bmpview.elf`.
+- Text-like files (`.txt`, `.c`, `.h`, `.md`, `.ini`, `.log`, `.html`) run
+  through `/bin/edit.elf`.
+
+The desktop owns the framebuffer while it is active, so launching a full-screen
+program temporarily releases the display, waits for that child to exit, then
+reacquires the display and redraws the desktop.
+
 ## Shell Window
 
 The GUI treats each shell window as a window-owned terminal session:

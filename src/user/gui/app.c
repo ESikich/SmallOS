@@ -208,6 +208,7 @@ typedef struct {
     int   row_dir[MAX_ROWS];
     int   row_count;
     int   need_reload;
+    char  status[80];
     gui_shell_window_t shell;
 } window_t;
 
@@ -216,6 +217,8 @@ static window_t g_wins[MAX_WINDOWS];
 #define TITLE_H 14
 #define CLOSE_W 14
 #define ROW_H   12
+
+static void icons_layout(int sw);
 
 /* z-order: g_zorder[0..count) holds indexes into g_wins, back to front. */
 static int g_zorder[MAX_WINDOWS];
@@ -290,6 +293,119 @@ static void path_append(char* path, const char* name, unsigned int cap) {
     u_strcat_n(path, name, cap);
 }
 
+/* ---------------- file launcher ---------------- */
+
+typedef enum {
+    LAUNCH_NONE = 0,
+    LAUNCH_ELF,
+    LAUNCH_EDIT,
+    LAUNCH_BMP,
+} launch_kind_t;
+
+static launch_kind_t g_launch_kind = LAUNCH_NONE;
+static char g_launch_path[256];
+
+static int s_ends_with(const char* s, const char* suffix) {
+    unsigned int n = u_strlen(s);
+    unsigned int m = u_strlen(suffix);
+    if (m > n) return 0;
+    return u_streq(s + n - m, suffix);
+}
+
+static void basename_of(const char* path, char* out, unsigned int cap) {
+    const char* base = path;
+    const char* p = path;
+    while (*p) {
+        if (*p == '/') base = p + 1;
+        p++;
+    }
+    u_strcpy_n(out, base, cap);
+}
+
+static int is_text_like_file(const char* path) {
+    return s_ends_with(path, ".txt") ||
+           s_ends_with(path, ".TXT") ||
+           s_ends_with(path, ".c") ||
+           s_ends_with(path, ".h") ||
+           s_ends_with(path, ".md") ||
+           s_ends_with(path, ".ini") ||
+           s_ends_with(path, ".log") ||
+           s_ends_with(path, ".html");
+}
+
+static launch_kind_t launch_kind_for_path(const char* path) {
+    if (s_ends_with(path, ".elf")) return LAUNCH_ELF;
+    if (s_ends_with(path, ".bmp") || s_ends_with(path, ".BMP")) return LAUNCH_BMP;
+    if (is_text_like_file(path)) return LAUNCH_EDIT;
+    return LAUNCH_NONE;
+}
+
+static void queue_launch(window_t* w, const char* path) {
+    launch_kind_t kind = launch_kind_for_path(path);
+    if (kind == LAUNCH_NONE) {
+        u_strcpy_n(w->status, "No launcher for this file type", sizeof(w->status));
+        return;
+    }
+    g_launch_kind = kind;
+    u_strcpy_n(g_launch_path, path, sizeof(g_launch_path));
+    u_strcpy_n(w->status, "Launching...", sizeof(w->status));
+}
+
+static int run_queued_launch(gfx_context_t* gfx, int* sw, int* sh) {
+    launch_kind_t kind = g_launch_kind;
+    char path[256];
+    char name[NAME_MAX + 1];
+    char* argv[3];
+    int pid;
+    int status = 0;
+
+    if (kind == LAUNCH_NONE) return 0;
+
+    u_strcpy_n(path, g_launch_path, sizeof(path));
+    g_launch_kind = LAUNCH_NONE;
+    g_launch_path[0] = 0;
+
+    gfx_close(gfx);
+
+    if (kind == LAUNCH_ELF) {
+        basename_of(path, name, sizeof(name));
+        argv[0] = name;
+        argv[1] = 0;
+        pid = sys_exec_foreground(path, 1, argv);
+    } else if (kind == LAUNCH_BMP) {
+        argv[0] = "bmpview";
+        argv[1] = path;
+        argv[2] = 0;
+        pid = sys_exec_foreground("/bin/bmpview.elf", 2, argv);
+    } else {
+        argv[0] = "edit";
+        argv[1] = path;
+        argv[2] = 0;
+        pid = sys_exec_foreground("/bin/edit.elf", 2, argv);
+    }
+
+    if (pid >= 0) {
+        if (sys_waitpid_foreground(pid, &status) < 0) {
+            (void)sys_waitpid(pid, &status, 0);
+        }
+    } else {
+        u_puts("gui: launch failed: ");
+        u_puts(path);
+        u_putc('\n');
+        sys_sleep(30);
+    }
+
+    if (gfx_open(gfx) < 0) {
+        u_puts("gui: could not reacquire display\n");
+        return -1;
+    }
+
+    *sw = (int)gfx->backbuffer.width;
+    *sh = (int)gfx->backbuffer.height;
+    icons_layout(*sw);
+    return 1;
+}
+
 /* ---------------- file load ---------------- */
 
 static void load_dir(window_t* w) {
@@ -352,7 +468,8 @@ static void draw_files_body(gfx_surface_t* s, window_t* w, int mx, int my) {
     hline(s, bx, by + 12, bw, COL_FRAME);
 
     int row_top = by + 14;
-    int row_area = bh - 14;
+    int status_h = 13;
+    int row_area = bh - 14 - status_h;
     int visible = row_area / ROW_H;
     if (visible < 1) visible = 1;
 
@@ -377,6 +494,11 @@ static void draw_files_body(gfx_surface_t* s, window_t* w, int mx, int my) {
         int thumb_y = by + 14 + (row_area - thumb_h) * w->scroll /
                                  (w->row_count - visible);
         fillr(s, sx + 2, thumb_y, 6, thumb_h, COL_TITLE_BG);
+    }
+
+    hline(s, bx, by + bh - status_h, bw, COL_FRAME);
+    if (w->status[0]) {
+        draw_text(s, bx + 4, by + bh - status_h + 4, w->status, COL_SUBTEXT);
     }
 
     /* outer frame */
@@ -634,6 +756,7 @@ static void action_files(int sw, int sh) {
     if (w->x < 4) w->x = 4;
     if (w->y < 20) w->y = 20;
     u_strcpy_n(w->cwd, "/", sizeof(w->cwd));
+    u_strcpy_n(w->status, "Double-click files to open", sizeof(w->status));
     load_dir(w);
 }
 static void action_system(int sw, int sh) {
@@ -822,6 +945,9 @@ typedef enum {
 static drag_mode_t g_drag = DRAG_NONE;
 static int g_drag_idx = -1;
 static int g_drag_dx = 0, g_drag_dy = 0;
+static int g_last_file_win = -1;
+static int g_last_file_row = -1;
+static uint32_t g_last_file_tick = 0;
 
 static int point_in(int x, int y, int rx, int ry, int rw, int rh) {
     return x >= rx && x < rx + rw && y >= ry && y < ry + rh;
@@ -853,8 +979,9 @@ static void handle_click(int mx, int my, int sw, int sh) {
         if (w->type == WT_FILES) {
             int by = w->y + TITLE_H;
             int row_top = by + 14;
-            int row_area = (w->h - TITLE_H) - 14;
+            int row_area = (w->h - TITLE_H) - 27;
             int visible = row_area / ROW_H;
+            if (visible < 1) visible = 1;
             if (mx >= w->x && mx < w->x + w->w - 12 &&
                 my >= row_top && my < row_top + visible * ROW_H) {
                 int i = (my - row_top) / ROW_H;
@@ -867,6 +994,28 @@ static void handle_click(int mx, int my, int sw, int sh) {
                             path_append(w->cwd, w->rows[idx], sizeof(w->cwd));
                         }
                         load_dir(w);
+                    } else {
+                        uint32_t now = sys_get_ticks();
+                        int widx = win_index(w);
+                        int is_double =
+                            g_last_file_win == widx &&
+                            g_last_file_row == idx &&
+                            (uint32_t)(now - g_last_file_tick) < 35u;
+                        char target[256];
+                        u_strcpy_n(target, w->cwd, sizeof(target));
+                        path_append(target, w->rows[idx], sizeof(target));
+                        if (is_double) {
+                            queue_launch(w, target);
+                            g_last_file_win = -1;
+                            g_last_file_row = -1;
+                            g_last_file_tick = 0;
+                        } else {
+                            u_strcpy_n(w->status, "Double-click to open ", sizeof(w->status));
+                            u_strcat_n(w->status, w->rows[idx], sizeof(w->status));
+                            g_last_file_win = widx;
+                            g_last_file_row = idx;
+                            g_last_file_tick = now;
+                        }
                     }
                 }
             }
@@ -969,6 +1118,14 @@ int gui_main(int argc, char** argv) {
             if (g_wins[i].active && g_wins[i].type == WT_SHELL) {
                 if (gui_shell_poll(&g_wins[i].shell)) dirty = 1;
             }
+        }
+
+        if (g_launch_kind != LAUNCH_NONE) {
+            int launch_rc = run_queued_launch(&gfx, &sw, &sh);
+            if (launch_rc < 0) return 1;
+            mx = clampi(mx, 0, sw - 1);
+            my = clampi(my, 0, sh - 1);
+            dirty = 1;
         }
 
         if (dirty) {
