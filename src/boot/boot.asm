@@ -10,8 +10,6 @@ MBR_PARTITION_TABLE_OFFSET equ 446
 MBR_PARTITION_ENTRY_SIZE   equ 16
 
 start:
-    mov [BOOT_DRIVE], dl
-
     cli
     xor ax, ax
     mov ds, ax
@@ -20,6 +18,8 @@ start:
     ; Stage 1 only needs a temporary stack while it loads loader2.
     mov sp, 0x9000
     sti
+
+    mov [BOOT_DRIVE], dl
 
     mov si, boot_msg
     call print_string
@@ -52,22 +52,36 @@ load_loader2:
     pusha
 
     mov ax, LOADER2_SEGMENT
+    mov [READ_SEGMENT], ax
+    mov word [READ_OFFSET], LOADER2_OFFSET
+    mov byte [READ_SECTOR], 2
+    mov byte [READ_REMAINING], LOADER2_SECTORS
+
+.read_sector:
+    mov ax, [READ_SEGMENT]
     mov es, ax
-    xor bx, bx
-
-    mov dl, [BOOT_DRIVE]
-    xor ax, ax
-    int 0x13
-    jc disk_error
-
-    mov al, LOADER2_SECTORS
+    mov bx, [READ_OFFSET]
     mov ah, 0x02
+    mov al, 1
     mov ch, 0
-    mov cl, 2
+    mov cl, [READ_SECTOR]
     mov dh, 0
     mov dl, [BOOT_DRIVE]
     int 0x13
-    jc disk_error
+    pushf
+    push ax
+    xor ax, ax
+    mov ds, ax
+    pop ax
+    popf
+    jnc .read_ok
+    mov [DISK_ERROR_CODE], ah
+    jmp disk_error
+.read_ok:
+    add word [READ_OFFSET], BOOT_SECTOR_SIZE
+    inc byte [READ_SECTOR]
+    dec byte [READ_REMAINING]
+    jnz .read_sector
 
     popa
     ret
@@ -75,12 +89,59 @@ load_loader2:
 disk_error:
     mov si, disk_msg
     call print_string
+    mov si, drive_msg
+    call print_string
+    mov al, [BOOT_DRIVE]
+    call print_hex8
+    mov si, error_msg
+    call print_string
+    mov al, [DISK_ERROR_CODE]
+    call print_hex8
     jmp $
 
+print_hex8:
+    pusha
+    mov bl, al
+    mov al, ' '
+    call print_char
+    mov al, '0'
+    call print_char
+    mov al, 'x'
+    call print_char
+    mov al, bl
+    shr al, 4
+    call print_hex_nibble
+    mov al, bl
+    and al, 0x0F
+    call print_hex_nibble
+    popa
+    ret
+
+print_hex_nibble:
+    cmp al, 10
+    jb .digit
+    add al, 'A' - 10
+    jmp print_char
+.digit:
+    add al, '0'
+    jmp print_char
+
+print_char:
+    mov ah, 0x0E
+    int 0x10
+    ret
+
 BOOT_DRIVE db 0
+DISK_ERROR_CODE db 0
+READ_SEGMENT dw 0
+READ_OFFSET dw 0
+READ_SECTOR db 0
+READ_REMAINING db 0
 boot_msg   db "Booting stage2...", 0
 loaded_msg db " loaded", 0
 disk_msg   db " Disk read error!", 0
+drive_msg  db " drive", 0
+error_msg  db " err", 0
 
 BOOT_SIGNATURE_SIZE    equ 2
 times MBR_PARTITION_TABLE_OFFSET-($-$$) db 0

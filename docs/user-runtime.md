@@ -187,8 +187,9 @@ The runtime exposes `CLOCK_MONOTONIC` as uptime and `CLOCK_REALTIME` as a
 settable wall clock. The kernel stores realtime as an offset from uptime, so
 the clock continues advancing after boot-time or manual synchronization.
 
-Boot performs a best-effort NTP sync through the e1000/IPv4/UDP path before the
-shell starts. `/bin/date` prints the current UTC realtime value, and
+Boot performs DHCP configuration and then a best-effort NTP sync through the
+e1000/IPv4/UDP path before the shell starts. `/bin/date` prints the current UTC
+realtime value, and
 `date -s [server-ip]` asks the kernel NTP helper to synchronize again. The
 default server is `129.6.15.28`.
 

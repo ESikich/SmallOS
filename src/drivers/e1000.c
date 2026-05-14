@@ -7,7 +7,8 @@
 #include "terminal.h"
 
 #define E1000_VENDOR_ID 0x8086u
-#define E1000_DEVICE_ID 0x100Eu
+#define E1000_DEVICE_ID_82540EM 0x100Eu
+#define E1000_DEVICE_ID_82545EM 0x100Fu
 
 #define E1000_CTRL      0x0000u
 #define E1000_STATUS    0x0008u
@@ -194,7 +195,8 @@ static int e1000_find_and_map(void) {
     u32 bar0;
     u32* pd;
 
-    if (!pci_find_device(E1000_VENDOR_ID, E1000_DEVICE_ID, &dev)) {
+    if (!pci_find_device(E1000_VENDOR_ID, E1000_DEVICE_ID_82540EM, &dev) &&
+        !pci_find_device(E1000_VENDOR_ID, E1000_DEVICE_ID_82545EM, &dev)) {
         return 0;
     }
 

@@ -151,6 +151,7 @@ The kernel boot path calls:
 ata_init()
 pci_init()
 e1000_init()
+dhcp_configure()
 tcp_init()
 ntp_sync()   # best-effort CLOCK_REALTIME setup; warning-only on failure
 ext2_init()

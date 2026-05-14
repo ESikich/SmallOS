@@ -21,7 +21,6 @@
 #define TCP_IPV4_TTL         64u
 #define TCP_IPV4_PROTO       6u
 #define TCP_LISTEN_PORT      2323u
-#define TCP_LOCAL_IP         0x0A00020Fu  /* 10.0.2.15 */
 
 #define TCP_SYN              0x02u
 #define TCP_RST              0x04u
@@ -53,8 +52,6 @@
 #define TCP_MAX_BACKLOG           32u
 #define TCP_EPHEMERAL_FIRST    49152u
 #define TCP_EPHEMERAL_LAST     60999u
-#define TCP_GATEWAY_IP    0x0A000202u  /* 10.0.2.2 */
-#define TCP_NETMASK       0xFFFFFF00u
 
 typedef unsigned short u16;
 
@@ -144,6 +141,10 @@ static tcp_slot_t* tcp_slot_for_port_create(u16 port) {
     }
 
     return 0;
+}
+
+static u32 tcp_local_ip(void) {
+    return net_ipv4_local_ip();
 }
 
 static tcp_slot_t* tcp_active_slot(void) {
@@ -239,10 +240,17 @@ static u16 tcp_alloc_ephemeral_port(void) {
 }
 
 static u32 tcp_route_next_hop(u32 remote_ip) {
-    if ((remote_ip & TCP_NETMASK) == (TCP_LOCAL_IP & TCP_NETMASK)) {
+    u32 local_ip = net_ipv4_local_ip();
+    u32 netmask = net_ipv4_netmask();
+    u32 gateway = net_ipv4_gateway();
+
+    if (local_ip == 0u) {
+        return 0;
+    }
+    if (netmask != 0u && (remote_ip & netmask) == (local_ip & netmask)) {
         return remote_ip;
     }
-    return TCP_GATEWAY_IP;
+    return gateway;
 }
 
 static void tcp_conn_rx_release(tcp_conn_t* conn) {
@@ -573,7 +581,7 @@ static unsigned int tcp_slot_pending_count(tcp_slot_t* slot) {
     for (unsigned int i = 0; i < TCP_MAX_CONNECTIONS; i++) {
         tcp_conn_t* conn = &s_conns[i];
         if (conn->state != TCP_STATE_CLOSED &&
-            conn->local_ip == TCP_LOCAL_IP &&
+            conn->local_ip == tcp_local_ip() &&
             conn->local_port == slot->local_port &&
             !conn->accepted) {
             count++;
@@ -808,7 +816,7 @@ static int tcp_validate_ipv4(const u8* frame, u32 len, u32* out_ip_header_len, u
     if (frame[23] != TCP_IPV4_PROTO) {
         return 0;
     }
-    if (tcp_read_u32_be(frame, 30) != TCP_LOCAL_IP) {
+    if (!net_ipv4_is_configured() || tcp_read_u32_be(frame, 30) != tcp_local_ip()) {
         return 0;
     }
 
@@ -966,7 +974,7 @@ static void tcp_reset_slot_connections(tcp_slot_t* slot, int accepted_too) {
     for (unsigned int i = 0; i < TCP_MAX_CONNECTIONS; i++) {
         tcp_conn_t* conn = &s_conns[i];
         if (conn->state == TCP_STATE_CLOSED) continue;
-        if (conn->local_ip != TCP_LOCAL_IP) continue;
+        if (conn->local_ip != tcp_local_ip()) continue;
         if (conn->local_port != slot->local_port) continue;
         if (!accepted_too && conn->accepted) continue;
         tcp_reset_connection(conn);
@@ -1176,7 +1184,7 @@ int tcp_socket_connect(unsigned int local_port,
     }
 
     next_hop = tcp_route_next_hop(remote_ip);
-    if (!arp_resolve(TCP_LOCAL_IP, next_hop, remote_mac)) {
+    if (next_hop == 0u || !arp_resolve(tcp_local_ip(), next_hop, remote_mac)) {
         return -EHOSTUNREACH;
     }
 
@@ -1187,7 +1195,7 @@ int tcp_socket_connect(unsigned int local_port,
     for (unsigned int i = 0; i < 6; i++) {
         conn->remote_mac[i] = remote_mac[i];
     }
-    conn->local_ip = TCP_LOCAL_IP;
+    conn->local_ip = tcp_local_ip();
     conn->local_port = chosen_port;
     conn->conn_id = conn_id;
     conn->remote_ip = remote_ip;
@@ -1234,7 +1242,7 @@ int tcp_socket_accept_ready(void) {
     for (unsigned int i = 0; i < TCP_MAX_CONNECTIONS; i++) {
         tcp_conn_t* conn = &s_conns[i];
         if (conn->state == TCP_STATE_ESTABLISHED &&
-            conn->local_ip == TCP_LOCAL_IP &&
+            conn->local_ip == tcp_local_ip() &&
             conn->local_port == slot->local_port &&
             !conn->accepted) {
             return 1;
@@ -1252,7 +1260,7 @@ unsigned int tcp_socket_mark_accepted(void) {
     for (unsigned int i = 0; i < TCP_MAX_CONNECTIONS; i++) {
         tcp_conn_t* conn = &s_conns[i];
         if (conn->state == TCP_STATE_ESTABLISHED &&
-            conn->local_ip == TCP_LOCAL_IP &&
+            conn->local_ip == tcp_local_ip() &&
             conn->local_port == slot->local_port &&
             !conn->accepted) {
             conn->accepted = 1;
@@ -1437,7 +1445,7 @@ unsigned int tcp_socket_peer_port(void) {
 
 unsigned int tcp_socket_local_ip(void) {
     tcp_conn_t* conn = tcp_active_conn();
-    return conn ? conn->local_ip : TCP_LOCAL_IP;
+    return conn ? conn->local_ip : tcp_local_ip();
 }
 
 unsigned int tcp_socket_local_port(void) {
@@ -1509,7 +1517,7 @@ static void tcp_accept_syn(const u8* frame,
         return;
     }
 
-    conn = tcp_find_conn(TCP_LOCAL_IP, dst_port, src_ip, src_port, 0);
+    conn = tcp_find_conn(tcp_local_ip(), dst_port, src_ip, src_port, 0);
     if (conn) {
         return;
     }
@@ -1527,7 +1535,7 @@ static void tcp_accept_syn(const u8* frame,
     for (unsigned int i = 0; i < 6; i++) {
         conn->remote_mac[i] = frame[6 + i];
     }
-    conn->local_ip = TCP_LOCAL_IP;
+    conn->local_ip = tcp_local_ip();
     conn->local_port = dst_port;
     conn->conn_id = conn_id;
     conn->remote_ip = src_ip;
@@ -1685,7 +1693,7 @@ static void tcp_echo_payload(const u8* frame,
     payload_off = tcp_off + header_len;
     payload_len = tcp_len - header_len;
 
-    conn = tcp_find_conn(TCP_LOCAL_IP, dst_port, src_ip, src_port, &conn_id);
+    conn = tcp_find_conn(tcp_local_ip(), dst_port, src_ip, src_port, &conn_id);
     if (!conn) {
         slot = tcp_slot_for_port(dst_port);
         if (!slot) {

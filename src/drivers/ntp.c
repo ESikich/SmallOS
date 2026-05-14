@@ -10,8 +10,6 @@
 #define NTP_IPV4_VERSION_IHL 0x45u
 #define NTP_IPV4_TTL 64u
 #define NTP_IPV4_PROTO_UDP 17u
-#define NTP_LOCAL_IP 0x0A00020Fu
-#define NTP_GATEWAY_IP 0x0A000202u
 #define NTP_LOCAL_PORT 49123u
 #define NTP_SERVER_PORT 123u
 #define NTP_PACKET_LEN 48u
@@ -83,7 +81,7 @@ static void build_request(u8* frame, const u8* dst_mac, u32 server_ip) {
     write_u16_be(frame, ip_off + 6u, 0x4000u);
     frame[ip_off + 8u] = NTP_IPV4_TTL;
     frame[ip_off + 9u] = NTP_IPV4_PROTO_UDP;
-    write_u32_be(frame, ip_off + 12u, NTP_LOCAL_IP);
+    write_u32_be(frame, ip_off + 12u, net_ipv4_local_ip());
     write_u32_be(frame, ip_off + 16u, server_ip);
     write_u16_be(frame, ip_off + 10u, checksum16(&frame[ip_off], 20u));
 
@@ -112,7 +110,7 @@ int ntp_handle_ipv4_frame(const u8* frame, u32 len) {
     if (len < ip_off + header_len + 8u + NTP_PACKET_LEN) return 0;
     if (frame[ip_off + 9u] != NTP_IPV4_PROTO_UDP) return 0;
     if (read_u32_be(frame, ip_off + 12u) != s_server_ip) return 0;
-    if (read_u32_be(frame, ip_off + 16u) != NTP_LOCAL_IP) return 0;
+    if (read_u32_be(frame, ip_off + 16u) != net_ipv4_local_ip()) return 0;
 
     udp_off = ip_off + header_len;
     if (read_u16_be(frame, udp_off) != NTP_SERVER_PORT) return 0;
@@ -134,7 +132,10 @@ int ntp_sync(u32 server_ip, u32* out_unix_time) {
     unsigned int deadline;
 
     if (server_ip == 0u) return 0;
-    if (!arp_resolve(NTP_LOCAL_IP, NTP_GATEWAY_IP, gateway_mac)) {
+    if (!net_ipv4_is_configured() || net_ipv4_gateway() == 0u) {
+        return 0;
+    }
+    if (!arp_resolve(net_ipv4_local_ip(), net_ipv4_gateway(), gateway_mac)) {
         return 0;
     }
 

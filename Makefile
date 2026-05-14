@@ -2,6 +2,7 @@ ASM=nasm
 CC=i686-elf-gcc
 LD=i686-elf-ld
 OBJCOPY=i686-elf-objcopy
+QEMU_IMG?=qemu-img
 MAKEFLAGS += --no-print-directory
 
 SRC_DIR=src
@@ -32,6 +33,10 @@ IMG_FILE=$(IMG_DIR)$(SERIAL_SUFFIX)/os-image.bin
 else
 IMG_FILE=$(IMG_DIR)/$(DISPLAY_BACKEND)$(SERIAL_SUFFIX)/os-image.bin
 endif
+ESXI_VMDK_SIZE ?=
+ESXI_VMDK_DIR=$(IMG_DIR)/esxi/$(DISPLAY_BACKEND)$(SERIAL_SUFFIX)
+ESXI_RAW_FILE=$(ESXI_VMDK_DIR)/smallos-esxi.raw
+ESXI_VMDK_FILE=$(ESXI_VMDK_DIR)/smallos-esxi.vmdk
 TOOLS_DIR=$(BUILD_DIR)/tools
 TINYCC_DIR=$(BUILD_DIR)/tinycc-host
 TINYCC_CONFIG_STAMP=$(TINYCC_DIR)/.configured
@@ -127,6 +132,7 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/pci.c \
 	$(DRIVERS_DIR)/e1000.c \
 	$(DRIVERS_DIR)/net.c \
+	$(DRIVERS_DIR)/dhcp.c \
 	$(DRIVERS_DIR)/arp.c \
 	$(DRIVERS_DIR)/ipv4.c \
 	$(DRIVERS_DIR)/ntp.c \
@@ -173,7 +179,7 @@ OBJ_SUBDIRS=$(sort \
 	$(dir $(USER_OBJS)) \
 )
 
-BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(dir $(IMG_FILE)) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
+BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(dir $(IMG_FILE)) $(ESXI_VMDK_DIR) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
 BUILD_SUBDIRS+=$(TINYCC_SMALOS_OBJ_DIR) $(CSERVER_OBJ_DIR)
 
 all: check-third-party $(IMG_FILE)
@@ -377,6 +383,31 @@ image-layout-check: $(IMG_FILE)
 		--boot-partition-table-offset $(BOOT_PARTITION_TABLE_OFFSET) \
 		--boot-partition-entry-size $(BOOT_PARTITION_ENTRY_SIZE)
 
+qemu-image:
+	$(MAKE) image-layout-check SERIAL_CONSOLE=0 DISPLAY_BACKEND=$(DISPLAY_BACKEND)
+
+esxi-vmdk: qemu-image
+	$(MAKE) esxi-vmdk-build SERIAL_CONSOLE=1 DISPLAY_BACKEND=$(DISPLAY_BACKEND)
+
+esxi-vmdk-build: $(ESXI_VMDK_FILE)
+
+$(ESXI_VMDK_FILE): image-layout-check | dirs
+	cp $(IMG_FILE) $(ESXI_RAW_FILE)
+	@if [ -n "$(ESXI_VMDK_SIZE)" ]; then \
+		truncate -s "$(ESXI_VMDK_SIZE)" "$(ESXI_RAW_FILE)"; \
+	fi
+	$(QEMU_IMG) convert -f raw -O vmdk -o adapter_type=ide,subformat=monolithicSparse $(ESXI_RAW_FILE) $@
+	@printf 'ESXi VMDK: %s\n' "$@"
+
+esxi-deploy:
+	tools/deploy_esxi.sh $(ESXI_DEPLOY_FLAGS)
+
+esxi-serial-log:
+	tools/esxi_serial_log.sh $(ESXI_SERIAL_FLAGS)
+
+esxi-smoke:
+	tools/esxi_smoke.sh $(ESXI_SMOKE_FLAGS)
+
 -include $(wildcard $(OBJ_DIR)/*.d)
 -include $(wildcard $(OBJ_DIR)/*/*.d)
 
@@ -414,9 +445,7 @@ QEMUFLAGS=-drive format=raw,file=$(IMG_FILE) -boot c -m $(QEMU_MEMORY_MB) \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all dirs deps check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap test framebuffer-smoke vga-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean
-
-test ftp-smoke socket-eof-smoke socket-parallel-smoke ftp-loop-smoke cserve-smoke display-smoke-one smoke smoke-reboot smoke-halt: SERIAL_CONSOLE=1
+.PHONY: all dirs deps check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap test framebuffer-smoke vga-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean
 
 run: image-layout-check
 	$(QEMU) $(QEMUFLAGS) -display $(QEMU_DISPLAY)
@@ -465,7 +494,8 @@ test:
 		--timeout 600 \
 		$(QEMU_SELFTEST_FLAGS)
 
-ftp-smoke: reset-disk image-layout-check
+ftp-smoke:
+	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
 	$(MAKE) run-headless SERIAL_CONSOLE=1 QEMU_NET_HOSTFWD=',hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000'
@@ -475,7 +505,8 @@ ftp-smoke: reset-disk image-layout-check
 		--pidfile $(PIDFILE) \
 		--timeout 120
 
-socket-eof-smoke: reset-disk image-layout-check
+socket-eof-smoke:
+	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
 	$(MAKE) run-headless SERIAL_CONSOLE=1 QEMU_NET_HOSTFWD=',hostfwd=tcp::2463-:2463'
@@ -485,7 +516,8 @@ socket-eof-smoke: reset-disk image-layout-check
 		--pidfile $(PIDFILE) \
 		--timeout 120
 
-socket-parallel-smoke: reset-disk image-layout-check
+socket-parallel-smoke:
+	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
 	$(MAKE) run-headless SERIAL_CONSOLE=1 QEMU_NET_HOSTFWD=',hostfwd=tcp::$(SOCKET_PARALLEL_PORT)-:2323'
@@ -498,7 +530,8 @@ socket-parallel-smoke: reset-disk image-layout-check
 		--rounds $(SOCKET_PARALLEL_ROUNDS) \
 		--timeout 120
 
-ftp-loop-smoke: reset-disk image-layout-check
+ftp-loop-smoke:
+	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
 	$(MAKE) run-headless SERIAL_CONSOLE=1 QEMU_NET_HOSTFWD=',hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000'
@@ -509,7 +542,8 @@ ftp-loop-smoke: reset-disk image-layout-check
 		--iterations $(FTP_LOOP_ITERATIONS) \
 		--timeout 120
 
-cserve-smoke: reset-disk image-layout-check
+cserve-smoke:
+	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
 	$(MAKE) run-headless SERIAL_CONSOLE=1 QEMU_NET_HOSTFWD=',hostfwd=tcp::$(CSERVE_SMOKE_PORT)-:8080'
@@ -527,7 +561,8 @@ framebuffer-smoke:
 vga-smoke:
 	$(MAKE) display-smoke-one DISPLAY_BACKEND=vga DISPLAY_SMOKE_MODE=vga DISPLAY_SMOKE_PPM=$(VGA_SMOKE_PPM)
 
-display-smoke-one: reset-disk image-layout-check
+display-smoke-one:
+	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1 DISPLAY_BACKEND=$(DISPLAY_BACKEND)
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE) $(DISPLAY_SMOKE_VNC_SOCK) $(DISPLAY_SMOKE_PPM)
 	mkdir -p $(SMOKE_DIR)
@@ -542,11 +577,13 @@ display-smoke-one: reset-disk image-layout-check
 
 display-smoke: framebuffer-smoke vga-smoke
 
-smoke: reset-disk image-layout-check
+smoke:
+	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1
 	$(MAKE) smoke-reboot
 	$(MAKE) smoke-halt
 
-smoke-reboot: image-layout-check
+smoke-reboot:
+	$(MAKE) image-layout-check SERIAL_CONSOLE=1
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
 	$(MAKE) run-headless SERIAL_CONSOLE=1
@@ -557,7 +594,8 @@ smoke-reboot: image-layout-check
 		--pidfile $(PIDFILE) \
 		--timeout $(SMOKE_TIMEOUT)
 
-smoke-halt: image-layout-check
+smoke-halt:
+	$(MAKE) image-layout-check SERIAL_CONSOLE=1
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
 	$(MAKE) run-headless SERIAL_CONSOLE=1

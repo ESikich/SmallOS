@@ -19,6 +19,8 @@
 #include "fb_console.h"
 #include "elf_loader.h"
 #include "vfs.h"
+#include "../drivers/dhcp.h"
+#include "../drivers/net.h"
 #include "../drivers/tcp.h"
 #include "../drivers/ntp.h"
 
@@ -207,6 +209,18 @@ static void boot_sync_clock(void) {
     }
 }
 
+static void boot_configure_network(void) {
+    boot_puts("dhcp: configuring IPv4\n");
+    __asm__ __volatile__("sti");
+    if (dhcp_configure()) {
+        __asm__ __volatile__("cli");
+        boot_splash_pass("dhcp: IPv4 lease acquired");
+    } else {
+        __asm__ __volatile__("cli");
+        boot_splash_warn("dhcp: IPv4 lease unavailable");
+    }
+}
+
 static void boot_splash_boot_info(void) {
     boot_splash_expect(boot_info_validate(),
                        "boot info: SMOS v2 contract",
@@ -364,13 +378,15 @@ void kernel_main(void) {
     boot_splash_pass("pci: config-space scan complete");
 
     /*
-     * e1000 NIC — bind to the Intel 82540EM QEMU exposes and set up
+     * e1000 NIC — bind to a supported Intel PRO/1000 device and set up
      * basic DMA rings so networking can grow from a known-good device.
      */
     if (e1000_init()) {
-        boot_splash_pass("e1000: Intel 82540EM ready");
+        boot_splash_pass("e1000: Intel PRO/1000 ready");
+        boot_configure_network();
     } else {
-        boot_splash_warn("e1000: Intel 82540EM not present");
+        boot_splash_warn("e1000: Intel PRO/1000 not present");
+        net_ipv4_clear_config();
     }
 
     /*

@@ -58,7 +58,7 @@ Important current-state facts:
 - the **shell consumer** (`shell_key_consumer` in `shell.c`) enqueues `shell_event_t` entries; the shell task drains them in `shell_poll()` outside IRQ context
 - the **process consumer** (`process_key_consumer` in `process.c`) pushes ASCII into `kb_buf`; terminal signals such as Ctrl+C target the foreground process group
 - consumer ownership transfers via `process_set_foreground()` — shell consumer at boot, process consumer while a user process holds the foreground reader/group, shell consumer restored on exit
-- **PS/2 mouse IRQ12** decodes relative-motion packets into accumulated `dx`/`dy` and button state; user graphics code polls that state with `SYS_MOUSE_READ`
+- **Mouse IRQ12** decodes PS/2 relative packets or VMware absolute-pointer events into accumulated `dx`/`dy` and button state; user graphics code polls that state with `SYS_MOUSE_READ`
 - **ELF user programs** are loaded into their own page directory and do execute in ring 3
 - ELF launch and exit are now scheduler-owned: `elf_run_image()` seeds a bootstrap context, enqueues the task, and returns `process_t*`
 - the scheduler supports kernel tasks, ELF tasks, voluntary yielding, timer-driven sleeping, and timer-driven switching; `runelf` blocks with `process_wait()`, `runelf_nowait` returns immediately, and `bg` / `runelf_bg` return while keeping a reattachable shell job
@@ -67,9 +67,9 @@ Important current-state facts:
   `stat`/`rename`/`unlink`, `lseek`, and socket wrappers, which is enough for
   compiler-style tools and small network services
 - the shipped `usr/bin/tcc.elf` compiler binary links the generic SmallOS `user_crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from ext2, write the results back to disk, and then those generated ELFs can be executed immediately
-- QEMU user networking is still the default for `make run` / `make test`, but `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT
+- QEMU user networking is still the default for `make run` / `make test`, but the guest now learns its IPv4 address, netmask, gateway, DNS server, and lease time through DHCP instead of assuming QEMU's NAT addresses. `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT.
 - Boot performs a best-effort NTP sync through the e1000 path before the shell starts. On success, `CLOCK_REALTIME` is set and the boot log prints the UTC time; on failure, boot continues with a warning.
-- `pinggw` and `ping 10.0.2.2` are the supported QEMU user-network checks; public ICMP is often unsupported by user-mode networking, so `pingpublic` is only a best-effort probe
+- `pinggw` and bare `ping` target the DHCP-provided gateway. `ping <ip>` routes through the DHCP gateway when the target is off-subnet. Public ICMP may still be blocked by the surrounding hypervisor or NAT, so `pingpublic` is only a best-effort probe.
 - `netcheck` prints the gateway steps separately from the public ICMP probe so a `1.1.1.1` timeout does not imply the local NAT path is broken
 - `usr/sbin/tcpecho.elf`, `usr/sbin/sockeof.elf`, and `usr/sbin/ftpd.elf` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
 - `tcpecho.elf` listens on `2323` in the guest and is driven by `make socket-parallel-smoke` to verify multiple simultaneous echo clients
@@ -113,11 +113,11 @@ elf_run_named()
 Mouse input is separate from the foreground keyboard consumer path:
 
 ```text
-PS/2 mouse IRQ12
+Mouse IRQ12
   ↓
 mouse_handle_irq()
   ↓
-decode 3-byte packet → accumulate dx/dy/buttons
+decode PS/2 packet or VMware event → accumulate dx/dy/buttons
   ↓
 SYS_MOUSE_READ copies state to userland and clears dx/dy
 ```

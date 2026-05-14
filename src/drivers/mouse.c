@@ -25,13 +25,41 @@
 #define MOUSE_SAMPLE_RATE 200u
 #define MOUSE_RESOLUTION  3u
 
+#define VMWARE_MAGIC 0x564D5868u
+#define VMWARE_PORT  0x5658u
+
+#define VMWARE_CMD_GET_VERSION        10u
+#define VMWARE_CMD_ABSPOINTER_DATA    39u
+#define VMWARE_CMD_ABSPOINTER_STATUS  40u
+#define VMWARE_CMD_ABSPOINTER_COMMAND 41u
+
+#define VMMOUSE_CMD_ENABLE           0x45414552u
+#define VMMOUSE_CMD_REQUEST_ABSOLUTE 0x53424152u
+#define VMMOUSE_ERROR                0xFFFF0000u
+#define VMMOUSE_RELATIVE_PACKET      0x00010000u
+#define VMMOUSE_LEFT_BUTTON          0x20u
+#define VMMOUSE_RIGHT_BUTTON         0x10u
+#define VMMOUSE_MIDDLE_BUTTON        0x08u
+#define VMMOUSE_ABS_SCALE_SHIFT      6u
+
 static int s_mouse_ready = 0;
+static int s_vmmouse_ready = 0;
 static unsigned char s_packet[3];
 static unsigned int s_packet_pos = 0;
 static int s_dx = 0;
 static int s_dy = 0;
 static unsigned int s_buttons = 0;
 static unsigned int s_sequence = 0;
+static unsigned int s_vmmouse_have_abs = 0;
+static unsigned int s_vmmouse_last_x = 0;
+static unsigned int s_vmmouse_last_y = 0;
+static unsigned int s_irq_count = 0;
+static unsigned int s_byte_count = 0;
+static unsigned int s_aux_status_count = 0;
+static unsigned int s_packet_count = 0;
+static unsigned int s_vmmouse_packet_count = 0;
+static unsigned int s_sync_drop_count = 0;
+static unsigned int s_overflow_drop_count = 0;
 
 static unsigned int irq_save(void) {
     unsigned int flags;
@@ -133,15 +161,178 @@ static int ps2_write_config(unsigned char config) {
     return ps2_write_data(config);
 }
 
+static void vmware_cmd(unsigned int in_bx,
+                       unsigned int in_cx,
+                       unsigned int* out_ax,
+                       unsigned int* out_bx,
+                       unsigned int* out_cx,
+                       unsigned int* out_dx) {
+    unsigned int ax = VMWARE_MAGIC;
+    unsigned int bx = in_bx;
+    unsigned int cx = in_cx;
+    unsigned int dx = VMWARE_PORT;
+
+    __asm__ __volatile__(
+        "inl %%dx, %%eax"
+        : "+a"(ax), "+b"(bx), "+c"(cx), "+d"(dx)
+        :
+        : "memory");
+
+    if (out_ax) *out_ax = ax;
+    if (out_bx) *out_bx = bx;
+    if (out_cx) *out_cx = cx;
+    if (out_dx) *out_dx = dx;
+}
+
+static int vmware_backdoor_available(void) {
+    unsigned int ax;
+    unsigned int bx;
+
+    vmware_cmd(~VMWARE_MAGIC, VMWARE_CMD_GET_VERSION, &ax, &bx, 0, 0);
+    return bx == VMWARE_MAGIC && ax != 0xFFFFFFFFu;
+}
+
+static void vmmouse_command(unsigned int command) {
+    vmware_cmd(command, VMWARE_CMD_ABSPOINTER_COMMAND, 0, 0, 0, 0);
+}
+
+static unsigned int vmmouse_status(void) {
+    unsigned int ax;
+
+    vmware_cmd(0, VMWARE_CMD_ABSPOINTER_STATUS, &ax, 0, 0, 0);
+    return ax;
+}
+
+static void vmmouse_data(unsigned int words,
+                         unsigned int* status,
+                         unsigned int* x,
+                         unsigned int* y,
+                         unsigned int* z) {
+    vmware_cmd(words, VMWARE_CMD_ABSPOINTER_DATA, status, x, y, z);
+}
+
+static int vmmouse_init(void) {
+    unsigned int status;
+    unsigned int x;
+    unsigned int y;
+    unsigned int z;
+
+    if (!vmware_backdoor_available()) {
+        return 0;
+    }
+
+    vmmouse_command(VMMOUSE_CMD_ENABLE);
+    (void)vmmouse_status();
+    vmmouse_data(1u, &status, &x, &y, &z);
+    (void)status;
+    (void)x;
+    (void)y;
+    (void)z;
+    vmmouse_command(VMMOUSE_CMD_REQUEST_ABSOLUTE);
+    return 1;
+}
+
+static unsigned int vmmouse_buttons_to_ps2(unsigned int status) {
+    unsigned int buttons = 0;
+
+    if (status & VMMOUSE_LEFT_BUTTON) buttons |= SYS_MOUSE_BUTTON_LEFT;
+    if (status & VMMOUSE_RIGHT_BUTTON) buttons |= SYS_MOUSE_BUTTON_RIGHT;
+    if (status & VMMOUSE_MIDDLE_BUTTON) buttons |= SYS_MOUSE_BUTTON_MIDDLE;
+    return buttons;
+}
+
+static int vmmouse_scaled_delta(unsigned int now, unsigned int last) {
+    int delta = (int)now - (int)last;
+
+    if (delta >= 0) {
+        return delta >> VMMOUSE_ABS_SCALE_SHIFT;
+    }
+    return -(((-delta) >> VMMOUSE_ABS_SCALE_SHIFT));
+}
+
+static int vmmouse_drain_events(void) {
+    unsigned int status;
+    unsigned int queue_length;
+    unsigned int x;
+    unsigned int y;
+    unsigned int z;
+    unsigned int old_buttons;
+    unsigned int new_buttons;
+    unsigned int processed = 0;
+
+    for (unsigned int i = 0; i < 255u; i++) {
+        status = vmmouse_status();
+        if ((status & VMMOUSE_ERROR) == VMMOUSE_ERROR) {
+            s_vmmouse_ready = 0;
+            return processed != 0u;
+        }
+
+        queue_length = status & 0xFFFFu;
+        if (queue_length < 4u) {
+            return processed != 0u;
+        }
+
+        vmmouse_data(4u, &status, &x, &y, &z);
+        old_buttons = s_buttons;
+        new_buttons = vmmouse_buttons_to_ps2(status);
+
+        if (status & VMMOUSE_RELATIVE_PACKET) {
+            int dx = (int)x;
+            int dy = -((int)y);
+
+            s_dx += dx;
+            s_dy += dy;
+            s_buttons = new_buttons;
+            s_sequence++;
+            s_packet_count++;
+            s_vmmouse_packet_count++;
+            input_push_mouse_event(dx, dy, s_buttons, old_buttons ^ s_buttons);
+        } else {
+            int dx = 0;
+            int dy = 0;
+
+            if (s_vmmouse_have_abs) {
+                dx = vmmouse_scaled_delta(x, s_vmmouse_last_x);
+                dy = vmmouse_scaled_delta(y, s_vmmouse_last_y);
+            }
+            s_vmmouse_last_x = x;
+            s_vmmouse_last_y = y;
+            s_vmmouse_have_abs = 1;
+
+            s_dx += dx;
+            s_dy += dy;
+            s_buttons = new_buttons;
+            s_sequence++;
+            s_packet_count++;
+            s_vmmouse_packet_count++;
+            input_push_mouse_event(dx, dy, s_buttons, old_buttons ^ s_buttons);
+        }
+        processed++;
+    }
+
+    return processed != 0u;
+}
+
 int mouse_init(void) {
     unsigned char config;
 
     s_mouse_ready = 0;
+    s_vmmouse_ready = 0;
     s_packet_pos = 0;
     s_dx = 0;
     s_dy = 0;
     s_buttons = 0;
     s_sequence = 0;
+    s_vmmouse_have_abs = 0;
+    s_vmmouse_last_x = 0;
+    s_vmmouse_last_y = 0;
+    s_irq_count = 0;
+    s_byte_count = 0;
+    s_aux_status_count = 0;
+    s_packet_count = 0;
+    s_vmmouse_packet_count = 0;
+    s_sync_drop_count = 0;
+    s_overflow_drop_count = 0;
 
     ps2_flush_output();
     if (!ps2_write_command(PS2_CMD_ENABLE_AUX)) {
@@ -167,6 +358,7 @@ int mouse_init(void) {
 
     ps2_flush_output();
     s_mouse_ready = 1;
+    s_vmmouse_ready = vmmouse_init();
     return 1;
 }
 
@@ -182,16 +374,26 @@ void mouse_handle_irq(void) {
     int event_dy;
     unsigned int old_buttons;
 
+    s_irq_count++;
     if ((status & PS2_STATUS_OUT) == 0) {
         return;
     }
 
     data = inb(PS2_DATA);
-    if (!s_mouse_ready || (status & PS2_STATUS_AUX) == 0) {
+    s_byte_count++;
+    if (status & PS2_STATUS_AUX) {
+        s_aux_status_count++;
+    }
+    if (!s_mouse_ready) {
+        return;
+    }
+
+    if (s_vmmouse_ready && vmmouse_drain_events()) {
         return;
     }
 
     if (s_packet_pos == 0 && (data & 0x08u) == 0) {
+        s_sync_drop_count++;
         return;
     }
 
@@ -202,6 +404,7 @@ void mouse_handle_irq(void) {
     s_packet_pos = 0;
 
     if (s_packet[0] & 0xC0u) {
+        s_overflow_drop_count++;
         return;
     }
 
@@ -217,6 +420,7 @@ void mouse_handle_irq(void) {
     s_dy += event_dy;
     s_buttons = s_packet[0] & 0x07u;
     s_sequence++;
+    s_packet_count++;
     input_push_mouse_event(dx, event_dy, s_buttons, old_buttons ^ s_buttons);
 }
 
@@ -236,4 +440,23 @@ int mouse_read_state(sys_mouse_state_t* out) {
     s_dy = 0;
     irq_restore(flags);
     return 1;
+}
+
+void mouse_debug_snapshot(mouse_debug_state_t* out) {
+    unsigned int flags;
+
+    if (!out) {
+        return;
+    }
+
+    flags = irq_save();
+    out->irq_count = s_irq_count;
+    out->byte_count = s_byte_count;
+    out->aux_status_count = s_aux_status_count;
+    out->packet_count = s_packet_count;
+    out->vmware_packet_count = s_vmmouse_packet_count;
+    out->sync_drop_count = s_sync_drop_count;
+    out->overflow_drop_count = s_overflow_drop_count;
+    out->vmware_enabled = (unsigned int)s_vmmouse_ready;
+    irq_restore(flags);
 }

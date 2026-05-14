@@ -10,7 +10,6 @@
 #define ARP_PTYPE_IPV4     0x0800u
 #define ARP_OP_REQUEST     0x0001u
 #define ARP_OP_REPLY       0x0002u
-#define ARP_LOCAL_IP       0x0A00020Fu  /* 10.0.2.15 */
 
 #define ARP_FRAME_SIZE     42u
 #define ARP_MAX_POLL_COUNT 200u
@@ -46,6 +45,7 @@ static u32 arp_read_u32_be(const u8* buf, u32 off) {
 static void arp_reply(const u8* frame) {
     u8 reply[ARP_FRAME_SIZE];
     const u8* src_mac = e1000_mac();
+    u32 local_ip = net_ipv4_local_ip();
 
     k_memset(reply, 0, sizeof(reply));
 
@@ -64,7 +64,7 @@ static void arp_reply(const u8* frame) {
     for (unsigned int i = 0; i < 6; i++) {
         reply[22 + i] = src_mac[i];
     }
-    arp_write_u32_be(reply, 28, ARP_LOCAL_IP);
+    arp_write_u32_be(reply, 28, local_ip);
 
     for (unsigned int i = 0; i < 6; i++) {
         reply[32 + i] = frame[22 + i];
@@ -214,7 +214,7 @@ int arp_handle_frame(const u8* frame, u32 len) {
     if (arp_read_u16_be(frame, 20) != ARP_OP_REQUEST) {
         return 0;
     }
-    if (arp_read_u32_be(frame, 38) != ARP_LOCAL_IP) {
+    if (!net_ipv4_is_configured() || arp_read_u32_be(frame, 38) != net_ipv4_local_ip()) {
         return 0;
     }
 

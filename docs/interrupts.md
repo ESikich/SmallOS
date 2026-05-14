@@ -39,7 +39,7 @@ idt_set_gate(vector, handler, 0x08, flags);
 8    → ISR8 (double fault)
 32   → IRQ0 (timer)
 33   → IRQ1 (keyboard)
-44   → IRQ12 (PS/2 mouse)
+44   → IRQ12 (mouse)
 128  → syscall (int 0x80)
 ```
 
@@ -76,12 +76,13 @@ popa
 iretd
 ```
 
-## IRQ12 stub (PS/2 mouse) — same ESP-passing pattern
+## IRQ12 stub (mouse) — same ESP-passing pattern
 
 `irq12_stub` mirrors the timer/syscall ESP-passing shape so the C handler can
 share the same interrupt-frame convention if it needs it later. The current
-mouse handler does not schedule; it acknowledges the PICs and decodes one PS/2
-packet byte.
+mouse handler does not schedule; it acknowledges the PICs, consumes the PS/2
+controller byte, and then either decodes standard PS/2 packets or drains the
+VMware absolute-pointer queue when available.
 
 ```asm
 pusha
@@ -208,13 +209,14 @@ void irq12_handler_main(unsigned int esp) {
 
 The mouse IRQ arrives through the slave PIC, so the handler sends EOI to both
 PIC2 and PIC1 before decoding. `mouse_handle_irq()` consumes PS/2 auxiliary
-bytes from port `0x60`, syncs on standard 3-byte packets, accumulates signed
-relative movement, tracks the low three button bits, and increments a sequence
-counter for complete packets.
+bytes from port `0x60`, syncs on standard 3-byte packets, and drains VMware
+absolute-pointer packets through the VMware backdoor when present. Both paths
+accumulate signed relative movement, track button bits, and increment a
+sequence counter for decoded events.
 
 Userland reads this state through `SYS_MOUSE_READ`, which returns accumulated
-`dx`/`dy` and clears those movement counters. There is no mouse event queue
-yet; graphics demos poll the syscall when they are ready to redraw.
+`dx`/`dy` and clears those movement counters. Code that wants queued keyboard
+and mouse events together can use `SYS_INPUT_READ`.
 
 ---
 

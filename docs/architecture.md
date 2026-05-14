@@ -49,7 +49,8 @@ kernel_main()
   sched_init()      ← initialise runnable task table
   ata_init()        ← software reset ATA primary channel, verify ready
   pci_init()        ← scan PCI config space and log network controllers
-  e1000_init()      ← bind the Intel 82540EM NIC and set up DMA rings
+  e1000_init()      ← bind a supported Intel PRO/1000 NIC and set up DMA rings
+  dhcp_configure()  ← acquire IPv4 address, netmask, gateway, DNS, and lease
   tcp_init()        ← start TCP/network service task
   ntp_sync()        ← set CLOCK_REALTIME and print synchronized UTC time
   ext2_init()       ← read MBR entry 1, validate ext2 superblock and geometry
@@ -124,15 +125,16 @@ Inside `kernel_main()`:
 9. `sched_init()` — initialise the scheduler data structures
 10. `ata_init()` — software reset ATA primary channel (`0x1F0`), poll until ready
 11. `pci_init()` — scan PCI config space and log discovered network controllers
-12. `e1000_init()` — bind the Intel 82540EM NIC and set up DMA rings
-13. `tcp_init()` — create and enqueue the TCP/network service kernel task
-14. `ntp_sync()` — briefly enables interrupts so PIT-backed timeout logic works, queries the default NTP server through UDP over the e1000 path, sets `CLOCK_REALTIME`, and prints the synchronized UTC time. Failure is a boot warning, not a halt.
-15. `ext2_init()` — read ATA sector 0, extract the ext2 start LBA from partition entry 1 in the MBR partition table, then read and validate the ext2 superblock at that runtime-discovered location; after this succeeds, the accumulated boot log is saved to `/var/log/boot.log`
-16. `process_create_kernel_task("bootseq", ...)` — create the post-diagnostics boot sequence task. `bootseq` runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, prints `SmallOS ready`, refreshes `/var/log/boot.log`, and queues the shell. A future login task can replace the shell launch here without changing the early boot checks.
-17. `sched_enqueue(boot_proc)` — make the boot sequence task runnable
-18. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
-19. `sti` — enable interrupts
-20. `sched_start(shell_proc)` — switch from the boot stack into the shell task
+12. `e1000_init()` — bind a supported Intel PRO/1000 NIC and set up DMA rings
+13. `dhcp_configure()` — briefly enables interrupts and requests IPv4 configuration from the attached network. The runtime network config is shared by ARP, TCP, NTP, and shell diagnostics.
+14. `tcp_init()` — create and enqueue the TCP/network service kernel task
+15. `ntp_sync()` — briefly enables interrupts so PIT-backed timeout logic works, queries the default NTP server through UDP over the e1000 path and DHCP gateway, sets `CLOCK_REALTIME`, and prints the synchronized UTC time. Failure is a boot warning, not a halt.
+16. `ext2_init()` — read ATA sector 0, extract the ext2 start LBA from partition entry 1 in the MBR partition table, then read and validate the ext2 superblock at that runtime-discovered location; after this succeeds, the accumulated boot log is saved to `/var/log/boot.log`
+17. `process_create_kernel_task("bootseq", ...)` — create the post-diagnostics boot sequence task. `bootseq` runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, prints `SmallOS ready`, refreshes `/var/log/boot.log`, and queues the shell. A future login task can replace the shell launch here without changing the early boot checks.
+18. `sched_enqueue(boot_proc)` — make the boot sequence task runnable
+19. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
+20. `sti` — enable interrupts
+21. `sched_start(shell_proc)` — switch from the boot stack into the shell task
 
 `sched_init()` must still be called before `sti`, and `sched_start()` must happen only after the first runnable task has been created.
 
@@ -363,7 +365,7 @@ reaper task (permanent kernel task):
 8    → ISR8 (double fault — VGA marker '8' white-on-red at row 1 col 12 + halt)
 32   → IRQ0 (timer, DPL=0)
 33   → IRQ1 (keyboard, DPL=0)
-44   → IRQ12 (PS/2 mouse, DPL=0)
+44   → IRQ12 (mouse, DPL=0)
 128  → syscall int 0x80 (DPL=3 — callable from ring 3)
 ```
 
@@ -483,10 +485,11 @@ The active consumer is managed by `keyboard_set_consumer()`:
 The keyboard driver makes no routing decisions. It decodes scancodes and calls whoever is registered.
 
 Mouse input is intentionally lower-level today. `mouse.c` initializes the PS/2
-auxiliary port, decodes 3-byte relative-motion packets on IRQ12, and stores
-accumulated `dx`/`dy` plus button bits. User programs call `SYS_MOUSE_READ` to
-copy and clear the accumulated movement. There is no unified keyboard/mouse
-event queue yet.
+auxiliary port, decodes 3-byte relative-motion packets on IRQ12, and also
+drains VMware absolute-pointer events when the VMware backdoor is present.
+Both paths store accumulated `dx`/`dy` plus button bits. User programs can call
+`SYS_MOUSE_READ` to copy and clear the accumulated movement, or use
+`SYS_INPUT_READ` when they want queued keyboard and mouse events together.
 
 ---
 
@@ -768,7 +771,7 @@ clean process exit via `PROCESS_STATE_ZOMBIE` transition and later reap from a s
 physical memory manager (bitmap, all frames reclaimed on exit — no leak)
 per-process kernel stacks (PMM frame per process, freed on exit)
 SYS_READ / fd 0 — true blocking keyboard input through the console handle: parks process in PROCESS_STATE_WAITING, woken by keyboard IRQ via process_key_consumer()
-SYS_MOUSE_READ — polling PS/2 mouse state for graphics demos: returns accumulated relative deltas/buttons and clears the movement counters
+SYS_MOUSE_READ — polling mouse state for graphics demos: returns accumulated relative deltas/buttons and clears the movement counters
 SYS_YIELD — voluntary preemption via sched_yield_now()
 SYS_SLEEP — timed sleep: parks process in PROCESS_STATE_SLEEPING and wakes via the timer IRQ once the deadline is reached
 SYS_EXEC / SYS_FORK / SYS_EXECVE / SYS_WAITPID / SYS_KILL — legacy async ELF spawn plus POSIX-shaped fork/replace; userland can collect exit/signal status or terminate a child by pid

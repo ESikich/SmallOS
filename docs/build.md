@@ -106,6 +106,118 @@ The default `DISPLAY_BACKEND=auto` image remains `build/img/os-image.bin`.
 Backend-specific forced-VGA builds write `build/img/vga/os-image.bin`, while
 their objects and binaries stay under `build/obj/vga` and `build/bin/vga`.
 
+## VMware ESXi VMDK
+
+`make esxi-vmdk` first refreshes the matching non-serial QEMU image and runs
+the finished-image layout check, then builds a serial-console image and converts
+it to an IDE monolithic sparse VMDK:
+
+```bash
+make esxi-vmdk
+```
+
+The default artifact is:
+
+```text
+build/img/esxi/auto-serial/smallos-esxi.vmdk
+```
+
+The default QEMU artifact is also kept current:
+
+```text
+build/img/os-image.bin
+```
+
+By default the ESXi raw disk uses the assembled SmallOS image size. To pad the
+raw disk before VMDK conversion, pass `ESXI_VMDK_SIZE`, for example:
+
+```bash
+make esxi-vmdk ESXI_VMDK_SIZE=64M
+```
+
+Use `DISPLAY_BACKEND=vga` when a VMware console cannot display the VBE
+framebuffer path early enough:
+
+```bash
+make esxi-vmdk DISPLAY_BACKEND=vga
+```
+
+The ESXi baseline VM should use legacy BIOS boot, an IDE disk, at least 32 MB
+of RAM, and an e1000 virtual NIC. The SmallOS e1000 driver binds both QEMU's
+Intel 82540EM device (`8086:100E`) and VMware's Intel 82545EM-style device
+(`8086:100F`). Keep `usb.present = "FALSE"` and avoid manual `mouse.*` or
+`vmmouse.*` VMX overrides on ESXi 6.7; SmallOS handles VMware absolute-pointer
+events in the mouse driver and converts them into the normal `SYS_MOUSE_READ`
+relative deltas. Serial logging is recommended because the browser console may
+miss short framebuffer transitions during boot.
+
+To import the generated VMDK on an ESXi datastore, upload it next to the VM and
+clone it into VMFS format:
+
+```sh
+cd /vmfs/volumes/datastore1/SmallOS
+vmkfstools -i smallos-esxi.vmdk smallos-esxi-vmfs.vmdk -d thin
+```
+
+The helper script automates the local build, upload, and remote `vmkfstools`
+import over SSH:
+
+```bash
+ESXI_HOST=10.10.0.13 tools/deploy_esxi.sh --force
+```
+
+For password-based ESXi SSH, put the password in `ESXI_PASSWORD`. The script
+uses `sshpass -e` when that variable is present:
+
+```bash
+ESXI_HOST=10.10.0.13 ESXI_PASSWORD='...' tools/deploy_esxi.sh --force
+```
+
+Or through make:
+
+```bash
+make esxi-deploy ESXI_DEPLOY_FLAGS="--host 10.10.0.13 --force"
+```
+
+To also replace the VM's IDE `0:0` disk and power it back on, pass
+`--attach-and-reboot`. The script finds the VM by inventory name, defaulting to
+`--vm-dir`/`SmallOS`:
+
+```bash
+ESXI_PASSWORD='...' tools/deploy_esxi.sh --host 10.10.0.13 --force --attach-and-reboot
+```
+
+The VM lifecycle flow is: upload the VMDK, find the VM, power it off if needed,
+remove the configured disk slot without deleting its backing file, import the
+new VMFS VMDK, attach it at the configured slot, reload the VM, and power it on.
+
+Useful options include `--datastore`, `--vm-dir`, `--display-backend vga`,
+`--password-env`, `--vm-name`, `--disk-controller`, `--disk-unit`,
+`--controller-type`, `--skip-build`, and `--dry-run`.
+
+Attach the cloned VMFS VMDK to the VM as an IDE disk, reload the VM if needed,
+and boot from disk. The serial log should reach `SmallOS ready`.
+
+For day-to-day VMware checks, use the serial-log helper. It resolves
+`serial0.fileName` from the VMX unless `--serial-file` is provided:
+
+```bash
+make esxi-serial-log ESXI_SERIAL_FLAGS="--host 10.10.0.13 --tail"
+make esxi-serial-log ESXI_SERIAL_FLAGS="--host 10.10.0.13 --follow"
+```
+
+The ESXi smoke helper clears the serial log, deploys the current serial VMDK,
+replaces IDE `0:0`, powers the VM back on, waits for `SmallOS ready`, and checks
+the VMware-relevant boot transcript markers:
+
+```bash
+make esxi-smoke ESXI_SMOKE_FLAGS="--host 10.10.0.13"
+```
+
+It expects the baseline VM shape above. Use `--skip-deploy` when you only want
+to validate the current serial log, or `--display-backend vga` to smoke the
+forced VGA image.
+
 `make verify` is the standard preflight target: it runs both layout checks,
 then `make test`, then `make smoke`. The heavier suites are grouped
 separately: `make verify-display` runs the framebuffer/VGA visual smoke checks,
@@ -202,10 +314,11 @@ It holds 32 clients by default. Override `CSERVE_SMOKE_CLIENTS` or
 `CSERVE_SMOKE_PORT` when needed.
 
 For networking, the default `run` and `test` targets keep using QEMU's
-user-network NAT so CI stays simple. `make run-tap` and
-`make run-headless-tap` switch the e1000 NIC over to a host TAP device
-instead. That is the right path when you want the guest on a bridged LAN
-or otherwise reachable beyond QEMU's built-in NAT layer.
+user-network NAT so CI stays simple. The guest still uses DHCP in that mode,
+so the old QEMU `10.0.2.15/24` address is no longer hardcoded in the kernel.
+`make run-tap` and `make run-headless-tap` switch the e1000 NIC over to a host
+TAP device instead. That is the right path when you want the guest on a bridged
+LAN or otherwise reachable beyond QEMU's built-in NAT layer.
 
 For interactive display/input, `make run` defaults to QEMU's curses backend:
 
@@ -506,7 +619,7 @@ Shipped ext2 programs:
 - `boot/splash.bmp` - splash BMP copied from `assets/boot_splash.bmp`
 - `usr/bin/hello` - print argc/argv and tick count
 - `usr/bin/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
-- `usr/bin/mandel` - interactive Mandelbrot demo with arrow-key pan, +/- zoom, reset/quit keys, and PS/2 mouse cursor movement
+- `usr/bin/mandel` - interactive Mandelbrot demo with arrow-key pan, +/- zoom, reset/quit keys, and mouse cursor movement
 - `usr/libexec/tests/ticks` - print the current tick count
 - `usr/libexec/tests/args` - print argc and argv
 - `usr/libexec/tests/runelf_test` - verify ELF loading, syscalls, and stack setup
@@ -828,8 +941,7 @@ fails.
 
 # Future Improvements
 
-* TAP-mode coverage for outbound TCP `connect()` in addition to the default
-  QEMU user-network smoke
+* Broader DHCP coverage such as renewal and lease expiry handling
 * Broader TCP close-state fuzzing beyond the focused EOF smoke
 * Richer filesystem metadata such as long filenames or permission bits
 * Environment-variable support for the hosted `main(argc, argv)` runtime path

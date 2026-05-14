@@ -31,10 +31,10 @@ guest.
   `/bin`, `/usr/bin`, `/usr/sbin`, `/usr/libexec/tests`, `/etc`, `/boot`,
   `/var`, and `/tmp`, with boot diagnostics persisted at `/var/log/boot.log`.
 - Framebuffer terminal with VGA text fallback, graphical boot splash, PS/2
-  keyboard and mouse input, and several graphics demos.
-- PCI and e1000 networking with ARP, IPv4, UDP/NTP clock sync, a compact TCP
-  service task, passive sockets, `poll`/`epoll` readiness, FTP, echo, and HTTP
-  server smoke paths.
+  keyboard, PS/2 plus VMware mouse input, and several graphics demos.
+- PCI and e1000 networking with DHCP, ARP, IPv4, UDP/NTP clock sync, a compact
+  TCP service task, passive sockets, `poll`/`epoll` readiness, FTP, echo, and
+  HTTP server smoke paths.
 - Guest userland includes familiar commands such as `ls`, `tree`, `cat`,
   `more`, `pwd`, `touch`, `mkdir`, `rm`, `cp`, `mv`, `edit`, `date`,
   `uptime`, `halt`, and `reboot`, plus diagnostics and demos.
@@ -92,10 +92,10 @@ make run-gtk   # graphical GTK display
 make run-sdl   # graphical SDL display
 ```
 
-`make run` uses QEMU user-network NAT with an e1000 NIC. If terminal input
-feels sluggish through curses, use `make run-gtk` or `make run QEMU_DISPLAY=gtk`.
-Mouse-driven graphics demos need a graphical QEMU backend and a grabbed QEMU
-window.
+`make run` uses QEMU user-network NAT with an e1000 NIC, and the guest acquires
+its IPv4 configuration with DHCP. If terminal input feels sluggish through
+curses, use `make run-gtk` or `make run QEMU_DISPLAY=gtk`. Mouse-driven
+graphics demos need a graphical QEMU backend and a grabbed QEMU window.
 
 Headless run with serial logging:
 
@@ -152,6 +152,16 @@ sudo ip addr add 192.168.100.1/24 dev tap0
 
 Bridge or route that interface if the guest should reach beyond the host.
 
+VMware ESXi deploys use a serial-console VMDK and the same DHCP/e1000 path:
+
+```bash
+make esxi-smoke ESXI_SMOKE_FLAGS="--host 10.10.0.13"
+```
+
+That target builds, uploads, replaces the VM disk, reboots, waits for
+`SmallOS ready`, and checks the VMware boot markers. See `docs/build.md` for
+the baseline VM shape and lower-level deploy/log helpers.
+
 ## Verification
 
 Fast regression path:
@@ -197,7 +207,7 @@ make cserve-smoke
 ├── samples/         files seeded into the guest filesystem
 ├── src/
 │   ├── boot/        BIOS stage 1, stage 2, kernel entry, ELF embedding helper
-│   ├── drivers/     display, input, disk, ext2, PCI, e1000, net/TCP/NTP
+│   ├── drivers/     display, input, disk, ext2, PCI, e1000, DHCP/net/TCP/NTP
 │   ├── exec/        ELF loader
 │   ├── kernel/      memory, paging, process, scheduler, syscall, VFS, time
 │   ├── shell/       shell, parser, line editor, built-in commands

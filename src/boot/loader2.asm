@@ -80,6 +80,7 @@ start:
     mov si, kernel_loaded_msg
     call print_string
 
+    call enable_a20
 %if FORCE_VGA_BACKEND
     call vga_setup
 %else
@@ -102,6 +103,15 @@ print_string:
     jmp .loop
 .done:
     popa
+    ret
+
+enable_a20:
+    push ax
+    in al, 0x92
+    or al, 0x02
+    and al, 0xFE
+    out 0x92, al
+    pop ax
     ret
 
 ; ---------------------------

@@ -271,6 +271,11 @@ framebuffer fields in the boot info block. If any VBE step fails,
 With `DISPLAY_BACKEND=vga`, loader2 keeps BIOS/VGA text mode while still
 collecting E820.
 
+Loader2 enables A20 before switching to protected mode. The kernel immediately
+uses memory above 1 MiB for `.bss` and the boot stack, so relying on BIOS/QEMU
+defaults can triple-fault on firmware that leaves A20 disabled. ESXi is one
+environment where making this explicit matters.
+
 ---
 
 # Kernel Entry – kernel_entry.asm
@@ -396,6 +401,20 @@ The kernel load overwrote loader2 or the generated stage-2 stack mid-transfer. T
 
 BIOS does not support INT 0x13 extensions. Ensure QEMU is not in floppy mode.
 
+## VMware console accepts clicks but not movement
+
+ESXi browser consoles can deliver mouse buttons through the PS/2 IRQ path while
+movement arrives through VMware's absolute-pointer backdoor. SmallOS handles
+that VMware path in `src/drivers/mouse.c` by draining the absolute-pointer queue
+on IRQ12 and converting absolute positions into relative `SYS_MOUSE_READ`
+deltas. Avoid VMX `mouse.*` or `vmmouse.*` overrides on ESXi 6.7 unless you are
+deliberately testing VM configuration; the known-good baseline leaves those
+keys absent and keeps `usb.present = "FALSE"`.
+
+Use the shell command `mousetest` to confirm input delivery. A VMware console
+with working movement should report nonzero `dx`/`dy` events and a summary with
+nonzero `vmware=` packets.
+
 ## "ext2: bad MBR signature", "ext2: MBR partition type mismatch", or "ext2: partition entry not populated"
 
 The partition table is missing, malformed, or the ext2 image was not appended. Check the `mkimage` step in the final image build.
@@ -488,13 +507,16 @@ Stage 2  →  LBA extension check
          →  derive kernel_lba from partition entry 0
          →  load kernel to 0x1000
          →  collect boot info and BIOS E820 memory map at 0x90000
+         →  enable A20
          →  protected mode entry
 Kernel   →  zero BSS
          →  terminal_init, gdt_init, paging_init
          →  memory_init(page-aligned bss_end), pmm_init
          →  keyboard, mouse, timer, idt, sched_init
-         →  ata_init, pci_init, e1000_init, tcp_init
-         →  ntp_sync (best-effort realtime clock sync)
+         →  ata_init, pci_init, e1000_init
+         →  dhcp_configure (best-effort IPv4 lease)
+         →  tcp_init
+         →  ntp_sync (best-effort realtime clock sync through DHCP gateway)
          →  ext2_init, save /var/log/boot.log
          →  create bootseq task and zombie reaper, sti, sched_start
 Bootseq  →  run /bin/bootsplash.elf boot/splash.bmp

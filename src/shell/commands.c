@@ -6,7 +6,9 @@
 #include "boot_info.h"
 #include "pmm.h"
 #include "ata.h"
+#include "dhcp.h"
 #include "e1000.h"
+#include "mouse.h"
 #include "net.h"
 #include "tcp.h"
 #include "arp.h"
@@ -16,6 +18,7 @@
 #include "process.h"
 #include "scheduler.h"
 #include "socket.h"
+#include "timer.h"
 #include "klib.h"
 
 #define SHELL_JOB_MAX 8
@@ -30,6 +33,7 @@ static int command_name_has_path_sep(const char* name);
 static int path_has_dot(const char* path);
 static int path_copy3(char* out, unsigned int out_size, const char* a, const char* b, const char* c);
 static void terminal_put_cwd(void);
+static void terminal_put_int(int value);
 
 typedef struct {
     int used;
@@ -59,6 +63,15 @@ static const char* job_state_name(process_t* proc) {
     default:
         return "unknown";
     }
+}
+
+static void terminal_put_int(int value) {
+    if (value < 0) {
+        terminal_putc('-');
+        terminal_put_uint((unsigned int)(-value));
+        return;
+    }
+    terminal_put_uint((unsigned int)value);
 }
 
 static int parse_uint_arg(const char* s, unsigned int* out) {
@@ -447,6 +460,7 @@ static void cmd_netinfo(command_t* cmd) {
 
     terminal_puts("netinfo: ");
     e1000_print_info();
+    net_ipv4_print_config();
 
     socket_get_stats(&socket_stats);
     terminal_puts("sockets: ");
@@ -527,13 +541,114 @@ static void cmd_netrecv(command_t* cmd) {
     terminal_puts("netrecv: dispatched packet\n");
 }
 
+static void cmd_mousetest(command_t* cmd) {
+    sys_mouse_state_t mouse;
+    mouse_debug_state_t before;
+    mouse_debug_state_t after;
+    unsigned int deadline;
+    unsigned int last_sequence;
+    unsigned int events = 0;
+
+    (void)cmd;
+
+    if (!mouse_read_state(&mouse)) {
+        terminal_puts("mousetest: mouse unavailable\n");
+        return;
+    }
+
+    last_sequence = mouse.sequence;
+    mouse_debug_snapshot(&before);
+    deadline = timer_get_ticks() + timer_ms_to_ticks_round_up(5000u);
+    terminal_puts("mousetest: move/click mouse for 5 seconds\n");
+
+    while ((int)(timer_get_ticks() - deadline) < 0) {
+        if (!mouse_read_state(&mouse)) {
+            terminal_puts("mousetest: mouse became unavailable\n");
+            return;
+        }
+        if (mouse.sequence != last_sequence || mouse.dx != 0 || mouse.dy != 0) {
+            last_sequence = mouse.sequence;
+            events++;
+            terminal_puts("mousetest: seq=");
+            terminal_put_uint(mouse.sequence);
+            terminal_puts(" dx=");
+            terminal_put_int(mouse.dx);
+            terminal_puts(" dy=");
+            terminal_put_int(mouse.dy);
+            terminal_puts(" buttons=");
+            terminal_put_uint(mouse.buttons);
+            terminal_putc('\n');
+        }
+    }
+
+    terminal_puts("mousetest: events=");
+    terminal_put_uint(events);
+    terminal_putc('\n');
+    mouse_debug_snapshot(&after);
+    terminal_puts("mousetest: irq=");
+    terminal_put_uint(after.irq_count - before.irq_count);
+    terminal_puts(" bytes=");
+    terminal_put_uint(after.byte_count - before.byte_count);
+    terminal_puts(" aux=");
+    terminal_put_uint(after.aux_status_count - before.aux_status_count);
+    terminal_puts(" packets=");
+    terminal_put_uint(after.packet_count - before.packet_count);
+    terminal_puts(" vmware=");
+    terminal_put_uint(after.vmware_packet_count - before.vmware_packet_count);
+    terminal_puts(" vmware_on=");
+    terminal_put_uint(after.vmware_enabled);
+    terminal_puts(" syncdrop=");
+    terminal_put_uint(after.sync_drop_count - before.sync_drop_count);
+    terminal_puts(" overflow=");
+    terminal_put_uint(after.overflow_drop_count - before.overflow_drop_count);
+    terminal_putc('\n');
+}
+
+static int net_route_for_target(u32 target_ip, u32* out_sender_ip, u32* out_next_hop) {
+    u32 sender_ip = net_ipv4_local_ip();
+    u32 netmask = net_ipv4_netmask();
+    u32 gateway = net_ipv4_gateway();
+    u32 next_hop = target_ip;
+
+    if (!net_ipv4_is_configured() || sender_ip == 0u) {
+        terminal_puts("net: IPv4 is not configured\n");
+        return 0;
+    }
+
+    if (netmask != 0u && (target_ip & netmask) != (sender_ip & netmask)) {
+        if (gateway == 0u) {
+            terminal_puts("net: no default gateway\n");
+            return 0;
+        }
+        next_hop = gateway;
+    }
+
+    if (out_sender_ip) *out_sender_ip = sender_ip;
+    if (out_next_hop) *out_next_hop = next_hop;
+    return 1;
+}
+
+static void cmd_dhcp(command_t* cmd) {
+    (void)cmd;
+
+    if (!dhcp_configure()) {
+        terminal_puts("dhcp: failed\n");
+        return;
+    }
+    terminal_puts("dhcp: ok\n");
+}
+
 static void cmd_arpgw(command_t* cmd) {
     (void)cmd;
 
-    /* QEMU user networking defaults to 10.0.2.2 as the gateway. */
-    u32 sender_ip = 0x0A00020Fu; /* 10.0.2.15 */
-    u32 target_ip  = 0x0A000202u; /* 10.0.2.2  */
+    u32 sender_ip = net_ipv4_local_ip();
+    u32 target_ip  = net_ipv4_gateway();
     u8 mac[6];
+
+    if (!net_ipv4_is_configured() || sender_ip == 0u || target_ip == 0u) {
+        terminal_puts("arpgw: IPv4 gateway is not configured\n");
+        return;
+    }
 
     terminal_puts("arpgw: who-has ");
     arp_print_ip(target_ip);
@@ -579,61 +694,82 @@ static void cmd_ping_target(const char* label, u32 sender_ip, u32 target_ip, u32
 }
 
 static void cmd_ping(command_t* cmd) {
-    if (cmd->argc < 2) {
-        terminal_puts("usage: ping <ip>\n");
-        return;
-    }
-
+    u32 sender_ip;
+    u32 next_hop;
     u32 target_ip = 0;
-    if (!ipv4_parse_ip(cmd->argv[1], &target_ip)) {
+
+    if (cmd->argc < 2) {
+        target_ip = net_ipv4_gateway();
+        if (target_ip == 0u) {
+            terminal_puts("usage: ping <ip>\n");
+            return;
+        }
+    } else if (!ipv4_parse_ip(cmd->argv[1], &target_ip)) {
         terminal_puts("ping: invalid ip\n");
         return;
     }
 
-    /* QEMU user networking defaults to 10.0.2.15/24 with gateway 10.0.2.2. */
-    cmd_ping_target("ping", 0x0A00020Fu, target_ip, 0x0A000202u);
+    if (!net_route_for_target(target_ip, &sender_ip, &next_hop)) {
+        return;
+    }
+    cmd_ping_target("ping", sender_ip, target_ip, next_hop);
 }
 
 static void cmd_pinggw(command_t* cmd) {
     (void)cmd;
 
-    /* QEMU user networking defaults to 10.0.2.15/24 with gateway 10.0.2.2. */
-    cmd_ping_target("pinggw", 0x0A00020Fu, 0x0A000202u, 0x0A000202u);
+    if (!net_ipv4_is_configured() || net_ipv4_gateway() == 0u) {
+        terminal_puts("pinggw: IPv4 gateway is not configured\n");
+        return;
+    }
+    cmd_ping_target("pinggw", net_ipv4_local_ip(), net_ipv4_gateway(), net_ipv4_gateway());
 }
 
 static void cmd_pingpublic(command_t* cmd) {
+    u32 sender_ip;
+    u32 next_hop;
+
     (void)cmd;
 
-    /* QEMU user networking usually does not forward public ICMP. */
-    cmd_ping_target("pingpublic", 0x0A00020Fu, 0x01010101u, 0x0A000202u);
-    terminal_puts("pingpublic: note: QEMU user networking may not support public ICMP\n");
-    terminal_puts("pingpublic: use pinggw or ping 10.0.2.2 for the supported NAT check\n");
+    if (!net_route_for_target(0x01010101u, &sender_ip, &next_hop)) {
+        return;
+    }
+    cmd_ping_target("pingpublic", sender_ip, 0x01010101u, next_hop);
+    terminal_puts("pingpublic: note: some hypervisors do not forward public ICMP\n");
+    terminal_puts("pingpublic: use pinggw for the supported gateway check\n");
 }
 
 static void cmd_netcheck(command_t* cmd) {
     (void)cmd;
 
     u8 mac[6];
+    u32 sender_ip = net_ipv4_local_ip();
+    u32 gateway_ip = net_ipv4_gateway();
+
+    if (!net_ipv4_is_configured() || sender_ip == 0u || gateway_ip == 0u) {
+        terminal_puts("netcheck: IPv4 gateway is not configured\n");
+        return;
+    }
 
     terminal_puts("netcheck: gateway arp\n");
-    if (!arp_resolve(0x0A00020Fu, 0x0A000202u, mac)) {
+    if (!arp_resolve(sender_ip, gateway_ip, mac)) {
         terminal_puts("netcheck: gateway arp failed\n");
         return;
     }
     terminal_puts("netcheck: gateway arp ok\n");
 
     terminal_puts("netcheck: gateway ping\n");
-    if (!ipv4_ping(0x0A00020Fu, 0x0A000202u)) {
+    if (!ipv4_ping(sender_ip, gateway_ip)) {
         terminal_puts("netcheck: gateway ping failed\n");
         return;
     }
     terminal_puts("netcheck: gateway ping ok\n");
 
     terminal_puts("netcheck: public ping\n");
-    if (!ipv4_ping_via_gateway(0x0A00020Fu, 0x01010101u, 0x0A000202u)) {
+    if (!ipv4_ping_via_gateway(sender_ip, 0x01010101u, gateway_ip)) {
         terminal_puts("netcheck: public ping failed\n");
-        terminal_puts("netcheck: note: QEMU user networking may not support public ICMP\n");
-        terminal_puts("netcheck: gateway is ok; TCP hostfwd smokes are the supported user-net test\n");
+        terminal_puts("netcheck: note: some hypervisors do not forward public ICMP\n");
+        terminal_puts("netcheck: gateway is ok\n");
         return;
     }
     terminal_puts("netcheck: public ping ok\n");
@@ -1097,7 +1233,7 @@ static void cmd_shelltest(command_t* cmd) {
     command_t netsend_cmd = { 1, { "netsend" } };
     command_t netrecv_cmd = { 1, { "netrecv" } };
     command_t arpgw_cmd = { 1, { "arpgw" } };
-    static command_t ping_cmd = { 2, { "ping", "10.0.2.2" } };
+    static command_t ping_cmd = { 1, { "ping" } };
     static command_t pinggw_cmd = { 1, { "pinggw" } };
     static command_t cd_demo_cmd = { 2, { "cd", "usr/bin" } };
     static command_t pwd_demo_cmd = { 1, { "pwd" } };
@@ -1404,12 +1540,14 @@ static command_entry_t commands[] = {
     { "meminfo",       "show heap and frame usage",     cmd_meminfo },
     { "memmap",        "show BIOS E820 memory map",     cmd_memmap },
     { "netinfo",       "show PCI NIC status",          cmd_netinfo },
+    { "dhcp",          "request IPv4 config via DHCP", cmd_dhcp },
     { "netsend",       "queue a test Ethernet frame",  cmd_netsend },
     { "netrecv",       "poll and dispatch one Ethernet frame", cmd_netrecv },
-    { "arpgw",         "resolve the QEMU gateway via ARP", cmd_arpgw },
+    { "mousetest",     "print mouse events for 5 seconds", cmd_mousetest },
+    { "arpgw",         "resolve the IPv4 gateway via ARP", cmd_arpgw },
     { "ping",          "ping an IPv4 address",        cmd_ping },
-    { "pinggw",        "ping the QEMU gateway",         cmd_pinggw },
-    { "pingpublic",    "try public ICMP (often unsupported by QEMU user net)", cmd_pingpublic },
+    { "pinggw",        "ping the IPv4 gateway",       cmd_pinggw },
+    { "pingpublic",    "try public ICMP",             cmd_pingpublic },
     { "netcheck",      "check gateway and public connectivity", cmd_netcheck },
     { "cd",            "change the shell working directory", cmd_cd },
     { "ataread",       "dump raw sector bytes",         cmd_ataread },

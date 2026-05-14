@@ -134,7 +134,7 @@ large inline arrays.
   `POLLHUP` after buffered payload is drained.
 - Closing after a final write sends FIN after queued TX drains.
 - Active-open smoke uses QEMU user networking to reach a host echo endpoint at
-  `10.0.2.2`.
+  QEMU's DHCP-provided gateway, normally `10.0.2.2`.
 
 ## Regression Matrix
 
@@ -169,7 +169,8 @@ Coverage highlights:
 There is no remaining implementation work in the completed socket rollout.
 Later networking work can build on it in these areas:
 
-- TAP-mode outbound `connect()` coverage in addition to QEMU user networking.
+- DHCP-backed outbound `connect()` coverage in QEMU user networking, plus
+  TAP-mode coverage for bridged or routed host setups.
 - Production TCP polish, including broader congestion, window, and recovery
   behavior.
 - Broader close-state and retransmission fuzzing beyond the focused EOF smoke.
