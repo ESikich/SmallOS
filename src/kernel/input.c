@@ -102,12 +102,37 @@ void input_push_key_event(key_event_t ev) {
     input_push_event(&out);
 }
 
-void input_push_mouse_event(int dx, int dy,
+void input_push_mouse_abs_event(int dx, int dy, int wheel,
+                                unsigned int abs_x,
+                                unsigned int abs_y,
+                                unsigned int buttons,
+                                unsigned int button_changes) {
+    sys_input_event_t out;
+
+    if (dx == 0 && dy == 0 && wheel == 0 && button_changes == 0) return;
+
+    k_memset(&out, 0, sizeof(out));
+    out.type = SYS_INPUT_TYPE_MOUSE;
+    out.flags = SYS_INPUT_MOUSE_ABSOLUTE;
+    out.ticks = timer_get_ticks();
+    out.sequence = ++s_sequence;
+    out.dx = dx;
+    out.dy = dy;
+    out.wheel = wheel;
+    out.abs_x = abs_x;
+    out.abs_y = abs_y;
+    out.buttons = buttons;
+    out.button_changes = button_changes;
+
+    input_push_event(&out);
+}
+
+void input_push_mouse_event(int dx, int dy, int wheel,
                             unsigned int buttons,
                             unsigned int button_changes) {
     sys_input_event_t out;
 
-    if (dx == 0 && dy == 0 && button_changes == 0) return;
+    if (dx == 0 && dy == 0 && wheel == 0 && button_changes == 0) return;
 
     k_memset(&out, 0, sizeof(out));
     out.type = SYS_INPUT_TYPE_MOUSE;
@@ -115,6 +140,7 @@ void input_push_mouse_event(int dx, int dy,
     out.sequence = ++s_sequence;
     out.dx = dx;
     out.dy = dy;
+    out.wheel = wheel;
     out.buttons = buttons;
     out.button_changes = button_changes;
 

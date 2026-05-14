@@ -20,10 +20,13 @@
 #define MOUSE_CMD_SET_RESOLUTION  0xE8
 #define MOUSE_CMD_SET_SCALING_1_1 0xE6
 #define MOUSE_CMD_SET_DEFAULTS    0xF6
+#define MOUSE_CMD_GET_DEVICE_ID   0xF2
 #define MOUSE_CMD_ENABLE_STREAM   0xF4
 
 #define MOUSE_SAMPLE_RATE 200u
 #define MOUSE_RESOLUTION  3u
+#define MOUSE_PACKET_STANDARD 3u
+#define MOUSE_PACKET_WHEEL    4u
 
 #define VMWARE_MAGIC 0x564D5868u
 #define VMWARE_PORT  0x5658u
@@ -44,15 +47,20 @@
 
 static int s_mouse_ready = 0;
 static int s_vmmouse_ready = 0;
-static unsigned char s_packet[3];
+static unsigned char s_packet[4];
 static unsigned int s_packet_pos = 0;
+static unsigned int s_packet_size = MOUSE_PACKET_STANDARD;
+static unsigned int s_device_id = 0;
 static int s_dx = 0;
 static int s_dy = 0;
+static int s_wheel = 0;
 static unsigned int s_buttons = 0;
 static unsigned int s_sequence = 0;
 static unsigned int s_vmmouse_have_abs = 0;
 static unsigned int s_vmmouse_last_x = 0;
 static unsigned int s_vmmouse_last_y = 0;
+static int s_vmmouse_rem_x = 0;
+static int s_vmmouse_rem_y = 0;
 static unsigned int s_irq_count = 0;
 static unsigned int s_byte_count = 0;
 static unsigned int s_aux_status_count = 0;
@@ -141,6 +149,26 @@ static int mouse_write(unsigned char command) {
 
 static int mouse_write_arg(unsigned char command, unsigned char value) {
     return mouse_write(command) && mouse_write(value);
+}
+
+static int mouse_get_device_id(unsigned char* id) {
+    if (!id) {
+        return 0;
+    }
+    if (!ps2_write_command(PS2_CMD_WRITE_AUX)) {
+        return 0;
+    }
+    if (!ps2_write_data(MOUSE_CMD_GET_DEVICE_ID)) {
+        return 0;
+    }
+    if (!ps2_wait_read() || inb(PS2_DATA) != MOUSE_ACK) {
+        return 0;
+    }
+    if (!ps2_wait_read()) {
+        return 0;
+    }
+    *id = inb(PS2_DATA);
+    return 1;
 }
 
 static int ps2_read_config(unsigned char* config) {
@@ -241,13 +269,31 @@ static unsigned int vmmouse_buttons_to_ps2(unsigned int status) {
     return buttons;
 }
 
-static int vmmouse_scaled_delta(unsigned int now, unsigned int last) {
+static int vmmouse_scaled_delta(unsigned int now, unsigned int last, int* remainder) {
     int delta = (int)now - (int)last;
+    int total;
+    int scaled;
 
-    if (delta >= 0) {
-        return delta >> VMMOUSE_ABS_SCALE_SHIFT;
+    total = delta + *remainder;
+    if (total >= 0) {
+        scaled = total >> VMMOUSE_ABS_SCALE_SHIFT;
+    } else {
+        scaled = -(((-total) >> VMMOUSE_ABS_SCALE_SHIFT));
     }
-    return -(((-delta) >> VMMOUSE_ABS_SCALE_SHIFT));
+    *remainder = total - scaled * (1 << VMMOUSE_ABS_SCALE_SHIFT);
+    return scaled;
+}
+
+static int sign_extend8(unsigned int value) {
+    int out = (int)(value & 0xFFu);
+    if (out & 0x80) out -= 256;
+    return out;
+}
+
+static int sign_extend4(unsigned int value) {
+    int out = (int)(value & 0x0Fu);
+    if (out & 0x08) out -= 16;
+    return out;
 }
 
 static int vmmouse_drain_events(void) {
@@ -259,6 +305,7 @@ static int vmmouse_drain_events(void) {
     unsigned int old_buttons;
     unsigned int new_buttons;
     unsigned int processed = 0;
+    int wheel;
 
     for (unsigned int i = 0; i < 255u; i++) {
         status = vmmouse_status();
@@ -275,6 +322,7 @@ static int vmmouse_drain_events(void) {
         vmmouse_data(4u, &status, &x, &y, &z);
         old_buttons = s_buttons;
         new_buttons = vmmouse_buttons_to_ps2(status);
+        wheel = -sign_extend8(z);
 
         if (status & VMMOUSE_RELATIVE_PACKET) {
             int dx = (int)x;
@@ -282,18 +330,21 @@ static int vmmouse_drain_events(void) {
 
             s_dx += dx;
             s_dy += dy;
+            s_vmmouse_rem_x = 0;
+            s_vmmouse_rem_y = 0;
+            s_wheel += wheel;
             s_buttons = new_buttons;
             s_sequence++;
             s_packet_count++;
             s_vmmouse_packet_count++;
-            input_push_mouse_event(dx, dy, s_buttons, old_buttons ^ s_buttons);
+            input_push_mouse_event(dx, dy, wheel, s_buttons, old_buttons ^ s_buttons);
         } else {
             int dx = 0;
             int dy = 0;
 
             if (s_vmmouse_have_abs) {
-                dx = vmmouse_scaled_delta(x, s_vmmouse_last_x);
-                dy = vmmouse_scaled_delta(y, s_vmmouse_last_y);
+                dx = vmmouse_scaled_delta(x, s_vmmouse_last_x, &s_vmmouse_rem_x);
+                dy = vmmouse_scaled_delta(y, s_vmmouse_last_y, &s_vmmouse_rem_y);
             }
             s_vmmouse_last_x = x;
             s_vmmouse_last_y = y;
@@ -301,11 +352,13 @@ static int vmmouse_drain_events(void) {
 
             s_dx += dx;
             s_dy += dy;
+            s_wheel += wheel;
             s_buttons = new_buttons;
             s_sequence++;
             s_packet_count++;
             s_vmmouse_packet_count++;
-            input_push_mouse_event(dx, dy, s_buttons, old_buttons ^ s_buttons);
+            input_push_mouse_abs_event(dx, dy, wheel, x, y,
+                                       s_buttons, old_buttons ^ s_buttons);
         }
         processed++;
     }
@@ -315,17 +368,23 @@ static int vmmouse_drain_events(void) {
 
 int mouse_init(void) {
     unsigned char config;
+    unsigned char device_id = 0;
 
     s_mouse_ready = 0;
     s_vmmouse_ready = 0;
     s_packet_pos = 0;
+    s_packet_size = MOUSE_PACKET_STANDARD;
+    s_device_id = 0;
     s_dx = 0;
     s_dy = 0;
+    s_wheel = 0;
     s_buttons = 0;
     s_sequence = 0;
     s_vmmouse_have_abs = 0;
     s_vmmouse_last_x = 0;
     s_vmmouse_last_y = 0;
+    s_vmmouse_rem_x = 0;
+    s_vmmouse_rem_y = 0;
     s_irq_count = 0;
     s_byte_count = 0;
     s_aux_status_count = 0;
@@ -349,8 +408,28 @@ int mouse_init(void) {
     }
 
     if (!mouse_write(MOUSE_CMD_SET_DEFAULTS) ||
-        !mouse_write(MOUSE_CMD_SET_SCALING_1_1) ||
-        !mouse_write_arg(MOUSE_CMD_SET_SAMPLE_RATE, MOUSE_SAMPLE_RATE) ||
+        !mouse_write(MOUSE_CMD_SET_SCALING_1_1)) {
+        return 0;
+    }
+
+    if (mouse_write_arg(MOUSE_CMD_SET_SAMPLE_RATE, 200u) &&
+        mouse_write_arg(MOUSE_CMD_SET_SAMPLE_RATE, 100u) &&
+        mouse_write_arg(MOUSE_CMD_SET_SAMPLE_RATE, 80u) &&
+        mouse_get_device_id(&device_id)) {
+        s_device_id = device_id;
+    }
+    if (device_id != 3u &&
+        mouse_write_arg(MOUSE_CMD_SET_SAMPLE_RATE, 200u) &&
+        mouse_write_arg(MOUSE_CMD_SET_SAMPLE_RATE, 200u) &&
+        mouse_write_arg(MOUSE_CMD_SET_SAMPLE_RATE, 80u) &&
+        mouse_get_device_id(&device_id)) {
+        s_device_id = device_id;
+    }
+    if (device_id == 3u || device_id == 4u) {
+        s_packet_size = MOUSE_PACKET_WHEEL;
+    }
+
+    if (!mouse_write_arg(MOUSE_CMD_SET_SAMPLE_RATE, MOUSE_SAMPLE_RATE) ||
         !mouse_write_arg(MOUSE_CMD_SET_RESOLUTION, MOUSE_RESOLUTION) ||
         !mouse_write(MOUSE_CMD_ENABLE_STREAM)) {
         return 0;
@@ -371,6 +450,7 @@ void mouse_handle_irq(void) {
     unsigned char data;
     int dx;
     int dy;
+    int wheel;
     int event_dy;
     unsigned int old_buttons;
 
@@ -388,7 +468,8 @@ void mouse_handle_irq(void) {
         return;
     }
 
-    if (s_vmmouse_ready && vmmouse_drain_events()) {
+    if (s_vmmouse_ready) {
+        (void)vmmouse_drain_events();
         return;
     }
 
@@ -398,7 +479,7 @@ void mouse_handle_irq(void) {
     }
 
     s_packet[s_packet_pos++] = data;
-    if (s_packet_pos < 3u) {
+    if (s_packet_pos < s_packet_size) {
         return;
     }
     s_packet_pos = 0;
@@ -412,16 +493,21 @@ void mouse_handle_irq(void) {
     dy = (int)s_packet[2];
     if (s_packet[0] & 0x10u) dx -= 256;
     if (s_packet[0] & 0x20u) dy -= 256;
+    wheel = 0;
+    if (s_packet_size == MOUSE_PACKET_WHEEL) {
+        wheel = sign_extend4(s_packet[3]);
+    }
 
     event_dy = -dy;
     old_buttons = s_buttons;
 
     s_dx += dx;
     s_dy += event_dy;
+    s_wheel += wheel;
     s_buttons = s_packet[0] & 0x07u;
     s_sequence++;
     s_packet_count++;
-    input_push_mouse_event(dx, event_dy, s_buttons, old_buttons ^ s_buttons);
+    input_push_mouse_event(dx, event_dy, wheel, s_buttons, old_buttons ^ s_buttons);
 }
 
 int mouse_read_state(sys_mouse_state_t* out) {
@@ -434,10 +520,12 @@ int mouse_read_state(sys_mouse_state_t* out) {
     flags = irq_save();
     out->dx = s_dx;
     out->dy = s_dy;
+    out->wheel = s_wheel;
     out->buttons = s_buttons;
     out->sequence = s_sequence;
     s_dx = 0;
     s_dy = 0;
+    s_wheel = 0;
     irq_restore(flags);
     return 1;
 }
@@ -458,5 +546,7 @@ void mouse_debug_snapshot(mouse_debug_state_t* out) {
     out->sync_drop_count = s_sync_drop_count;
     out->overflow_drop_count = s_overflow_drop_count;
     out->vmware_enabled = (unsigned int)s_vmmouse_ready;
+    out->packet_size = s_packet_size;
+    out->device_id = s_device_id;
     irq_restore(flags);
 }

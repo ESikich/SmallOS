@@ -188,6 +188,7 @@ static void utoa10(unsigned int v, char* buf) {
 
 #define MAX_WINDOWS 8
 #define MAX_ROWS    256
+#define INPUT_BATCH 1
 
 typedef enum {
     WT_FILES = 1,
@@ -217,6 +218,10 @@ static window_t g_wins[MAX_WINDOWS];
 #define TITLE_H 14
 #define CLOSE_W 14
 #define ROW_H   12
+#define CURSOR_W 9
+#define CURSOR_H 12
+#define CURSOR_MOVE_MAX_W 64
+#define CURSOR_MOVE_MAX_H 64
 
 static void icons_layout(int sw);
 
@@ -837,6 +842,56 @@ static void draw_icons(gfx_surface_t* s, int hover_idx) {
     }
 }
 
+/* ---------------- frame counter ---------------- */
+
+static unsigned int g_scene_fps = 0;
+static unsigned int g_cursor_fps = 0;
+static unsigned int g_mouse_hz = 0;
+static unsigned int g_scene_frame_count = 0;
+static unsigned int g_cursor_frame_count = 0;
+static unsigned int g_mouse_event_count = 0;
+static uint32_t g_perf_last_tick = 0;
+
+static void perf_init(void) {
+    g_scene_fps = 0;
+    g_cursor_fps = 0;
+    g_mouse_hz = 0;
+    g_scene_frame_count = 0;
+    g_cursor_frame_count = 0;
+    g_mouse_event_count = 0;
+    g_perf_last_tick = sys_get_ticks();
+}
+
+static void perf_count_scene_present(void) {
+    g_scene_frame_count++;
+}
+
+static void perf_count_cursor_present(void) {
+    g_cursor_frame_count++;
+}
+
+static void perf_count_mouse_event(void) {
+    g_mouse_event_count++;
+}
+
+static int perf_update(void) {
+    uint32_t now = sys_get_ticks();
+    uint32_t elapsed = now - g_perf_last_tick;
+
+    if (elapsed < SMALLOS_TIMER_HZ) {
+        return 0;
+    }
+
+    g_scene_fps = (g_scene_frame_count * SMALLOS_TIMER_HZ + elapsed / 2u) / elapsed;
+    g_cursor_fps = (g_cursor_frame_count * SMALLOS_TIMER_HZ + elapsed / 2u) / elapsed;
+    g_mouse_hz = (g_mouse_event_count * SMALLOS_TIMER_HZ + elapsed / 2u) / elapsed;
+    g_scene_frame_count = 0;
+    g_cursor_frame_count = 0;
+    g_mouse_event_count = 0;
+    g_perf_last_tick = now;
+    return 1;
+}
+
 /* ---------------- background + top bar ---------------- */
 
 static void draw_desktop(gfx_surface_t* s) {
@@ -866,6 +921,17 @@ static void draw_top_bar(gfx_surface_t* s, int n_windows) {
     utoa10((unsigned int)n_windows, num);
     u_strcat_n(buf, num, sizeof(buf));
     draw_text(s, 200, 4, buf, COL_TEXT);
+
+    u_strcpy_n(buf, "FPS: ", sizeof(buf));
+    utoa10(g_scene_fps, num);
+    u_strcat_n(buf, num, sizeof(buf));
+    u_strcat_n(buf, " Cur: ", sizeof(buf));
+    utoa10(g_cursor_fps, num);
+    u_strcat_n(buf, num, sizeof(buf));
+    u_strcat_n(buf, " In: ", sizeof(buf));
+    utoa10(g_mouse_hz, num);
+    u_strcat_n(buf, num, sizeof(buf));
+    draw_text(s, 300, 4, buf, COL_TEXT);
 
     const char* hint = "ESC or Q to exit";
     draw_text(s, w - 8 - (int)text_width(hint), 4, hint, COL_TEXT);
@@ -911,6 +977,15 @@ static int count_windows(void) {
     return n;
 }
 
+static int shell_window_active(void) {
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+        if (g_wins[i].active && g_wins[i].type == WT_SHELL) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void compose_v2(gfx_surface_t* s, int mx, int my) {
     draw_desktop(s);
     draw_top_bar(s, count_windows());
@@ -925,8 +1000,108 @@ static void compose_v2(gfx_surface_t* s, int mx, int my) {
         if (!w->active) continue;
         draw_window(s, w, w == top, mx, my);
     }
+}
 
-    draw_cursor(s, mx, my);
+static int present_cursor_rect(gfx_surface_t* scene, int mx, int my, int draw) {
+    unsigned int tmp[CURSOR_W * CURSOR_H];
+    gfx_surface_t out;
+    int w = CURSOR_W;
+    int h = CURSOR_H;
+
+    if (!scene || !scene->pixels || mx < 0 || my < 0 ||
+        mx >= (int)scene->width || my >= (int)scene->height) {
+        return 0;
+    }
+
+    if (mx + w > (int)scene->width) w = (int)scene->width - mx;
+    if (my + h > (int)scene->height) h = (int)scene->height - my;
+    if (w <= 0 || h <= 0) return 0;
+
+    for (int y = 0; y < h; y++) {
+        unsigned int* src = scene->pixels + (my + y) * scene->pitch_pixels + mx;
+        for (int x = 0; x < w; x++) {
+            tmp[y * w + x] = src[x];
+        }
+    }
+
+    out.width = (unsigned int)w;
+    out.height = (unsigned int)h;
+    out.pitch_pixels = (unsigned int)w;
+    out.pixels = tmp;
+    if (draw) {
+        draw_cursor(&out, 0, 0);
+    }
+
+    return sys_display_blit((uint32_t)mx, (uint32_t)my,
+                            (uint32_t)w, (uint32_t)h, tmp);
+}
+
+static int present_frame_with_cursor(gfx_context_t* gfx, int mx, int my) {
+    if (gfx_present(gfx) < 0) {
+        return -1;
+    }
+    if (present_cursor_rect(&gfx->backbuffer, mx, my, 1) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int present_cursor_move(gfx_context_t* gfx,
+                               int old_mx,
+                               int old_my,
+                               int mx,
+                               int my) {
+    unsigned int tmp[CURSOR_MOVE_MAX_W * CURSOR_MOVE_MAX_H];
+    gfx_surface_t out;
+    gfx_surface_t* scene;
+    int x0;
+    int y0;
+    int x1;
+    int y1;
+    int w;
+    int h;
+
+    if (old_mx == mx && old_my == my) return 0;
+    scene = &gfx->backbuffer;
+
+    x0 = old_mx < mx ? old_mx : mx;
+    y0 = old_my < my ? old_my : my;
+    x1 = old_mx > mx ? old_mx + CURSOR_W : mx + CURSOR_W;
+    y1 = old_my > my ? old_my + CURSOR_H : my + CURSOR_H;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > (int)scene->width) x1 = (int)scene->width;
+    if (y1 > (int)scene->height) y1 = (int)scene->height;
+    w = x1 - x0;
+    h = y1 - y0;
+
+    if (w > 0 && h > 0 &&
+        w <= CURSOR_MOVE_MAX_W &&
+        h <= CURSOR_MOVE_MAX_H) {
+        for (int y = 0; y < h; y++) {
+            unsigned int* src = scene->pixels + (y0 + y) * scene->pitch_pixels + x0;
+            for (int x = 0; x < w; x++) {
+                tmp[y * w + x] = src[x];
+            }
+        }
+
+        out.width = (unsigned int)w;
+        out.height = (unsigned int)h;
+        out.pitch_pixels = (unsigned int)w;
+        out.pixels = tmp;
+        draw_cursor(&out, mx - x0, my - y0);
+
+        return sys_display_blit((uint32_t)x0, (uint32_t)y0,
+                                (uint32_t)w, (uint32_t)h, tmp);
+    }
+
+    if (present_cursor_rect(&gfx->backbuffer, old_mx, old_my, 0) < 0) {
+        return -1;
+    }
+    if (present_cursor_rect(&gfx->backbuffer, mx, my, 1) < 0) {
+        return -1;
+    }
+    return 0;
 }
 
 /* ---------------- input handling ---------------- */
@@ -935,6 +1110,12 @@ static int clampi(int v, int lo, int hi) {
     if (v < lo) return lo;
     if (v > hi) return hi;
     return v;
+}
+
+static int abs_to_screen(unsigned int value, int max_value) {
+    if (max_value <= 0) return 0;
+    if (value > 65535u) value = 65535u;
+    return (int)((value * (unsigned int)max_value + 32767u) / 65535u);
 }
 
 typedef enum {
@@ -951,6 +1132,30 @@ static uint32_t g_last_file_tick = 0;
 
 static int point_in(int x, int y, int rx, int ry, int rw, int rh) {
     return x >= rx && x < rx + rw && y >= ry && y < ry + rh;
+}
+
+static int hover_key(int mx, int my) {
+    window_t* w = hit_window_z(mx, my);
+
+    if (!w) {
+        int icon = icon_hit(mx, my);
+        return icon >= 0 ? 1000 + icon : 0;
+    }
+
+    if (w->type == WT_FILES) {
+        int by = w->y + TITLE_H;
+        int row_top = by + 14;
+        int row_area = (w->h - TITLE_H) - 27;
+        int visible = row_area / ROW_H;
+        if (visible < 1) visible = 1;
+        if (mx >= w->x && mx < w->x + w->w - 12 &&
+            my >= row_top && my < row_top + visible * ROW_H) {
+            int row = (my - row_top) / ROW_H + w->scroll;
+            return 2000 + win_index(w) * 512 + row;
+        }
+    }
+
+    return 3000 + win_index(w);
 }
 
 static void handle_click(int mx, int my, int sw, int sh) {
@@ -1044,6 +1249,33 @@ static void handle_click(int mx, int my, int sw, int sh) {
     }
 }
 
+static void handle_wheel(int mx, int my, int wheel) {
+    if (wheel == 0) return;
+
+    window_t* w = hit_window_z(mx, my);
+    if (!w) return;
+    z_push_top(win_index(w));
+
+    if (w->type == WT_FILES) {
+        int row_area = (w->h - TITLE_H) - 27;
+        int visible = row_area / ROW_H;
+        if (visible < 1) visible = 1;
+        int max_scroll = w->row_count - visible;
+        if (max_scroll < 0) max_scroll = 0;
+
+        w->scroll -= wheel * 3;
+        if (w->scroll < 0) w->scroll = 0;
+        if (w->scroll > max_scroll) w->scroll = max_scroll;
+    } else if (w->type == WT_SHELL) {
+        int max_scroll = w->shell.line_count - 1;
+        if (max_scroll < 0) max_scroll = 0;
+
+        w->shell.scroll += wheel * 3;
+        if (w->shell.scroll < 0) w->shell.scroll = 0;
+        if (w->shell.scroll > max_scroll) w->shell.scroll = max_scroll;
+    }
+}
+
 int gui_main(int argc, char** argv) {
     gfx_context_t gfx;
     int rc;
@@ -1068,77 +1300,145 @@ int gui_main(int argc, char** argv) {
 
     int prev_left = 0;
     int dirty = 1;
+    int cursor_dirty = 1;
+    int presented_mx = mx;
+    int presented_my = my;
+    int last_hover = hover_key(mx, my);
+    perf_init();
 
     while (!g_should_quit) {
-        sys_input_event_t ev;
+        sys_input_event_t events[INPUT_BATCH];
         int got = 0;
+        int fps_refresh_only = 0;
 
-        for (;;) {
-            int n = sys_input_read(&ev, 1u, SYS_INPUT_FLAG_NONBLOCK);
-            if (n != 1) break;
+        if (perf_update()) {
+            fps_refresh_only =
+                !dirty &&
+                !cursor_dirty &&
+                g_launch_kind == LAUNCH_NONE &&
+                !shell_window_active();
+            dirty = 1;
+        }
+
+        int n = sys_input_read(events, INPUT_BATCH, SYS_INPUT_FLAG_NONBLOCK);
+        if (n > 0) {
             got = 1;
+            fps_refresh_only = 0;
 
-            if (ev.type == SYS_INPUT_TYPE_KEY &&
-                (ev.flags & SYS_INPUT_KEY_PRESSED) != 0u) {
-                unsigned int a = ev.ascii & 0xFFu;
-                window_t* top = topmost();
-                if (top && top->type == WT_SHELL) {
-                    if (a == 27u) { close_window(top); }
-                    else if (gui_shell_handle_key(&top->shell, a, ev.key, ev.flags) == GUI_SHELL_KEY_CLOSE) {
-                        close_window(top);
+            for (int ei = 0; ei < n && !g_should_quit; ei++) {
+                sys_input_event_t* ev = &events[ei];
+
+                if (ev->type == SYS_INPUT_TYPE_KEY &&
+                    (ev->flags & SYS_INPUT_KEY_PRESSED) != 0u) {
+                    unsigned int a = ev->ascii & 0xFFu;
+                    window_t* top = topmost();
+                    dirty = 1;
+                    if (top && top->type == WT_SHELL) {
+                        if (a == 27u) { close_window(top); }
+                        else if (gui_shell_handle_key(&top->shell, a, ev->key, ev->flags) == GUI_SHELL_KEY_CLOSE) {
+                            close_window(top);
+                        }
+                    } else {
+                        if (a == 27u || a == 'q' || a == 'Q') { g_should_quit = 1; }
                     }
-                } else {
-                    if (a == 27u || a == 'q' || a == 'Q') { g_should_quit = 1; break; }
-                }
-            } else if (ev.type == SYS_INPUT_TYPE_MOUSE) {
-                mx = clampi(mx + ev.dx, 0, sw - 1);
-                my = clampi(my + ev.dy, 0, sh - 1);
-                int left_now = (ev.buttons & SYS_MOUSE_BUTTON_LEFT) != 0;
-                if (left_now && !prev_left) {
-                    handle_click(mx, my, sw, sh);
-                } else if (!left_now && prev_left) {
-                    g_drag = DRAG_NONE;
-                    g_drag_idx = -1;
-                }
-                if (g_drag == DRAG_MOVE && g_drag_idx >= 0) {
-                    window_t* w = &g_wins[g_drag_idx];
-                    if (w->active) {
-                        w->x = clampi(mx - g_drag_dx, -w->w + 32, sw - 32);
-                        w->y = clampi(my - g_drag_dy, 16, sh - TITLE_H);
+                } else if (ev->type == SYS_INPUT_TYPE_MOUSE) {
+                    int old_mx = mx;
+                    int old_my = my;
+                    int old_hover = last_hover;
+                    perf_count_mouse_event();
+
+                    if (ev->flags & SYS_INPUT_MOUSE_ABSOLUTE) {
+                        mx = abs_to_screen(ev->abs_x, sw - 1);
+                        my = abs_to_screen(ev->abs_y, sh - 1);
+                    } else {
+                        mx = clampi(mx + ev->dx, 0, sw - 1);
+                        my = clampi(my + ev->dy, 0, sh - 1);
+                    }
+                    if (mx != old_mx || my != old_my) {
+                        cursor_dirty = 1;
+                    }
+                    if (ev->wheel != 0) {
+                        handle_wheel(mx, my, ev->wheel);
+                        dirty = 1;
+                    }
+                    int left_now = (ev->buttons & SYS_MOUSE_BUTTON_LEFT) != 0;
+                    if (left_now && !prev_left) {
+                        handle_click(mx, my, sw, sh);
+                        dirty = 1;
+                    } else if (!left_now && prev_left) {
+                        g_drag = DRAG_NONE;
+                        g_drag_idx = -1;
+                        dirty = 1;
+                    }
+                    if (g_drag == DRAG_MOVE && g_drag_idx >= 0) {
+                        window_t* w = &g_wins[g_drag_idx];
+                        if (w->active) {
+                            w->x = clampi(mx - g_drag_dx, -w->w + 32, sw - 32);
+                            w->y = clampi(my - g_drag_dy, 16, sh - TITLE_H);
+                            dirty = 1;
+                        }
+                    }
+                    prev_left = left_now;
+                    last_hover = hover_key(mx, my);
+                    if (last_hover != old_hover || ev->button_changes != 0u) {
+                        dirty = 1;
                     }
                 }
-                prev_left = left_now;
-                dirty = 1;
             }
         }
 
-        if (got) dirty = 1;
-
         for (int i = 0; i < MAX_WINDOWS; i++) {
             if (g_wins[i].active && g_wins[i].type == WT_SHELL) {
-                if (gui_shell_poll(&g_wins[i].shell)) dirty = 1;
+                if (gui_shell_poll(&g_wins[i].shell)) {
+                    dirty = 1;
+                    fps_refresh_only = 0;
+                }
             }
         }
 
         if (g_launch_kind != LAUNCH_NONE) {
             int launch_rc = run_queued_launch(&gfx, &sw, &sh);
             if (launch_rc < 0) return 1;
+            fps_refresh_only = 0;
             mx = clampi(mx, 0, sw - 1);
             my = clampi(my, 0, sh - 1);
+            presented_mx = mx;
+            presented_my = my;
+            last_hover = hover_key(mx, my);
+            cursor_dirty = 1;
             dirty = 1;
         }
 
         if (dirty) {
             compose_v2(&gfx.backbuffer, mx, my);
-            if (gfx_present(&gfx) < 0) {
+            if (present_frame_with_cursor(&gfx, mx, my) < 0) {
                 gfx_close(&gfx);
                 u_puts("gui: present failed\n");
                 return 1;
             }
             dirty = 0;
+            cursor_dirty = 0;
+            if (!fps_refresh_only) {
+                perf_count_scene_present();
+            }
+            presented_mx = mx;
+            presented_my = my;
+            last_hover = hover_key(mx, my);
+        } else if (cursor_dirty) {
+            if (present_cursor_move(&gfx, presented_mx, presented_my, mx, my) < 0) {
+                gfx_close(&gfx);
+                u_puts("gui: present failed\n");
+                return 1;
+            }
+            cursor_dirty = 0;
+            perf_count_cursor_present();
+            presented_mx = mx;
+            presented_my = my;
         }
 
-        sys_sleep(1);
+        if (!got) {
+            sys_sleep(1);
+        }
     }
 
     gfx_close(&gfx);

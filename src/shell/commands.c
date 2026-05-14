@@ -566,7 +566,8 @@ static void cmd_mousetest(command_t* cmd) {
             terminal_puts("mousetest: mouse became unavailable\n");
             return;
         }
-        if (mouse.sequence != last_sequence || mouse.dx != 0 || mouse.dy != 0) {
+        if (mouse.sequence != last_sequence ||
+            mouse.dx != 0 || mouse.dy != 0 || mouse.wheel != 0) {
             last_sequence = mouse.sequence;
             events++;
             terminal_puts("mousetest: seq=");
@@ -575,6 +576,8 @@ static void cmd_mousetest(command_t* cmd) {
             terminal_put_int(mouse.dx);
             terminal_puts(" dy=");
             terminal_put_int(mouse.dy);
+            terminal_puts(" wheel=");
+            terminal_put_int(mouse.wheel);
             terminal_puts(" buttons=");
             terminal_put_uint(mouse.buttons);
             terminal_putc('\n');
@@ -597,6 +600,10 @@ static void cmd_mousetest(command_t* cmd) {
     terminal_put_uint(after.vmware_packet_count - before.vmware_packet_count);
     terminal_puts(" vmware_on=");
     terminal_put_uint(after.vmware_enabled);
+    terminal_puts(" packet_size=");
+    terminal_put_uint(after.packet_size);
+    terminal_puts(" device_id=");
+    terminal_put_uint(after.device_id);
     terminal_puts(" syncdrop=");
     terminal_put_uint(after.sync_drop_count - before.sync_drop_count);
     terminal_puts(" overflow=");

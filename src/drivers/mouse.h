@@ -12,6 +12,8 @@ typedef struct mouse_debug_state {
     unsigned int sync_drop_count;
     unsigned int overflow_drop_count;
     unsigned int vmware_enabled;
+    unsigned int packet_size;
+    unsigned int device_id;
 } mouse_debug_state_t;
 
 int mouse_init(void);

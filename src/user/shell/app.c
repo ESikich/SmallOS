@@ -1415,7 +1415,8 @@ static void sh_builtin_mousetest(void) {
             u_puts("mousetest: mouse became unavailable\n");
             return;
         }
-        if (mouse.sequence != last_sequence || mouse.dx != 0 || mouse.dy != 0) {
+        if (mouse.sequence != last_sequence ||
+            mouse.dx != 0 || mouse.dy != 0 || mouse.wheel != 0) {
             last_sequence = mouse.sequence;
             events++;
             u_puts("mousetest: seq=");
@@ -1424,6 +1425,8 @@ static void sh_builtin_mousetest(void) {
             sh_put_int(mouse.dx);
             u_puts(" dy=");
             sh_put_int(mouse.dy);
+            u_puts(" wheel=");
+            sh_put_int(mouse.wheel);
             u_puts(" buttons=");
             u_put_uint(mouse.buttons);
             u_putc('\n');

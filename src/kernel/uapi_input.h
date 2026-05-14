@@ -18,9 +18,12 @@
 #define SYS_INPUT_KEY_NUM_LOCK    0x0020u
 #define SYS_INPUT_KEY_SCROLL_LOCK 0x0040u
 
+#define SYS_INPUT_MOUSE_ABSOLUTE  0x00010000u
+
 typedef struct sys_mouse_state {
     int dx;
     int dy;
+    int wheel;
     unsigned int buttons;
     unsigned int sequence;
 } sys_mouse_state_t;
@@ -34,6 +37,9 @@ typedef struct sys_input_event {
     unsigned int ascii;
     int dx;
     int dy;
+    int wheel;
+    unsigned int abs_x;
+    unsigned int abs_y;
     unsigned int buttons;
     unsigned int button_changes;
 } sys_input_event_t;

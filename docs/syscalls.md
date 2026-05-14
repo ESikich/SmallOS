@@ -868,7 +868,8 @@ Copies the current mouse state into user memory and clears the accumulated
 relative movement counters. The driver may source those deltas from standard
 PS/2 packets or from VMware absolute-pointer events converted to relative
 motion. `dx` and `dy` are signed screen-space deltas since the previous
-successful read, with positive `dy` moving downward. `buttons` uses
+successful read, with positive `dy` moving downward. `wheel` is the accumulated
+vertical wheel delta. `buttons` uses
 `SYS_MOUSE_BUTTON_LEFT`, `SYS_MOUSE_BUTTON_RIGHT`, and
 `SYS_MOUSE_BUTTON_MIDDLE`; `sequence` increments when a mouse event is decoded.
 
@@ -889,8 +890,8 @@ int sys_input_read(sys_input_event_t* out_events,
 Reads queued keyboard and mouse events into user memory and returns the number
 of events copied. Key events report key code, ASCII value when one exists,
 pressed/released state, modifier flags, tick count, and input sequence number.
-Mouse events report screen-space `dx`/`dy`, current buttons, changed buttons,
-tick count, and input sequence number.
+Mouse events report screen-space `dx`/`dy`, vertical `wheel` delta, current
+buttons, changed buttons, tick count, and input sequence number.
 
 With `flags == 0`, the syscall blocks until at least one event is available.
 With `SYS_INPUT_FLAG_NONBLOCK`, it returns `0` immediately when the queue is

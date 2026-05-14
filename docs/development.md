@@ -147,10 +147,11 @@ via `keyboard_set_consumer()`:
 Do not add imports of `process.h`, `scheduler.h`, or `shell.h` to `keyboard.c` or `keyboard.h`. Do not add routing logic to `keyboard_handle_irq()`. If a new input consumer is needed, register it — do not modify the driver.
 
 Mouse input follows the same driver-boundary rule at a smaller scale:
-`mouse.c` owns PS/2 auxiliary-port setup, standard 3-byte packet decoding, and
-the VMware absolute-pointer path that converts vmmouse positions into relative
-deltas. It does not know about shells, processes, windows, cursors, or graphics
-ownership. Userland can poll accumulated relative motion through
+`mouse.c` owns PS/2 auxiliary-port setup, standard and IntelliMouse packet
+decoding, and the VMware absolute-pointer path that converts vmmouse positions
+into relative deltas. It does not know about shells, processes, windows,
+cursors, or graphics ownership. Userland can poll accumulated relative motion
+and wheel movement through
 `SYS_MOUSE_READ`, while mixed keyboard/mouse consumers should use the higher
 level `SYS_INPUT_READ` event queue rather than adding routing policy to the raw
 driver.
