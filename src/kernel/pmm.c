@@ -162,6 +162,11 @@ static void pmm_reserve_boot_ranges(void) {
         pmm_mark_range_used(info->framebuffer_phys,
                             info->framebuffer_phys + fb_bytes);
     }
+
+    if (boot_info_ramdisk_valid()) {
+        pmm_mark_range_used(info->ramdisk_phys,
+                            info->ramdisk_phys + info->ramdisk_size);
+    }
 }
 
 /* ------------------------------------------------------------------ */

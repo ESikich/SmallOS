@@ -4,7 +4,7 @@ bits 16
 
 LOADER2_SEGMENT  equ 0x4000
 LOADER2_OFFSET   equ 0x0000
-LOADER2_SECTORS  equ 8
+LOADER2_SECTORS  equ 16
 BOOT_SECTOR_SIZE equ 512
 MBR_PARTITION_TABLE_OFFSET equ 446
 MBR_PARTITION_ENTRY_SIZE   equ 16
@@ -137,8 +137,8 @@ READ_SEGMENT dw 0
 READ_OFFSET dw 0
 READ_SECTOR db 0
 READ_REMAINING db 0
-boot_msg   db "Booting stage2...", 0
-loaded_msg db " loaded", 0
+boot_msg   db "SmallOS USB diag2 stage2...", 0
+loaded_msg db " loaded ", 0
 disk_msg   db " Disk read error!", 0
 drive_msg  db " drive", 0
 error_msg  db " err", 0

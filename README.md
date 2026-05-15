@@ -87,6 +87,31 @@ current seed image with:
 make reset-disk
 ```
 
+Build the USB-oriented image for older BIOS hardware:
+
+```bash
+make usb-image
+```
+
+This writes `build/img/vga/smallos-usb.img`. It forces VGA text mode and stage 2
+preloads the ext2 volume into RAM, so the kernel can keep running after BIOS
+USB disk services disappear in protected mode. Write it to a whole USB device,
+not a partition:
+
+```bash
+sudo dd if=build/img/vga/smallos-usb.img of=/dev/sdX bs=4M conv=fsync status=progress
+```
+
+For WYSE graphics diagnostics, build the VBE-probing USB image:
+
+```bash
+make usb-vbe-image
+```
+
+This writes `build/img/smallos-usb-vbe.img`. It keeps the USB/CHS/RAM-disk boot
+path, prints VBE probe details in stage 2, and accepts 1024x768, 800x600, or
+640x480 32-bit linear-framebuffer modes.
+
 Interactive runs:
 
 ```bash

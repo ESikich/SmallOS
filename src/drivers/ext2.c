@@ -1,8 +1,10 @@
 #include "ext2.h"
 #include "ata.h"
 #include "../drivers/terminal.h"
+#include "../kernel/boot_info.h"
 #include "../kernel/klib.h"
 #include "../kernel/memory.h"
+#include "../kernel/paging.h"
 
 #define SECTOR_SIZE          512u
 #define EXT2_BLOCK_SIZE      4096u
@@ -102,6 +104,8 @@ static int s_inode_bitmap_dirty = 0;
 static u32 s_next_alloc_block = EXT2_FIRST_DATA_BLOCK;
 static u32 s_ext2_lba = 0;
 static u32 s_ext2_sectors = 0;
+static u8* s_ramdisk = 0;
+static u32 s_ramdisk_size = 0;
 static u8* s_load_buf = 0;
 
 static u8 s_sector[SECTOR_SIZE];
@@ -155,12 +159,30 @@ static u32 abs_lba_for_block(u32 block) {
 }
 
 static int read_block(u32 block, u8* out) {
+    if (s_ramdisk) {
+        u32 offset = block * EXT2_BLOCK_SIZE;
+        if (offset > s_ramdisk_size || s_ramdisk_size - offset < EXT2_BLOCK_SIZE) {
+            return 0;
+        }
+        k_memcpy(out, s_ramdisk + offset, EXT2_BLOCK_SIZE);
+        return 1;
+    }
+
     return ata_read_sectors(abs_lba_for_block(block),
                             (unsigned char)EXT2_SECTORS_PER_BLOCK,
                             out);
 }
 
 static int write_block(u32 block, const u8* data) {
+    if (s_ramdisk) {
+        u32 offset = block * EXT2_BLOCK_SIZE;
+        if (offset > s_ramdisk_size || s_ramdisk_size - offset < EXT2_BLOCK_SIZE) {
+            return 0;
+        }
+        k_memcpy(s_ramdisk + offset, data, EXT2_BLOCK_SIZE);
+        return 1;
+    }
+
     return ata_write_sectors(abs_lba_for_block(block),
                              (unsigned char)EXT2_SECTORS_PER_BLOCK,
                              data);
@@ -170,6 +192,15 @@ static int write_blocks(u32 first_block, u32 block_count, const u8* data) {
     u32 sectors = block_count * EXT2_SECTORS_PER_BLOCK;
 
     if (block_count == 0u) return 1;
+    if (s_ramdisk) {
+        u32 offset = first_block * EXT2_BLOCK_SIZE;
+        u32 bytes = block_count * EXT2_BLOCK_SIZE;
+        if (offset > s_ramdisk_size || s_ramdisk_size - offset < bytes) {
+            return 0;
+        }
+        k_memcpy(s_ramdisk + offset, data, bytes);
+        return 1;
+    }
     if (sectors > 255u) return 0;
     return ata_write_sectors(abs_lba_for_block(first_block),
                              (unsigned char)sectors,
@@ -1229,26 +1260,33 @@ int ext2_init(void) {
         }
     }
 
-    if (!ata_read_sectors(0, 1, s_sector)) {
-        terminal_puts("ext2: cannot read sector 0\n");
-        return 0;
-    }
-    if (s_sector[510] != 0x55 || s_sector[511] != 0xAA) {
-        terminal_puts("ext2: bad MBR signature\n");
-        return 0;
-    }
+    if (boot_info_ramdisk_valid()) {
+        s_ramdisk = (u8*)paging_phys_to_kernel_virt(boot_info_ramdisk_phys());
+        s_ramdisk_size = boot_info_ramdisk_size();
+        s_ext2_lba = 0;
+        s_ext2_sectors = s_ramdisk_size / SECTOR_SIZE;
+    } else {
+        if (!ata_read_sectors(0, 1, s_sector)) {
+            terminal_puts("ext2: cannot read sector 0\n");
+            return 0;
+        }
+        if (s_sector[510] != 0x55 || s_sector[511] != 0xAA) {
+            terminal_puts("ext2: bad MBR signature\n");
+            return 0;
+        }
 
-    u32 entry_off = MBR_PARTITION_TABLE_OFFSET +
-                    EXT2_PARTITION_ENTRY_INDEX * MBR_PARTITION_ENTRY_SIZE;
-    if (s_sector[entry_off + MBR_PARTITION_TYPE_OFFSET] != EXT2_PARTITION_TYPE) {
-        terminal_puts("ext2: MBR partition type mismatch\n");
-        return 0;
-    }
-    s_ext2_lba = read_u32_le(s_sector, entry_off + MBR_PARTITION_LBA_OFFSET);
-    s_ext2_sectors = read_u32_le(s_sector, entry_off + MBR_PARTITION_SIZE_OFFSET);
-    if (s_ext2_lba == 0 || s_ext2_sectors == 0) {
-        terminal_puts("ext2: partition entry not populated\n");
-        return 0;
+        u32 entry_off = MBR_PARTITION_TABLE_OFFSET +
+                        EXT2_PARTITION_ENTRY_INDEX * MBR_PARTITION_ENTRY_SIZE;
+        if (s_sector[entry_off + MBR_PARTITION_TYPE_OFFSET] != EXT2_PARTITION_TYPE) {
+            terminal_puts("ext2: MBR partition type mismatch\n");
+            return 0;
+        }
+        s_ext2_lba = read_u32_le(s_sector, entry_off + MBR_PARTITION_LBA_OFFSET);
+        s_ext2_sectors = read_u32_le(s_sector, entry_off + MBR_PARTITION_SIZE_OFFSET);
+        if (s_ext2_lba == 0 || s_ext2_sectors == 0) {
+            terminal_puts("ext2: partition entry not populated\n");
+            return 0;
+        }
     }
 
     if (!read_block(0, s_block)) {
@@ -1273,8 +1311,15 @@ int ext2_init(void) {
     }
 
     s_initialised = 1;
-    terminal_puts("ext2: ok  lba=");
-    terminal_put_uint(s_ext2_lba);
+    terminal_puts("ext2: ok  ");
+    if (s_ramdisk) {
+        terminal_puts("ramdisk=");
+        terminal_put_uint(s_ramdisk_size / 1024u);
+        terminal_puts(" KB");
+    } else {
+        terminal_puts("lba=");
+        terminal_put_uint(s_ext2_lba);
+    }
     terminal_putc('\n');
     return 1;
 }

@@ -173,7 +173,7 @@ log="$("$serial_tool" "${common_args[@]}" --tail --lines 1000)"
 
 markers=(
     "boot: PASS terminal:"
-    "boot: PASS boot info: SMOS v2 contract"
+    "boot: PASS boot info: SMOS v3 contract"
     "boot: PASS mouse: PS/2 packet stream enabled"
     "boot: PASS ata: primary channel ready"
     "boot: PASS e1000: Intel PRO/1000 ready"

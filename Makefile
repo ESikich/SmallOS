@@ -16,11 +16,23 @@ USER_DIR=$(SRC_DIR)/user
 BUILD_DIR=build
 DISPLAY_BACKEND ?= auto
 SERIAL_CONSOLE ?= 0
+BOOT_FORCE_CHS ?= 0
+BOOT_VBE_DIAG ?= 0
+BOOT_VBE_RELAXED ?= 0
 ifneq ($(filter $(DISPLAY_BACKEND),auto vga),$(DISPLAY_BACKEND))
 $(error DISPLAY_BACKEND must be one of: auto vga)
 endif
 ifneq ($(filter $(SERIAL_CONSOLE),0 1),$(SERIAL_CONSOLE))
 $(error SERIAL_CONSOLE must be one of: 0 1)
+endif
+ifneq ($(filter $(BOOT_FORCE_CHS),0 1),$(BOOT_FORCE_CHS))
+$(error BOOT_FORCE_CHS must be one of: 0 1)
+endif
+ifneq ($(filter $(BOOT_VBE_DIAG),0 1),$(BOOT_VBE_DIAG))
+$(error BOOT_VBE_DIAG must be one of: 0 1)
+endif
+ifneq ($(filter $(BOOT_VBE_RELAXED),0 1),$(BOOT_VBE_RELAXED))
+$(error BOOT_VBE_RELAXED must be one of: 0 1)
 endif
 SERIAL_SUFFIX=$(if $(filter 1,$(SERIAL_CONSOLE)),-serial,)
 OBJ_DIR=$(BUILD_DIR)/obj/$(DISPLAY_BACKEND)$(SERIAL_SUFFIX)
@@ -132,6 +144,7 @@ KERNEL_C_SRCS=\
 	$(KERNEL_DIR)/paging.c \
 	$(DRIVERS_DIR)/ata.c \
 	$(DRIVERS_DIR)/pci.c \
+	$(DRIVERS_DIR)/usb.c \
 	$(DRIVERS_DIR)/e1000.c \
 	$(DRIVERS_DIR)/net.c \
 	$(DRIVERS_DIR)/dhcp.c \
@@ -213,10 +226,10 @@ $(OBJ_DIR)/boot/%.o: $(BOOT_DIR)/%.asm | dirs
 $(OBJ_DIR)/kernel/%.o: $(KERNEL_DIR)/%.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
-$(OBJ_DIR)/kernel/%.o: $(KERNEL_DIR)/%.c | dirs
+$(OBJ_DIR)/kernel/%.o: $(KERNEL_DIR)/%.c Makefile | dirs
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(KERNEL_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
-$(OBJ_DIR)/drivers/%.o: $(DRIVERS_DIR)/%.c | dirs
+$(OBJ_DIR)/drivers/%.o: $(DRIVERS_DIR)/%.c Makefile | dirs
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(KERNEL_CFLAGS) $(DRIVER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
 $(OBJ_DIR)/drivers/display.o \
@@ -224,10 +237,12 @@ $(OBJ_DIR)/drivers/fb_console.o \
 $(OBJ_DIR)/drivers/screen.o \
 $(OBJ_DIR)/drivers/terminal.o: DRIVER_CFLAGS += $(DISPLAY_DRIVER_CFLAGS)
 
-$(OBJ_DIR)/shell/%.o: $(SHELL_DIR)/%.c | dirs
+$(OBJ_DIR)/drivers/usb.o: DRIVER_CFLAGS += -Os
+
+$(OBJ_DIR)/shell/%.o: $(SHELL_DIR)/%.c Makefile | dirs
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(KERNEL_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
-$(OBJ_DIR)/exec/%.o: $(EXEC_DIR)/%.c | dirs
+$(OBJ_DIR)/exec/%.o: $(EXEC_DIR)/%.c Makefile | dirs
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(KERNEL_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
 $(OBJ_DIR)/user/%.o: $(USER_DIR)/%.c | dirs
@@ -342,11 +357,14 @@ tinycc-host-clean:
 
 tinycc-smalos: $(TINYCC_SMALOS_BIN)
 
-$(GEN_DIR)/loader2.gen.asm: $(BOOT_DIR)/loader2.asm | dirs
+$(GEN_DIR)/loader2.gen.asm: $(BOOT_DIR)/loader2.asm FORCE | dirs
 	sed \
 		-e "s/__STAGE2_STACK_TOP__/$(STAGE2_STACK_TOP)/" \
 		-e "s/__STAGE2_STACK_TOP_32__/$(STAGE2_STACK_TOP_32)/" \
 		-e "s/__FORCE_VGA_BACKEND__/$(LOADER2_FORCE_VGA_BACKEND)/" \
+		-e "s/__FORCE_CHS_BOOT__/$(BOOT_FORCE_CHS)/" \
+		-e "s/__VBE_DIAG__/$(BOOT_VBE_DIAG)/" \
+		-e "s/__VBE_RELAXED__/$(BOOT_VBE_RELAXED)/" \
 		$< > $@
 
 $(BIN_DIR)/loader2.bin: $(GEN_DIR)/loader2.gen.asm | dirs
@@ -403,11 +421,25 @@ image-layout-check: $(IMG_FILE)
 		--fs $(STATE_DIR)/ext2.img \
 		--sector-size $(BOOT_SECTOR_SIZE) \
 		--loader-size $(LOADER2_SIZE_BYTES) \
+		--kernel-load-addr $(KERNEL_OFFSET) \
+		--reserved-before $(LOADER2_LOAD_ADDR) \
 		--boot-partition-table-offset $(BOOT_PARTITION_TABLE_OFFSET) \
 		--boot-partition-entry-size $(BOOT_PARTITION_ENTRY_SIZE)
 
 qemu-image:
 	$(MAKE) image-layout-check SERIAL_CONSOLE=0 DISPLAY_BACKEND=$(DISPLAY_BACKEND)
+
+usb-image:
+	$(MAKE) image-layout-check SERIAL_CONSOLE=0 DISPLAY_BACKEND=vga
+	@cp "$(IMG_DIR)/vga/os-image.bin" "$(IMG_DIR)/vga/smallos-usb.img"
+	@printf 'USB image: %s\n' "$(IMG_DIR)/vga/smallos-usb.img"
+	@sha256sum "$(IMG_DIR)/vga/smallos-usb.img"
+
+usb-vbe-image:
+	$(MAKE) image-layout-check SERIAL_CONSOLE=0 DISPLAY_BACKEND=auto BOOT_VBE_DIAG=1 BOOT_VBE_RELAXED=1
+	@cp "$(IMG_DIR)/os-image.bin" "$(IMG_DIR)/smallos-usb-vbe.img"
+	@printf 'USB VBE image: %s\n' "$(IMG_DIR)/smallos-usb-vbe.img"
+	@sha256sum "$(IMG_DIR)/smallos-usb-vbe.img"
 
 esxi-vmdk: qemu-image
 	$(MAKE) esxi-vmdk-build SERIAL_CONSOLE=1 DISPLAY_BACKEND=$(DISPLAY_BACKEND)
@@ -469,7 +501,9 @@ QEMUFLAGS=-drive format=raw,file=$(IMG_FILE) -boot c -m $(QEMU_MEMORY_MB) \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all dirs deps check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap test framebuffer-smoke vga-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean
+.PHONY: all dirs deps check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap test framebuffer-smoke vga-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean FORCE
+
+FORCE:
 
 run: image-layout-check
 	$(QEMU) $(QEMUFLAGS) -display $(QEMU_DISPLAY)

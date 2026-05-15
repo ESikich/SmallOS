@@ -7,6 +7,8 @@
 #define PCI_CONFIG_DATA    0xCFC
 
 #define PCI_CLASS_NETWORK 0x02
+#define PCI_CLASS_SERIAL_BUS 0x0C
+#define PCI_SUBCLASS_USB     0x03
 
 static void pci_put_byte_hex(unsigned char value) {
     static const char hex[] = "0123456789ABCDEF";
@@ -168,6 +170,21 @@ void pci_init(void) {
                     pci_put_byte_hex(dev.class_code);
                     terminal_putc('/');
                     pci_put_byte_hex(dev.subclass);
+                    terminal_putc('\n');
+                } else if (dev.class_code == PCI_CLASS_SERIAL_BUS &&
+                           dev.subclass == PCI_SUBCLASS_USB) {
+                    terminal_puts("pci: usb ");
+                    pci_put_byte_hex(dev.bus);
+                    terminal_putc(':');
+                    pci_put_byte_hex(dev.slot);
+                    terminal_putc('.');
+                    terminal_putc((char)('0' + dev.func));
+                    terminal_puts(" vendor=");
+                    terminal_put_hex(dev.vendor_id);
+                    terminal_puts(" device=");
+                    terminal_put_hex(dev.device_id);
+                    terminal_puts(" prog=");
+                    pci_put_byte_hex(dev.prog_if);
                     terminal_putc('\n');
                 }
             }

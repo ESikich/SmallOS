@@ -102,6 +102,7 @@ struct process_t_tag;
 void keyboard_init(void);
 void keyboard_handle_irq(void);
 void keyboard_reset_modifiers(void);
+void keyboard_inject_scancode(unsigned char scancode);
 
 /*
  * keyboard_set_consumer(fn)

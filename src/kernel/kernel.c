@@ -16,6 +16,7 @@
 #include "ext2.h"
 #include "pci.h"
 #include "e1000.h"
+#include "usb.h"
 #include "fb_console.h"
 #include "elf_loader.h"
 #include "vfs.h"
@@ -28,7 +29,6 @@ extern unsigned char bss_end;
 
 #define BOOT_LOG_PATH "var/log/boot.log"
 #define BOOT_LOG_CAPACITY 8192u
-
 static char s_boot_log[BOOT_LOG_CAPACITY];
 static unsigned int s_boot_log_len = 0;
 static int s_boot_log_enabled = 1;
@@ -154,6 +154,18 @@ static void boot_put_uint_width(unsigned int value, unsigned int width) {
     }
 }
 
+static void boot_put_uint(unsigned int value) {
+    boot_put_uint_width(value, 1u);
+}
+
+static void boot_put_hex(unsigned int value) {
+    static const char hex[] = "0123456789ABCDEF";
+    boot_puts("0x");
+    for (int i = 7; i >= 0; i--) {
+        boot_putc(hex[(value >> (unsigned int)(i * 4)) & 0xFu]);
+    }
+}
+
 static void boot_print_utc_time(unsigned int unix_time) {
     static const unsigned int month_days[] = {
         31u, 28u, 31u, 30u, 31u, 30u, 31u, 31u, 30u, 31u, 30u, 31u
@@ -193,6 +205,49 @@ static void boot_print_utc_time(unsigned int unix_time) {
     boot_puts(" UTC\n");
 }
 
+static void boot_print_hardware_diag_summary(void) {
+    usb_debug_state_t usb_dbg;
+    mouse_debug_state_t mouse_dbg;
+
+    usb_debug_snapshot(&usb_dbg);
+    mouse_debug_snapshot(&mouse_dbg);
+
+    boot_puts("diag: build usb-hid-diag1\n");
+    boot_puts("diag: usb controllers=");
+    boot_put_uint(usb_dbg.controller_count);
+    boot_puts(" uhci=");
+    boot_put_uint(usb_dbg.uhci_count);
+    boot_puts(" ohci=");
+    boot_put_uint(usb_dbg.ohci_count);
+    boot_puts(" ehci=");
+    boot_put_uint(usb_dbg.ehci_count);
+    boot_puts(" xhci=");
+    boot_put_uint(usb_dbg.xhci_count);
+    boot_puts(" last_prog=");
+    boot_put_hex(usb_dbg.last_prog_if);
+    boot_puts(" last_bar=");
+    boot_put_hex(usb_dbg.last_bar);
+    boot_putc('\n');
+
+    boot_puts("diag: mouse ready=");
+    boot_put_uint(mouse_dbg.ready);
+    boot_puts(" init=");
+    boot_put_uint(mouse_dbg.init_step);
+    boot_putc('/');
+    boot_put_uint(mouse_dbg.init_fail);
+    boot_puts(" cfg=");
+    boot_put_hex(mouse_dbg.config_before);
+    boot_putc('/');
+    boot_put_hex(mouse_dbg.config_after);
+    boot_puts(" irq=");
+    boot_put_uint(mouse_dbg.irq_count);
+    boot_puts(" bytes=");
+    boot_put_uint(mouse_dbg.byte_count);
+    boot_puts(" packets=");
+    boot_put_uint(mouse_dbg.packet_count);
+    boot_putc('\n');
+}
+
 static void boot_sync_clock(void) {
     unsigned int unix_time = 0;
 
@@ -223,7 +278,7 @@ static void boot_configure_network(void) {
 
 static void boot_splash_boot_info(void) {
     boot_splash_expect(boot_info_validate(),
-                       "boot info: SMOS v2 contract",
+                       "boot info: SMOS v3 contract",
                        "boot info header or memory-map bounds are invalid");
 
     if (boot_info_e820_valid()) {
@@ -284,6 +339,9 @@ static void boot_sequence_task_main(void) {
         process_claim_for_wait(splash_proc);
         process_wait(splash_proc);
     }
+
+    boot_print_hardware_diag_summary();
+    boot_log_save();
 
     boot_puts("SmallOS ready\n");
     boot_log_save();
@@ -355,8 +413,22 @@ void kernel_main(void) {
     if (mouse_init()) {
         boot_splash_pass("mouse: PS/2 packet stream enabled");
     } else {
+        mouse_debug_state_t mouse_dbg;
+        mouse_debug_snapshot(&mouse_dbg);
         boot_splash_warn("mouse: PS/2 unavailable");
+        boot_puts("mouse: init_step=");
+        boot_put_uint(mouse_dbg.init_step);
+        boot_puts(" init_fail=");
+        boot_put_uint(mouse_dbg.init_fail);
+        boot_puts(" cfg=");
+        boot_put_hex(mouse_dbg.config_before);
+        boot_putc('/');
+        boot_put_hex(mouse_dbg.config_after);
+        boot_putc('\n');
     }
+
+    usb_init();
+    boot_splash_pass("usb: passive controller probe complete");
 
     timer_init(SMALLOS_TIMER_HZ);
     boot_splash_expect(timer_get_hz() == SMALLOS_TIMER_HZ &&
@@ -372,13 +444,18 @@ void kernel_main(void) {
                        "scheduler: run queue reset",
                        "scheduler selected a current task before start");
 
-    /*
-     * ATA PIO driver — software reset + wait ready.
-     * Must be called before ext2_init() and before sti.
-     */
-    boot_splash_expect(ata_init(),
-                       "ata: primary channel ready",
-                       "ATA primary channel failed to become ready");
+    if (boot_info_ramdisk_valid()) {
+        boot_splash_pass("storage: boot ramdisk available");
+    } else {
+        /*
+         * ATA PIO driver — software reset + wait ready.
+         * Must be called before ext2_init() and before sti when no boot
+         * ramdisk was provided by stage 2.
+         */
+        boot_splash_expect(ata_init(),
+                           "ata: primary channel ready",
+                           "ATA primary channel failed to become ready");
+    }
 
     /*
      * PCI bus scan — discover devices now so NIC work can bind to the
@@ -406,6 +483,10 @@ void kernel_main(void) {
     boot_splash_expect(tcp_init(),
                        "tcp: service task queued",
                        "TCP service task could not be created");
+
+    boot_splash_expect(usb_start_service(),
+                       "usb: HID service task queued",
+                       "USB HID service task could not be created");
 
     boot_sync_clock();
 

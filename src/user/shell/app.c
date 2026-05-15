@@ -1400,8 +1400,17 @@ static void sh_builtin_mousetest(void) {
     unsigned int deadline;
     unsigned int last_sequence;
     unsigned int events = 0;
+    int usb_open = 0;
+
+    if (sys_usb_mouse_op(SYS_USB_MOUSE_OP_OPEN, 0u) > 0) {
+        usb_open = 1;
+        u_puts("mousetest: usb poll active\n");
+    }
 
     if (sys_mouse_read(&mouse) < 0) {
+        if (usb_open) {
+            sys_usb_mouse_op(SYS_USB_MOUSE_OP_CLOSE, 0u);
+        }
         u_puts("mousetest: mouse unavailable\n");
         return;
     }
@@ -1411,7 +1420,14 @@ static void sh_builtin_mousetest(void) {
     u_puts("mousetest: move/click mouse for 5 seconds\n");
 
     while ((int)(sys_get_ticks() - deadline) < 0) {
+        if (usb_open && sys_usb_mouse_op(SYS_USB_MOUSE_OP_POLL, 0u) < 0) {
+            usb_open = 0;
+            u_puts("mousetest: usb poll stopped\n");
+        }
         if (sys_mouse_read(&mouse) < 0) {
+            if (usb_open) {
+                sys_usb_mouse_op(SYS_USB_MOUSE_OP_CLOSE, 0u);
+            }
             u_puts("mousetest: mouse became unavailable\n");
             return;
         }
@@ -1434,6 +1450,9 @@ static void sh_builtin_mousetest(void) {
         sys_sleep(1);
     }
 
+    if (usb_open) {
+        sys_usb_mouse_op(SYS_USB_MOUSE_OP_CLOSE, 0u);
+    }
     u_puts("mousetest: events=");
     u_put_uint(events);
     u_putc('\n');

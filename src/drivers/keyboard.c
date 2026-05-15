@@ -383,10 +383,7 @@ static key_event_t decode_scancode(unsigned char scancode) {
     return ev;
 }
 
-void keyboard_handle_irq(void) {
-    unsigned char scancode = inb(0x60);
-    key_event_t ev = decode_scancode(scancode);
-
+static void keyboard_emit_event(key_event_t ev) {
     if (ev.key == KEY_NONE) {
         return;
     }
@@ -400,6 +397,15 @@ void keyboard_handle_irq(void) {
     if (s_consumer) {
         s_consumer(ev);
     }
+}
+
+void keyboard_handle_irq(void) {
+    unsigned char scancode = inb(0x60);
+    keyboard_emit_event(decode_scancode(scancode));
+}
+
+void keyboard_inject_scancode(unsigned char scancode) {
+    keyboard_emit_event(decode_scancode(scancode));
 }
 
 void keyboard_reset_modifiers(void) {

@@ -53,6 +53,8 @@ def main() -> int:
     parser.add_argument("--fs", type=Path, required=True)
     parser.add_argument("--sector-size", type=int, required=True)
     parser.add_argument("--loader-size", type=int, required=True)
+    parser.add_argument("--kernel-load-addr", type=lambda s: int(s, 0), default=None)
+    parser.add_argument("--reserved-before", type=lambda s: int(s, 0), default=None)
     parser.add_argument("--boot-partition-table-offset", type=int, required=True)
     parser.add_argument("--boot-partition-entry-size", type=int, required=True)
     args = parser.parse_args()
@@ -77,6 +79,12 @@ def main() -> int:
     kernel_sectors = kernel_padded_size // args.sector_size
     fs_lba = kernel_lba + kernel_sectors
     fs_sectors = len(fs) // args.sector_size
+
+    if args.kernel_load_addr is not None and args.reserved_before is not None:
+        kernel_end = args.kernel_load_addr + len(kernel)
+        expect(kernel_end <= args.reserved_before,
+               f"kernel image overlaps reserved loader memory: "
+               f"end 0x{kernel_end:x} > 0x{args.reserved_before:x}")
 
     expected_size = args.sector_size + len(loader2) + kernel_padded_size + len(fs)
     expect(len(image) == expected_size,
@@ -105,6 +113,8 @@ def main() -> int:
     print(f"  loader2 sectors     = {loader2_sectors}")
     print(f"  kernel start LBA    = {kernel_lba}")
     print(f"  kernel sectors      = {kernel_sectors}")
+    if args.kernel_load_addr is not None:
+        print(f"  kernel memory end   = 0x{args.kernel_load_addr + len(kernel):x}")
     print(f"  ext2 start LBA      = {fs_lba}")
     print(f"  kernel padded bytes = {kernel_padded_size}")
     return 0

@@ -25,9 +25,9 @@ The OS image (`os-image.bin`) is structured as:
 
 ```text
 LBA 0           → boot.bin              (512 bytes, exactly)
-LBA 1–8         → loader2.bin           (currently 4096 bytes, exactly)
-LBA 9+          → padded kernel region  (sector-aligned)
-LBA 9+ks
+LBA 1–16        → loader2.bin           (currently 8192 bytes, exactly)
+LBA 17+         → padded kernel region  (sector-aligned)
+LBA 17+ks
                → ext2 partition        (16 MB volume inside the image)
 ```
 
@@ -36,11 +36,11 @@ where `ks = ceil(kernel.bin / BOOT_SECTOR_SIZE)` and `kernel_lba = 1 + loader2_s
 Constraints:
 
 * `boot.bin` must be **exactly `BOOT_SECTOR_SIZE` bytes**
-* `loader2.bin` must be **exactly `LOADER2_SIZE_BYTES` bytes** (currently 4096 bytes / 8 sectors)
+* `loader2.bin` must be **exactly `LOADER2_SIZE_BYTES` bytes** (currently 8192 bytes / 16 sectors)
 * `kernel.bin` must be **padded to a sector boundary during final image assembly** so the ext2 partition starts at a clean LBA
 * ext2 partition starts at `kernel_lba + kernel_sectors`
 * partition entry 0 records the kernel LBA range and boot flag
-* partition entry 1 records the ext2 LBA range; the kernel reads it during `ext2_init()`
+* partition entry 1 records the ext2 LBA range; stage 2 caches it before the kernel overwrites `0x7C00`
 
 ---
 
@@ -85,8 +85,9 @@ Loaded to `0x4000:0x0000` (physical `0x40000`).
 
 ## Responsibilities
 
-* Check INT 0x13 LBA extension support — halt with message if unsupported
+* Check INT 0x13 LBA extension support and print drive diagnostics
 * Load kernel from disk immediately before the ext2 partition to physical `0x1000`
+* Load the ext2 partition through BIOS LBA reads into a RAM disk at `0x800000`
 * Apply the build-time display policy: VBE framebuffer in auto mode, BIOS/VGA text in forced VGA mode
 * Copy the BIOS 8x16 font, publish framebuffer fields when VBE is selected, and collect BIOS E820 memory-map entries in boot info
 * Setup temporary GDT
@@ -136,13 +137,16 @@ This keeps the hand-rolled boot path explicit: the build fails before QEMU start
 
 ## Why LBA Extended Reads
 
-Stage 2 uses **INT 0x13 AH=0x42** (LBA extended read) for all disk reads. CHS was abandoned because:
+Stage 2 prefers **INT 0x13 AH=0x42** (LBA extended read) for disk reads. LBA is
+preferred because:
 
 * The kernel and ext2 partition can easily extend beyond one CHS track (18 sectors on a standard floppy geometry).
 * CHS reads beyond sector 18 on track 0 either fail or silently read wrong data.
 * LBA addressing has no track geometry limit.
 
-**The system must be launched as a hard disk** (`-drive format=raw,file=...` in QEMU). Floppy mode (`-fda`) does not support INT 0x13 extensions and will halt with "NO LBA!".
+**The system should be launched as a hard disk** (`-drive format=raw,file=...` in QEMU).
+When a BIOS does not report LBA extensions, stage 2 prints diagnostics and
+attempts a CHS fallback.
 
 ---
 
@@ -158,7 +162,18 @@ int 0x13
 jc .no_ext          ; carry set = not supported
 ```
 
-If not supported, loader2 prints "NO LBA!" and halts.
+If not supported, loader2 prints `NO LBA; CHS fallback` plus the BIOS drive
+number and CHS geometry, then attempts classic INT 0x13 sector reads.
+
+## USB Boot Storage
+
+On BIOS USB boot, the firmware can read sectors while the bootloader is still in
+real mode, but the protected-mode kernel cannot assume that the USB stick exists
+as primary ATA hardware. Stage 2 therefore reads the ext2 partition into RAM
+before entering protected mode and publishes it through boot info. It prefers
+INT 0x13 LBA reads and falls back to CHS reads when the BIOS reports no LBA
+extensions. `ext2_init()` mounts the RAM-backed volume when present and falls
+back to ATA/MBR discovery for QEMU and IDE-style virtual disks.
 
 ---
 
@@ -392,14 +407,16 @@ The kernel load overwrote loader2 or the generated stage-2 stack mid-transfer. T
 
 ## "Disk read error!" on screen
 
-`INT 0x13 AH=0x42` returned carry set. Causes:
+The active BIOS disk read returned carry set. Causes:
 
 * Drive not presented as hard disk — use `-drive format=raw,file=...` not `-fda`
 * LBA address out of range — disk image too small or ext2.img not appended
+* CHS fallback geometry does not match the BIOS's USB-disk translation
 
-## "NO LBA!" on screen
+## "NO LBA; CHS fallback" on screen
 
-BIOS does not support INT 0x13 extensions. Ensure QEMU is not in floppy mode.
+BIOS does not report INT 0x13 extensions for the boot drive. Record the whole
+diagnostic line, especially `drive=`, `heads=`, and `spt=`.
 
 ## VMware console accepts clicks but not movement
 

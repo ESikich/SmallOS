@@ -68,6 +68,27 @@ static unsigned int s_packet_count = 0;
 static unsigned int s_vmmouse_packet_count = 0;
 static unsigned int s_sync_drop_count = 0;
 static unsigned int s_overflow_drop_count = 0;
+static unsigned int s_init_step = 0;
+static unsigned int s_init_fail = 0;
+static unsigned int s_config_before = 0;
+static unsigned int s_config_after = 0;
+
+enum {
+    MOUSE_INIT_START = 1,
+    MOUSE_INIT_ENABLE_AUX,
+    MOUSE_INIT_READ_CONFIG,
+    MOUSE_INIT_WRITE_CONFIG,
+    MOUSE_INIT_DEFAULTS,
+    MOUSE_INIT_NEGOTIATE_WHEEL,
+    MOUSE_INIT_STREAM_PARAMS,
+    MOUSE_INIT_ENABLE_STREAM,
+    MOUSE_INIT_READY
+};
+
+static int mouse_fail(unsigned int step) {
+    s_init_fail = step;
+    return 0;
+}
 
 static unsigned int irq_save(void) {
     unsigned int flags;
@@ -392,26 +413,37 @@ int mouse_init(void) {
     s_vmmouse_packet_count = 0;
     s_sync_drop_count = 0;
     s_overflow_drop_count = 0;
+    s_init_step = MOUSE_INIT_START;
+    s_init_fail = 0;
+    s_config_before = 0;
+    s_config_after = 0;
 
     ps2_flush_output();
+    s_init_step = MOUSE_INIT_ENABLE_AUX;
     if (!ps2_write_command(PS2_CMD_ENABLE_AUX)) {
-        return 0;
+        return mouse_fail(s_init_step);
     }
+    s_init_step = MOUSE_INIT_READ_CONFIG;
     if (!ps2_read_config(&config)) {
-        return 0;
+        return mouse_fail(s_init_step);
     }
+    s_config_before = config;
 
     config |= 0x02u;   /* enable IRQ12 */
     config &= ~0x20u;  /* enable auxiliary clock */
+    s_config_after = config;
+    s_init_step = MOUSE_INIT_WRITE_CONFIG;
     if (!ps2_write_config(config)) {
-        return 0;
+        return mouse_fail(s_init_step);
     }
 
+    s_init_step = MOUSE_INIT_DEFAULTS;
     if (!mouse_write(MOUSE_CMD_SET_DEFAULTS) ||
         !mouse_write(MOUSE_CMD_SET_SCALING_1_1)) {
-        return 0;
+        return mouse_fail(s_init_step);
     }
 
+    s_init_step = MOUSE_INIT_NEGOTIATE_WHEEL;
     if (mouse_write_arg(MOUSE_CMD_SET_SAMPLE_RATE, 200u) &&
         mouse_write_arg(MOUSE_CMD_SET_SAMPLE_RATE, 100u) &&
         mouse_write_arg(MOUSE_CMD_SET_SAMPLE_RATE, 80u) &&
@@ -429,15 +461,20 @@ int mouse_init(void) {
         s_packet_size = MOUSE_PACKET_WHEEL;
     }
 
+    s_init_step = MOUSE_INIT_STREAM_PARAMS;
     if (!mouse_write_arg(MOUSE_CMD_SET_SAMPLE_RATE, MOUSE_SAMPLE_RATE) ||
-        !mouse_write_arg(MOUSE_CMD_SET_RESOLUTION, MOUSE_RESOLUTION) ||
-        !mouse_write(MOUSE_CMD_ENABLE_STREAM)) {
-        return 0;
+        !mouse_write_arg(MOUSE_CMD_SET_RESOLUTION, MOUSE_RESOLUTION)) {
+        return mouse_fail(s_init_step);
+    }
+    s_init_step = MOUSE_INIT_ENABLE_STREAM;
+    if (!mouse_write(MOUSE_CMD_ENABLE_STREAM)) {
+        return mouse_fail(s_init_step);
     }
 
     ps2_flush_output();
     s_mouse_ready = 1;
     s_vmmouse_ready = vmmouse_init();
+    s_init_step = MOUSE_INIT_READY;
     return 1;
 }
 
@@ -510,6 +547,24 @@ void mouse_handle_irq(void) {
     input_push_mouse_event(dx, event_dy, wheel, s_buttons, old_buttons ^ s_buttons);
 }
 
+void mouse_inject_relative(int dx, int dy, int wheel, unsigned int buttons) {
+    unsigned int flags;
+    unsigned int old_buttons;
+
+    flags = irq_save();
+    old_buttons = s_buttons;
+    s_dx += dx;
+    s_dy += dy;
+    s_wheel += wheel;
+    s_buttons = buttons & 0x07u;
+    s_sequence++;
+    s_packet_count++;
+    irq_restore(flags);
+
+    input_push_mouse_event(dx, dy, wheel, buttons & 0x07u,
+                           old_buttons ^ (buttons & 0x07u));
+}
+
 int mouse_read_state(sys_mouse_state_t* out) {
     unsigned int flags;
 
@@ -548,5 +603,10 @@ void mouse_debug_snapshot(mouse_debug_state_t* out) {
     out->vmware_enabled = (unsigned int)s_vmmouse_ready;
     out->packet_size = s_packet_size;
     out->device_id = s_device_id;
+    out->ready = (unsigned int)s_mouse_ready;
+    out->init_step = s_init_step;
+    out->init_fail = s_init_fail;
+    out->config_before = s_config_before;
+    out->config_after = s_config_after;
     irq_restore(flags);
 }

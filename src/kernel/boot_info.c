@@ -75,3 +75,25 @@ u32 boot_info_e820_count(void) {
 
     return info->e820_count;
 }
+
+int boot_info_ramdisk_valid(void) {
+    const boot_info_t* info = boot_info_get();
+
+    if (!boot_info_header_valid(info)) {
+        return 0;
+    }
+
+    return info->ramdisk_valid != 0 &&
+           info->ramdisk_phys != 0 &&
+           info->ramdisk_size != 0;
+}
+
+u32 boot_info_ramdisk_phys(void) {
+    const boot_info_t* info = boot_info_get();
+    return boot_info_ramdisk_valid() ? info->ramdisk_phys : 0;
+}
+
+u32 boot_info_ramdisk_size(void) {
+    const boot_info_t* info = boot_info_get();
+    return boot_info_ramdisk_valid() ? info->ramdisk_size : 0;
+}

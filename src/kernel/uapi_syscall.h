@@ -122,6 +122,10 @@ typedef struct sys_netinfo {
 #define SYS_NET_OP_PING            4u
 #define SYS_NET_OP_DHCP            5u
 
+#define SYS_USB_MOUSE_OP_OPEN      1u
+#define SYS_USB_MOUSE_OP_POLL      2u
+#define SYS_USB_MOUSE_OP_CLOSE     3u
+
 typedef struct sys_net_op_request {
     unsigned int op;
     unsigned int target_ip;
@@ -242,7 +246,8 @@ enum {
     SYS_PTY_OPEN        = 83, /* create master/slave pseudo-terminal fds */
     SYS_PTY_SET_SIZE    = 84, /* set pseudo-terminal rows/cols */
     SYS_STAT_FULL       = 85, /* copy full POSIX-shaped stat info for path */
-    SYS_FSTAT_FULL      = 86  /* copy full POSIX-shaped stat info for fd */
+    SYS_FSTAT_FULL      = 86, /* copy full POSIX-shaped stat info for fd */
+    SYS_USB_MOUSE_OP    = 87  /* temporary USB mouse diagnostic session */
 };
 
 #endif

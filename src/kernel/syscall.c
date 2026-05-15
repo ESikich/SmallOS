@@ -19,6 +19,7 @@
 #include "../drivers/tcp.h"
 #include "../drivers/ntp.h"
 #include "../drivers/mouse.h"
+#include "../drivers/usb.h"
 #include "uapi_poll.h"
 #include "uapi_errno.h"
 #include "uapi_dirent.h"
@@ -2361,6 +2362,20 @@ static int sys_mouse_read_impl(sys_mouse_state_t* out_state) {
     return 0;
 }
 
+static int sys_usb_mouse_op_impl(unsigned int op, unsigned int port) {
+    switch (op) {
+        case SYS_USB_MOUSE_OP_OPEN:
+            return usb_mouse_open_port_quiet(port) ? 1 : 0;
+        case SYS_USB_MOUSE_OP_POLL:
+            return usb_mouse_poll_once();
+        case SYS_USB_MOUSE_OP_CLOSE:
+            usb_mouse_close();
+            return 0;
+        default:
+            return -EINVAL;
+    }
+}
+
 static int sys_input_read_impl(syscall_regs_t* regs,
                                sys_input_event_t* out_events,
                                unsigned int max_events,
@@ -3097,6 +3112,12 @@ void syscall_handler_main(syscall_regs_t* regs) {
         case SYS_MOUSE_READ:
             regs->eax = (unsigned int)sys_mouse_read_impl(
                             (sys_mouse_state_t*)regs->ebx);
+            break;
+
+        case SYS_USB_MOUSE_OP:
+            regs->eax = (unsigned int)sys_usb_mouse_op_impl(
+                            regs->ebx,
+                            regs->ecx);
             break;
 
         case SYS_INPUT_READ:
