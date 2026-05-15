@@ -70,47 +70,41 @@ make deps
 
 ## Build And Run
 
-Build the default disk image:
+Build the canonical artifacts:
 
 ```bash
 make clean && make
 ```
 
-The normal image is written to `build/img/os-image.bin`. The seeded ext2 image
-is built under `build/bin/<backend>/ext2.seed.img`, then copied to the mutable
-runtime partition at `.state/ext2.img`. Guest-created files survive normal
-rebuilds, while the `.state/ext2.img.stamp` dependency lets Make refresh the
-runtime partition when userland binaries in the seed change. Reset it from the
-current seed image with:
+This writes `build/img/smallos.img` and `build/img/smallos.vmdk`. QEMU boots
+the raw image directly, and the same file can be written to a whole USB device.
+The seeded ext2 image is built under `build/bin/<backend>/ext2.seed.img`, then
+copied to the mutable runtime partition at `.state/ext2.img`. Guest-created
+files survive normal rebuilds, while the `.state/ext2.img.stamp` dependency
+lets Make refresh the runtime partition when userland binaries in the seed
+change. Reset it from the current seed image with:
 
 ```bash
 make reset-disk
 ```
 
-Build the USB-oriented image for older BIOS hardware:
+Write the image to a whole USB device, not a partition:
 
 ```bash
-make usb-image
+sudo dd if=build/img/smallos.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
-This writes `build/img/vga/smallos-usb.img`. It forces VGA text mode and stage 2
-preloads the ext2 volume into RAM, so the kernel can keep running after BIOS
-USB disk services disappear in protected mode. Write it to a whole USB device,
-not a partition:
+To rebuild only the raw image:
 
 ```bash
-sudo dd if=build/img/vga/smallos-usb.img of=/dev/sdX bs=4M conv=fsync status=progress
+make image
 ```
 
-For WYSE graphics diagnostics, build the VBE-probing USB image:
+To rebuild only the VMware/ESXi wrapper from the same raw image:
 
 ```bash
-make usb-vbe-image
+make vmdk
 ```
-
-This writes `build/img/smallos-usb-vbe.img`. It keeps the USB/CHS/RAM-disk boot
-path, prints VBE probe details in stage 2, and accepts 1024x768, 800x600, or
-640x480 32-bit linear-framebuffer modes.
 
 Interactive runs:
 
@@ -128,7 +122,7 @@ graphics demos need a graphical QEMU backend and a grabbed QEMU window.
 Headless run with serial logging:
 
 ```bash
-make run-headless SERIAL_CONSOLE=1
+make run-headless
 tail -f /tmp/smallos-serial.log
 ```
 
@@ -148,7 +142,7 @@ be passed through `QEMU_NET_HOSTFWD`; for example, this forwards host port
 2323 to the guest echo service port:
 
 ```bash
-make run-headless SERIAL_CONSOLE=1 \
+make run-headless \
   QEMU_NET_HOSTFWD=',hostfwd=tcp::2323-:2323'
 ```
 
@@ -167,7 +161,7 @@ then run:
 
 ```bash
 make run-tap QEMU_NET_IFACE=tap0
-make run-headless-tap QEMU_NET_IFACE=tap0 SERIAL_CONSOLE=1
+make run-headless-tap QEMU_NET_IFACE=tap0
 ```
 
 One simple Linux TAP setup is:
@@ -180,7 +174,7 @@ sudo ip addr add 192.168.100.1/24 dev tap0
 
 Bridge or route that interface if the guest should reach beyond the host.
 
-VMware ESXi deploys use a serial-console VMDK and the same DHCP/e1000 path:
+VMware ESXi deploys use the same VMDK and the same DHCP/e1000 path:
 
 ```bash
 make esxi-smoke ESXI_SMOKE_FLAGS="--host 10.10.0.13"
@@ -279,5 +273,7 @@ after that  mutable ext2 partition
 
 The boot sector stores MBR-style entries for the kernel region and the ext2
 partition. Stage 2 reads the kernel location from the image metadata; the
-kernel reads the ext2 location during mount. `make boot-layout-check` and
-`make image-layout-check` keep those contracts honest before QEMU runs.
+kernel normally mounts ext2 through ATA/MBR discovery, but stage 2 also
+preloads the whole ext2 partition as a 16 MB fallback for USB BIOS boots and
+hardware whose ATA path cannot validate the filesystem. `make boot-layout-check`
+and `make image-layout-check` keep those contracts honest before QEMU runs.

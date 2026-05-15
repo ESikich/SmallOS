@@ -456,7 +456,7 @@ kernel_main()
   idt_init()
   sched_init()
   ata_init()
-  ext2_init()
+  ext2_init() or boot ramdisk fallback
   create bootseq kernel task
   sched_enqueue(boot_proc)
   process_start_reaper()    ← creates and enqueues reaper task
@@ -560,7 +560,7 @@ freestanding tests; new hosted-ish programs should prefer
 
 The following must remain true:
 
-- `ext2_init()` must run after `ata_init()` and before any VFS-backed ext2 file load
+- `ext2_init()` must run after the storage policy chooses ATA or boot ramdisk, and before any VFS-backed ext2 file load
 - `vfs_load_file()` / `ext2_load()` results must be copied before another ext2 load reuses the static buffer
 - every user process must have a valid kernel stack frame before ring-3 entry
 - `tss_set_kernel_stack()` must match the process that will next return from ring 3 into the kernel

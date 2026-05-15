@@ -264,6 +264,40 @@ static void boot_sync_clock(void) {
     }
 }
 
+static void boot_mount_ext2(int ata_ready) {
+    /*
+     * Prefer the writable ATA path for IDE-style disks. Some hardware can
+     * reset the ATA channel successfully but still fail real sector reads, so
+     * the loader-provided ext2 copy remains a second-chance mount fallback.
+     */
+    if (ata_ready) {
+        ext2_use_boot_ramdisk(0);
+        if (ext2_init()) {
+            boot_splash_pass("ext2: volume mounted");
+            return;
+        }
+        if (boot_info_ramdisk_valid()) {
+            boot_splash_warn("ext2: ATA mount failed, using boot ramdisk");
+            ext2_use_boot_ramdisk(1);
+            boot_splash_expect(ext2_init(),
+                               "ext2: volume mounted",
+                               "ext2 volume failed on ATA and boot ramdisk");
+            return;
+        }
+    } else if (boot_info_ramdisk_valid()) {
+        ext2_use_boot_ramdisk(1);
+        boot_splash_warn("ata: unavailable, using boot ramdisk");
+        boot_splash_pass("storage: boot ramdisk fallback");
+        boot_splash_expect(ext2_init(),
+                           "ext2: volume mounted",
+                           "ext2 volume failed on boot ramdisk");
+        return;
+    }
+
+    boot_splash_fail("ext2: volume mounted",
+                     "ext2 volume failed superblock or partition validation");
+}
+
 static void boot_configure_network(void) {
     boot_puts("dhcp: configuring IPv4\n");
     __asm__ __volatile__("sti");
@@ -444,17 +478,14 @@ void kernel_main(void) {
                        "scheduler: run queue reset",
                        "scheduler selected a current task before start");
 
-    if (boot_info_ramdisk_valid()) {
-        boot_splash_pass("storage: boot ramdisk available");
+    int ata_ready = ata_init();
+    if (ata_ready) {
+        boot_splash_pass("ata: primary channel ready");
+    } else if (boot_info_ramdisk_valid()) {
+        boot_splash_warn("ata: unavailable, boot ramdisk available");
     } else {
-        /*
-         * ATA PIO driver — software reset + wait ready.
-         * Must be called before ext2_init() and before sti when no boot
-         * ramdisk was provided by stage 2.
-         */
-        boot_splash_expect(ata_init(),
-                           "ata: primary channel ready",
-                           "ATA primary channel failed to become ready");
+        boot_splash_fail("storage: boot device available",
+                         "ATA is unavailable and stage 2 did not provide a boot ramdisk");
     }
 
     /*
@@ -490,13 +521,7 @@ void kernel_main(void) {
 
     boot_sync_clock();
 
-    /*
-     * ext2 filesystem — discovers the partition from MBR entry 1 and
-     * validates the superblock before user programs can be loaded.
-     */
-    boot_splash_expect(ext2_init(),
-                       "ext2: volume mounted",
-                       "ext2 volume failed superblock or partition validation");
+    boot_mount_ext2(ata_ready);
     s_boot_log_fs_ready = 1;
     boot_log_save();
 

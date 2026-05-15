@@ -8,14 +8,14 @@ This document explains how to safely work on the OS without breaking it.
 
 ```bash
 make clean && make
-qemu-system-i386 -drive format=raw,file=build/img/os-image.bin
+qemu-system-i386 -drive format=raw,file=build/img/smallos.img
 ```
 
 On Windows / PowerShell, this pattern keeps a GTK window open and captures
-COM1 plus QEMU logs. Build the serial image first with `make SERIAL_CONSOLE=1`:
+COM1 plus QEMU logs:
 
 ```powershell
-qemu-system-i386 -drive format=raw,file=build/img-serial/os-image.bin -m 32 -serial stdio -d int,cpu_reset,guest_errors -D qemu.log -display gtk 2>&1 | Tee-Object -FilePath qemu-console.log
+qemu-system-i386 -drive format=raw,file=build/img/smallos.img -m 32 -serial stdio -d int,cpu_reset,guest_errors -D qemu.log -display gtk 2>&1 | Tee-Object -FilePath qemu-console.log
 ```
 
 `make test` runs the same image headlessly, launches the shell `selftest`
@@ -46,9 +46,9 @@ if the framebuffer backend is selected, and also requires a nonblank VGA text
 screenshot. Keep these checks out of the regular `make test` loop until they
 have proven stable across host QEMU setups.
 
-The default framebuffer image is `build/img/os-image.bin`. Forced-VGA visual
-checks write `build/img/vga/os-image.bin`, so a VGA smoke run does not replace
-the image used by plain `make run`.
+The public raw image is `build/img/smallos.img`. Forced-VGA visual checks use
+separate object and binary directories, but they still refresh that same public
+image path.
 
 `kernel_main()` runs startup diagnostics during boot. The early self-checks
 report the live TSS selector, boot stack, page-aligned heap start after high
@@ -104,7 +104,7 @@ If you see `implicit declaration of function` — you forgot a header.
 
 `terminal_put_uint` and `terminal_put_hex` are declared in `terminal.h` and defined in `terminal.c`. Do not add private copies in any other file.
 
-Terminal output goes to the active display backend by default. COM1 serial mirroring is opt-in with `SERIAL_CONSOLE=1`, mainly for headless tests and debug logs. Keep ANSI/control-character handling in `terminal.c` so VGA text and framebuffer output share behavior; backend `putc` implementations should only handle raw newline, carriage return, backspace, wrapping, scrolling, and drawing.
+Terminal output goes to the active display backend and is mirrored to COM1 by default so QEMU and ESXi smoke tests observe the same boot transcript. Set `SERIAL_CONSOLE=0` only for visual-only experiments. Keep ANSI/control-character handling in `terminal.c` so VGA text and framebuffer output share behavior; backend `putc` implementations should only handle raw newline, carriage return, backspace, wrapping, scrolling, and drawing.
 
 Use `terminal_write()` for bulk console output from syscall/fd paths so backends can bracket expensive redraw work. User programs that produce lots of text should batch writes up to the syscall limit instead of writing one rendered row at a time. Do not add automatic "press any key to continue" paging in the terminal or kernel write path; paging belongs in userland commands such as `more` so `write()` does not unexpectedly block on terminal input.
 
@@ -332,7 +332,7 @@ Exited tasks must be marked `PROCESS_STATE_ZOMBIE` and destroyed later from a sa
 
 ## ATA / ext2 Rules
 
-* `ata_init()` must be called before `ext2_init()` and before any `ata_read_sectors()` call
+* Try ATA before the boot ramdisk, but if ATA mount validation fails and loader2 published a boot ramdisk, retry with `ext2_use_boot_ramdisk(1)`
 * `ext2_init()` must be called before `ext2_load()` or `ext2_ls()`
 * `ext2_load()` returns a pointer into the static `s_load_buf` buffer — the caller must not hold this pointer across another `ext2_load()` call
 * `elf_run_image()` copies all ELF segment data into PMM frames before returning, so the buffer is safe to reuse immediately after `elf_run_named()` returns
@@ -395,7 +395,7 @@ meminfo   ← before and after runelf (heap and frames must be stable)
 ### QEMU logging
 
 ```bash
-qemu-system-i386 -drive format=raw,file=build/img/os-image.bin \
+qemu-system-i386 -drive format=raw,file=build/img/smallos.img \
     -no-reboot -no-shutdown \
     -d int,cpu_reset,guest_errors \
     -D qemu.log

@@ -51,6 +51,7 @@ typedef struct {
 } ext2_stat_info_t;
 
 int ext2_init(void);
+void ext2_use_boot_ramdisk(int enable);
 
 void ext2_ls(void);
 void ext2_ls_path(const char* path);

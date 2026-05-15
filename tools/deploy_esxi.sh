@@ -18,8 +18,8 @@ Options:
   --size SIZE             Optional raw disk size/padding passed to make esxi-vmdk
                           (default: use the assembled image size)
   --local-vmdk PATH       Upload an existing local VMDK instead of the default build output
-  --remote-name NAME      Imported VMFS VMDK name (default: smallos-esxi-vmfs.vmdk)
-  --upload-name NAME      Temporary uploaded VMDK name (default: smallos-esxi-upload.vmdk)
+  --remote-name NAME      Imported VMFS VMDK name (default: smallos-vmfs.vmdk)
+  --upload-name NAME      Temporary uploaded VMDK name (default: smallos-upload.vmdk)
   --vm-name NAME          VM inventory name for disk replacement/reboot
                           (default: ESXI_VM_NAME or --vm-dir)
   --replace-vm-disk      Replace the VM disk at the selected controller/unit
@@ -113,8 +113,8 @@ ESXI_VM_NAME="${ESXI_VM_NAME:-}"
 DISPLAY_BACKEND="${DISPLAY_BACKEND:-auto}"
 ESXI_VMDK_SIZE="${ESXI_VMDK_SIZE-}"
 LOCAL_VMDK=""
-REMOTE_NAME="${ESXI_REMOTE_NAME:-smallos-esxi-vmfs.vmdk}"
-UPLOAD_NAME="${ESXI_UPLOAD_NAME:-smallos-esxi-upload.vmdk}"
+REMOTE_NAME="${ESXI_REMOTE_NAME:-smallos-vmfs.vmdk}"
+UPLOAD_NAME="${ESXI_UPLOAD_NAME:-smallos-upload.vmdk}"
 VM_DISK_CONTROLLER="${ESXI_VM_DISK_CONTROLLER:-0}"
 VM_DISK_UNIT="${ESXI_VM_DISK_UNIT:-0}"
 VM_CONTROLLER_TYPE="${ESXI_VM_CONTROLLER_TYPE:-ide}"
@@ -315,7 +315,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
 fi
 
 if [ -z "$LOCAL_VMDK" ]; then
-    LOCAL_VMDK="$repo_root/build/img/esxi/${DISPLAY_BACKEND}-serial/smallos-esxi.vmdk"
+    LOCAL_VMDK="$repo_root/build/img/smallos.vmdk"
 fi
 
 [ -f "$LOCAL_VMDK" ] || die "local VMDK not found: $LOCAL_VMDK"

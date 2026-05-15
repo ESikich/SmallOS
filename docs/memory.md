@@ -56,8 +56,9 @@ If E820 is unavailable, PMM falls back to the old 30 MB fixed-window assumption.
 
 The protected ranges that are never handed to PMM include low BIOS memory,
 the boot sector, loader2, boot info at `0x90000`, the copied boot font at
-`0x91000`, high kernel `.bss` plus the bump heap, the boot stack, and the
-framebuffer range when framebuffer boot info is valid.
+`0x91000`, the loader2-published boot ramdisk when present, high kernel `.bss`
+plus the bump heap, the boot stack, and the framebuffer range when framebuffer
+boot info is valid.
 
 Use PMM frames for:
 
@@ -113,6 +114,12 @@ kernel bump heap, not per `runelf`, so repeated program launches do not keep
 consuming heap.
 
 The loader copies ELF segment data out of this buffer into PMM-backed frames before returning, so the buffer can be reused immediately after `elf_run_named()`.
+
+Loader2 also preloads the entire ext2 partition to physical `0x800000` as a
+boot-storage fallback. With the current 16 MB seed volume, that reservation is
+16 MB. QEMU and VMware normally mount the writable ATA path instead, but BIOS
+USB boots and hardware with failing ATA sector reads can mount this RAM-backed
+copy. Writes made through the fallback are not persisted to the disk image.
 
 Fd-backed file reads and writes do not need to fit inside this static buffer.
 Small fd reads still use reclaimable PMM cache pages owned by the shared

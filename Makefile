@@ -15,10 +15,10 @@ USER_DIR=$(SRC_DIR)/user
 
 BUILD_DIR=build
 DISPLAY_BACKEND ?= auto
-SERIAL_CONSOLE ?= 0
+SERIAL_CONSOLE ?= 1
 BOOT_FORCE_CHS ?= 0
-BOOT_VBE_DIAG ?= 0
-BOOT_VBE_RELAXED ?= 0
+BOOT_VBE_DIAG ?= 1
+BOOT_VBE_RELAXED ?= 1
 ifneq ($(filter $(DISPLAY_BACKEND),auto vga),$(DISPLAY_BACKEND))
 $(error DISPLAY_BACKEND must be one of: auto vga)
 endif
@@ -40,15 +40,10 @@ BIN_ROOT=$(BUILD_DIR)/bin
 BIN_DIR=$(BIN_ROOT)/$(DISPLAY_BACKEND)$(SERIAL_SUFFIX)
 GEN_DIR=$(BUILD_DIR)/gen/$(DISPLAY_BACKEND)$(SERIAL_SUFFIX)
 IMG_DIR=$(BUILD_DIR)/img
-ifeq ($(DISPLAY_BACKEND),auto)
-IMG_FILE=$(IMG_DIR)$(SERIAL_SUFFIX)/os-image.bin
-else
-IMG_FILE=$(IMG_DIR)/$(DISPLAY_BACKEND)$(SERIAL_SUFFIX)/os-image.bin
-endif
+IMG_FILE=$(IMG_DIR)/smallos.img
 ESXI_VMDK_SIZE ?=
-ESXI_VMDK_DIR=$(IMG_DIR)/esxi/$(DISPLAY_BACKEND)$(SERIAL_SUFFIX)
-ESXI_RAW_FILE=$(ESXI_VMDK_DIR)/smallos-esxi.raw
-ESXI_VMDK_FILE=$(ESXI_VMDK_DIR)/smallos-esxi.vmdk
+ESXI_RAW_FILE=$(IMG_DIR)/smallos-vmdk.raw
+ESXI_VMDK_FILE=$(IMG_DIR)/smallos.vmdk
 TOOLS_DIR=$(BUILD_DIR)/tools
 TINYCC_DIR=$(BUILD_DIR)/tinycc-host
 TINYCC_CONFIG_STAMP=$(TINYCC_DIR)/.configured
@@ -198,10 +193,14 @@ OBJ_SUBDIRS=$(sort \
 	$(dir $(USER_SHELL_OBJS)) \
 )
 
-BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(dir $(IMG_FILE)) $(ESXI_VMDK_DIR) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
+BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(dir $(IMG_FILE)) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
 BUILD_SUBDIRS+=$(TINYCC_SMALOS_OBJ_DIR) $(CSERVER_OBJ_DIR)
 
-all: check-third-party $(IMG_FILE)
+all: artifacts
+
+image: check-third-party image-layout-check
+
+artifacts: image vmdk
 
 dirs:
 	mkdir -p $(BUILD_SUBDIRS)
@@ -426,32 +425,33 @@ image-layout-check: $(IMG_FILE)
 		--boot-partition-table-offset $(BOOT_PARTITION_TABLE_OFFSET) \
 		--boot-partition-entry-size $(BOOT_PARTITION_ENTRY_SIZE)
 
-qemu-image:
-	$(MAKE) image-layout-check SERIAL_CONSOLE=0 DISPLAY_BACKEND=$(DISPLAY_BACKEND)
+qemu-image: image
 
-usb-image:
-	$(MAKE) image-layout-check SERIAL_CONSOLE=0 DISPLAY_BACKEND=vga
-	@cp "$(IMG_DIR)/vga/os-image.bin" "$(IMG_DIR)/vga/smallos-usb.img"
-	@printf 'USB image: %s\n' "$(IMG_DIR)/vga/smallos-usb.img"
-	@sha256sum "$(IMG_DIR)/vga/smallos-usb.img"
+img: image
 
-usb-vbe-image:
-	$(MAKE) image-layout-check SERIAL_CONSOLE=0 DISPLAY_BACKEND=auto BOOT_VBE_DIAG=1 BOOT_VBE_RELAXED=1
-	@cp "$(IMG_DIR)/os-image.bin" "$(IMG_DIR)/smallos-usb-vbe.img"
-	@printf 'USB VBE image: %s\n' "$(IMG_DIR)/smallos-usb-vbe.img"
-	@sha256sum "$(IMG_DIR)/smallos-usb-vbe.img"
+usb-image: image
+	@printf 'USB/raw image: %s\n' "$(IMG_FILE)"
+	@sha256sum "$(IMG_FILE)"
 
-esxi-vmdk: qemu-image
-	$(MAKE) esxi-vmdk-build SERIAL_CONSOLE=1 DISPLAY_BACKEND=$(DISPLAY_BACKEND)
+usb-vbe-image: image
+	@printf 'USB/VBE raw image: %s\n' "$(IMG_FILE)"
+	@sha256sum "$(IMG_FILE)"
+
+vmdk: check-third-party esxi-vmdk-build
+
+esxi-vmdk: vmdk
 
 esxi-vmdk-build: $(ESXI_VMDK_FILE)
 
 $(ESXI_VMDK_FILE): image-layout-check | dirs
-	cp $(IMG_FILE) $(ESXI_RAW_FILE)
 	@if [ -n "$(ESXI_VMDK_SIZE)" ]; then \
+		cp $(IMG_FILE) $(ESXI_RAW_FILE); \
 		truncate -s "$(ESXI_VMDK_SIZE)" "$(ESXI_RAW_FILE)"; \
+		$(QEMU_IMG) convert -f raw -O vmdk -o adapter_type=ide,subformat=monolithicSparse $(ESXI_RAW_FILE) $@; \
+		rm -f $(ESXI_RAW_FILE); \
+	else \
+		$(QEMU_IMG) convert -f raw -O vmdk -o adapter_type=ide,subformat=monolithicSparse $(IMG_FILE) $@; \
 	fi
-	$(QEMU_IMG) convert -f raw -O vmdk -o adapter_type=ide,subformat=monolithicSparse $(ESXI_RAW_FILE) $@
 	@printf 'ESXi VMDK: %s\n' "$@"
 
 esxi-deploy:
@@ -501,7 +501,7 @@ QEMUFLAGS=-drive format=raw,file=$(IMG_FILE) -boot c -m $(QEMU_MEMORY_MB) \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all dirs deps check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap test framebuffer-smoke vga-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean FORCE
+.PHONY: all image img artifacts dirs deps check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap test framebuffer-smoke vga-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean FORCE
 
 FORCE:
 

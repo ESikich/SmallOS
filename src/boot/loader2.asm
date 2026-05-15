@@ -16,7 +16,7 @@ LOADER2_SEGMENT      equ 0x4000
 KERNEL_OFFSET        equ 0x1000
 KERNEL_SEGMENT       equ KERNEL_OFFSET / 16
 KERNEL_READ_CHUNK    equ 120        ; 120 sectors = 61440 bytes, fits below 64 KiB
-RAMDISK_READ_CHUNK   equ 64         ; conservative BIOS bounce-buffer read
+RAMDISK_READ_CHUNK   equ 120        ; keep BIOS reads below the 64 KiB DMA boundary
 STAGE2_STACK_TOP     equ __STAGE2_STACK_TOP__
 STAGE2_STACK_TOP_32  equ __STAGE2_STACK_TOP_32__
 FORCE_VGA_BACKEND    equ __FORCE_VGA_BACKEND__
@@ -1086,9 +1086,9 @@ RAMDISK_NEXT_DOT     dd 0
 ext_ok_msg           db "LBA ok ", 0
 no_ext_msg           db "NO LBA; CHS fallback ", 0
 forced_chs_msg       db "FORCE CHS ", 0
-loader_msg           db "Loading...", 0
-kernel_loaded_msg    db "K", 13, 10, 0
-ramdisk_loaded_msg   db "R", 13, 10, 0
+loader_msg           db "Loading kernel... ", 0
+kernel_loaded_msg    db "done", 13, 10, "Preloading ext2 fallback... ", 0
+ramdisk_loaded_msg   db "done", 13, 10, 0
 disk_msg             db "Disk err!", 0
 drive_msg            db " drive=", 0
 error_msg            db " err=", 0

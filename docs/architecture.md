@@ -10,7 +10,7 @@ Boot-image layout facts are owned by the files that define them, not by the Make
 * `Makefile` owns the generated stage-2 stack top
 * `tools/mkext2.c` owns `TOTAL_SIZE_MB` / `TOTAL_BLOCKS`
 
-The Makefile consumes these declarations while building `os-image.bin`, and passes them into `mkimage` for final image assembly.
+The Makefile consumes these declarations while building `smallos.img`, and passes them into `mkimage` for final image assembly.
 
 ---
 
@@ -47,13 +47,13 @@ kernel_main()
   keyboard/mouse/timer/idt
   #PF handler      ← logs CR2 / error code, kills user faults, panics on kernel faults
   sched_init()      ← initialise runnable task table
-  ata_init()        ← software reset ATA primary channel, verify ready
+  ata_init()        ← prefer writable ATA storage when sector reads validate
   pci_init()        ← scan PCI config space and log network controllers
   e1000_init()      ← bind a supported Intel PRO/1000 NIC and set up DMA rings
   dhcp_configure()  ← acquire IPv4 address, netmask, gateway, DNS, and lease
   tcp_init()        ← start TCP/network service task
   ntp_sync()        ← set CLOCK_REALTIME and print synchronized UTC time
-  ext2_init()       ← read MBR entry 1, validate ext2 superblock and geometry
+  ext2_init()       ← mount ATA ext2 or retry loader2 boot ramdisk fallback
   bootseq task      ← run userland splash, print ready, then queue shell/login path
   process_start_reaper() ← create and enqueue zombie reaper task
   sti
@@ -129,7 +129,7 @@ Inside `kernel_main()`:
 13. `dhcp_configure()` — briefly enables interrupts and requests IPv4 configuration from the attached network. The runtime network config is shared by ARP, TCP, NTP, and shell diagnostics.
 14. `tcp_init()` — create and enqueue the TCP/network service kernel task
 15. `ntp_sync()` — briefly enables interrupts so PIT-backed timeout logic works, queries the default NTP server through UDP over the e1000 path and DHCP gateway, sets `CLOCK_REALTIME`, and prints the synchronized UTC time. Failure is a boot warning, not a halt.
-16. `ext2_init()` — read ATA sector 0, extract the ext2 start LBA from partition entry 1 in the MBR partition table, then read and validate the ext2 superblock at that runtime-discovered location; after this succeeds, the accumulated boot log is saved to `/var/log/boot.log`
+16. `ext2_init()` — prefer ATA by reading sector 0, extracting the ext2 start LBA from partition entry 1 in the MBR partition table, then validating the ext2 superblock; if ATA mount validation fails and loader2 published a boot ramdisk, retry against the RAM-backed ext2 volume; after mount succeeds, the accumulated boot log is saved to `/var/log/boot.log`
 17. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, prints `SmallOS ready`, refreshes `/var/log/boot.log`, and launches `/bin/shell.elf` as the default user shell. If that fails or exits, it queues the kernel shell fallback.
 18. `sched_enqueue(boot_proc)` — make the boot sequence task runnable
 19. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
@@ -603,7 +603,7 @@ blocks 4-11         inode table
 block 12+           file and directory data blocks
 ```
 
-The ext2 start LBA is computed during final image assembly by `mkimage` as `kernel_lba + kernel_sectors` and written into partition entry 1 of the MBR partition table. `loader2.asm` reads partition entry 0 to load the kernel. At runtime, `ext2_init()` reads ATA sector 0, extracts the ext2 partition metadata, and uses it to locate the live ext2 volume.
+The ext2 start LBA is computed during final image assembly by `mkimage` as `kernel_lba + kernel_sectors` and written into partition entry 1 of the MBR partition table. `loader2.asm` reads partition entry 0 to load the kernel and preloads partition entry 1 as a fallback ext2 image. At runtime, `ext2_init()` normally reads ATA sector 0, extracts the ext2 partition metadata, and uses it to locate the live ext2 volume; if that path fails, the kernel can retry against the preloaded fallback.
 
 Verified by `make image-layout-check`: partition entry 1 has type `0x83` and
 points at the appended ext2 image; the runtime then validates magic `0xEF53` in

@@ -42,7 +42,7 @@ The ext2 start LBA is **not** compiled into the kernel. The Makefile computes it
 
 `build/bin/ext2.seed.img` is built by `tools/mkext2.c` as a raw 16 MB ext2
 volume. Normal runs copy that seed to `.state/ext2.img`, which is the mutable
-volume appended to `os-image.bin`. The seed includes `/var/log/boot.log` from
+volume appended to `smallos.img`. The seed includes `/var/log/boot.log` from
 `samples/boot.log` so the kernel can persist boot diagnostics by overwriting an
 existing file after `ext2_init()`.
 
@@ -101,7 +101,7 @@ The image build contract is:
 6. assemble:
 
 ```text
-os-image.bin = boot.bin + loader2.bin + kernel_padded.bin + .state/ext2.img
+smallos.img = boot.bin + loader2.bin + kernel_padded.bin + .state/ext2.img
 ```
 
 ## Why kernel padding matters
@@ -127,13 +127,18 @@ sector 0, partition entry 1
 
 That location is in the MBR partition table and does not overlap the boot signature at bytes 510–511.
 
-At runtime:
+At runtime on IDE-style disks:
 
 1. `ata_init()` brings up the ATA driver, including bus-master DMA when available
 2. `ext2_init()` reads ATA sector 0
 3. `ext2_init()` extracts the ext2 LBA from partition entry 1
 4. `ext2_init()` reads the ext2 superblock from that partition
 5. `ext2_init()` validates the ext2 superblock and fixed geometry
+
+When ATA is unavailable, or when ATA resets successfully but ext2 cannot be
+mounted from sector 0, the kernel retries with the loader2-published boot
+ramdisk. That path is for BIOS USB boots and marginal ATA-compatible hardware;
+it does not persist guest writes back to the disk image.
 
 If the partition entry is missing or malformed, `ext2_init()` prints:
 
@@ -157,14 +162,16 @@ ntp_sync()   # best-effort CLOCK_REALTIME setup; warning-only on failure
 ext2_init()
 ```
 
-in that order.
+in that order. The storage policy tries ATA first, then retries `ext2_init()`
+against the loader2-published boot ramdisk if the ATA mount cannot validate the
+volume.
 
 ## `ata_init()`
 
 The ATA driver is:
 - primary channel only
 - master drive only
-- polling PIO only
+- bus-master DMA when available, with polling PIO fallback
 - 28-bit LBA only
 - blocking
 

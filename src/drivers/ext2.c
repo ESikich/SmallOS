@@ -106,6 +106,7 @@ static u32 s_ext2_lba = 0;
 static u32 s_ext2_sectors = 0;
 static u8* s_ramdisk = 0;
 static u32 s_ramdisk_size = 0;
+static int s_use_boot_ramdisk = 0;
 static u8* s_load_buf = 0;
 
 static u8 s_sector[SECTOR_SIZE];
@@ -1251,7 +1252,13 @@ static int dirent_name_to_buf(const ext2_dirent_t* de, char* out, u32 out_size, 
     return 1;
 }
 
+void ext2_use_boot_ramdisk(int enable) {
+    s_use_boot_ramdisk = enable ? 1 : 0;
+}
+
 int ext2_init(void) {
+    s_initialised = 0;
+
     if (!s_load_buf) {
         s_load_buf = (u8*)kmalloc(EXT2_MAX_LOAD_FILE_BYTES);
         if (!s_load_buf) {
@@ -1260,12 +1267,14 @@ int ext2_init(void) {
         }
     }
 
-    if (boot_info_ramdisk_valid()) {
+    if (s_use_boot_ramdisk && boot_info_ramdisk_valid()) {
         s_ramdisk = (u8*)paging_phys_to_kernel_virt(boot_info_ramdisk_phys());
         s_ramdisk_size = boot_info_ramdisk_size();
         s_ext2_lba = 0;
         s_ext2_sectors = s_ramdisk_size / SECTOR_SIZE;
     } else {
+        s_ramdisk = 0;
+        s_ramdisk_size = 0;
         if (!ata_read_sectors(0, 1, s_sector)) {
             terminal_puts("ext2: cannot read sector 0\n");
             return 0;

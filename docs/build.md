@@ -9,14 +9,15 @@ This document defines how the system is built, how artifacts are generated, and 
 The build process produces:
 
 ```text
-build/img/os-image.bin
+build/img/smallos.img
+build/img/smallos.vmdk
 ```
 
 This image contains:
 
 ```text
 boot.bin         stage 1 bootloader   (size declared by boot.asm; currently 512 bytes)
-loader2.bin      stage 2 loader       (size declared by loader2.asm; currently 4096 bytes)
+loader2.bin      stage 2 loader       (size declared by loader2.asm; currently 8192 bytes)
 kernel.bin       kernel               (padded to sector boundary during final image assembly)
 .state/ext2.img ext2 partition     (mutable fixed-size ext2 volume, stored after the padded kernel)
 ```
@@ -66,7 +67,7 @@ build/
 │                    ext2.seed.img, boot.bin, loader2.bin, tcc-smalos.elf)
 ├── obj/<backend>/ → object files and depfiles (.o, .d), mirrored by source subtree
 ├── gen/<backend>/ → generated source (loader2.gen.asm)
-├── img/           → final disk images (os-image.bin, vga/os-image.bin)
+├── img/           → final disk image and wrappers (smallos.img, smallos.vmdk)
 └── tools/         → host tools (mkext2, mkimage)
 ```
 
@@ -98,22 +99,23 @@ loader2.bin          boot.bin
             \          |          /
                  mkimage
                    ↓
-              os-image.bin
+              smallos.img
 ```
 
 `mkimage` performs the final disk-image assembly step. It pads `kernel.bin` to a whole number of sectors, computes the ext2 start LBA, concatenates the component binaries, and patches the ext2 start LBA into the boot-sector field declared by `boot.asm`.
 
-`make boot-layout-check` verifies the generated boot-chain inputs before that step runs, and `make image-layout-check` verifies the finished image afterwards.
+`make boot-layout-check` verifies the generated boot-chain inputs before that step runs, and `make image-layout-check` verifies the finished image afterwards. The default `make` target builds both the raw image and the VMDK wrapper; use `make image` when you only want the raw image.
 
-The default `DISPLAY_BACKEND=auto` image remains `build/img/os-image.bin`.
-Backend-specific forced-VGA builds write `build/img/vga/os-image.bin`, while
-their objects and binaries stay under `build/obj/vga` and `build/bin/vga`.
+The public raw disk image is always `build/img/smallos.img`. Developer build
+knobs such as `DISPLAY_BACKEND`, `SERIAL_CONSOLE`, and boot diagnostics can
+still change the generated internals, but they no longer create separately
+named release images.
 
 ## VMware ESXi VMDK
 
-`make esxi-vmdk` first refreshes the matching non-serial QEMU image and runs
-the finished-image layout check, then builds a serial-console image and converts
-it to an IDE monolithic sparse VMDK:
+`make esxi-vmdk` refreshes `build/img/smallos.img`, runs the finished-image
+layout check, then converts that same raw image to an IDE monolithic sparse
+VMDK:
 
 ```bash
 make esxi-vmdk
@@ -122,13 +124,13 @@ make esxi-vmdk
 The default artifact is:
 
 ```text
-build/img/esxi/auto-serial/smallos-esxi.vmdk
+build/img/smallos.vmdk
 ```
 
 The default QEMU artifact is also kept current:
 
 ```text
-build/img/os-image.bin
+build/img/smallos.img
 ```
 
 By default the ESXi raw disk uses the assembled SmallOS image size. To pad the
@@ -138,8 +140,9 @@ raw disk before VMDK conversion, pass `ESXI_VMDK_SIZE`, for example:
 make esxi-vmdk ESXI_VMDK_SIZE=64M
 ```
 
-Use `DISPLAY_BACKEND=vga` when a VMware console cannot display the VBE
-framebuffer path early enough:
+Use `DISPLAY_BACKEND=vga` only as a developer diagnostic when a VMware console
+cannot display the VBE framebuffer path early enough. It still writes the same
+public artifact names:
 
 ```bash
 make esxi-vmdk DISPLAY_BACKEND=vga
@@ -159,7 +162,7 @@ clone it into VMFS format:
 
 ```sh
 cd /vmfs/volumes/datastore1/SmallOS
-vmkfstools -i smallos-esxi.vmdk smallos-esxi-vmfs.vmdk -d thin
+vmkfstools -i smallos.vmdk smallos-vmfs.vmdk -d thin
 ```
 
 The helper script automates the local build, upload, and remote `vmkfstools`
@@ -209,7 +212,7 @@ make esxi-serial-log ESXI_SERIAL_FLAGS="--host 10.10.0.13 --tail"
 make esxi-serial-log ESXI_SERIAL_FLAGS="--host 10.10.0.13 --follow"
 ```
 
-The ESXi smoke helper clears the serial log, deploys the current serial VMDK,
+The ESXi smoke helper clears the serial log, deploys the current VMDK,
 replaces IDE `0:0`, powers the VM back on, waits for `SmallOS ready`, and checks
 the VMware-relevant boot transcript markers:
 
@@ -357,19 +360,18 @@ make run-headless DISPLAY_BACKEND=vga   # force BIOS/VGA text mode
 before mapping or selecting the framebuffer. The VGA panic and double-fault
 paths remain available either way.
 
-Serial console mirroring is disabled for normal builds so bulk terminal output
-is not throttled by COM1. Build with `SERIAL_CONSOLE=1` when you want COM1
-logs:
+Serial console mirroring is enabled for normal builds so QEMU and ESXi smoke
+checks observe the same boot transcript. Disable it only for visual-only
+experiments:
 
 ```sh
-make run SERIAL_CONSOLE=1
+make run SERIAL_CONSOLE=0
 ```
 
-The headless test and smoke targets opt into `SERIAL_CONSOLE=1` automatically
-because their host harnesses use the serial log as the transcript.
-Serial-enabled builds use separate artifacts such as
-`build/obj/auto-serial/` and `build/img-serial/os-image.bin`, so enabling COM1
-logs does not overwrite the fast default image.
+The headless test and smoke targets also pass `SERIAL_CONSOLE=1` explicitly
+because their host harnesses use the serial log as the transcript. COM1-enabled
+builds use `build/obj/auto-serial/` internally but still produce the canonical
+`build/img/smallos.img`.
 
 Userland framebuffer programs should use the small graphics helper in
 `src/user/gfx.c`. It validates the display mode, acquires exclusive graphics
@@ -746,7 +748,7 @@ build/tools/mkimage \
     --loader build/bin/auto/loader2.bin \
     --kernel build/bin/auto/kernel.bin \
     --fs .state/ext2.img \
-    --out build/img/os-image.bin \
+    --out build/img/smallos.img \
     --sector-size 512 \
     --loader-size 4096 \
     --boot-partition-table-offset 446 \
@@ -809,7 +811,7 @@ Stage 1 uses the old CHS interface (`INT 0x13 AH=0x02`) because it only reads th
 
 ```bash
 make clean && make
-qemu-system-i386 -drive format=raw,file=build/img/os-image.bin
+qemu-system-i386 -drive format=raw,file=build/img/smallos.img
 ```
 
 **Do not use `-fda`** (floppy disk mode). Floppy does not support INT 0x13 LBA extended reads. The system will halt with `NO LBA!` if launched as a floppy.
@@ -894,7 +896,7 @@ boot.bin ───────────────────────�
                                                                    │
 mkimage ────────────────────────────────────────────────────────────┤
                                                                    ↓
-                                                             os-image.bin
+                                                             smallos.img
 ```
 
 ---

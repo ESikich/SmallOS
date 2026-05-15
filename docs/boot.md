@@ -21,7 +21,7 @@ BIOS
 
 # Disk Layout
 
-The OS image (`os-image.bin`) is structured as:
+The OS image (`smallos.img`) is structured as:
 
 ```text
 LBA 0           → boot.bin              (512 bytes, exactly)
@@ -127,7 +127,7 @@ The Makefile reads these declarations during image construction rather than rede
 
 This keeps the hand-rolled boot path explicit: the build fails before QEMU starts if the fixed boot-stage layout drifts.
 
-`make image-layout-check` goes one step further and validates the finished `os-image.bin` itself. It checks the partition table entries, the loader and kernel placement, the ext2 start LBA, and the zero padding between the kernel and ext2 region.
+`make image-layout-check` goes one step further and validates the finished `smallos.img` itself. It checks the partition table entries, the loader and kernel placement, the ext2 start LBA, and the zero padding between the kernel and ext2 region.
 
 `make verify` runs the standard preflight sequence: boot-layout check, image-layout check, guest `test`, and `smoke`. Broader gates live behind `make verify-display`, `make verify-network`, and `make verify-full`.
 
@@ -172,8 +172,10 @@ real mode, but the protected-mode kernel cannot assume that the USB stick exists
 as primary ATA hardware. Stage 2 therefore reads the ext2 partition into RAM
 before entering protected mode and publishes it through boot info. It prefers
 INT 0x13 LBA reads and falls back to CHS reads when the BIOS reports no LBA
-extensions. `ext2_init()` mounts the RAM-backed volume when present and falls
-back to ATA/MBR discovery for QEMU and IDE-style virtual disks.
+extensions. The kernel still prefers ATA/MBR discovery when the disk can be
+mounted, so QEMU and VMware keep the writable disk path. It mounts the
+RAM-backed volume only when ATA is unavailable or when the ATA path cannot
+validate the ext2 volume.
 
 ---
 
@@ -371,7 +373,7 @@ The ext2 partition start LBA cannot be a compile-time constant in `ext2.c` witho
 1. The Makefile discovers source-owned layout constants from `boot.asm` and `loader2.asm`
 2. `mkimage` computes `kernel_lba = 1 + loader2_sectors` and then `ext2_lba = kernel_lba + kernel_sectors` during final image assembly
 3. `mkimage` writes the kernel and ext2 spans into the MBR partition table entries declared by `MBR_PARTITION_TABLE_OFFSET` and `MBR_PARTITION_ENTRY_SIZE` in `boot.asm`
-4. At runtime, `ext2_init()` reads ATA sector 0 and extracts the partition metadata
+4. At runtime, `ext2_init()` normally reads ATA sector 0 and extracts the partition metadata; if that mount fails and loader2 published the preloaded ext2 fallback, the kernel retries against the RAM-backed volume
 
 The partition table lives in the declared boot-sector padding area before the `0x55AA` signature and is safe to overwrite.
 
@@ -481,7 +483,7 @@ mov byte [0xB8001], 0x4F   ; red background, white text
 ## QEMU logging
 
 ```bash
-qemu-system-i386 -drive format=raw,file=build/img/os-image.bin \
+qemu-system-i386 -drive format=raw,file=build/img/smallos.img \
     -no-reboot -no-shutdown \
     -d int,cpu_reset,guest_errors \
     -D qemu.log
@@ -506,12 +508,12 @@ Cons: no relocation support.
 Pros: no compile-time dependency, no chicken-and-egg; the correct value is always in the image regardless of kernel size changes.
 Cons: the image builder and consumers need to agree on partition-table offsets and entry meanings.
 
-## No Ramdisk
+## ATA Preferred, Ramdisk Fallback
 
 Programs are loaded from the ext2 partition at runtime via the ATA driver, using
-bus-master DMA when available and polling PIO as a fallback. The ramdisk was a
-temporary program store used while the ext2 driver was being developed; it has
-been removed.
+bus-master DMA when available and polling PIO as a fallback. Loader2 also
+preloads the ext2 partition into RAM so BIOS USB boots have a storage fallback
+when the protected-mode kernel cannot see the boot device as ATA.
 
 ---
 
