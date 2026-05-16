@@ -1126,6 +1126,70 @@ Waits for a direct child while temporarily making the child's process group the
 foreground owner of its terminal. This is the shell-facing wait path for
 interactive foreground jobs.
 
+### SYS_MEMINFO (77)
+
+```c
+int sys_meminfo(sys_meminfo_t* out_info);
+```
+
+Copies a kernel memory diagnostic summary into `out_info`, including the kernel
+heap range, PMM free/total frame counts, and whether E820 boot memory metadata
+is available.
+
+### SYS_E820_ENTRY (78)
+
+```c
+int sys_e820_entry(uint32_t index, sys_e820_entry_t* out_entry);
+```
+
+Copies one E820 memory-map entry by index. The return value is the total E820
+entry count on success, `0` when no boot E820 map is available, `-EINVAL` for
+an out-of-range index, or `-EFAULT` for an invalid output pointer.
+
+### SYS_NETINFO (79)
+
+```c
+int sys_netinfo(sys_netinfo_t* out_info);
+```
+
+Copies the current e1000, IPv4, socket, and TCP diagnostic state. The IPv4
+fields include whether an address is configured, address, netmask, gateway,
+DNS server, DHCP server, and lease time. `/bin/ip.elf`, `/bin/ipconfig.elf`,
+`netinfo`, and network smoke tests use this as the read side of runtime network
+configuration.
+
+### SYS_NET_OP (80)
+
+```c
+int sys_net_op(sys_net_op_request_t* req);
+```
+
+Performs narrow network maintenance or diagnostic operations. Supported `op`
+values are:
+
+| Operation | Behavior |
+| --- | --- |
+| `SYS_NET_OP_SEND_TEST_FRAME` | Queue a raw e1000 test frame. |
+| `SYS_NET_OP_POLL_ONCE` | Drain at most one received network frame through the dispatcher. |
+| `SYS_NET_OP_ARP` | Resolve `target_ip` or the configured gateway and write the next-hop MAC to `req->mac`. |
+| `SYS_NET_OP_PING` | Send one ICMP echo to `target_ip` or the configured gateway. |
+| `SYS_NET_OP_DHCP` | Request a DHCP IPv4 lease and install the returned address, netmask, gateway, DNS, DHCP server, and lease time. |
+| `SYS_NET_OP_CONFIGURE` | Install a runtime static IPv4 config from `target_ip`, `netmask`, `gateway`, `dns`, `dhcp_server`, and `lease_seconds`. |
+| `SYS_NET_OP_CLEAR_CONFIG` | Clear the runtime IPv4 config. |
+
+Addresses are host-order IPv4 values in the same format used by the kernel
+network drivers. These settings are runtime-only; they are not persisted to
+disk.
+
+### SYS_ATA_READ_SECTOR (81)
+
+```c
+int sys_ata_read_sector(uint32_t lba, void* buf);
+```
+
+Copies one 512-byte ATA sector into a user buffer for diagnostics. Returns `0`
+on success, `-EIO` for read failure, or `-EFAULT` for an invalid buffer.
+
 ### SYS_EXEC_FG (82)
 
 ```c
@@ -1289,6 +1353,11 @@ sys_dup3(oldfd, newfd, flags)
 sys_fork()
 sys_execve(path, argv, envp)
 sys_waitpid_foreground(pid, status)
+sys_meminfo(out_info)
+sys_e820_entry(index, out_entry)
+sys_netinfo(out_info)
+sys_net_op(req)
+sys_ata_read_sector(lba, buf)
 sys_exec_foreground(name, argc, argv)
 sys_pty_open(fds, master_flags)
 sys_pty_set_size(fd, rows, cols)

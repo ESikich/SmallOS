@@ -1,6 +1,7 @@
 #include "arp.h"
 
 #include "e1000.h"
+#include "ext2.h"
 #include "net.h"
 #include "../kernel/klib.h"
 #include "terminal.h"
@@ -13,6 +14,7 @@
 
 #define ARP_FRAME_SIZE     42u
 #define ARP_MAX_POLL_COUNT 200u
+#define ARP_LOG_PATH       "/var/log/net.log"
 
 static int s_arp_cache_valid;
 static u32 s_arp_cache_sender_ip;
@@ -93,6 +95,62 @@ static void arp_print_mac(const u8* mac) {
             terminal_putc(':');
         }
     }
+}
+
+static void arp_log_append_char(char* buf, unsigned int cap, unsigned int* pos, char ch) {
+    if (!buf || !pos || *pos + 1u >= cap) return;
+    buf[(*pos)++] = ch;
+    buf[*pos] = '\0';
+}
+
+static void arp_log_append_str(char* buf, unsigned int cap, unsigned int* pos, const char* s) {
+    if (!s) return;
+    while (*s) {
+        arp_log_append_char(buf, cap, pos, *s++);
+    }
+}
+
+static void arp_log_append_uint(char* buf, unsigned int cap, unsigned int* pos, u32 value) {
+    char digits[10];
+    unsigned int n = 0;
+
+    if (value == 0u) {
+        arp_log_append_char(buf, cap, pos, '0');
+        return;
+    }
+
+    while (value > 0u && n < sizeof(digits)) {
+        digits[n++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    }
+    while (n > 0u) {
+        arp_log_append_char(buf, cap, pos, digits[--n]);
+    }
+}
+
+static void arp_log_append_ip(char* buf, unsigned int cap, unsigned int* pos, u32 ip) {
+    arp_log_append_uint(buf, cap, pos, (ip >> 24) & 0xFFu);
+    arp_log_append_char(buf, cap, pos, '.');
+    arp_log_append_uint(buf, cap, pos, (ip >> 16) & 0xFFu);
+    arp_log_append_char(buf, cap, pos, '.');
+    arp_log_append_uint(buf, cap, pos, (ip >> 8) & 0xFFu);
+    arp_log_append_char(buf, cap, pos, '.');
+    arp_log_append_uint(buf, cap, pos, ip & 0xFFu);
+}
+
+static void arp_log_reply(u32 remote_ip) {
+    char line[48];
+    unsigned int pos = 0;
+    u32 size = 0;
+
+    if (ext2_is_read_only()) return;
+
+    arp_log_append_str(line, sizeof(line), &pos, "arp: reply to ");
+    arp_log_append_ip(line, sizeof(line), &pos, remote_ip);
+    arp_log_append_char(line, sizeof(line), &pos, '\n');
+
+    (void)ext2_stat(ARP_LOG_PATH, &size);
+    (void)ext2_write_at_path(ARP_LOG_PATH, size, (const u8*)line, pos, &size, 1);
 }
 
 static void arp_wait(void) {
@@ -219,8 +277,6 @@ int arp_handle_frame(const u8* frame, u32 len) {
     }
 
     arp_reply(frame);
-    terminal_puts("arp: reply to ");
-    arp_print_ip(arp_read_u32_be(frame, 28));
-    terminal_putc('\n');
+    arp_log_reply(arp_read_u32_be(frame, 28));
     return 1;
 }

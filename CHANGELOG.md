@@ -52,6 +52,10 @@
 
 ### Added
 
+* **Runtime network configuration tools** (`src/user/ip.c`, `src/user/ipconfig.c`, `src/kernel/syscall.c`, `docs/`)
+  * Added `/bin/ip.elf` and `/bin/ipconfig.elf` for viewing link, IPv4 address, route, DNS, DHCP server, lease, socket, and TCP state from userland.
+  * Added runtime static IPv4 configure and clear operations to `SYS_NET_OP`; `ip addr add`, `ip route add default`, `ip dns set`, `ip dhcp`, `ip release`, `ip ping`, and `ip arp` all use the same kernel network config as DHCP.
+  * Documented that static settings are runtime-only and added shell selftest coverage for `ip`, `ip addr show`, `ip route show`, `ip dns show`, and `ipconfig /all`.
 * **Date command and NTP clock sync** (`src/drivers/ntp.*`, `src/kernel/timer.*`, `src/kernel/syscall.c`, `src/user/date.c`, `Makefile`, `docs/`)
   * Added a tiny UDP/NTP client path for QEMU user networking, with boot-time clock synchronization from `129.6.15.28` and a boot diagnostic that prints the synchronized UTC time.
   * Added `/bin/date.elf`; `date` prints the current UTC clock, while `date -s [server-ip]` synchronizes the realtime clock from NTP.

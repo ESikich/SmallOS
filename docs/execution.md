@@ -161,9 +161,14 @@ The user shell resolves bare command names through `/bin/<name>.elf` and then
 the current filesystem namespace. Path-like command names are resolved relative
 to the shell cwd and may omit the `.elf` suffix. Commands like `echo`, `about`,
 `uptime`, `halt`, `reboot`, `date`, `pwd`, `cat`, `fsread`, `ls`, `tree`,
-`touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, and `edit` are shipped this way
-under `/bin/`. The kernel fallback shell keeps a similar app fallback after
-checking its built-in command table.
+`touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, `edit`, `ip`, and `ipconfig` are
+shipped this way under `/bin/`. The kernel fallback shell keeps a similar app
+fallback after checking its built-in command table.
+
+`/bin/ip.elf` and `/bin/ipconfig.elf` are the user-facing runtime network
+configuration tools. They read e1000/IPv4/TCP state through `SYS_NETINFO` and
+update the runtime IPv4 address, route, DNS, or DHCP lease through `SYS_NET_OP`.
+Those settings are intentionally volatile; rebooting returns to boot-time DHCP.
 
 When the shell launches an app command, the child inherits the current shell
 cwd and standard descriptors before it becomes runnable. That preserves

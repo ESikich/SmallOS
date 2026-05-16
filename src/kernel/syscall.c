@@ -2522,6 +2522,7 @@ static int sys_netinfo_impl(sys_netinfo_t* out_info) {
         info.netmask = cfg->netmask;
         info.gateway = cfg->gateway;
         info.dns = cfg->dns;
+        info.dhcp_server = cfg->dhcp_server;
         info.lease_seconds = cfg->lease_seconds;
     }
 
@@ -2588,6 +2589,14 @@ static int sys_net_op_impl(sys_net_op_request_t* user_req) {
         return net_poll_once() ? 1 : 0;
     case SYS_NET_OP_DHCP:
         return dhcp_configure() ? 1 : 0;
+    case SYS_NET_OP_CONFIGURE:
+        if (req.target_ip == 0u) return -EINVAL;
+        net_ipv4_configure(req.target_ip, req.netmask, req.gateway, req.dns,
+                           req.dhcp_server, req.lease_seconds);
+        return 1;
+    case SYS_NET_OP_CLEAR_CONFIG:
+        net_ipv4_clear_config();
+        return 1;
     case SYS_NET_OP_ARP:
         if (req.target_ip == 0u) req.target_ip = net_ipv4_gateway();
         rc = sys_net_route_for_target(req.target_ip, &req.sender_ip, &req.next_hop_ip);

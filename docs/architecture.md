@@ -50,7 +50,7 @@ kernel_main()
   ata_init()        ← prefer writable ATA storage when sector reads validate
   pci_init()        ← scan PCI config space and log network controllers
   e1000_init()      ← bind a supported Intel PRO/1000 NIC and set up DMA rings
-  dhcp_configure()  ← acquire IPv4 address, netmask, gateway, DNS, and lease
+  dhcp_configure()  ← acquire IPv4 address, netmask, gateway, DNS, DHCP server, and lease
   tcp_init()        ← start TCP/network service task
   ntp_sync()        ← set CLOCK_REALTIME and print synchronized UTC time
   ext2_init()       ← mount ATA, USB storage, or loader2 boot RAM fallback
@@ -126,7 +126,7 @@ Inside `kernel_main()`:
 10. `ata_init()` — software reset ATA primary channel (`0x1F0`), poll until ready
 11. `pci_init()` — scan PCI config space and log discovered network controllers
 12. `e1000_init()` — bind a supported Intel PRO/1000 NIC and set up DMA rings
-13. `dhcp_configure()` — briefly enables interrupts and requests IPv4 configuration from the attached network. The runtime network config is shared by ARP, TCP, NTP, and shell diagnostics.
+13. `dhcp_configure()` — briefly enables interrupts and requests IPv4 configuration from the attached network. The runtime network config is shared by ARP, TCP, NTP, `netinfo`, and the `/bin/ip.elf` and `/bin/ipconfig.elf` configuration tools. Static IPv4 settings use the same `SYS_NET_OP` path and remain runtime-only.
 14. `tcp_init()` — create and enqueue the TCP/network service kernel task
 15. `ntp_sync()` — briefly enables interrupts so PIT-backed timeout logic works, queries the default NTP server through UDP over the e1000 path and DHCP gateway, sets `CLOCK_REALTIME`, and prints the synchronized UTC time. Failure is a boot warning, not a halt.
 16. `boot_mount_ext2()` — prefer writable ATA, then read-only USB mass storage, then the loader2 RAM fallback when one was published. The storage probe briefly enables only timer IRQ0 so boot timestamps and USB waits advance without delivering keyboard/process IRQs before scheduling starts. After mount succeeds, the accumulated boot log is saved to `/var/log/boot.txt` when the filesystem is writable.

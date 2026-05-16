@@ -42,8 +42,10 @@ POSIX edge-semantics work.
 - `shutdown()` covers the first half-close behavior: `SHUT_RD` reports local
   EOF, `SHUT_WR` drains queued TX before sending FIN, later writes fail with
   `EPIPE`, duplicate peer FINs are ACKed, and late FIN cleanup is covered.
-- `netinfo` reports socket-object counts, TCP listener and connection counts,
-  RX/TX ring usage, allocated ring capacity, and global RX/TX caps.
+- `netinfo`, `ip`, and `ipconfig /all` report socket-object counts, TCP
+  listener and connection counts, RX/TX ring usage, allocated ring capacity,
+  and global RX/TX caps. `ip` and `ipconfig` also expose the runtime IPv4
+  address, route, DNS, DHCP server, and lease state used by outbound sockets.
 - The sample cserve config uses `max_conn = 40`; the default cserve smoke gate
   still holds 32 keep-alive clients and adds one slow-reader connection.
 

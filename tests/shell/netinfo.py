@@ -12,6 +12,50 @@ CASES = [
         ],
     },
     {
+        "name": "ip",
+        "must_contain": [
+            "shelltest: ip begin",
+            "link:",
+            "inet:",
+            "gateway:",
+            "shelltest: ip end",
+        ],
+    },
+    {
+        "name": "ip_addr",
+        "must_contain": [
+            "shelltest: ip_addr begin",
+            "inet:",
+            "shelltest: ip_addr end",
+        ],
+    },
+    {
+        "name": "ip_route",
+        "must_contain": [
+            "shelltest: ip_route begin",
+            "route:",
+            "shelltest: ip_route end",
+        ],
+    },
+    {
+        "name": "ip_dns",
+        "must_contain": [
+            "shelltest: ip_dns begin",
+            "dns:",
+            "shelltest: ip_dns end",
+        ],
+    },
+    {
+        "name": "ipconfig",
+        "must_contain": [
+            "shelltest: ipconfig begin",
+            "link:",
+            "route:",
+            "sockets:",
+            "shelltest: ipconfig end",
+        ],
+    },
+    {
         "name": "netsend",
         "must_contain": [
             "shelltest: netsend begin",

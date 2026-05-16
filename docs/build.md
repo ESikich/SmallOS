@@ -336,6 +336,11 @@ so the old QEMU `10.0.2.15/24` address is no longer hardcoded in the kernel.
 TAP device instead. That is the right path when you want the guest on a bridged
 LAN or otherwise reachable beyond QEMU's built-in NAT layer.
 
+Inside the guest, `ip`, `ipconfig /all`, `ip dhcp`, `ip addr add <addr>/<prefix>`,
+`ip route add default via <gateway>`, and `ip dns set <server>` inspect or
+replace the runtime IPv4 settings. Static settings use the same volatile kernel
+network config as DHCP and are not written to disk.
+
 For interactive display/input, `make run` defaults to QEMU's curses backend:
 
 ```bash

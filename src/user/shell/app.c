@@ -352,6 +352,8 @@ static void sh_help(void) {
     u_puts("  meminfo         show memory summary\n");
     u_puts("  memmap          show physical memory map\n");
     u_puts("  netinfo         show network state\n");
+    u_puts("  ip              show or set IPv4 config\n");
+    u_puts("  ipconfig        alias for ip\n");
     u_puts("  dhcp            request IPv4 config via DHCP\n");
     u_puts("  netsend         queue a test network frame\n");
     u_puts("  netrecv         receive a test network frame\n");
@@ -393,7 +395,7 @@ static void sh_help(void) {
 }
 
 static const char* const s_builtin_names[] = {
-    "help", "clear", "meminfo", "memmap", "netinfo", "dhcp",
+    "help", "clear", "meminfo", "memmap", "netinfo", "ip", "ipconfig", "dhcp",
     "netsend", "netrecv", "arpgw", "ping", "pinggw", "pingpublic",
     "netcheck", "mousetest", "ataread", "cd", "pwd", "wd", "runelf",
     "runelf_nowait", "runelf_bg", "bg", "jobs", "fg", "kill",
@@ -1760,6 +1762,11 @@ void sh_shelltest(void) {
     sh_shelltest_exec("meminfo", "meminfo");
     sh_shelltest_exec("memmap", "memmap");
     sh_shelltest_exec("netinfo", "netinfo");
+    sh_shelltest_exec("ip", "ip");
+    sh_shelltest_exec("ip_addr", "ip addr show");
+    sh_shelltest_exec("ip_route", "ip route show");
+    sh_shelltest_exec("ip_dns", "ip dns show");
+    sh_shelltest_exec("ipconfig", "ipconfig /all");
     sh_shelltest_exec("netsend", "netsend");
     sh_shelltest_exec("netrecv", "netrecv");
     sh_shelltest_exec("arpgw", "arpgw");

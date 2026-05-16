@@ -89,6 +89,7 @@ typedef struct sys_netinfo {
     unsigned int netmask;
     unsigned int gateway;
     unsigned int dns;
+    unsigned int dhcp_server;
     unsigned int lease_seconds;
     unsigned int max_sockets;
     unsigned int used_sockets;
@@ -121,6 +122,8 @@ typedef struct sys_netinfo {
 #define SYS_NET_OP_ARP             3u
 #define SYS_NET_OP_PING            4u
 #define SYS_NET_OP_DHCP            5u
+#define SYS_NET_OP_CONFIGURE       6u
+#define SYS_NET_OP_CLEAR_CONFIG    7u
 
 #define SYS_USB_MOUSE_OP_OPEN      1u
 #define SYS_USB_MOUSE_OP_POLL      2u
@@ -131,6 +134,11 @@ typedef struct sys_net_op_request {
     unsigned int target_ip;
     unsigned int sender_ip;
     unsigned int next_hop_ip;
+    unsigned int netmask;
+    unsigned int gateway;
+    unsigned int dns;
+    unsigned int dhcp_server;
+    unsigned int lease_seconds;
     unsigned char mac[6];
 } sys_net_op_request_t;
 

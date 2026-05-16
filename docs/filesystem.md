@@ -172,11 +172,13 @@ ntp_sync()   # best-effort CLOCK_REALTIME setup; warning-only on failure
 ext2_init()
 ```
 
-in that order. The storage policy tries ATA first, USB mass storage second, and
-the loader2-published boot RAM fallback last. During the early storage probe, only
-timer IRQ0 is temporarily unmasked so boot timestamps and USB/OHCI waits
-advance without letting keyboard/process IRQ paths run before the scheduler has
-a current task.
+in that order. The DHCP-provided network config is runtime state; after boot,
+`/bin/ip.elf` and `/bin/ipconfig.elf` can inspect or replace it without writing
+anything to the filesystem. The storage policy tries ATA first, USB mass storage
+second, and the loader2-published boot RAM fallback last. During the early
+storage probe, only timer IRQ0 is temporarily unmasked so boot timestamps and
+USB/OHCI waits advance without letting keyboard/process IRQ paths run before the
+scheduler has a current task.
 
 ## `ata_init()`
 

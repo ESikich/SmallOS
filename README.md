@@ -36,12 +36,13 @@ guest.
   `/var/log/boot.txt`, late graphical boot splash, PS/2 keyboard, retrying OHCI
   USB boot keyboard/mouse probing, PS/2 plus VMware mouse input, and several
   graphics demos.
-- PCI and e1000 networking with DHCP, ARP, IPv4, UDP/NTP clock sync, a compact
-  TCP service task, passive sockets, `poll`/`epoll` readiness, FTP, echo, and
-  HTTP server smoke paths.
+- PCI and e1000 networking with DHCP, ARP, IPv4, UDP/NTP clock sync,
+  runtime `ip`/`ipconfig` inspection and configuration, a compact TCP service
+  task, passive sockets, `poll`/`epoll` readiness, FTP, echo, and HTTP server
+  smoke paths.
 - Guest userland includes familiar commands such as `ls`, `tree`, `cat`,
-  `more`, `pwd`, `touch`, `mkdir`, `rm`, `cp`, `mv`, `edit`, `date`,
-  `uptime`, `halt`, and `reboot`, plus diagnostics and demos.
+  `more`, `pwd`, `touch`, `mkdir`, `rm`, `cp`, `mv`, `edit`, `date`, `ip`,
+  `ipconfig`, `uptime`, `halt`, and `reboot`, plus diagnostics and demos.
 - TinyCC is built as `usr/bin/tcc.elf` and can compile sample C programs inside
   SmallOS.
 
@@ -182,6 +183,18 @@ sudo ip addr add 192.168.100.1/24 dev tap0
 ```
 
 Bridge or route that interface if the guest should reach beyond the host.
+
+Inside SmallOS, `ip` and `ipconfig` show and update the runtime IPv4
+configuration:
+
+```text
+ip
+ip addr add 192.168.100.2/24 gateway 192.168.100.1 dns 1.1.1.1
+ip route add default via 192.168.100.1
+ip dns set 1.1.1.1
+ip dhcp
+ipconfig /all
+```
 
 VMware ESXi deploys use the same VMDK and the same DHCP/e1000 path:
 
