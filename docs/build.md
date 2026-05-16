@@ -1009,7 +1009,9 @@ USB boot keyboard and mouse discovery are handled by the same OHCI driver after
 storage is mounted and the shell ELF has been loaded. A failed first probe does
 not freeze input discovery: the `usb` kernel task retries once per second until
 both supported boot HID devices are found, while skipping the active
-USB-storage port and already-claimed HID ports. The visible `Input:` lines and
+USB-storage port and already-claimed HID ports. The HID matcher accepts keyboard
+and mouse protocol interfaces even when older firmware reports a non-boot HID
+subclass, then requests boot protocol before polling. The visible `Input:` lines and
 `/bin/usbinfo.elf` report keyboard/mouse endpoint, packet, poll, report, and
 condition-code counters for hardware bring-up; `/bin/mousetest.elf` can poll
 the shared mouse state and USB boot mouse path from userland.

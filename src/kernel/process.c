@@ -5,7 +5,6 @@
 #include "terminal.h"
 #include "scheduler.h"
 #include "keyboard.h"
-#include "shell.h"
 #include "timer.h"
 #include "../drivers/tcp.h"
 #include "uapi_poll.h"
@@ -225,6 +224,10 @@ static void process_key_consumer(key_event_t ev) {
         return;
     }
 
+    if (!s_foreground_reader || s_foreground_pgid == 0) {
+        return;
+    }
+
     if (ev.ctrl && ev.key == KEY_Z) {
         process_t* proc = s_foreground_reader;
         if (!proc) return;
@@ -235,7 +238,6 @@ static void process_key_consumer(key_event_t ev) {
         s_detach_requested = proc;
         s_foreground_reader = 0;
         s_foreground_pgid = 0;
-        shell_register_consumer();
         return;
     }
 
@@ -2536,7 +2538,7 @@ void process_set_foreground(process_t* proc) {
         input_clear_events();
         keyboard_set_consumer(process_key_consumer);
     } else {
-        shell_register_consumer();
+        keyboard_set_consumer(process_key_consumer);
     }
 }
 
@@ -2548,7 +2550,7 @@ void process_set_foreground_preserve_input(process_t* proc) {
     if (proc) {
         keyboard_set_consumer(process_key_consumer);
     } else {
-        shell_register_consumer();
+        keyboard_set_consumer(process_key_consumer);
     }
 }
 

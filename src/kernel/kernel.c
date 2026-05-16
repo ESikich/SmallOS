@@ -4,7 +4,6 @@
 #include "timer.h"
 #include "gdt.h"
 #include "idt.h"
-#include "shell.h"
 #include "memory.h"
 #include "boot_info.h"
 #include "pmm.h"
@@ -695,21 +694,9 @@ static void boot_sequence_task_main(void) {
         process_set_foreground(user_shell_proc);
         user_shell_proc->state = PROCESS_STATE_RUNNING;
         process_wait(user_shell_proc);
-        terminal_puts("User shell exited; starting kernel shell fallback\n");
+        terminal_puts("User shell exited; no kernel shell fallback is linked\n");
     } else {
-        terminal_puts("User shell unavailable; starting kernel shell fallback\n");
-    }
-
-    process_t* shell_proc = process_create_kernel_task("shell", shell_task_main);
-
-    if (!shell_proc) {
-        boot_splash_fail("shell: task created",
-                         "kernel could not allocate the shell process");
-    }
-
-    if (!sched_enqueue(shell_proc)) {
-        boot_splash_fail("shell: task queued",
-                         "kernel could not enqueue the shell process");
+        terminal_puts("User shell unavailable; no kernel shell fallback is linked\n");
     }
 
     process_t* current = sched_current();

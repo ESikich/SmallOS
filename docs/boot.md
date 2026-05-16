@@ -227,7 +227,9 @@ until this first HID pass finishes, so the serial log captures either
 not final: the `usb` service task retries boot keyboard and mouse discovery
 once per second, skips the already-mounted USB-storage port and already-active
 HID ports, and preserves USB addresses for failed attempts so late devices can
-still be claimed after the shell is visible. The visible `Input:` lines show
+still be claimed after the shell is visible. The HID matcher accepts keyboard
+and mouse protocol interfaces even when older firmware reports a non-boot HID
+subclass, then requests boot protocol before polling. The visible `Input:` lines show
 keyboard and mouse endpoint/poll/report counters so hardware bring-up can be
 debugged even when only one input device is working.
 
@@ -629,7 +631,7 @@ Bootseq  →  load /bin/shell.elf suspended
          →  run /bin/bootsplash.elf boot/splash.bmp
          →  print SmallOS ready
          →  launch /bin/shell.elf
-         →  create kernel shell fallback if the user shell exits or fails
+         →  idle if the user shell exits or fails
 ```
 
 Boot code is the most fragile part of the system. Failures here are often silent — no terminal, no debug output, just a reboot loop or a hung screen.

@@ -130,7 +130,7 @@ Inside `kernel_main()`:
 14. `tcp_init()` — create and enqueue the TCP/network service kernel task
 15. `ntp_sync()` — briefly enables interrupts so PIT-backed timeout logic works, queries the default NTP server through UDP over the e1000 path and DHCP gateway, sets `CLOCK_REALTIME`, and prints the synchronized UTC time. Failure is a boot warning, not a halt.
 16. `boot_mount_ext2()` — prefer writable ATA, then read-only USB mass storage, then the loader2 RAM fallback when one was published. The storage probe briefly enables only timer IRQ0 so boot timestamps and USB waits advance without delivering keyboard/mouse/process IRQs before scheduling starts. After mount succeeds, the accumulated boot log is saved to `/var/log/boot.txt` when the filesystem is writable.
-17. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` keeps the active display muted while it loads `/bin/shell.elf` suspended, probes OHCI boot keyboard/mouse HID, starts the retrying USB HID service, and refreshes `/var/log/boot.txt`. It then runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, re-enables display output, prints `SmallOS ready`, and releases `/bin/shell.elf` as the default user shell. If that fails or exits, it queues the kernel shell fallback.
+17. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` keeps the active display muted while it loads `/bin/shell.elf` suspended, probes OHCI boot keyboard/mouse HID, starts the retrying USB HID service, and refreshes `/var/log/boot.txt`. It then runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, re-enables display output, prints `SmallOS ready`, and releases `/bin/shell.elf` as the default user shell. If that fails or exits, it reports that no kernel shell fallback is linked and idles.
 18. `sched_enqueue(boot_proc)` — make the boot sequence task runnable
 19. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
 20. `sched_start(boot_proc)` - switch from the boot stack into the boot sequence task with interrupts still masked
@@ -181,12 +181,8 @@ For runnable tasks, `sched_esp` is the saved kernel resume stack pointer used by
 
 `process_set_args()` copies argv strings into `user_arg_data`, populates
 `user_argv`, and guarantees `user_argv[user_argc] == NULL`. This process-owned
-storage is independent of the shell input buffer or syscall caller memory and
-remains valid until the process exits.
-
-The kernel fallback shell is intentionally a compact debug monitor. The full
-scripted `shelltest` / `selftest` command paths live in `/bin/shell.elf`, where
-the command lists are kept in static storage for predictable regression runs.
+storage is independent of syscall caller memory and remains valid until the
+process exits.
 
 The handle table is generic rather than file-specific now. `process_create()`
 pre-opens fd `0`, `1`, and `2` as console handles for stdin/stdout/stderr;
@@ -463,34 +459,25 @@ keyboard IRQ → keyboard_handle_irq()
   ↓
   call registered consumer (keyboard_consumer_fn)
   ↓
-  [shell consumer]              [process consumer]
-  shell_key_consumer()          process_key_consumer()
-  enqueue shell_event_t         ASCII → keyboard_buf_push_char()
-                                Ctrl+C → signal/terminate foreground group
-  ↓                             ↓
-  shell_task_main()             SYS_READ drains kb_buf
-  drains queue via shell_poll()
+  [process consumer]
+  process_key_consumer()
+  ASCII → keyboard_buf_push_char()
+  Ctrl+C → signal/terminate foreground group
   ↓
-  line_editor (insert, delete, cursor, history)
-  ↓
-  [Enter] → parse_command() → commands_execute()
-  ↓
-  kernel command dispatch or bin/<name>.elf fallback
+  SYS_READ drains kb_buf for the foreground user process
 ```
 
 The active consumer is managed by `keyboard_set_consumer()`:
-- `shell_init()` registers `shell_key_consumer` for the kernel fallback shell
 - `process_set_foreground(proc)` clears `kb_buf` (discarding any stale input, e.g. the Enter that launched `runelf`), records the foreground process group, then registers `process_key_consumer` when a user process takes the foreground
 - `process_set_foreground_preserve_input(proc)` keeps already-buffered input while refreshing the same foreground owner; bootseq uses an explicit `process_set_foreground(shell)` before resuming the suspended user shell so PS/2 and USB keyboard events are routed to the prompt immediately
 - `process_key_consumer` pushes ASCII into `kb_buf`; after each push it checks `keyboard_get_waiting_process()` and, if a process is parked in `PROCESS_STATE_WAITING`, sets it back to `PROCESS_STATE_RUNNING` and clears the waiter slot so the scheduler picks it up
 - Ctrl+C is handled by `process_key_consumer` as a terminal interrupt for the foreground process group. Matching signalfds receive `SIGINT`; otherwise the group gets exit status `130`, pending console/socket waits are cleared, and any actively running member is switched away from the IRQ1 frame.
-- `process_set_foreground(0)` calls `shell_register_consumer()` to restore the shell consumer on exit
+- `process_set_foreground(0)` leaves the process input router registered but clears the foreground reader/group, so key events are ignored until a new foreground process is installed
 
 The keyboard driver makes no routing decisions. It decodes scancodes and calls whoever is registered. USB boot keyboards feed this same path by translating HID boot reports into set-1 scancodes and injecting them through `keyboard_inject_scancode()`.
 
-The boot sequence launches `/bin/shell.elf` as the normal interactive shell.
-The kernel shell path above remains available as a fallback/debug monitor if
-the user shell exits or fails to load.
+The boot sequence launches `/bin/shell.elf` as the interactive shell. The old
+kernel shell is no longer linked into the kernel image.
 
 Mouse input is intentionally lower-level today. `mouse.c` initializes the PS/2
 auxiliary port, decodes 3-byte relative-motion packets on IRQ12, drains VMware
@@ -504,7 +491,9 @@ OHCI USB boot HID is claimed after storage mount so real USB boots can load the
 shell from the same device path first. The first HID probe runs before the shell
 is released; if either the boot keyboard or boot mouse is missing, the `usb`
 kernel task retries once per second and skips any port already owned by USB
-storage or an active HID endpoint. USB keyboard reports are translated into
+storage or an active HID endpoint. The matcher accepts keyboard and mouse
+protocol interfaces even when older firmware does not report the exact boot HID
+subclass, then requests boot protocol before polling. USB keyboard reports are translated into
 set-1 scancodes; USB mouse reports are injected into the normal mouse state.
 The shell-facing USB and mouse diagnostics are userland programs
 (`/bin/usbinfo.elf`, `/bin/usbports.elf`, `/bin/usbdiag.elf`,

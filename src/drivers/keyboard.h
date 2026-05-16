@@ -129,8 +129,9 @@ void keyboard_debug_snapshot(keyboard_debug_state_t* out);
  * no routing decisions of its own.
  *
  * Ownership transfers are:
- *   shell_init()            — registers the shell consumer
- *   process_set_foreground  — registers a process consumer (or restores shell)
+ *   process_set_foreground  — registers the process input router
+ *   process_set_foreground(0) leaves the router active but with no foreground
+ *                             reader, so key events are ignored
  */
 void keyboard_set_consumer(keyboard_consumer_fn fn);
 

@@ -68,9 +68,9 @@ loads `/bin/shell.elf` suspended, probes OHCI boot keyboard/mouse HID, queues
 the retrying USB service, refreshes `/var/log/boot.txt`, then runs
 `/bin/bootsplash.elf boot/splash.bmp`. After the splash exits, it re-enables
 display output, prints `SmallOS ready`, and releases `/bin/shell.elf` as the
-default user shell. If that user shell exits or fails to load, `bootseq` queues
-the kernel shell fallback. This keeps framebuffer splash rendering and normal
-interactive shell work in userland while preserving a low-level debug monitor.
+default user shell. If that user shell exits or fails to load, `bootseq`
+reports that no kernel shell fallback is linked and parks itself. This keeps
+framebuffer splash rendering and interactive shell work in userland.
 
 Descriptor slots are owned by `process.c`, not the syscall dispatcher. fd `0`,
 `1`, and `2` are real console handles created with each process and may be
@@ -143,13 +143,12 @@ That is its entire job. PS/2 IRQ1 and USB boot keyboards both enter here; USB
 HID reports are translated to set-1 scancodes before calling
 `keyboard_inject_scancode()`.
 
-Routing decisions - whether input goes to the kernel fallback shell or a user
-process - belong to the consumer, not the driver. The consumer is registered
-via `keyboard_set_consumer()`:
-- `shell_init()` registers `shell_key_consumer` for the kernel fallback shell
+Routing decisions - whether input goes to a foreground user process or nowhere -
+belong to the consumer owner, not the driver. The consumer is registered via
+`keyboard_set_consumer()`:
 - `process_set_foreground(proc)` registers `process_key_consumer` and records the foreground process group for terminal signals
 - `process_set_foreground_preserve_input(proc)` refreshes the same foreground owner without discarding buffered input; bootseq explicitly installs the suspended user shell as foreground before resuming it
-- `process_set_foreground(0)` restores the shell consumer via `shell_register_consumer()`
+- `process_set_foreground(0)` leaves the process input router registered but clears the foreground reader/group, so key events are ignored until a new foreground process is installed
 
 Do not add imports of `process.h`, `scheduler.h`, or `shell.h` to `keyboard.c`
 or `keyboard.h`. Do not add routing logic to `keyboard_handle_irq()` or the USB
@@ -306,9 +305,9 @@ meminfo              ← still identical after second run
 
 ## Scheduler Rules
 
-`sched_init()` must be called **after `idt_init()` and before `sti`**. It initialises the scheduler table. The shell is not registered here; `kernel_main()` queues the `bootseq` task, and `bootseq` launches the user shell after the late boot splash. If the user shell exits or fails to load, `bootseq` queues the kernel shell fallback. If `sched_init()` is called after `sti`, the first timer tick may fire with an uninitialised scheduler state.
+`sched_init()` must be called **after `idt_init()` and before `sti`**. It initialises the scheduler table. The shell is not registered here; `kernel_main()` queues the `bootseq` task, and `bootseq` launches the user shell after the late boot splash. If the user shell exits or fails to load, `bootseq` idles without a shell. If `sched_init()` is called after `sti`, the first timer tick may fire with an uninitialised scheduler state.
 
-`sched_enqueue(proc)` — call after `proc->state = RUNNING` when handing a task to the scheduler. The boot sequence task follows this path in `kernel_main()`, kernel fallback shell launch follows it from `bootseq`, and ELF launches do as well.
+`sched_enqueue(proc)` — call after `proc->state = RUNNING` when handing a task to the scheduler. The boot sequence task follows this path in `kernel_main()`, and ELF launches do as well.
 
 `sched_dequeue(proc)` is for scheduler-owned tasks. In the current tree it is used from `sched_exit_current()`. It removes the process from the run queue, compacts the table, and adjusts scheduler indices so round-robin execution can continue over the remaining runnable entries.
 

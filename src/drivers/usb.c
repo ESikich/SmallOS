@@ -92,7 +92,6 @@
 #define USB_DESC_CONFIGURATION 0x02u
 
 #define USB_CLASS_HID          0x03u
-#define USB_HID_SUBCLASS_BOOT  0x01u
 #define USB_HID_PROTOCOL_KEYBOARD 0x01u
 #define USB_HID_PROTOCOL_MOUSE 0x02u
 #define USB_CLASS_MASS_STORAGE 0x08u
@@ -992,7 +991,6 @@ static int usb_parse_hid_config(const u8* data,
             protocol = data[i + 7u];
             in_hid_interface =
                 data[i + 5u] == USB_CLASS_HID &&
-                data[i + 6u] == USB_HID_SUBCLASS_BOOT &&
                 (protocol == USB_HID_PROTOCOL_KEYBOARD ||
                  protocol == USB_HID_PROTOCOL_MOUSE) &&
                 (desired_protocol == 0u || protocol == desired_protocol);

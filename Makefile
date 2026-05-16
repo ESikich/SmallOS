@@ -9,7 +9,6 @@ SRC_DIR=src
 BOOT_DIR=$(SRC_DIR)/boot
 KERNEL_DIR=$(SRC_DIR)/kernel
 DRIVERS_DIR=$(SRC_DIR)/drivers
-SHELL_DIR=$(SRC_DIR)/shell
 EXEC_DIR=$(SRC_DIR)/exec
 USER_DIR=$(SRC_DIR)/user
 
@@ -86,7 +85,7 @@ BOOT_PARTITION_TABLE_OFFSET := $(shell awk '/^MBR_PARTITION_TABLE_OFFSET[[:space
 BOOT_PARTITION_ENTRY_SIZE := $(shell awk '/^MBR_PARTITION_ENTRY_SIZE[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 LOADER2_SIZE_BYTES := $(shell awk '/^LOADER2_SIZE_BYTES[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/loader2.asm)
 
-CPPFLAGS=-I$(GEN_DIR) -I$(KERNEL_DIR) -I$(DRIVERS_DIR) -I$(SHELL_DIR) -I$(EXEC_DIR) -I$(USER_DIR) -I$(CURDIR)/third_party/ftp_server/include
+CPPFLAGS=-I$(GEN_DIR) -I$(KERNEL_DIR) -I$(DRIVERS_DIR) -I$(EXEC_DIR) -I$(USER_DIR) -I$(CURDIR)/third_party/ftp_server/include
 ifeq ($(DISPLAY_BACKEND),vga)
 CPPFLAGS+=-DSMALLOS_FORCE_VGA_BACKEND=1
 LOADER2_FORCE_VGA_BACKEND=1
@@ -119,8 +118,6 @@ KERNEL_C_SRCS=\
 	$(KERNEL_DIR)/idt.c \
 	$(DRIVERS_DIR)/keyboard.c \
 	$(DRIVERS_DIR)/mouse.c \
-	$(SHELL_DIR)/shell.c \
-	$(SHELL_DIR)/line_editor.c \
 	$(DRIVERS_DIR)/terminal.c \
 	$(DRIVERS_DIR)/unicode.c \
 	$(DRIVERS_DIR)/display.c \
@@ -138,8 +135,6 @@ KERNEL_C_SRCS=\
 	$(KERNEL_DIR)/wait.c \
 	$(KERNEL_DIR)/process.c \
 	$(KERNEL_DIR)/scheduler.c \
-	$(SHELL_DIR)/parse.c \
-	$(SHELL_DIR)/commands.c \
 	$(EXEC_DIR)/elf_loader.c \
 	$(KERNEL_DIR)/syscall.c \
 	$(KERNEL_DIR)/gdt.c \
@@ -246,9 +241,6 @@ $(OBJ_DIR)/drivers/screen.o \
 $(OBJ_DIR)/drivers/terminal.o: DRIVER_CFLAGS += $(DISPLAY_DRIVER_CFLAGS)
 
 $(OBJ_DIR)/drivers/usb.o: DRIVER_CFLAGS += -Os
-
-$(OBJ_DIR)/shell/%.o: $(SHELL_DIR)/%.c Makefile | dirs
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(KERNEL_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
 $(OBJ_DIR)/exec/%.o: $(EXEC_DIR)/%.c Makefile | dirs
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(KERNEL_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@

@@ -187,8 +187,8 @@ void irq1_handler_main(unsigned int esp) {
 `keyboard_handle_irq()` decodes the scancode into a `key_event_t` and calls the registered `keyboard_consumer_fn`. The driver makes no routing decisions — it has no knowledge of processes, the scheduler, or the shell.
 
 The active consumer is set via `keyboard_set_consumer()`:
-- `shell_key_consumer` (registered by `shell_init`) — enqueues `shell_event_t` entries for `shell_poll()` to drain on the shell task's stack
 - `process_key_consumer` (registered by `process_set_foreground`) — pushes ASCII into `kb_buf` for `SYS_READ`; Ctrl+C signals or terminates the foreground process group instead of entering the input buffer
+- `process_set_foreground(0)` keeps the process router registered but clears the foreground owner, so events are ignored until a foreground process is installed
 
 EOI is sent before `keyboard_handle_irq()` so the PIC is unmasked before any consumer logic runs.
 

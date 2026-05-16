@@ -8,8 +8,6 @@ For the C runtime contract exposed to those ELF programs, including cwd,
 
 It reflects the current code in:
 
-- `src/shell/shell.c`
-- `src/shell/commands.c`
 - `src/exec/elf_loader.c`
 - `src/kernel/process.c`
 - `src/kernel/scheduler.c`
@@ -20,11 +18,11 @@ It reflects the current code in:
 # Overview
 
 ELF programs are scheduler-owned user processes. The boot path launches the
-user shell from `/bin/shell.elf`, and both the kernel fallback shell and the
-user shell use the same loader machinery for child programs:
+user shell from `/bin/shell.elf`, and the user shell uses the kernel loader
+machinery for child programs:
 
 ```text
-user shell command or kernel fallback command
+user shell command
   → runelf <name> [args]
   → vfs_load_file()
   → elf_run_image()
@@ -56,12 +54,10 @@ user shell command
 Important current-state facts:
 
 - the default **shell** is `/bin/shell.elf`, a scheduler-owned ring-3 user
-  process launched by `bootseq`; the older kernel shell is kept as a fallback
-  and debug monitor if the user shell exits or cannot be loaded
+  process launched by `bootseq`; no kernel shell fallback is linked
 - **keyboard IRQ1** decodes scancodes and calls a registered `keyboard_consumer_fn` — it makes no routing decisions itself; USB boot keyboards inject translated set-1 scancodes into the same path
-- the **kernel fallback shell consumer** (`shell_key_consumer` in `shell.c`) enqueues `shell_event_t` entries; the shell task drains them in `shell_poll()` outside IRQ context
 - the **process consumer** (`process_key_consumer` in `process.c`) pushes ASCII into `kb_buf`; terminal signals such as Ctrl+C target the foreground process group
-- consumer ownership transfers via `process_set_foreground()` - process consumer while the user shell or another user process owns the foreground reader/group, kernel shell consumer restored only for the fallback shell
+- consumer ownership transfers via `process_set_foreground()` - the process consumer is active while the user shell or another user process owns the foreground reader/group; `process_set_foreground(0)` keeps the router installed but ignores events until a new foreground owner is set
 - **Mouse input** decodes PS/2 relative packets, VMware absolute-pointer events, or OHCI USB boot mouse reports into accumulated `dx`/`dy` and button state; user graphics code polls that state with `SYS_MOUSE_READ`
 - **ELF user programs** are loaded into their own page directory and do execute in ring 3
 - ELF launch and exit are now scheduler-owned: `elf_run_image()` seeds a bootstrap context, enqueues the task, and returns `process_t*`
@@ -99,25 +95,9 @@ decode scancode → key_event_t
   ↓
 call s_consumer(ev)   ← registered keyboard_consumer_fn
   ↓
-shell_key_consumer()
+process_key_consumer()
   ↓
-enqueue shell_event_t (char, backspace, arrows, history, etc.)
-  ↓
-shell_task_main()
-  ↓
-shell_poll()
-  ↓
-line_editor
-  ↓
-[Enter pressed]
-  ↓
-parse_command()
-  ↓
-commands_execute()
-  ↓
-cmd_runelf()
-  ↓
-elf_run_named()
+ASCII enters kb_buf for SYS_READ; Ctrl+C targets foreground process group
 ```
 
 Mouse input is separate from the foreground keyboard consumer path:
@@ -137,26 +117,14 @@ enters the scheduler on it. `bootseq` loads `/bin/shell.elf` suspended, probes
 boot keyboard/mouse HID, refreshes `/var/log/boot.txt`, then runs
 `/bin/bootsplash.elf boot/splash.bmp`. After the splash exits, it prints
 `SmallOS ready` and launches `/bin/shell.elf` as the default user shell. If that
-user shell exits or cannot be loaded, `bootseq` creates and queues the older
-kernel shell task as a fallback/debug monitor.
+user shell exits or cannot be loaded, `bootseq` reports that no kernel shell
+fallback is linked and idles.
 
 ---
 
 # Supported Program Paths
 
 ## 1. Shell commands and app commands
-
-In the kernel fallback shell, commands like `help`, `clear`, `cd`, `runelf`,
-and `runelf_nowait` are normal kernel C functions dispatched by
-`commands_execute()`. The full `shelltest` and `selftest` regression commands
-live in `/bin/shell.elf`, not in this fallback monitor.
-
-They:
-
-- run in ring 0
-- run in the kernel address space
-- do not switch page directories
-- do not create a new `process_t`
 
 The user shell resolves bare command names through `/bin/<name>.elf` and then
 the current filesystem namespace. Path-like command names are resolved relative
@@ -165,8 +133,7 @@ to the shell cwd and may omit the `.elf` suffix. Commands like `echo`, `about`,
 `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, `edit`, `meminfo`, `memmap`,
 `netinfo`, `ping`, `dhcp`, `ataread`, `usbinfo`, `usbports`, `usbdiag`,
 `usbpeek`, `usbpower`, `usbmouse`, `mousetest`, `ip`, and `ipconfig` are
-shipped this way under `/bin/`. The kernel fallback shell keeps a similar app
-fallback after checking its built-in command table.
+shipped this way under `/bin/`.
 
 `/bin/ip.elf` and `/bin/ipconfig.elf` are the user-facing runtime network
 configuration tools. They read e1000/IPv4/TCP state through `SYS_NETINFO` and

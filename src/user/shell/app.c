@@ -1,8 +1,8 @@
 /*
  * User-space interactive shell for SmallOS.
  *
- * The kernel shell is now a fallback/debug monitor.  This shell is the normal
- * boot target and owns command dispatch for user programs.
+ * This shell is the normal boot target and owns command dispatch for user
+ * programs.
  */
 
 #include "user_lib.h"
