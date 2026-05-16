@@ -57,11 +57,13 @@ static int bot_command(const u8* cdb,
                        int data_in) {
     u32 tag = s_tag++;
     unsigned int actual = 0;
+    int ok = 0;
 
     if (!cdb || cdb_len == 0u || cdb_len > 16u) {
         return 0;
     }
 
+    usb_bus_lock_hid_suspended();
     k_memset(s_cbw, 0, sizeof(s_cbw));
     write_u32_le(s_cbw, 0, USB_BOT_CBW_SIGNATURE);
     write_u32_le(s_cbw, 4, tag);
@@ -75,26 +77,26 @@ static int bot_command(const u8* cdb,
         terminal_puts("usbms: CBW failed cmd=");
         terminal_put_hex(cdb[0]);
         terminal_putc('\n');
-        return 0;
+        goto out;
     }
 
     if (data_len != 0u) {
         if (!data) {
-            return 0;
+            goto out;
         }
         if (data_in) {
             if (!usb_bulk_in(&s_mass_dev, data, data_len, &actual)) {
                 terminal_puts("usbms: data IN failed cmd=");
                 terminal_put_hex(cdb[0]);
                 terminal_putc('\n');
-                return 0;
+                goto out;
             }
         } else {
             if (!usb_bulk_out(&s_mass_dev, data, data_len)) {
                 terminal_puts("usbms: data OUT failed cmd=");
                 terminal_put_hex(cdb[0]);
                 terminal_putc('\n');
-                return 0;
+                goto out;
             }
             actual = data_len;
         }
@@ -105,20 +107,24 @@ static int bot_command(const u8* cdb,
         terminal_puts("usbms: CSW read failed cmd=");
         terminal_put_hex(cdb[0]);
         terminal_putc('\n');
-        return 0;
+        goto out;
     }
     if (read_u32_le(s_csw, 0) != USB_BOT_CSW_SIGNATURE ||
         read_u32_le(s_csw, 4) != tag) {
         terminal_puts("usbms: bad CSW\n");
-        return 0;
+        goto out;
     }
     if (s_csw[12] != 0u) {
         terminal_puts("usbms: command status=");
         terminal_put_uint(s_csw[12]);
         terminal_putc('\n');
-        return 0;
+        goto out;
     }
-    return 1;
+    ok = 1;
+
+out:
+    usb_bus_unlock_hid_suspended();
+    return ok;
 }
 
 static int scsi_request_sense(void) {

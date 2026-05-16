@@ -214,6 +214,9 @@ static unsigned int s_usb_mouse_last_buttons = 0;
 static int s_usb_storage_active = 0;
 static unsigned int s_usb_storage_controller_index = 0;
 static unsigned int s_usb_storage_port_index = 0;
+static volatile int s_usb_bus_locked = 0;
+static unsigned int s_usb_locked_keyboard_was_skipped = 0;
+static unsigned int s_usb_locked_mouse_was_skipped = 0;
 
 static unsigned int usb_alloc_address(unsigned int controller_index) {
     unsigned int address;
@@ -962,6 +965,51 @@ static int ohci_td_done(const ohci_td_t* td) {
 
 static int ohci_td_ok(const ohci_td_t* td) {
     return ((td->control >> OHCI_TD_CC_SHIFT) & 0xFu) == 0u;
+}
+
+int usb_bus_try_lock(void) {
+    return __sync_bool_compare_and_swap(&s_usb_bus_locked, 0, 1);
+}
+
+void usb_bus_lock(void) {
+    while (!usb_bus_try_lock()) {
+        __asm__ __volatile__("sti; hlt");
+    }
+}
+
+void usb_bus_unlock(void) {
+    __sync_lock_release(&s_usb_bus_locked);
+}
+
+void usb_bus_lock_hid_suspended(void) {
+    usb_bus_lock();
+
+    s_usb_locked_keyboard_was_skipped = 0;
+    s_usb_locked_mouse_was_skipped = 0;
+
+    if (s_usb_keyboard_active) {
+        s_usb_locked_keyboard_was_skipped =
+            (s_keyboard_intr_ed.control & OHCI_ED_CTRL_SKIP) ? 1u : 0u;
+        s_keyboard_intr_ed.control |= OHCI_ED_CTRL_SKIP;
+    }
+    if (s_usb_mouse_active) {
+        s_usb_locked_mouse_was_skipped =
+            (s_intr_ed.control & OHCI_ED_CTRL_SKIP) ? 1u : 0u;
+        s_intr_ed.control |= OHCI_ED_CTRL_SKIP;
+    }
+}
+
+void usb_bus_unlock_hid_suspended(void) {
+    if (s_usb_keyboard_active && !s_usb_locked_keyboard_was_skipped) {
+        s_keyboard_intr_ed.control &= ~OHCI_ED_CTRL_SKIP;
+    }
+    if (s_usb_mouse_active && !s_usb_locked_mouse_was_skipped) {
+        s_intr_ed.control &= ~OHCI_ED_CTRL_SKIP;
+    }
+
+    s_usb_locked_keyboard_was_skipped = 0;
+    s_usb_locked_mouse_was_skipped = 0;
+    usb_bus_unlock();
 }
 
 static void ohci_wait_frame(void) {
@@ -2632,12 +2680,21 @@ static void usb_hid_service_enable_periodic(volatile u32* regs) {
 
 static int usb_hid_service_open(void) {
     int old_log = s_usb_mouse_log;
+    int activated_any = 0;
+    unsigned int protocols[2];
+    unsigned int protocol_count = 0;
 
     if (s_usb_keyboard_active && s_usb_mouse_active) {
         return 1;
     }
 
     s_usb_mouse_log = 0;
+    if (!s_usb_keyboard_active) {
+        protocols[protocol_count++] = USB_HID_PROTOCOL_KEYBOARD;
+    }
+    if (!s_usb_mouse_active) {
+        protocols[protocol_count++] = USB_HID_PROTOCOL_MOUSE;
+    }
 
     for (unsigned int i = 0; i < s_usb_controller_count; i++) {
         usb_controller_t* ctrl = &s_usb_controllers[i];
@@ -2663,81 +2720,96 @@ static int usb_hid_service_open(void) {
             if (ports > 15u) ports = 15u;
         }
 
-        for (u32 port = 0; port < ports; port++) {
-            usb_mouse_dev_t dev;
-            u32 st = regs[(OHCI_HC_RH_PORT_BASE + port * 4u) / 4u];
-            unsigned int saved_next_address;
-            unsigned int address;
-            unsigned int desired_protocol;
+        for (unsigned int pass = 0; pass < protocol_count; pass++) {
+            unsigned int desired_protocol = protocols[pass];
 
-            if (s_usb_storage_active &&
-                s_usb_storage_controller_index == i &&
-                s_usb_storage_port_index == port) {
+            if (desired_protocol == USB_HID_PROTOCOL_KEYBOARD && s_usb_keyboard_active) {
                 continue;
             }
-            if (s_usb_keyboard_active &&
-                s_usb_keyboard_active_dev.regs == regs &&
-                s_usb_keyboard_active_dev.port_index == port) {
-                continue;
-            }
-            if (s_usb_mouse_active &&
-                s_usb_mouse_active_dev.regs == regs &&
-                s_usb_mouse_active_dev.port_index == port) {
-                continue;
-            }
-            if (!(st & OHCI_PORT_CCS)) {
+            if (desired_protocol == USB_HID_PROTOCOL_MOUSE && s_usb_mouse_active) {
                 continue;
             }
 
-            saved_next_address = s_usb_next_address[i];
-            address = usb_alloc_address(i);
-            if (address == 0u) {
-                break;
-            }
-            desired_protocol = 0u;
-            if (s_usb_keyboard_active && !s_usb_mouse_active) {
-                desired_protocol = USB_HID_PROTOCOL_MOUSE;
-            } else if (!s_usb_keyboard_active && s_usb_mouse_active) {
-                desired_protocol = USB_HID_PROTOCOL_KEYBOARD;
-            }
-            if (!usb_try_hid_on_port(regs, port, &dev, desired_protocol, address)) {
-                s_usb_next_address[i] = saved_next_address;
-                continue;
-            }
+            for (u32 port = 0; port < ports; port++) {
+                usb_mouse_dev_t dev;
+                u32 st = regs[(OHCI_HC_RH_PORT_BASE + port * 4u) / 4u];
+                unsigned int saved_next_address;
+                unsigned int address;
 
-            dev.has_saved_state = 0;
-            if (dev.protocol == USB_HID_PROTOCOL_KEYBOARD && !s_usb_keyboard_active) {
-                s_usb_keyboard_active_dev = dev;
-                s_usb_keyboard_active = 1;
-                activated_on_controller = 1;
-                s_usb_keyboard_poll_count = 0;
-                s_usb_keyboard_report_count = 0;
-                s_usb_keyboard_fail_count = 0;
-                s_usb_keyboard_last_cc = OHCI_TD_CC_NOT_ACCESSED;
-                k_memset(s_keyboard_last_report, 0, sizeof(s_keyboard_last_report));
-                usb_init_interrupt_ed(&s_usb_keyboard_active_dev,
-                                      &s_keyboard_intr_ed,
-                                      s_keyboard_intr_td);
-                usb_keyboard_queue_intr_td(&s_usb_keyboard_active_dev);
-                terminal_puts("usb: boot keyboard port=");
-                terminal_put_uint(port + 1u);
-                terminal_putc('\n');
-            } else if (dev.protocol == USB_HID_PROTOCOL_MOUSE && !s_usb_mouse_active) {
-                s_usb_mouse_active_dev = dev;
-                s_usb_mouse_active = 1;
-                activated_on_controller = 1;
-                s_usb_mouse_active_log = 0;
-                s_usb_mouse_last_buttons = 0;
-                s_usb_mouse_poll_count = 0;
-                s_usb_mouse_report_count = 0;
-                s_usb_mouse_fail_count = 0;
-                s_usb_mouse_last_cc = OHCI_TD_CC_NOT_ACCESSED;
-                mouse_enable_external_source();
-                usb_init_interrupt_ed(&s_usb_mouse_active_dev, &s_intr_ed, s_intr_td);
-                usb_mouse_queue_intr_td(&s_usb_mouse_active_dev);
-                terminal_puts("usb: boot mouse port=");
-                terminal_put_uint(port + 1u);
-                terminal_putc('\n');
+                if (s_usb_storage_active &&
+                    s_usb_storage_controller_index == i &&
+                    s_usb_storage_port_index == port) {
+                    continue;
+                }
+                if (desired_protocol == USB_HID_PROTOCOL_KEYBOARD &&
+                    s_usb_keyboard_active) {
+                    break;
+                }
+                if (desired_protocol == USB_HID_PROTOCOL_MOUSE &&
+                    s_usb_mouse_active) {
+                    break;
+                }
+                if (desired_protocol == USB_HID_PROTOCOL_MOUSE &&
+                    s_usb_keyboard_active &&
+                    s_usb_keyboard_active_dev.regs == regs &&
+                    s_usb_keyboard_active_dev.port_index == port) {
+                    continue;
+                }
+                if (s_usb_mouse_active &&
+                    s_usb_mouse_active_dev.regs == regs &&
+                    s_usb_mouse_active_dev.port_index == port) {
+                    continue;
+                }
+                if (!(st & OHCI_PORT_CCS)) {
+                    continue;
+                }
+
+                saved_next_address = s_usb_next_address[i];
+                address = usb_alloc_address(i);
+                if (address == 0u) {
+                    break;
+                }
+                if (!usb_try_hid_on_port(regs, port, &dev, desired_protocol, address)) {
+                    s_usb_next_address[i] = saved_next_address;
+                    continue;
+                }
+
+                dev.has_saved_state = 0;
+                if (dev.protocol == USB_HID_PROTOCOL_KEYBOARD && !s_usb_keyboard_active) {
+                    s_usb_keyboard_active_dev = dev;
+                    s_usb_keyboard_active = 1;
+                    activated_on_controller = 1;
+                    activated_any = 1;
+                    s_usb_keyboard_poll_count = 0;
+                    s_usb_keyboard_report_count = 0;
+                    s_usb_keyboard_fail_count = 0;
+                    s_usb_keyboard_last_cc = OHCI_TD_CC_NOT_ACCESSED;
+                    k_memset(s_keyboard_last_report, 0, sizeof(s_keyboard_last_report));
+                    usb_init_interrupt_ed(&s_usb_keyboard_active_dev,
+                                          &s_keyboard_intr_ed,
+                                          s_keyboard_intr_td);
+                    usb_keyboard_queue_intr_td(&s_usb_keyboard_active_dev);
+                    terminal_puts("usb: boot keyboard port=");
+                    terminal_put_uint(port + 1u);
+                    terminal_putc('\n');
+                } else if (dev.protocol == USB_HID_PROTOCOL_MOUSE && !s_usb_mouse_active) {
+                    s_usb_mouse_active_dev = dev;
+                    s_usb_mouse_active = 1;
+                    activated_on_controller = 1;
+                    activated_any = 1;
+                    s_usb_mouse_active_log = 0;
+                    s_usb_mouse_last_buttons = 0;
+                    s_usb_mouse_poll_count = 0;
+                    s_usb_mouse_report_count = 0;
+                    s_usb_mouse_fail_count = 0;
+                    s_usb_mouse_last_cc = OHCI_TD_CC_NOT_ACCESSED;
+                    mouse_enable_external_source();
+                    usb_init_interrupt_ed(&s_usb_mouse_active_dev, &s_intr_ed, s_intr_td);
+                    usb_mouse_queue_intr_td(&s_usb_mouse_active_dev);
+                    terminal_puts("usb: boot mouse port=");
+                    terminal_put_uint(port + 1u);
+                    terminal_putc('\n');
+                }
             }
         }
 
@@ -2746,13 +2818,14 @@ static int usb_hid_service_open(void) {
             s_usb_service_active = 1;
             s_usb_hid_no_device_logged = 0;
             usb_rebuild_periodic_schedule();
-            s_usb_mouse_log = old_log;
-            return 1;
+            if (s_usb_keyboard_active && s_usb_mouse_active) {
+                break;
+            }
         }
     }
 
     s_usb_mouse_log = old_log;
-    if (s_usb_service_active) {
+    if (activated_any || s_usb_service_active) {
         usb_rebuild_periodic_schedule();
         return 1;
     }
@@ -2784,16 +2857,38 @@ static int usb_hid_probe_due(void) {
     return 1;
 }
 
+static void usb_service_wait_next_frame(void) {
+    unsigned short frame = s_ohci_hcca.frame_number;
+    unsigned int spins = 0;
+
+    __asm__ __volatile__("sti");
+    while (s_usb_service_active &&
+           s_ohci_hcca.frame_number == frame &&
+           spins++ < 1000000u) {
+        __asm__ __volatile__("" : : : "memory");
+    }
+    if (spins >= 1000000u) {
+        __asm__ __volatile__("sti; hlt");
+    }
+}
+
 static void usb_service_main(void) {
     for (;;) {
-        if ((!s_usb_keyboard_active || !s_usb_mouse_active) && usb_hid_probe_due()) {
-            (void)usb_probe_hid();
+        if (usb_bus_try_lock()) {
+            if ((!s_usb_keyboard_active || !s_usb_mouse_active) && usb_hid_probe_due()) {
+                (void)usb_hid_service_open();
+            }
+            if (s_usb_service_active) {
+                (void)usb_keyboard_poll_once();
+                (void)usb_mouse_poll_once();
+            }
+            usb_bus_unlock();
         }
         if (s_usb_service_active) {
-            (void)usb_keyboard_poll_once();
-            (void)usb_mouse_poll_once();
+            usb_service_wait_next_frame();
+        } else {
+            __asm__ __volatile__("sti; hlt");
         }
-        __asm__ __volatile__("sti; hlt");
     }
 }
 

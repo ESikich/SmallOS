@@ -43,6 +43,9 @@
 #define INPUT_READ_MAX_EVENTS 64u
 #define DIRLIST_BATCH_MAX     64u
 
+static unsigned char s_sys_block_sector[512] __attribute__((aligned(16)));
+static volatile int s_sys_block_sector_locked = 0;
+
 typedef struct epoll_watch {
     int used;
     int fd;
@@ -2715,15 +2718,29 @@ static int sys_net_op_impl(sys_net_op_request_t* user_req) {
 }
 
 static int sys_block_read_sector_impl(unsigned int lba, void* user_buf) {
-    unsigned char sector[512];
     block_device_t* dev = ext2_block_device();
+    int rc = 0;
 
     if (!user_buf) return -EFAULT;
-    if (!user_buf_ok((unsigned int)user_buf, sizeof(sector))) return -EFAULT;
-    if (!dev || dev->sector_size != sizeof(sector)) return -EIO;
-    if (!block_read(dev, lba, 1, sector)) return -EIO;
-    if (copy_to_user(user_buf, sector, sizeof(sector)) < 0) return -EFAULT;
-    return 0;
+    if (!user_buf_ok((unsigned int)user_buf, sizeof(s_sys_block_sector))) return -EFAULT;
+    if (!dev || dev->sector_size != sizeof(s_sys_block_sector)) return -EIO;
+
+    while (!__sync_bool_compare_and_swap(&s_sys_block_sector_locked, 0, 1)) {
+        __asm__ __volatile__("" : : : "memory");
+    }
+
+    if (!block_read(dev, lba, 1, s_sys_block_sector)) {
+        rc = -EIO;
+        goto out;
+    }
+    if (copy_to_user(user_buf, s_sys_block_sector, sizeof(s_sys_block_sector)) < 0) {
+        rc = -EFAULT;
+        goto out;
+    }
+
+out:
+    __sync_lock_release(&s_sys_block_sector_locked);
+    return rc;
 }
 
 static int sys_getcwd_impl(char* buf, unsigned int size) {

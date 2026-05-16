@@ -75,5 +75,10 @@ void usb_debug_snapshot(usb_debug_state_t* out);
 int usb_find_mass_storage(usb_mass_device_t* out);
 int usb_bulk_in(usb_mass_device_t* dev, void* data, unsigned int len, unsigned int* out_len);
 int usb_bulk_out(usb_mass_device_t* dev, const void* data, unsigned int len);
+int usb_bus_try_lock(void);
+void usb_bus_lock(void);
+void usb_bus_unlock(void);
+void usb_bus_lock_hid_suspended(void);
+void usb_bus_unlock_hid_suspended(void);
 
 #endif /* USB_H */
