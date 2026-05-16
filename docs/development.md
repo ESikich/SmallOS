@@ -58,7 +58,9 @@ synchronized UTC time, while failure is a warning and boot continues. If a
 hard startup invariant drifts, the kernel halts before the post-diagnostics
 boot sequence starts. Once ext2 is mounted, the collected boot diagnostics are
 written to `/var/log/boot.log`; the file is seeded into the guest image so boot
-can overwrite it without allocating a fresh inode.
+can overwrite it without allocating a fresh inode. During capture, terminal
+output is visibly prefixed with `[ms=... tick=... cyc=...]`; the prefix hook is
+disabled before the user shell prompt.
 
 After diagnostics, `kernel_main()` queues the `bootseq` kernel task and the
 zombie reaper, then enters the scheduler on `bootseq`. The boot sequence task
@@ -171,7 +173,7 @@ The Makefile should read those declarations and pass them into host tools such a
 
 ---
 * `boot.asm` must be **exactly 512 bytes**, ending with `dw 0xAA55`
-* `loader2.asm` must be **exactly `LOADER2_SIZE_BYTES` bytes** (currently 4096 bytes / 8 sectors)
+* `loader2.asm` must be **exactly `LOADER2_SIZE_BYTES` bytes** (currently 8192 bytes / 16 sectors)
 * `kernel.bin` must be padded to a 512-byte sector boundary during final image assembly (`mkimage` handles this)
 * `kernel_lba` is derived as `1 + loader2_sectors`
 * `ext2_lba` is computed as `kernel_lba + kernel_sectors` and written into MBR partition entry 1 — if padding is skipped, ext2 reads will return incorrect data
@@ -192,8 +194,8 @@ The required invariant is that `0x1000 + kernel_sectors * BOOT_SECTOR_SIZE` must
 `make boot-layout-check` is the host-side guard for the fixed boot-stage layout. It verifies the built boot artifacts, the loader size/sector contract, and the generated stage-2 stack values before the disk image is assembled.
 
 `make image-layout-check` then validates the finished image for the active
-`DISPLAY_BACKEND`, including the patched ext2 LBA and the sector placement of
-each component.
+`DISPLAY_BACKEND`, including the MBR ext2 partition metadata and the sector
+placement of each component.
 
 ---
 
@@ -332,7 +334,8 @@ Exited tasks must be marked `PROCESS_STATE_ZOMBIE` and destroyed later from a sa
 
 ## ATA / ext2 Rules
 
-* Try ATA before the boot ramdisk, but if ATA mount validation fails and loader2 published a boot ramdisk, retry with `ext2_use_boot_ramdisk(1)`
+* Try writable ATA before read-only USB storage, and use the loader2 boot RAM fallback only as the final fallback
+* During pre-scheduler storage probing, only timer IRQ0 may be unmasked; do not let keyboard/process IRQ paths run before `sched_start()`
 * `ext2_init()` must be called before `ext2_load()` or `ext2_ls()`
 * `ext2_load()` returns a pointer into the static `s_load_buf` buffer — the caller must not hold this pointer across another `ext2_load()` call
 * `elf_run_image()` copies all ELF segment data into PMM frames before returning, so the buffer is safe to reuse immediately after `elf_run_named()` returns
@@ -418,7 +421,7 @@ Useful signals:
 |---|---|---|
 | 1 | Reboot loop | Bad GDT or IDT |
 | 2 | Triple fault on boot | BSS not zeroed |
-| 3 | "ext2: bad superblock magic" | kernel.bin not sector-padded, ext2 image missing, or `-fda` mode |
+| 3 | "ext2: bad superblock magic" | kernel.bin not sector-padded, ext2 image missing, wrong selected block device, or `-fda` mode |
 | 4 | Red '8' on screen | Double fault — bad TSS ESP0 or corrupt stack |
 | 5 | Crash after iret | TSS not loaded; wrong TSS ESP0; bad user GDT entries; DPL=0 on int 0x80 gate |
 | 6 | argv garbage in ring 3 | Strings not copied to user stack before iret |
@@ -439,8 +442,8 @@ Useful signals:
 ## Safe Development Order
 
 1. `make clean && make` — fix compile errors
-2. Boot — confirm shell appears and `ext2: ok` prints
-3. `ataread 0` — confirm `sig: 0x55 0xAA` and the correct ext2 partition LBA value
+2. Boot — confirm shell appears and `ext2: ok` prints with the expected `dev=...` or `ramdisk=...` source
+3. ATA boots: `ataread 0` — confirm `sig: 0x55 0xAA` and the correct ext2 partition LBA value
 4. `ls /` — confirm ext2 root directory lists correctly
 5. `tree` — confirm recursive directory traversal works from the ext2 root
 6. `mkdir TESTDIR` / `rmdir TESTDIR` — confirm directory creation and removal

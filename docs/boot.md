@@ -9,11 +9,11 @@ This document explains how SmallOS boots from BIOS to kernel, including disk lay
 ```text
 BIOS
  → boot.asm        (stage 1, 512 bytes, CHS read of loader2)
- → loader2.asm     (stage 2, 4096 bytes, LBA read of kernel, display policy)
+ → loader2.asm     (stage 2, 8192 bytes, LBA read of kernel, display policy)
  → kernel.bin      (loaded to 0x1000)
  → protected mode
  → kernel_entry.asm  (zeros BSS, calls kernel_main)
- → kernel_main()     (diagnostics, ext2 mount, /var/log/boot.log save)
+ → kernel_main()     (timestamped diagnostics, storage selection, boot log save)
  → bootseq task      (userland splash, ready line, shell/login path)
 ```
 
@@ -87,7 +87,8 @@ Loaded to `0x4000:0x0000` (physical `0x40000`).
 
 * Check INT 0x13 LBA extension support and print drive diagnostics
 * Load kernel from disk immediately before the ext2 partition to physical `0x1000`
-* Load the ext2 partition through BIOS LBA reads into a RAM disk at `0x800000`
+* Preload the used prefix of the ext2 partition through BIOS reads into a 16 MB
+  zero-filled RAM fallback at `0x800000`
 * Apply the build-time display policy: VBE framebuffer in auto mode, BIOS/VGA text in forced VGA mode
 * Copy the BIOS 8x16 font, publish framebuffer fields when VBE is selected, and collect BIOS E820 memory-map entries in boot info
 * Setup temporary GDT
@@ -169,13 +170,26 @@ number and CHS geometry, then attempts classic INT 0x13 sector reads.
 
 On BIOS USB boot, the firmware can read sectors while the bootloader is still in
 real mode, but the protected-mode kernel cannot assume that the USB stick exists
-as primary ATA hardware. Stage 2 therefore reads the ext2 partition into RAM
-before entering protected mode and publishes it through boot info. It prefers
-INT 0x13 LBA reads and falls back to CHS reads when the BIOS reports no LBA
-extensions. The kernel still prefers ATA/MBR discovery when the disk can be
-mounted, so QEMU and VMware keep the writable disk path. It mounts the
-RAM-backed volume only when ATA is unavailable or when the ATA path cannot
-validate the ext2 volume.
+as primary ATA hardware. Stage 2 therefore preloads the used ext2 prefix into
+RAM before entering protected mode and publishes the 16 MB zero-filled fallback
+through boot info. It prefers INT 0x13 LBA reads and falls back to CHS reads
+when the BIOS reports no LBA extensions.
+
+The protected-mode kernel now has three storage choices:
+
+* writable ATA via the generic block-device wrapper
+* read-only USB mass storage through OHCI + Bulk-Only Transport + SCSI READ(10)
+* the loader2 RAM fallback
+
+The mount order is ATA first, USB storage second, and boot RAM fallback last.
+QEMU and VMware IDE-style boots keep the writable ATA path. Real USB boots can
+mount the same on-stick ext2 volume through `usb0`; writes are disabled on that
+path until USB storage write support exists. The RAM fallback remains useful
+when protected-mode storage cannot validate the disk.
+
+During early storage probing, the kernel temporarily unmasks only timer IRQ0.
+That keeps `[ms=... tick=... cyc=...]` boot timestamps advancing while avoiding
+keyboard/process IRQ delivery before the scheduler owns a current task.
 
 ---
 
@@ -276,7 +290,7 @@ Loader2 must be exactly `LOADER2_SIZE_BYTES` bytes. The source enforces a fixed-
 ## Boot Info
 
 Before entering protected mode, loader2 clears and writes the versioned boot
-info block at `0x90000` with magic `SMOS`, version 2, framebuffer fields, and
+info block at `0x90000` with magic `SMOS`, version 3, framebuffer fields, and
 up to 32 BIOS E820 memory-map entries. E820 is best-effort: if INT 15h E820
 fails, `e820_valid` remains zero and the kernel boots with the fixed PMM
 fallback.
@@ -489,6 +503,19 @@ qemu-system-i386 -drive format=raw,file=build/img/smallos.img \
     -D qemu.log
 ```
 
+## QEMU USB Storage Path
+
+Use the dedicated target to boot the canonical raw image as an OHCI USB storage
+device:
+
+```bash
+make run-usb-storage
+make usb-storage-smoke
+```
+
+The smoke target expects the serial transcript to show `usbms: ready`,
+`dev=usb0`, and `boot: PASS ext2: volume mounted from USB`.
+
 ---
 
 # Design Decisions
@@ -508,12 +535,13 @@ Cons: no relocation support.
 Pros: no compile-time dependency, no chicken-and-egg; the correct value is always in the image regardless of kernel size changes.
 Cons: the image builder and consumers need to agree on partition-table offsets and entry meanings.
 
-## ATA Preferred, Ramdisk Fallback
+## Storage Preference
 
-Programs are loaded from the ext2 partition at runtime via the ATA driver, using
-bus-master DMA when available and polling PIO as a fallback. Loader2 also
-preloads the ext2 partition into RAM so BIOS USB boots have a storage fallback
-when the protected-mode kernel cannot see the boot device as ATA.
+Programs are loaded from the mounted ext2 partition at runtime. The kernel
+tries ATA first because it is writable, then USB mass storage as a read-only
+block device, then the loader2-published RAM fallback. Loader2 still preloads
+the ext2 used prefix into RAM so BIOS USB boots have a last-resort filesystem
+even when protected-mode storage cannot see the boot device.
 
 ---
 
@@ -536,7 +564,8 @@ Kernel   →  zero BSS
          →  dhcp_configure (best-effort IPv4 lease)
          →  tcp_init
          →  ntp_sync (best-effort realtime clock sync through DHCP gateway)
-         →  ext2_init, save /var/log/boot.log
+         →  mount ext2 from ATA, USB storage, or boot RAM fallback
+         →  save /var/log/boot.log when the filesystem is writable
          →  create bootseq task and zombie reaper, sti, sched_start
 Bootseq  →  run /bin/bootsplash.elf boot/splash.bmp
          →  print SmallOS ready and refresh /var/log/boot.log

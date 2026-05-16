@@ -148,6 +148,11 @@ ext2-backed file descriptors support:
 - flush
 - close-time writeback
 
+Write-capable ext2 operations require a writable mount. Normal ATA boots are
+writable; USB mass-storage boots currently mount `usb0` read-only, so create,
+truncate, append, rename, unlink, and directory mutation calls fail through the
+ordinary negative-errno paths instead of persisting changes to the stick.
+
 The user-visible fd API is preserved while file writes stream directly through
 ext2 write-at. File offsets, status flags, and cached read data live on the
 shared file description, so duplicated and fork-inherited regular-file
@@ -243,8 +248,9 @@ tracked normally:
 `fflush(stream)` calls `SYS_FSYNC` for writable file streams. That makes it
 meaningful even though userland stdio is unbuffered: it asks the kernel VFS
 layer to commit any dirty writable descriptor state. ext2 fd writes now stream
-to disk as they arrive, so `fflush` is usually a confirmation point rather than
-a whole-file rewrite. Console streams treat `fflush` as success.
+to disk as they arrive on writable storage, so `fflush` is usually a
+confirmation point rather than a whole-file rewrite. Console streams treat
+`fflush` as success.
 
 ---
 
@@ -298,7 +304,7 @@ on normal runtime behavior:
 - fd-backed stdio streams
 - meaningful `fflush`
 - directory traversal through `opendir` / `readdir`
-- ext2 writeback through normal streaming fd writes and flush/close
+- ext2 writeback through normal streaming fd writes and flush/close when the mounted storage is writable
 
 The TinyCC acceptance gate is the guest compiler suite:
 

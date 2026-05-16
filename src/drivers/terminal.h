@@ -15,10 +15,12 @@ typedef struct {
 } terminal_backend_t;
 
 typedef void (*terminal_output_hook_t)(char c);
+typedef const char* (*terminal_line_prefix_hook_t)(void);
 
 void terminal_init(void);
 void terminal_set_backend(const terminal_backend_t* backend);
 void terminal_set_output_hook(terminal_output_hook_t hook);
+void terminal_set_line_prefix_hook(terminal_line_prefix_hook_t hook);
 void terminal_clear(void);
 void terminal_putc(char c);
 void terminal_write(const char* s, unsigned int len);

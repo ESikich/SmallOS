@@ -324,6 +324,11 @@ Halts the system visibly rather than silently rebooting.
 
 Any gap in this list causes `#GP → #DF → triple fault → reboot`.
 
+One early exception is the storage probe window in `boot_mount_ext2()`: it
+temporarily restores only IRQ0 in the PIC mask and enables interrupts so PIT
+ticks advance during ATA/USB polling. Keyboard, mouse, and other IRQs remain
+masked until the original PIC masks are restored before the scheduler starts.
+
 ---
 
 # Failure Modes
@@ -333,7 +338,7 @@ Any gap in this list causes `#GP → #DF → triple fault → reboot`.
 | Reboot immediately after `sti` | Bad GDT, bad IDT, or missing segment setup |
 | Red '8' on screen | Double fault — corrupt kernel stack or bad IDT entry |
 | Timer not advancing | IRQ0 not firing; missing EOI |
-| No keyboard input | IRQ1 masked or missing EOI |
+| No keyboard input | IRQ1 masked, missing EOI, foreground consumer not registered, or pre-scheduler PIC mask not restored |
 | Mouse cursor does not move | IRQ12 masked, PS/2 aux port unavailable, QEMU window not grabbed, or missing slave/master EOI |
 | Syscalls silently broken | `syscall_regs_t` mismatch with `isr128_stub` push order |
 | Timer fires but process never preempted | `sched_tick` not called; EOI sent after `sched_switch` |

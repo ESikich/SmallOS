@@ -53,7 +53,7 @@ kernel_main()
   dhcp_configure()  ← acquire IPv4 address, netmask, gateway, DNS, and lease
   tcp_init()        ← start TCP/network service task
   ntp_sync()        ← set CLOCK_REALTIME and print synchronized UTC time
-  ext2_init()       ← mount ATA ext2 or retry loader2 boot ramdisk fallback
+  ext2_init()       ← mount ATA, USB storage, or loader2 boot RAM fallback
   bootseq task      ← run userland splash, print ready, then queue shell/login path
   process_start_reaper() ← create and enqueue zombie reaper task
   sti
@@ -129,7 +129,7 @@ Inside `kernel_main()`:
 13. `dhcp_configure()` — briefly enables interrupts and requests IPv4 configuration from the attached network. The runtime network config is shared by ARP, TCP, NTP, and shell diagnostics.
 14. `tcp_init()` — create and enqueue the TCP/network service kernel task
 15. `ntp_sync()` — briefly enables interrupts so PIT-backed timeout logic works, queries the default NTP server through UDP over the e1000 path and DHCP gateway, sets `CLOCK_REALTIME`, and prints the synchronized UTC time. Failure is a boot warning, not a halt.
-16. `ext2_init()` — prefer ATA by reading sector 0, extracting the ext2 start LBA from partition entry 1 in the MBR partition table, then validating the ext2 superblock; if ATA mount validation fails and loader2 published a boot ramdisk, retry against the RAM-backed ext2 volume; after mount succeeds, the accumulated boot log is saved to `/var/log/boot.log`
+16. `boot_mount_ext2()` — prefer writable ATA, then read-only USB mass storage, then the loader2 RAM fallback. The storage probe briefly enables only timer IRQ0 so boot timestamps and USB waits advance without delivering keyboard/process IRQs before scheduling starts. After mount succeeds, the accumulated boot log is saved to `/var/log/boot.log` when the filesystem is writable.
 17. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, prints `SmallOS ready`, refreshes `/var/log/boot.log`, and launches `/bin/shell.elf` as the default user shell. If that fails or exits, it queues the kernel shell fallback.
 18. `sched_enqueue(boot_proc)` — make the boot sequence task runnable
 19. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
@@ -603,7 +603,7 @@ blocks 4-11         inode table
 block 12+           file and directory data blocks
 ```
 
-The ext2 start LBA is computed during final image assembly by `mkimage` as `kernel_lba + kernel_sectors` and written into partition entry 1 of the MBR partition table. `loader2.asm` reads partition entry 0 to load the kernel and preloads partition entry 1 as a fallback ext2 image. At runtime, `ext2_init()` normally reads ATA sector 0, extracts the ext2 partition metadata, and uses it to locate the live ext2 volume; if that path fails, the kernel can retry against the preloaded fallback.
+The ext2 start LBA is computed during final image assembly by `mkimage` as `kernel_lba + kernel_sectors` and written into partition entry 1 of the MBR partition table. `loader2.asm` reads partition entry 0 to load the kernel and preloads the used portion of partition entry 1 as a fallback ext2 image. At runtime, the storage policy normally reads sector 0 through ATA, extracts the ext2 partition metadata, and uses it to locate the live writable volume. If ATA cannot validate the volume, the kernel probes USB mass storage (`usb0`, read-only). If that also fails, it retries against the preloaded RAM fallback.
 
 Verified by `make image-layout-check`: partition entry 1 has type `0x83` and
 points at the appended ext2 image; the runtime then validates magic `0xEF53` in
@@ -617,6 +617,15 @@ the ext2 superblock.
 ATA channel. It discovers PCI IDE bus-master registers and uses bounce-buffered
 DMA when available, then falls back to the original port-I/O polling path if DMA
 is unavailable or fails. QEMU emulates the primary channel at `0x1F0`.
+
+# USB Mass Storage
+
+`src/drivers/usb_storage.c` exposes the first supported OHCI USB mass-storage
+device as `usb0` through the same `block_device_t` interface used by ATA. It
+implements USB Bulk-Only Transport with enough SCSI for boot-time reads:
+INQUIRY, TEST UNIT READY, REQUEST SENSE, READ CAPACITY(10), and READ(10). The
+device is mounted read-only today, so boot logs and guest file writes are not
+persisted when ext2 is mounted from USB storage.
 
 ```text
 ata_init()
@@ -798,7 +807,8 @@ TCP service task — drains NIC RX, dispatches ARP/IPv4/TCP frames, advertises r
 page-aware copy-from-user validation — syscall pointer arguments are checked against user address space [USER_CODE_BASE, USER_STACK_TOP), mapped user pages, page-crossing buffers/structs, and wrapped variable-length byte counts before dereference
 preemptive round-robin scheduler — timer IRQ context switch, `SCHED_QUANTUM_MS` quantum
 ATA disk driver — 28-bit LBA reads/writes from primary IDE channel (0x1F0), with bus-master DMA and PIO fallback
-ext2 filesystem — ELF programs loaded from 16 MB ext2 partition on disk
+USB storage driver — OHCI Bulk-Only Transport/SCSI read-only block device used as `usb0`
+ext2 filesystem — ELF programs loaded from ATA, USB storage, or the boot RAM fallback
 run/runimg infrastructure removed — `runelf` is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
 interactive shell with meminfo / memmap / ataread / ls / tree / fsread / mkdir / rmdir / runelf commands
 guest TinyCC compiler path — `usr/bin/tcc.elf` runs inside SmallOS through `user_crt0` and TinyCC's normal `main`, then compiles guest C samples during `make test`

@@ -27,11 +27,14 @@ guest.
 - `int 0x80` syscall ABI for console I/O, files, directories, cwd, process
   control, pipes, descriptor duplication, heap growth, time, framebuffer
   display, input, sockets, polling, and timer/signalfd-style shims.
-- ATA disk driver and an ext2-backed VFS. The generated filesystem includes
-  `/bin`, `/usr/bin`, `/usr/sbin`, `/usr/libexec/tests`, `/etc`, `/boot`,
-  `/var`, and `/tmp`, with boot diagnostics persisted at `/var/log/boot.log`.
-- Framebuffer terminal with VGA text fallback, graphical boot splash, PS/2
-  keyboard, PS/2 plus VMware mouse input, and several graphics demos.
+- ATA and USB mass-storage block devices with an ext2-backed VFS. ATA is
+  writable; USB BOT/SCSI storage is mounted read-only today. The generated
+  filesystem includes `/bin`, `/usr/bin`, `/usr/sbin`, `/usr/libexec/tests`,
+  `/etc`, `/boot`, `/var`, and `/tmp`, with boot diagnostics persisted at
+  `/var/log/boot.log` when the mounted filesystem is writable.
+- Framebuffer terminal with VGA text fallback, visible boot timing prefixes,
+  graphical boot splash, PS/2 keyboard, USB boot keyboard/mouse probing, PS/2
+  plus VMware mouse input, and several graphics demos.
 - PCI and e1000 networking with DHCP, ARP, IPv4, UDP/NTP clock sync, a compact
   TCP service task, passive sockets, `poll`/`epoll` readiness, FTP, echo, and
   HTTP server smoke paths.
@@ -115,8 +118,10 @@ make run-sdl   # graphical SDL display
 ```
 
 `make run` uses QEMU user-network NAT with an e1000 NIC, and the guest acquires
-its IPv4 configuration with DHCP. If terminal input feels sluggish through
-curses, use `make run-gtk` or `make run QEMU_DISPLAY=gtk`. Mouse-driven
+its IPv4 configuration with DHCP. `make run-usb-storage` boots the same raw
+image through QEMU OHCI USB mass storage, which exercises the protected-mode
+USB storage path instead of the IDE disk path. If terminal input feels sluggish
+through curses, use `make run-gtk` or `make run QEMU_DISPLAY=gtk`. Mouse-driven
 graphics demos need a graphical QEMU backend and a grabbed QEMU window.
 
 Headless run with serial logging:
@@ -212,6 +217,7 @@ make smoke
 make smoke-reboot
 make smoke-halt
 make display-smoke
+make usb-storage-smoke
 make socket-eof-smoke
 make socket-parallel-smoke
 make ftp-smoke
@@ -229,7 +235,7 @@ make cserve-smoke
 ├── samples/         files seeded into the guest filesystem
 ├── src/
 │   ├── boot/        BIOS stage 1, stage 2, kernel entry, ELF embedding helper
-│   ├── drivers/     display, input, disk, ext2, PCI, e1000, DHCP/net/TCP/NTP
+│   ├── drivers/     display, input, block, ATA/USB storage, ext2, PCI, net
 │   ├── exec/        ELF loader
 │   ├── kernel/      memory, paging, process, scheduler, syscall, VFS, time
 │   ├── shell/       shell, parser, line editor, built-in commands
@@ -273,9 +279,14 @@ after that  mutable ext2 partition
 
 The boot sector stores MBR-style entries for the kernel region and the ext2
 partition. Stage 2 reads the kernel location from the image metadata; the
-kernel normally mounts ext2 through ATA/MBR discovery, but stage 2 also
-preloads the used ext2 prefix as a 16 MB zero-filled fallback for USB BIOS boots
-and hardware whose ATA path cannot validate the filesystem. USB EDD boots probe
-and byte-check direct high-memory reads before using them; otherwise the loader
-falls back to its low-memory bounce buffer. `make boot-layout-check` and
-`make image-layout-check` keep those contracts honest before QEMU runs.
+kernel mounts ext2 through the first storage path that validates: writable ATA,
+read-only USB mass storage, then the loader2-published RAM fallback. Stage 2
+still preloads the used ext2 prefix as a 16 MB zero-filled fallback for BIOS USB
+boots and hardware whose protected-mode storage path cannot validate the
+filesystem. USB EDD boots probe and byte-check direct high-memory reads before
+using them; otherwise the loader falls back to its low-memory bounce buffer.
+Boot diagnostics are prefixed with `[ms=... tick=... cyc=...]`; during early
+storage probing the kernel allows timer IRQ0 only, so the timestamps advance
+without letting keyboard/process IRQ paths run before the scheduler is live.
+`make boot-layout-check`, `make image-layout-check`, and
+`make usb-storage-smoke` keep those contracts honest before hardware runs.

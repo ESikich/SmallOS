@@ -12,6 +12,8 @@ static int csi_has_value = 0;
 static int csi_private = 0;
 static utf8_decoder_t utf8_decoder;
 static terminal_output_hook_t output_hook = 0;
+static terminal_line_prefix_hook_t line_prefix_hook = 0;
+static int line_prefix_line_start = 1;
 
 static int clamp_int(int value, int min, int max) {
     if (value < min) return min;
@@ -182,6 +184,38 @@ static void terminal_emit_utf8_byte(unsigned char b) {
     }
 }
 
+static void terminal_emit_raw_char(char c) {
+    terminal_emit_utf8_byte((unsigned char)c);
+#ifdef SMALLOS_SERIAL_CONSOLE
+    serial_putc(c);
+#endif
+}
+
+static void terminal_emit_raw_string(const char* s) {
+    if (!s) return;
+    while (*s) {
+        terminal_emit_raw_char(*s++);
+    }
+}
+
+static void terminal_emit_line_prefix_if_needed(char c) {
+    const char* prefix;
+
+    if (!line_prefix_hook || !line_prefix_line_start) return;
+    if (c == '\n' || c == '\r') return;
+
+    prefix = line_prefix_hook();
+    terminal_emit_raw_string(prefix);
+}
+
+static void terminal_note_visible_char(char c) {
+    if (c == '\n') {
+        line_prefix_line_start = 1;
+    } else if (c != '\r') {
+        line_prefix_line_start = 0;
+    }
+}
+
 void terminal_init(void) {
 #ifdef SMALLOS_SERIAL_CONSOLE
     serial_init();
@@ -203,15 +237,22 @@ void terminal_set_output_hook(terminal_output_hook_t hook) {
     output_hook = hook;
 }
 
+void terminal_set_line_prefix_hook(terminal_line_prefix_hook_t hook) {
+    line_prefix_hook = hook;
+    line_prefix_line_start = 1;
+}
+
 void terminal_clear(void) {
     if (active_backend && active_backend->clear) {
         active_backend->clear();
     }
+    line_prefix_line_start = 1;
 }
 
 void terminal_putc(char c) {
     unsigned char b = (unsigned char)c;
 
+    terminal_emit_line_prefix_if_needed(c);
     if (terminal_handle_escape(c)) {
         utf8_decoder_reset(&utf8_decoder);
     } else {
@@ -223,6 +264,7 @@ void terminal_putc(char c) {
     if (output_hook) {
         output_hook(c);
     }
+    terminal_note_visible_char(c);
 }
 
 void terminal_write(const char* s, unsigned int len) {
@@ -237,6 +279,7 @@ void terminal_write(const char* s, unsigned int len) {
     for (unsigned int i = 0; i < len; i++) {
         unsigned char b = (unsigned char)s[i];
 
+        terminal_emit_line_prefix_if_needed((char)b);
         if (terminal_handle_escape((char)b)) {
             utf8_decoder_reset(&utf8_decoder);
         } else {
@@ -248,6 +291,7 @@ void terminal_write(const char* s, unsigned int len) {
         if (output_hook) {
             output_hook((char)b);
         }
+        terminal_note_visible_char((char)b);
     }
 
     if (active_backend && active_backend->end_update) {

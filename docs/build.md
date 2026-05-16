@@ -102,7 +102,7 @@ loader2.bin          boot.bin
               smallos.img
 ```
 
-`mkimage` performs the final disk-image assembly step. It pads `kernel.bin` to a whole number of sectors, computes the ext2 start LBA, concatenates the component binaries, and patches the ext2 start LBA into the boot-sector field declared by `boot.asm`.
+`mkimage` performs the final disk-image assembly step. It pads `kernel.bin` to a whole number of sectors, computes the ext2 start LBA, concatenates the component binaries, and writes kernel/ext2 partition metadata into the MBR table fields declared by `boot.asm`.
 
 `make boot-layout-check` verifies the generated boot-chain inputs before that step runs, and `make image-layout-check` verifies the finished image afterwards. The default `make` target builds both the raw image and the VMDK wrapper; use `make image` when you only want the raw image.
 
@@ -320,6 +320,12 @@ slow reader, checks a 404, and captures guest `netinfo` socket/TCP counters.
 It holds 32 clients by default. Override `CSERVE_SMOKE_CLIENTS` or
 `CSERVE_SMOKE_PORT` when needed.
 
+`make usb-storage-smoke` boots the canonical raw image through QEMU OHCI USB
+mass storage (`-device pci-ohci` plus `-device usb-storage`). It verifies that
+ATA mount failure is tolerated, `usbms` reaches ready state, ext2 mounts from
+`dev=usb0`, and the user shell prompt appears. That path is read-only today,
+so boot log persistence is skipped with an informational boot message.
+
 For networking, the default `run` and `test` targets keep using QEMU's
 user-network NAT so CI stays simple. The guest still uses DHCP in that mode,
 so the old QEMU `10.0.2.15/24` address is no longer hardcoded in the kernel.
@@ -372,6 +378,12 @@ The headless test and smoke targets also pass `SERIAL_CONSOLE=1` explicitly
 because their host harnesses use the serial log as the transcript. COM1-enabled
 builds use `build/obj/auto-serial/` internally but still produce the canonical
 `build/img/smallos.img`.
+
+While boot diagnostics are being captured, terminal output is prefixed with
+`[ms=... tick=... cyc=...]`. `ms` and `tick` come from the PIT tick counter;
+`cyc` is a raw `rdtsc` sample. The storage probe briefly allows timer IRQ0 only
+so those fields advance during ATA/USB probing without enabling keyboard or
+mouse IRQ delivery before the scheduler is ready.
 
 Userland framebuffer programs should use the small graphics helper in
 `src/user/gfx.c`. It validates the display mode, acquires exclusive graphics
@@ -750,7 +762,7 @@ build/tools/mkimage \
     --fs .state/ext2.img \
     --out build/img/smallos.img \
     --sector-size 512 \
-    --loader-size 4096 \
+    --loader-size 8192 \
     --boot-partition-table-offset 446 \
     --boot-partition-entry-size 16
 ```
@@ -801,7 +813,7 @@ Constraints:
 
 * boot sector size is declared by `BOOT_SECTOR_SIZE` in `boot.asm`
 * the BIOS boot signature `0xAA55` must be present at the end of the sector
-* the boot sector also contains a declared patch field for the ext2 start LBA
+* the boot sector contains MBR partition entries for the kernel and ext2 spans
 
 Stage 1 uses the old CHS interface (`INT 0x13 AH=0x02`) because it only reads the fixed-size stage-2 loader, which fits comfortably within track 0.
 
@@ -946,6 +958,20 @@ Replaces CHS `AH=0x02`. Removes the 18-sector-per-track limit. Required because 
 At runtime, the ATA driver uses PCI IDE bus-master DMA when QEMU exposes it and
 falls back to the original polling PIO transfer path when DMA is unavailable or
 fails.
+
+## USB Storage Boot Smoke
+
+QEMU can also expose the raw image as OHCI USB storage:
+
+```bash
+make run-usb-storage
+make usb-storage-smoke
+```
+
+The kernel uses the generic block layer to try writable ATA first, then
+read-only USB mass storage, then the loader2 RAM fallback. The USB storage
+driver implements enough BOT/SCSI to enumerate the device, read capacity, and
+issue READ(10) requests for ext2 blocks.
 
 ---
 

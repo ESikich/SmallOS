@@ -34,7 +34,7 @@ kernel_sectors = ceil(kernel.bin / 512)
 ext2_lba = kernel_lba + kernel_sectors
 ```
 
-The ext2 start LBA is **not** compiled into the kernel. The Makefile computes it after the kernel size is known, writes it into partition entry 1, and `ext2_init()` reads the partition table back at boot.
+The ext2 start LBA is **not** compiled into the kernel. The Makefile computes it after the kernel size is known, writes it into partition entry 1, and the selected block-device path reads the partition table back at boot.
 
 ---
 
@@ -136,9 +136,12 @@ At runtime on IDE-style disks:
 5. `ext2_init()` validates the ext2 superblock and fixed geometry
 
 When ATA is unavailable, or when ATA resets successfully but ext2 cannot be
-mounted from sector 0, the kernel retries with the loader2-published boot
-ramdisk. That path is for BIOS USB boots and marginal ATA-compatible hardware;
-it does not persist guest writes back to the disk image.
+mounted from sector 0, the kernel tries USB mass storage through the generic
+block-device interface. The USB path exposes the first supported OHCI
+Bulk-Only Transport device as `usb0` and mounts it read-only. If USB storage
+also fails, the kernel retries with the loader2-published boot RAM fallback. The
+RAM-backed path is for BIOS USB boots and marginal storage hardware; it accepts
+in-memory writes, but those writes are not persisted back to the disk image.
 
 If the partition entry is missing or malformed, `ext2_init()` prints:
 
@@ -162,9 +165,11 @@ ntp_sync()   # best-effort CLOCK_REALTIME setup; warning-only on failure
 ext2_init()
 ```
 
-in that order. The storage policy tries ATA first, then retries `ext2_init()`
-against the loader2-published boot ramdisk if the ATA mount cannot validate the
-volume.
+in that order. The storage policy tries ATA first, USB mass storage second, and
+the loader2-published boot RAM fallback last. During the early storage probe, only
+timer IRQ0 is temporarily unmasked so boot timestamps and USB/OHCI waits
+advance without letting keyboard/process IRQ paths run before the scheduler has
+a current task.
 
 ## `ata_init()`
 
@@ -197,7 +202,7 @@ geometry in `ext2.c`:
 On success it sets internal state and prints:
 
 ```text
-ext2: ok  lba=<value>
+ext2: ok  lba=<value> dev=<device>
 ```
 
 On failure it leaves the driver unusable.
@@ -538,6 +543,6 @@ The following must stay true unless the implementation is changed everywhere:
 - `vfs_load_file()` currently returns the ext2 driver's reused static buffer
 - callers copy data out before another file load occurs
 - nested reads/listings use path-aware native lookup; regular file writes can target the root or a nested path
-- fd-backed writes use ext2 write-at paths and do not cache the whole output file before committing sectors
+- fd-backed writes require a writable ext2 source, use ext2 write-at paths, and do not cache the whole output file before committing sectors
 
 Breaking any of these produces either immediate mount failure or silent file corruption.

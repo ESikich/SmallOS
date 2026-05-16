@@ -272,7 +272,7 @@ Blocks the calling process for at least `ticks` timer ticks. The task marks itse
 int sys_writefile(const char* name, const char* buf, uint32_t len);
 ```
 
-Creates or overwrites a root-directory ext2 file in one shot. Returns `0` on success or a negative errno on failure.
+Creates or overwrites a root-directory ext2 file in one shot. Returns `0` on success or a negative errno on failure, including when the active ext2 source is read-only USB storage.
 
 This is the root-only persistence primitive for generated artifacts such as compiler output, assembly listings, or other build products. The kernel validates both the filename and the byte range before calling into the VFS root-write wrapper.
 
@@ -306,7 +306,7 @@ Requests a machine reboot through the kernel system path. Used by the
 int sys_writefile_path(const char* path, const char* buf, uint32_t len);
 ```
 
-Creates or overwrites an ext2 file at an arbitrary path. Returns `0` on success or a negative errno on failure.
+Creates or overwrites an ext2 file at an arbitrary path. Returns `0` on success or a negative errno on failure, including when the active ext2 source is read-only USB storage.
 
 This is the preferred persistence primitive for build tools and compilers because it can emit directly into nested writable directories such as `/var/tmp/WORK/` or `/var/tmp/samples/`. The kernel validates both the path and the byte range before calling into the VFS path-write wrapper.
 
@@ -333,7 +333,9 @@ int sys_open_write(const char* name);
 Legacy shorthand for `SYS_OPEN_MODE_WRITE | SYS_OPEN_MODE_CREATE |
 SYS_OPEN_MODE_TRUNC`. Opens an ext2 file for streaming write/truncate and
 returns a writable file-backed handle. New runtime code should prefer
-`SYS_OPEN_MODE` so read/write/append/truncate intent is explicit.
+`SYS_OPEN_MODE` so read/write/append/truncate intent is explicit. This fails
+through the normal negative-errno path when ext2 is mounted from read-only USB
+storage.
 
 ---
 
@@ -587,7 +589,8 @@ This is the preferred descriptor-open primitive for POSIX `open()` and stdio
 create, and append opens without forcing every write-capable path to truncate.
 Writable file handles stream writes through ext2 at the descriptor offset.
 Partial-sector writes preserve surrounding bytes, append starts at the current
-file size, and seek-past-EOF writes zero-fill the gap.
+file size, and seek-past-EOF writes zero-fill the gap. Write-capable opens fail
+when the current ext2 mount is read-only USB storage.
 
 ---
 

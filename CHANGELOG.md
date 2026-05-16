@@ -34,6 +34,14 @@
   * Made socket readiness checks actively drain pending e1000 RX descriptors before reporting TCP readability, avoiding timer-tick paced FTP uploads when data is already queued in the NIC ring.
   * Renamed build artifacts to `ext2.seed.img` and `.state/ext2.img`; `mkimage` and `image-layout-check` now treat the appended filesystem image generically.
   * Updated shell/user-visible filesystem labels and QEMU expectations for native ext2 names.
+* **USB storage boot path** (`src/drivers/block.*`, `src/drivers/usb_storage.*`, `src/drivers/usb.*`, `src/kernel/kernel.c`, `Makefile`)
+  * Added a generic block-device layer and an OHCI USB mass-storage path using Bulk-Only Transport plus SCSI `READ(10)`.
+  * The kernel now mounts ext2 from writable ATA first, read-only `usb0` second, and the loader2-published RAM fallback last.
+  * Kept the public image at 16 MB while letting loader2 preload only the used ext2 prefix and zero-fill the rest of the RAM fallback.
+  * Added `make run-usb-storage` and `make usb-storage-smoke` to exercise the same raw image through QEMU USB storage.
+* **Boot timing diagnostics** (`src/drivers/terminal.*`, `src/kernel/kernel.c`, `docs/`)
+  * Added visible `[ms=... tick=... cyc=...]` prefixes while boot diagnostics are captured.
+  * During early storage probing, the kernel temporarily unmasks only timer IRQ0 so PIT timestamps and USB waits advance without letting keyboard/process IRQ paths run before the scheduler is live.
 * **FTP upload path** (`third_party/ftp_server/src/ftp_data.c`)
   * Buffered STOR socket reads into 64 KiB file writes so uploads do not turn segment-sized TCP reads into repeated partial-block filesystem writes.
 * **Verification workflow** (`Makefile`, `README.md`, `docs/`)

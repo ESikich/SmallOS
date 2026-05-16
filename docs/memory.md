@@ -117,12 +117,15 @@ The loader copies ELF segment data out of this buffer into PMM-backed frames bef
 
 Loader2 also preloads the used prefix of the ext2 partition to physical
 `0x800000` as a boot-storage fallback, then zero-fills the rest of the current
-16 MB seed volume. QEMU and VMware normally mount the writable ATA path instead,
-but BIOS USB boots and hardware with failing ATA sector reads can mount this
-RAM-backed copy. For BIOSes that identify the boot device as USB, loader2 tests
-EDD direct high-memory reads by comparing a sample against the bounce-buffer
-path before using them for the fallback preload. Writes made through the
-fallback are not persisted to the disk image.
+16 MB seed volume. QEMU and VMware normally mount the writable ATA path instead.
+USB boots can now mount the device directly through read-only USB mass storage
+when OHCI/BOT/SCSI probing succeeds, and only fall back to this RAM-backed copy
+when protected-mode storage cannot validate the filesystem. For BIOSes that
+identify the boot device as USB, loader2 tests EDD direct high-memory reads by
+comparing a sample against the bounce-buffer path before using them for the
+fallback preload. USB storage is read-only today, so write attempts fail; writes
+made through the RAM fallback affect only the in-memory copy and are not
+persisted to the disk image.
 
 Fd-backed file reads and writes do not need to fit inside this static buffer.
 Small fd reads still use reclaimable PMM cache pages owned by the shared

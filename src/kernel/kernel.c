@@ -21,6 +21,7 @@
 #include "fb_console.h"
 #include "elf_loader.h"
 #include "vfs.h"
+#include "ports.h"
 #include "../drivers/dhcp.h"
 #include "../drivers/net.h"
 #include "../drivers/tcp.h"
@@ -37,6 +38,7 @@ static int s_boot_log_fs_ready = 0;
 static int s_boot_log_terminal_hooked = 0;
 static int s_boot_log_read_only_notice = 0;
 static int s_boot_log_line_start = 1;
+static char s_boot_terminal_prefix[80];
 
 static unsigned long long boot_read_cycles(void) {
     unsigned int lo;
@@ -102,6 +104,57 @@ static void boot_log_append_prefix(void) {
     boot_log_append_raw("] ");
 }
 
+static void boot_prefix_char(char** cursor, char* end, char ch) {
+    if (*cursor + 1 >= end) return;
+    **cursor = ch;
+    *cursor += 1;
+    **cursor = '\0';
+}
+
+static void boot_prefix_string(char** cursor, char* end, const char* s) {
+    if (!s) return;
+    while (*s) {
+        boot_prefix_char(cursor, end, *s++);
+    }
+}
+
+static void boot_prefix_uint(char** cursor, char* end, unsigned int value) {
+    char buf[10];
+    unsigned int i = 0;
+
+    do {
+        buf[i++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    } while (value > 0u && i < sizeof(buf));
+    while (i > 0u) {
+        boot_prefix_char(cursor, end, buf[--i]);
+    }
+}
+
+static void boot_prefix_hex64(char** cursor, char* end, unsigned long long value) {
+    static const char hex[] = "0123456789ABCDEF";
+
+    boot_prefix_string(cursor, end, "0x");
+    for (int i = 15; i >= 0; i--) {
+        boot_prefix_char(cursor, end, hex[(value >> (unsigned int)(i * 4)) & 0xFu]);
+    }
+}
+
+static const char* boot_terminal_prefix(void) {
+    char* cursor = s_boot_terminal_prefix;
+    char* end = s_boot_terminal_prefix + sizeof(s_boot_terminal_prefix);
+
+    s_boot_terminal_prefix[0] = '\0';
+    boot_prefix_string(&cursor, end, "[ms=");
+    boot_prefix_uint(&cursor, end, boot_log_elapsed_ms());
+    boot_prefix_string(&cursor, end, " tick=");
+    boot_prefix_uint(&cursor, end, timer_get_ticks());
+    boot_prefix_string(&cursor, end, " cyc=");
+    boot_prefix_hex64(&cursor, end, boot_read_cycles());
+    boot_prefix_string(&cursor, end, "] ");
+    return s_boot_terminal_prefix;
+}
+
 static void boot_log_append_char(char ch) {
     if (!s_boot_log_enabled) return;
     if (s_boot_log_line_start) {
@@ -126,12 +179,14 @@ static void boot_log_terminal_hook(char ch) {
 }
 
 static void boot_log_capture_begin(void) {
+    terminal_set_line_prefix_hook(boot_terminal_prefix);
     terminal_set_output_hook(boot_log_terminal_hook);
     s_boot_log_terminal_hooked = 1;
 }
 
 static void boot_log_capture_end(void) {
     terminal_set_output_hook(0);
+    terminal_set_line_prefix_hook(0);
     s_boot_log_terminal_hooked = 0;
 }
 
@@ -362,15 +417,46 @@ static void boot_sync_clock(void) {
     }
 }
 
+typedef struct {
+    unsigned char master;
+    unsigned char slave;
+} boot_pic_masks_t;
+
+static boot_pic_masks_t boot_pic_timer_only_begin(void) {
+    boot_pic_masks_t masks;
+
+    masks.master = inb(0x21);
+    masks.slave = inb(0xA1);
+    outb(0x21, 0xFE);  /* IRQ0 only: keep keyboard/process IRQs out of early boot. */
+    outb(0xA1, 0xFF);
+    return masks;
+}
+
+static void boot_pic_timer_only_end(boot_pic_masks_t masks) {
+    outb(0x21, masks.master);
+    outb(0xA1, masks.slave);
+}
+
 static void boot_mount_ext2(int ata_ready) {
+    boot_pic_masks_t pic_masks;
+
     /*
      * Prefer the writable ATA path for IDE-style disks. Some hardware can
      * reset the ATA channel successfully but still fail real sector reads, so
      * the loader-provided ext2 copy remains a second-chance mount fallback.
+     *
+     * Keep only IRQ0 running here so boot timestamps and USB/OHCI waits use
+     * real PIT time without allowing keyboard/process IRQ paths to run before
+     * the scheduler has a current task.
      */
+    pic_masks = boot_pic_timer_only_begin();
+    __asm__ __volatile__("sti");
+
     if (ata_ready) {
         ext2_use_block_device(ata_block_device());
         if (ext2_init()) {
+            __asm__ __volatile__("cli");
+            boot_pic_timer_only_end(pic_masks);
             boot_splash_pass("ext2: volume mounted");
             return;
         }
@@ -382,6 +468,8 @@ static void boot_mount_ext2(int ata_ready) {
         if (usb_dev) {
             ext2_use_block_device(usb_dev);
             if (ext2_init()) {
+                __asm__ __volatile__("cli");
+                boot_pic_timer_only_end(pic_masks);
                 if (usb_dev->read_only) {
                     boot_puts("usb: storage read-only\n");
                 }
@@ -394,6 +482,8 @@ static void boot_mount_ext2(int ata_ready) {
 
     if (boot_info_ramdisk_valid()) {
         ext2_use_boot_ramdisk(1);
+        __asm__ __volatile__("cli");
+        boot_pic_timer_only_end(pic_masks);
         if (ata_ready) {
             boot_splash_warn("storage: using boot ramdisk fallback");
         } else {
@@ -406,6 +496,8 @@ static void boot_mount_ext2(int ata_ready) {
         return;
     }
 
+    __asm__ __volatile__("cli");
+    boot_pic_timer_only_end(pic_masks);
     boot_splash_fail("ext2: volume mounted",
                      "ext2 volume failed superblock or partition validation");
 }

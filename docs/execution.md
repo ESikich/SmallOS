@@ -76,6 +76,9 @@ Important current-state facts:
 - the shipped `usr/bin/tcc.elf` compiler binary links the generic SmallOS `user_crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from ext2, write the results back to disk, and then those generated ELFs can be executed immediately
 - QEMU user networking is still the default for `make run` / `make test`, but the guest now learns its IPv4 address, netmask, gateway, DNS server, and lease time through DHCP instead of assuming QEMU's NAT addresses. `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT.
 - Boot performs a best-effort NTP sync through the e1000 path before the shell starts. On success, `CLOCK_REALTIME` is set and the boot log prints the UTC time; on failure, boot continues with a warning.
+- Boot diagnostics are mirrored live with `[ms=... tick=... cyc=...]` prefixes
+  while capture is enabled, then the prefix hook is removed before the user
+  shell prompt. The saved boot log keeps the same timing prefixes.
 - `pinggw` and bare `ping` target the DHCP-provided gateway. `ping <ip>` routes through the DHCP gateway when the target is off-subnet. Public ICMP may still be blocked by the surrounding hypervisor or NAT, so `pingpublic` is only a best-effort probe.
 - `netcheck` prints the gateway steps separately from the public ICMP probe so a `1.1.1.1` timeout does not imply the local NAT path is broken
 - `usr/sbin/tcpecho.elf`, `usr/sbin/sockeof.elf`, and `usr/sbin/ftpd.elf` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
@@ -254,7 +257,7 @@ host observes EOF.
 ```text
 vfs_load_file(name, &size)
   → backend file lookup
-  → follow block chain with ATA block reads
+  → follow block chain through the selected ext2 storage source
   → copy file into static ext2 load buffer
   → return pointer to buffer
 ```
@@ -456,7 +459,7 @@ kernel_main()
   idt_init()
   sched_init()
   ata_init()
-  ext2_init() or boot ramdisk fallback
+  mount ext2 from ATA, USB storage, or loader2 boot RAM fallback
   create bootseq kernel task
   sched_enqueue(boot_proc)
   process_start_reaper()    ← creates and enqueues reaper task
@@ -560,7 +563,7 @@ freestanding tests; new hosted-ish programs should prefer
 
 The following must remain true:
 
-- `ext2_init()` must run after the storage policy chooses ATA or boot ramdisk, and before any VFS-backed ext2 file load
+- `ext2_init()` must run after the storage policy chooses ATA, USB storage, or boot RAM fallback, and before any VFS-backed ext2 file load
 - `vfs_load_file()` / `ext2_load()` results must be copied before another ext2 load reuses the static buffer
 - every user process must have a valid kernel stack frame before ring-3 entry
 - `tss_set_kernel_stack()` must match the process that will next return from ring 3 into the kernel
