@@ -374,6 +374,12 @@ static inline int sys_usb_diag_op(uint32_t op, uint32_t arg) {
     return syscall2(SYS_USB_DIAG_OP, op, arg);
 }
 
+static inline int sys_usb_port_snapshot(sys_usb_port_snapshot_t* out) {
+    return syscall2(SYS_USB_DIAG_OP,
+                    SYS_USB_DIAG_OP_PORT_SNAPSHOT,
+                    (uint32_t)out);
+}
+
 static inline int sys_input_read(sys_input_event_t* out_events,
                                  uint32_t max_events,
                                  uint32_t flags) {

@@ -635,6 +635,179 @@ void usb_dump_ports(void) {
     }
 }
 
+static void usb_snapshot_add(sys_usb_port_snapshot_t* out,
+                             const sys_usb_port_entry_t* entry) {
+    if (!out || !entry) return;
+    if (out->entry_count >= SYS_USB_PORT_SNAPSHOT_MAX) {
+        out->truncated = 1u;
+        return;
+    }
+    out->entries[out->entry_count++] = *entry;
+}
+
+static void usb_snapshot_add_controller(sys_usb_port_snapshot_t* out,
+                                        unsigned int controller_index,
+                                        const pci_device_t* dev,
+                                        unsigned int bar,
+                                        unsigned int port_count,
+                                        unsigned int info,
+                                        unsigned int extra) {
+    sys_usb_port_entry_t entry;
+
+    k_memset(&entry, 0, sizeof(entry));
+    entry.kind = SYS_USB_PORT_ENTRY_CONTROLLER;
+    entry.controller_index = controller_index;
+    entry.bus = dev ? dev->bus : 0u;
+    entry.slot = dev ? dev->slot : 0u;
+    entry.func = dev ? dev->func : 0u;
+    entry.prog_if = dev ? dev->prog_if : 0u;
+    entry.bar = bar;
+    entry.port_count = port_count;
+    entry.info = info;
+    entry.extra = extra;
+    usb_snapshot_add(out, &entry);
+}
+
+static void usb_snapshot_add_port(sys_usb_port_snapshot_t* out,
+                                  unsigned int controller_index,
+                                  const pci_device_t* dev,
+                                  unsigned int bar,
+                                  unsigned int port,
+                                  unsigned int port_count,
+                                  unsigned int status,
+                                  unsigned int info,
+                                  unsigned int extra) {
+    sys_usb_port_entry_t entry;
+
+    k_memset(&entry, 0, sizeof(entry));
+    entry.kind = SYS_USB_PORT_ENTRY_PORT;
+    entry.controller_index = controller_index;
+    entry.bus = dev ? dev->bus : 0u;
+    entry.slot = dev ? dev->slot : 0u;
+    entry.func = dev ? dev->func : 0u;
+    entry.prog_if = dev ? dev->prog_if : 0u;
+    entry.bar = bar;
+    entry.port = port;
+    entry.port_count = port_count;
+    entry.status = status;
+    entry.info = info;
+    entry.extra = extra;
+    usb_snapshot_add(out, &entry);
+}
+
+void usb_port_snapshot(sys_usb_port_snapshot_t* out) {
+    if (!out) return;
+    k_memset(out, 0, sizeof(*out));
+
+    if (s_usb_controller_count != 0u) {
+        for (unsigned int i = 0; i < s_usb_controller_count; i++) {
+            usb_controller_t* ctrl = &s_usb_controllers[i];
+            pci_device_t* dev = &ctrl->pci;
+            u32 ports = ctrl->ports;
+            u32 info = 0u;
+            u32 extra = 0u;
+
+            if (ctrl->regs && dev->prog_if == USB_PROG_OHCI) {
+                info = ctrl->regs[OHCI_HC_RH_DESC_A / 4u];
+            } else if (ctrl->regs && dev->prog_if == USB_PROG_EHCI) {
+                volatile u8* base8 = (volatile u8*)ctrl->bar;
+                volatile u32* cap = (volatile u32*)ctrl->bar;
+                extra = base8[0];
+                info = cap[EHCI_CAP_HCS_PARAMS / 4u];
+            }
+
+            usb_snapshot_add_controller(out, i, dev, ctrl->bar, ports, info, extra);
+            if (!ctrl->regs) continue;
+
+            for (u32 port = 0; port < ports; port++) {
+                u32 st = 0u;
+                if (dev->prog_if == USB_PROG_OHCI) {
+                    st = ctrl->regs[(OHCI_HC_RH_PORT_BASE + port * 4u) / 4u];
+                } else if (dev->prog_if == USB_PROG_EHCI) {
+                    volatile u32* op = (volatile u32*)(ctrl->bar + extra);
+                    st = op[(EHCI_OP_PORT_BASE + port * 4u) / 4u];
+                } else {
+                    continue;
+                }
+                usb_snapshot_add_port(out, i, dev, ctrl->bar, port + 1u, ports,
+                                      st, info, extra);
+            }
+        }
+        return;
+    }
+
+    for (unsigned int bus = 0; bus < 256u; bus++) {
+        for (unsigned int slot = 0; slot < 32u; slot++) {
+            unsigned short vendor = pci_read_config_word((unsigned char)bus,
+                                                         (unsigned char)slot,
+                                                         0,
+                                                         0x00);
+            if (vendor == 0xFFFFu) continue;
+
+            unsigned char header_type = pci_read_config_byte((unsigned char)bus,
+                                                             (unsigned char)slot,
+                                                             0,
+                                                             0x0E);
+            unsigned int function_count = (header_type & 0x80u) ? 8u : 1u;
+
+            for (unsigned int func = 0; func < function_count; func++) {
+                pci_device_t dev;
+                unsigned int bar;
+                volatile u32* regs = 0;
+                u32 ports = 0u;
+                u32 info = 0u;
+                u32 extra = 0u;
+                unsigned int controller_index = out->entry_count;
+
+                pci_read_device((unsigned char)bus,
+                                (unsigned char)slot,
+                                (unsigned char)func,
+                                &dev);
+                if (dev.vendor_id == 0xFFFFu ||
+                    dev.class_code != PCI_CLASS_SERIAL_BUS ||
+                    dev.subclass != PCI_SUBCLASS_USB) {
+                    continue;
+                }
+
+                bar = usb_controller_bar(&dev);
+                if (bar != 0u && dev.prog_if != USB_PROG_UHCI &&
+                    dev.prog_if != USB_PROG_XHCI) {
+                    usb_map_mmio(bar, PAGE_SIZE);
+                    regs = (volatile u32*)bar;
+                    if (dev.prog_if == USB_PROG_OHCI) {
+                        info = regs[OHCI_HC_RH_DESC_A / 4u];
+                        ports = info & 0xFFu;
+                    } else if (dev.prog_if == USB_PROG_EHCI) {
+                        volatile u8* base8 = (volatile u8*)bar;
+                        volatile u32* cap = (volatile u32*)bar;
+                        extra = base8[0];
+                        info = cap[EHCI_CAP_HCS_PARAMS / 4u];
+                        ports = info & 0x0Fu;
+                    }
+                    if (ports > 15u) ports = 15u;
+                }
+
+                usb_snapshot_add_controller(out, controller_index, &dev, bar,
+                                            ports, info, extra);
+
+                for (u32 port = 0; regs && port < ports; port++) {
+                    u32 st = 0u;
+                    if (dev.prog_if == USB_PROG_OHCI) {
+                        st = regs[(OHCI_HC_RH_PORT_BASE + port * 4u) / 4u];
+                    } else if (dev.prog_if == USB_PROG_EHCI) {
+                        volatile u32* op = (volatile u32*)(bar + extra);
+                        st = op[(EHCI_OP_PORT_BASE + port * 4u) / 4u];
+                    } else {
+                        continue;
+                    }
+                    usb_snapshot_add_port(out, controller_index, &dev, bar,
+                                          port + 1u, ports, st, info, extra);
+                }
+            }
+        }
+    }
+}
+
 static unsigned int usb_power_ohci_controller(const pci_device_t* dev) {
     unsigned int bar = usb_controller_bar(dev);
     volatile u32* regs;

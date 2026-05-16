@@ -121,6 +121,11 @@ typedef struct sys_netinfo {
 #define SYS_USB_DIAG_OP_DIAG  2u
 #define SYS_USB_DIAG_OP_PEEK  3u
 #define SYS_USB_DIAG_OP_POWER 4u
+#define SYS_USB_DIAG_OP_PORT_SNAPSHOT 5u
+
+#define SYS_USB_PORT_SNAPSHOT_MAX 32u
+#define SYS_USB_PORT_ENTRY_CONTROLLER 1u
+#define SYS_USB_PORT_ENTRY_PORT       2u
 
 #define SYS_NET_OP_SEND_TEST_FRAME 1u
 #define SYS_NET_OP_POLL_ONCE       2u
@@ -171,6 +176,27 @@ typedef struct sys_usbinfo {
     unsigned char last_func;
     unsigned char last_prog_if;
 } sys_usbinfo_t;
+
+typedef struct sys_usb_port_entry {
+    unsigned int kind;
+    unsigned int controller_index;
+    unsigned int bus;
+    unsigned int slot;
+    unsigned int func;
+    unsigned int prog_if;
+    unsigned int bar;
+    unsigned int port;
+    unsigned int port_count;
+    unsigned int status;
+    unsigned int info;
+    unsigned int extra;
+} sys_usb_port_entry_t;
+
+typedef struct sys_usb_port_snapshot {
+    unsigned int entry_count;
+    unsigned int truncated;
+    sys_usb_port_entry_t entries[SYS_USB_PORT_SNAPSHOT_MAX];
+} sys_usb_port_snapshot_t;
 
 typedef struct sys_mousedebug {
     unsigned int irq_count;

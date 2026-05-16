@@ -1317,6 +1317,8 @@ void sh_shelltest(void) {
     sh_shelltest_exec("ping", "ping");
     sh_shelltest_exec("pinggw", "pinggw");
     sh_shelltest_exec("ataread", "ataread 0");
+    sh_shelltest_exec("usbports", "usbports");
+    sh_shelltest_exec("usbdiag", "usbdiag");
     sh_shelltest_exec("ls_abs_root", "ls /");
     sh_shelltest_exec("ls_path", "ls usr/bin");
     sh_shelltest_exec("tree", "tree");

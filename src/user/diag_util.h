@@ -104,4 +104,110 @@ static inline void diag_put_mac(const unsigned char mac[6]) {
     }
 }
 
+static inline void diag_put_hex_byte(unsigned int value) {
+    diag_put_hex_digit((value >> 4) & 0xFu);
+    diag_put_hex_digit(value & 0xFu);
+}
+
+static inline void diag_usb_put_addr(const sys_usb_port_entry_t* ent) {
+    diag_put_hex_byte(ent->bus);
+    u_putc(':');
+    diag_put_hex_byte(ent->slot);
+    u_putc('.');
+    u_putc((char)('0' + (ent->func & 7u)));
+}
+
+static inline void diag_usb_put_port_flags(unsigned int status, int ohci) {
+    u_puts(" flags=");
+    if (status & 0x00000001u) u_puts("conn,");
+    if (status & 0x00000002u) u_puts("en,");
+    if (status & 0x00000004u) u_puts(ohci ? "suspend," : "change,");
+    if (status & 0x00000010u) u_puts("reset,");
+    if (ohci && (status & 0x00000100u)) u_puts("power,");
+    if (ohci && (status & 0x00000200u)) u_puts("low,");
+    if (!ohci && (status & 0x00001000u)) u_puts("power,");
+}
+
+static inline void diag_usb_print_ports(const sys_usb_port_snapshot_t* snap) {
+    u_puts("usbports: passive port dump\n");
+    for (unsigned int i = 0; snap && i < snap->entry_count; i++) {
+        const sys_usb_port_entry_t* ent = &snap->entries[i];
+        int ohci = ent->prog_if == 0x10u;
+        int ehci = ent->prog_if == 0x20u;
+
+        if (ent->kind == SYS_USB_PORT_ENTRY_CONTROLLER) {
+            u_puts("usbports: ctrl ");
+            diag_usb_put_addr(ent);
+            u_puts(" prog=");
+            diag_put_hex32(ent->prog_if);
+            u_puts(" bar=");
+            diag_put_hex32(ent->bar);
+            u_putc('\n');
+            if (ohci) {
+                u_puts("usbports: ohci ports=");
+                u_put_uint(ent->port_count);
+                u_puts(" rhda=");
+                diag_put_hex32(ent->info);
+                u_putc('\n');
+            } else if (ehci) {
+                u_puts("usbports: ehci ports=");
+                u_put_uint(ent->port_count);
+                u_puts(" caplen=");
+                u_put_uint(ent->extra);
+                u_puts(" hcs=");
+                diag_put_hex32(ent->info);
+                u_putc('\n');
+            }
+        } else if (ent->kind == SYS_USB_PORT_ENTRY_PORT) {
+            if (ohci) {
+                u_puts("usbports: ohci port=");
+            } else if (ehci) {
+                u_puts("usbports: ehci port=");
+            } else {
+                u_puts("usbports: port=");
+            }
+            u_put_uint(ent->port);
+            u_puts(" st=");
+            diag_put_hex32(ent->status);
+            diag_usb_put_port_flags(ent->status, ohci);
+            u_putc('\n');
+        }
+    }
+    if (snap && snap->truncated) {
+        u_puts("usbports: truncated\n");
+    }
+}
+
+static inline void diag_usb_print_dry_run_candidates(const sys_usb_port_snapshot_t* snap) {
+    unsigned int candidates = 0;
+
+    u_puts("usbdiag: dry-run connected non-low OHCI ports\n");
+    for (unsigned int i = 0; snap && i < snap->entry_count; i++) {
+        const sys_usb_port_entry_t* ent = &snap->entries[i];
+        if (ent->kind != SYS_USB_PORT_ENTRY_PORT || ent->prog_if != 0x10u) {
+            continue;
+        }
+        if (!(ent->status & 0x00000001u)) {
+            continue;
+        }
+        if (ent->status & 0x00000200u) {
+            u_puts("usbdiag: skip low-speed port=");
+            u_put_uint(ent->port);
+            u_puts(" st=");
+            diag_put_hex32(ent->status);
+            u_putc('\n');
+            continue;
+        }
+        candidates++;
+        u_puts("usbdiag: peek port=");
+        u_put_uint(ent->port);
+        u_puts(" st=");
+        diag_put_hex32(ent->status);
+        u_puts(" dry-run no-reset no-dma\n");
+    }
+    if (candidates == 0) {
+        u_puts("usbdiag: no non-low OHCI candidates\n");
+    }
+}
+
 #endif

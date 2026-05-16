@@ -2434,6 +2434,17 @@ static int sys_usbinfo_impl(sys_usbinfo_t* out_info) {
 
 static int sys_usb_diag_op_impl(unsigned int op, unsigned int arg) {
     switch (op) {
+        case SYS_USB_DIAG_OP_PORT_SNAPSHOT: {
+            sys_usb_port_snapshot_t snapshot;
+            if (!arg) return -EFAULT;
+            usb_port_snapshot(&snapshot);
+            if (copy_to_user((sys_usb_port_snapshot_t*)arg,
+                             &snapshot,
+                             sizeof(snapshot)) < 0) {
+                return -EFAULT;
+            }
+            return 0;
+        }
         case SYS_USB_DIAG_OP_PORTS:
             usb_dump_ports();
             return 0;

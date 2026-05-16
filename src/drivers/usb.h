@@ -1,6 +1,8 @@
 #ifndef USB_H
 #define USB_H
 
+#include "../kernel/uapi_syscall.h"
+
 typedef struct {
     unsigned int controller_count;
     unsigned int uhci_count;
@@ -60,6 +62,7 @@ int usb_start_service(void);
 int usb_probe_hid(void);
 void usb_diag(void);
 void usb_dump_ports(void);
+void usb_port_snapshot(sys_usb_port_snapshot_t* out);
 void usb_peek_port(unsigned int one_based_port);
 unsigned int usb_power_ohci_ports(void);
 int usb_mouse_open_port(unsigned int one_based_port);

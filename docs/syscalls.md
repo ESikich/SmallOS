@@ -1266,18 +1266,25 @@ int sys_usb_diag_op(uint32_t op, uint32_t arg);
 ```
 
 Performs a narrow USB diagnostic action while keeping controller access inside
-the kernel. Supported `op` values:
+the kernel. Output formatting belongs to the user commands when the kernel can
+return structured records. Supported `op` values:
 
 | Operation | Meaning |
 | --- | --- |
-| `SYS_USB_DIAG_OP_PORTS` | Print the passive USB port dump used by `/bin/usbports.elf`. |
-| `SYS_USB_DIAG_OP_DIAG` | Run the USB port/descriptor diagnostic path used by `/bin/usbdiag.elf`. |
+| `SYS_USB_DIAG_OP_PORTS` | Legacy kernel-print passive USB port dump. |
+| `SYS_USB_DIAG_OP_DIAG` | Legacy kernel-print USB port/descriptor diagnostic path. |
 | `SYS_USB_DIAG_OP_PEEK` | Run the OHCI address-0 descriptor peek for one-based port `arg`, used by `/bin/usbpeek.elf`. |
 | `SYS_USB_DIAG_OP_POWER` | Try OHCI root-hub port power and return the powered-port count, used by `/bin/usbpower.elf`. |
+| `SYS_USB_DIAG_OP_PORT_SNAPSHOT` | Copy a `sys_usb_port_snapshot_t` to `arg`; `/bin/usbports.elf` and the passive part of `/bin/usbdiag.elf` format this in userspace. |
 
-The output-heavy operations still print through the kernel terminal path today;
-future versions can replace them with structured port/descriptor records while
-leaving the user command names stable.
+`SYS_USB_DIAG_OP_PEEK` still performs active OHCI reset/control-transfer work
+and prints descriptor details through the kernel terminal path.
+
+The snapshot contains up to `SYS_USB_PORT_SNAPSHOT_MAX` entries. Controller
+entries identify PCI address, programming interface, MMIO BAR, port count, and
+controller-specific root-hub/capability words. Port entries carry the same
+controller identity plus one-based port number and raw port status. If the
+snapshot fills, `truncated` is set and userland should print the partial data.
 
 ---
 
