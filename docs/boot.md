@@ -14,7 +14,7 @@ BIOS
  → protected mode
  → kernel_entry.asm  (zeros BSS, calls kernel_main)
  → kernel_main()     (timestamped diagnostics, storage selection, boot log save)
- → bootseq task      (userland splash, ready line, shell/login path)
+ → bootseq task      (shell preload, HID/log save, late splash, shell resume)
 ```
 
 ---
@@ -593,12 +593,13 @@ Kernel   →  zero BSS
          →  tcp_init
          →  ntp_sync (best-effort realtime clock sync through DHCP gateway)
          →  mount ext2 from ATA, USB storage, or boot RAM fallback
-         →  save /var/log/boot.log when the filesystem is writable
+         →  save /var/log/boot.txt when the filesystem is writable
          →  create bootseq task and zombie reaper, sti, sched_start
-Bootseq  →  run /bin/bootsplash.elf boot/splash.bmp
-         →  print SmallOS ready and refresh /var/log/boot.log
-         →  load /bin/shell.elf suspended
+Bootseq  →  load /bin/shell.elf suspended
          →  probe OHCI boot HID and queue retrying usb service
+         →  refresh /var/log/boot.txt
+         →  run /bin/bootsplash.elf boot/splash.bmp
+         →  print SmallOS ready
          →  launch /bin/shell.elf
          →  create kernel shell fallback if the user shell exits or fails
 ```

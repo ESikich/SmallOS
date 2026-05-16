@@ -19,6 +19,7 @@ typedef const char* (*terminal_line_prefix_hook_t)(void);
 
 void terminal_init(void);
 void terminal_set_backend(const terminal_backend_t* backend);
+void terminal_set_display_enabled(int enabled);
 void terminal_set_output_hook(terminal_output_hook_t hook);
 void terminal_set_line_prefix_hook(terminal_line_prefix_hook_t hook);
 void terminal_clear(void);

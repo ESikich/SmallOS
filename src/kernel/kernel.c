@@ -29,7 +29,7 @@
 
 extern unsigned char bss_end;
 
-#define BOOT_LOG_PATH "var/log/boot.log"
+#define BOOT_LOG_PATH "/var/log/boot.txt"
 #define BOOT_LOG_CAPACITY 32768u
 static char s_boot_log[BOOT_LOG_CAPACITY];
 static unsigned int s_boot_log_len = 0;
@@ -214,7 +214,7 @@ static void boot_log_save(void) {
         return;
     }
     if (!vfs_write_path(BOOT_LOG_PATH, (const u8*)s_boot_log, s_boot_log_len)) {
-        terminal_puts("boot: WARN var/log/boot.log write failed\n");
+        terminal_puts("boot: WARN /var/log/boot.txt write failed\n");
     }
 }
 
@@ -269,6 +269,7 @@ static void boot_splash_warn(const char* name) {
 }
 
 static void boot_splash_fail(const char* name, const char* detail) {
+    terminal_set_display_enabled(1);
     boot_splash_status("FAIL", name);
     if (detail) {
         boot_puts("boot: ");
@@ -569,7 +570,7 @@ static void kernel_selfcheck(void) {
                        "kernel stack pointer is outside the boot stack page");
 }
 
-static void boot_sequence_task_main(void) {
+static void boot_show_splash(void) {
     char* splash_argv[] = { "bootsplash", "boot/splash.bmp", 0 };
     process_t* splash_proc = elf_run_named("bin/bootsplash", 2, splash_argv);
 
@@ -577,11 +578,10 @@ static void boot_sequence_task_main(void) {
         process_claim_for_wait(splash_proc);
         process_wait(splash_proc);
     }
+}
 
+static void boot_sequence_task_main(void) {
     boot_print_hardware_diag_summary();
-    boot_log_save();
-
-    boot_puts("SmallOS ready\n");
     boot_log_save();
 
     /*
@@ -603,17 +603,26 @@ static void boot_sequence_task_main(void) {
         boot_puts("usb: WARN HID service task unavailable\n");
     }
 
+    boot_log_save();
+    boot_log_capture_end();
+    boot_show_splash();
+    terminal_set_display_enabled(1);
+    terminal_clear();
+    terminal_puts("SmallOS ready\n");
+
     if (user_shell_proc) {
-        boot_puts("Launching user shell\n");
-        boot_log_save();
-        boot_log_capture_end();
+        terminal_puts("Launching user shell\n");
+        /*
+         * Install the console reader before releasing the suspended shell.
+         * Real PS/2 and USB keyboard input can arrive as soon as the prompt is
+         * visible, so the consumer must already point at the user process.
+         */
+        process_set_foreground(user_shell_proc);
         user_shell_proc->state = PROCESS_STATE_RUNNING;
         process_wait(user_shell_proc);
-        boot_puts("User shell exited; starting kernel shell fallback\n");
+        terminal_puts("User shell exited; starting kernel shell fallback\n");
     } else {
-        boot_puts("User shell unavailable; starting kernel shell fallback\n");
-        boot_log_save();
-        boot_log_capture_end();
+        terminal_puts("User shell unavailable; starting kernel shell fallback\n");
     }
 
     process_t* shell_proc = process_create_kernel_task("shell", shell_task_main);
@@ -641,6 +650,7 @@ static void boot_sequence_task_main(void) {
 void kernel_main(void) {
     terminal_init();
     boot_log_capture_begin();
+    terminal_set_display_enabled(0);
     boot_splash_begin();
     boot_splash_terminal_ready();
     boot_splash_boot_info();

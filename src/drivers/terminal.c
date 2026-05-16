@@ -14,6 +14,7 @@ static utf8_decoder_t utf8_decoder;
 static terminal_output_hook_t output_hook = 0;
 static terminal_line_prefix_hook_t line_prefix_hook = 0;
 static int line_prefix_line_start = 1;
+static int display_enabled = 1;
 
 static int clamp_int(int value, int min, int max) {
     if (value < min) return min;
@@ -38,6 +39,9 @@ static int backend_col(void) {
 }
 
 static void backend_set_cursor(int row, int col) {
+    if (!display_enabled) {
+        return;
+    }
     if (active_backend && active_backend->set_cursor) {
         active_backend->set_cursor(row, col);
     }
@@ -163,7 +167,7 @@ static int terminal_handle_escape(char c) {
 }
 
 static void terminal_emit_codepoint(unsigned int cp) {
-    if (active_backend && active_backend->putc) {
+    if (display_enabled && active_backend && active_backend->putc) {
         active_backend->putc((char)unicode_to_cp437(cp));
     }
 }
@@ -233,6 +237,12 @@ void terminal_set_backend(const terminal_backend_t* backend) {
     utf8_decoder_reset(&utf8_decoder);
 }
 
+void terminal_set_display_enabled(int enabled) {
+    display_enabled = enabled ? 1 : 0;
+    esc_state = 0;
+    utf8_decoder_reset(&utf8_decoder);
+}
+
 void terminal_set_output_hook(terminal_output_hook_t hook) {
     output_hook = hook;
 }
@@ -243,7 +253,7 @@ void terminal_set_line_prefix_hook(terminal_line_prefix_hook_t hook) {
 }
 
 void terminal_clear(void) {
-    if (active_backend && active_backend->clear) {
+    if (display_enabled && active_backend && active_backend->clear) {
         active_backend->clear();
     }
     line_prefix_line_start = 1;
@@ -272,7 +282,7 @@ void terminal_write(const char* s, unsigned int len) {
         return;
     }
 
-    if (active_backend && active_backend->begin_update) {
+    if (display_enabled && active_backend && active_backend->begin_update) {
         active_backend->begin_update();
     }
 
@@ -294,7 +304,7 @@ void terminal_write(const char* s, unsigned int len) {
         terminal_note_visible_char((char)b);
     }
 
-    if (active_backend && active_backend->end_update) {
+    if (display_enabled && active_backend && active_backend->end_update) {
         active_backend->end_update();
     }
 }
@@ -376,7 +386,7 @@ void terminal_set_cursor(int row, int col) {
 }
 
 void terminal_write_at(int row, int col, char c) {
-    if (active_backend && active_backend->write_at) {
+    if (display_enabled && active_backend && active_backend->write_at) {
         active_backend->write_at(row, col, c);
     }
 }

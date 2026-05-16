@@ -31,10 +31,11 @@ guest.
   writable; USB BOT/SCSI storage is mounted read-only today. The generated
   filesystem includes `/bin`, `/usr/bin`, `/usr/sbin`, `/usr/libexec/tests`,
   `/etc`, `/boot`, `/var`, and `/tmp`, with boot diagnostics persisted at
-  `/var/log/boot.log` when the mounted filesystem is writable.
-- Framebuffer terminal with VGA text fallback, visible boot timing prefixes,
-  graphical boot splash, PS/2 keyboard, retrying OHCI USB boot keyboard/mouse
-  probing, PS/2 plus VMware mouse input, and several graphics demos.
+  `/var/log/boot.txt` when the mounted filesystem is writable.
+- Framebuffer terminal with VGA text fallback, boot timing prefixes captured in
+  `/var/log/boot.txt`, late graphical boot splash, PS/2 keyboard, retrying OHCI
+  USB boot keyboard/mouse probing, PS/2 plus VMware mouse input, and several
+  graphics demos.
 - PCI and e1000 networking with DHCP, ARP, IPv4, UDP/NTP clock sync, a compact
   TCP service task, passive sockets, `poll`/`epoll` readiness, FTP, echo, and
   HTTP server smoke paths.

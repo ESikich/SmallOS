@@ -24,6 +24,7 @@ Thumbs.db
 #etc
 *.zip
 *.txt
+!samples/boot.txt
 *.patch
 
 # Local/vendor experiments

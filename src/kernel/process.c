@@ -2668,7 +2668,15 @@ static int process_wait_impl(process_t* proc, int allow_detach, int* detached) {
         *detached = 0;
     }
     s_detach_allowed = allow_detach ? 1 : 0;
-    process_set_foreground(proc);
+    /*
+     * bootseq may install a suspended shell as foreground before resuming it.
+     * Preserve that handoff instead of clearing input a second time here.
+     */
+    if (process_get_foreground() == proc) {
+        process_set_foreground_preserve_input(proc);
+    } else {
+        process_set_foreground(proc);
+    }
     process_claim_for_wait(proc);
 
     while (proc->state != PROCESS_STATE_ZOMBIE) {
@@ -2705,7 +2713,15 @@ int process_wait_restore_foreground(process_t* proc, process_t* restore_proc) {
     if (!proc) return -1;
 
     s_detach_allowed = 0;
-    process_set_foreground(proc);
+    /*
+     * Match process_wait_impl(): callers may already have assigned foreground
+     * ownership before entering the blocking wait.
+     */
+    if (process_get_foreground() == proc) {
+        process_set_foreground_preserve_input(proc);
+    } else {
+        process_set_foreground(proc);
+    }
     process_claim_for_wait(proc);
 
     while (proc->state != PROCESS_STATE_ZOMBIE) {

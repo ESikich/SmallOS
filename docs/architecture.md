@@ -42,7 +42,7 @@ kernel_main()
   paging_init()     ← identity-maps first 8 MB, enables CR0.PG
   memory_init()     ← bump allocator after high kernel BSS
   pmm_init()        ← E820-filtered bitmap allocator at 0x200000–0x7FFFFFF
-  boot diagnostics  ← splash PASS/WARN/FAIL checks for startup invariants
+  boot diagnostics  ← muted display, serial/log PASS/WARN/FAIL checks
   fb_console_init() ← switch to framebuffer terminal when VBE boot info is valid
   keyboard/mouse/timer/idt
   #PF handler      ← logs CR2 / error code, kills user faults, panics on kernel faults
@@ -54,7 +54,7 @@ kernel_main()
   tcp_init()        ← start TCP/network service task
   ntp_sync()        ← set CLOCK_REALTIME and print synchronized UTC time
   ext2_init()       ← mount ATA, USB storage, or loader2 boot RAM fallback
-  bootseq task      ← run userland splash, print ready, then queue shell/login path
+  bootseq task      ← load shell, finish HID/logging, show splash, resume shell
   process_start_reaper() ← create and enqueue zombie reaper task
   sti
   sched_start()     ← switch from boot stack into bootseq task
@@ -129,8 +129,8 @@ Inside `kernel_main()`:
 13. `dhcp_configure()` — briefly enables interrupts and requests IPv4 configuration from the attached network. The runtime network config is shared by ARP, TCP, NTP, and shell diagnostics.
 14. `tcp_init()` — create and enqueue the TCP/network service kernel task
 15. `ntp_sync()` — briefly enables interrupts so PIT-backed timeout logic works, queries the default NTP server through UDP over the e1000 path and DHCP gateway, sets `CLOCK_REALTIME`, and prints the synchronized UTC time. Failure is a boot warning, not a halt.
-16. `boot_mount_ext2()` — prefer writable ATA, then read-only USB mass storage, then the loader2 RAM fallback when one was published. The storage probe briefly enables only timer IRQ0 so boot timestamps and USB waits advance without delivering keyboard/process IRQs before scheduling starts. After mount succeeds, the accumulated boot log is saved to `/var/log/boot.log` when the filesystem is writable.
-17. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, prints `SmallOS ready`, refreshes `/var/log/boot.log`, loads `/bin/shell.elf` suspended, probes OHCI boot HID, starts the retrying USB HID service, and then releases `/bin/shell.elf` as the default user shell. If that fails or exits, it queues the kernel shell fallback.
+16. `boot_mount_ext2()` — prefer writable ATA, then read-only USB mass storage, then the loader2 RAM fallback when one was published. The storage probe briefly enables only timer IRQ0 so boot timestamps and USB waits advance without delivering keyboard/process IRQs before scheduling starts. After mount succeeds, the accumulated boot log is saved to `/var/log/boot.txt` when the filesystem is writable.
+17. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` keeps the active display muted while it loads `/bin/shell.elf` suspended, probes OHCI boot HID, starts the retrying USB HID service, and refreshes `/var/log/boot.txt`. It then runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, re-enables display output, prints `SmallOS ready`, and releases `/bin/shell.elf` as the default user shell. If that fails or exits, it queues the kernel shell fallback.
 18. `sched_enqueue(boot_proc)` — make the boot sequence task runnable
 19. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
 20. `sti` — enable interrupts
@@ -482,6 +482,7 @@ keyboard IRQ → keyboard_handle_irq()
 The active consumer is managed by `keyboard_set_consumer()`:
 - `shell_init()` registers `shell_key_consumer` for the kernel fallback shell
 - `process_set_foreground(proc)` clears `kb_buf` (discarding any stale input, e.g. the Enter that launched `runelf`), records the foreground process group, then registers `process_key_consumer` when a user process takes the foreground
+- `process_set_foreground_preserve_input(proc)` keeps already-buffered input while refreshing the same foreground owner; bootseq uses an explicit `process_set_foreground(shell)` before resuming the suspended user shell so PS/2 and USB keyboard events are routed to the prompt immediately
 - `process_key_consumer` pushes ASCII into `kb_buf`; after each push it checks `keyboard_get_waiting_process()` and, if a process is parked in `PROCESS_STATE_WAITING`, sets it back to `PROCESS_STATE_RUNNING` and clears the waiter slot so the scheduler picks it up
 - Ctrl+C is handled by `process_key_consumer` as a terminal interrupt for the foreground process group. Matching signalfds receive `SIGINT`; otherwise the group gets exit status `130`, pending console/socket waits are cleared, and any actively running member is switched away from the IRQ1 frame.
 - `process_set_foreground(0)` calls `shell_register_consumer()` to restore the shell consumer on exit
@@ -630,8 +631,8 @@ is unavailable or fails. QEMU emulates the primary channel at `0x1F0`.
 device as `usb0` through the same `block_device_t` interface used by ATA. It
 implements USB Bulk-Only Transport with enough SCSI for boot-time reads:
 INQUIRY, TEST UNIT READY, REQUEST SENSE, READ CAPACITY(10), and READ(10). The
-device is mounted read-only today, so boot logs and guest file writes are not
-persisted when ext2 is mounted from USB storage.
+device is mounted read-only today, so `/var/log/boot.txt` and guest file writes
+are not persisted when ext2 is mounted from USB storage.
 
 `src/drivers/usb.c` also owns OHCI boot HID enumeration. Keyboard discovery is
 retryable after the first failed pass; failed attempts restore the controller's
