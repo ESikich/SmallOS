@@ -925,6 +925,26 @@ print_char:
     pop ax
     mov ah, 0x0E
     int 0x10
+    cmp al, 10
+    jne .done
+    call set_left_margin
+.done:
+    ret
+
+set_left_margin:
+    push ax
+    push bx
+    push dx
+    mov ah, 0x03
+    mov bh, 0
+    int 0x10
+    mov ah, 0x02
+    mov bh, 0
+    mov dl, 1
+    int 0x10
+    pop dx
+    pop bx
+    pop ax
     ret
 
 ; ---------------------------

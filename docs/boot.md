@@ -53,7 +53,7 @@ Loaded by BIOS at `0x0000:0x7C00`.
 ## Responsibilities
 
 * Initialize segment registers and a temporary stage-1 stack at `0x9000`
-* Print debug messages via BIOS `int 0x10`
+* Print a compact, one-cell-inset status banner via BIOS `int 0x10`
 * Load stage 2 from disk to `0x40000`
 * Transfer control to stage 2
 
@@ -74,6 +74,26 @@ DL = drive
 ## Why Stage 1 Is Minimal
 
 Must fit in 512 bytes. No room for LBA logic, extension checks, or complex error handling. Stage 1 performs only essential loading and defers all complexity to stage 2.
+
+## Early Screen Layout
+
+Stage 1 clears the BIOS text screen, starts its status text at row 1 / column 1,
+and keeps later lines aligned to that one-cell margin. The visible stage-1 text is
+intentionally log-like rather than centered or framed:
+
+```text
+ SmallOS
+ stage-1 bootstrap
+
+ reading stage 2...
+ stage 2 ready
+```
+
+Stage 2 uses the same VGA teletype margin helper for its real-mode status lines,
+so `Loading kernel...` and `Preloading ext2 fallback...` stay inside the same
+left buffer before the kernel display backend takes over. The COM1 serial mirror
+does not include cosmetic leading spaces; it remains a compact transcript for
+QEMU/ESXi smoke harnesses.
 
 ---
 

@@ -21,8 +21,7 @@ start:
 
     mov [BOOT_DRIVE], dl
 
-    mov si, boot_msg
-    call print_string
+    call draw_stage1_ui
 
     call load_loader2
 
@@ -43,8 +42,43 @@ print_string:
     jz .done
     mov ah, 0x0E
     int 0x10
+    cmp al, 10
+    jne .print_loop
+    call set_left_margin
     jmp .print_loop
 .done:
+    popa
+    ret
+
+set_left_margin:
+    pusha
+    mov ah, 0x03
+    mov bh, 0
+    int 0x10
+    mov ah, 0x02
+    mov bh, 0
+    mov dl, 1
+    int 0x10
+    popa
+    ret
+
+draw_stage1_ui:
+    pusha
+    mov ax, 0x0003
+    int 0x10
+    mov ax, 0x0600
+    mov bh, 0x07
+    xor cx, cx
+    mov dx, 0x184F
+    int 0x10
+
+    mov ah, 0x02
+    mov bh, 0
+    mov dx, 0x0101
+    int 0x10
+
+    mov si, stage1_msg
+    call print_string
     popa
     ret
 
@@ -137,8 +171,11 @@ READ_SEGMENT dw 0
 READ_OFFSET dw 0
 READ_SECTOR db 0
 READ_REMAINING db 0
-boot_msg   db "SmallOS USB diag2 stage2...", 0
-loaded_msg db " loaded ", 0
+stage1_msg db "SmallOS", 13, 10
+           db "stage-1 bootstrap", 13, 10
+           db 13, 10
+           db "reading stage 2...", 13, 10, 0
+loaded_msg db "stage 2 ready", 13, 10, 0
 disk_msg   db " Disk read error!", 0
 drive_msg  db " drive", 0
 error_msg  db " err", 0

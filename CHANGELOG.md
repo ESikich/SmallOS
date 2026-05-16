@@ -42,6 +42,9 @@
 * **Boot timing diagnostics** (`src/drivers/terminal.*`, `src/kernel/kernel.c`, `docs/`)
   * Added visible `[ms=... tick=... cyc=...]` prefixes while boot diagnostics are captured.
   * During early storage probing, the kernel temporarily unmasks only timer IRQ0 so PIT timestamps and USB waits advance without letting keyboard/process IRQ paths run before the scheduler is live.
+* **Early boot display polish** (`src/boot/boot.asm`, `src/boot/loader2.asm`, `Makefile`, `docs/`)
+  * Replaced the stage-1 text with a compact one-cell-inset boot log and made both stage-1 and stage-2 BIOS teletype output preserve the same left margin after newlines.
+  * Changed the default VBE selection to require the preferred 1024x768x32 framebuffer before falling back, while leaving `BOOT_VBE_RELAXED=1` available for firmware diagnostics.
 * **FTP upload path** (`third_party/ftp_server/src/ftp_data.c`)
   * Buffered STOR socket reads into 64 KiB file writes so uploads do not turn segment-sized TCP reads into repeated partial-block filesystem writes.
 * **Verification workflow** (`Makefile`, `README.md`, `docs/`)

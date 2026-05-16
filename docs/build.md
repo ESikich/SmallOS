@@ -363,11 +363,19 @@ make run-headless DISPLAY_BACKEND=vga   # force BIOS/VGA text mode
 ```
 
 `DISPLAY_BACKEND=auto` keeps the normal VBE path: loader2 asks for
-1024x768x32 and the kernel falls back to VGA text if VBE setup fails.
+1024x768x32 and the kernel falls back to VGA text if VBE setup fails. By
+default `BOOT_VBE_RELAXED=0`, so loader2 keeps scanning the BIOS mode list until
+it finds the requested 1024x768x32 framebuffer instead of accepting an earlier
+lower-resolution linear framebuffer. Set `BOOT_VBE_RELAXED=1` only when testing
+firmware that cannot provide the preferred mode.
 `DISPLAY_BACKEND=vga` keeps loader2 in BIOS/VGA text mode and defines
 `SMALLOS_FORCE_VGA_BACKEND=1` for the kernel, so `fb_console_init()` returns
 before mapping or selecting the framebuffer. The VGA panic and double-fault
 paths remain available either way.
+
+Before the kernel display backend takes over, both boot stages use plain BIOS
+text output inset by one character cell from the top-left edge. The serial
+mirror remains unpadded so host smoke logs keep compact line markers.
 
 Serial console mirroring is enabled for normal builds so QEMU and ESXi smoke
 checks observe the same boot transcript. Disable it only for visual-only
