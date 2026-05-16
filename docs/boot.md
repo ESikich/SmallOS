@@ -484,9 +484,9 @@ deltas. Avoid VMX `mouse.*` or `vmmouse.*` overrides on ESXi 6.7 unless you are
 deliberately testing VM configuration; the known-good baseline leaves those
 keys absent and keeps `usb.present = "FALSE"`.
 
-Use the shell command `mousetest` to confirm input delivery. A VMware console
-with working movement should report nonzero `dx`/`dy` events and a summary with
-nonzero `vmware=` packets.
+Use `/bin/mousetest.elf` through the shell command `mousetest` to confirm input
+delivery. A VMware console with working movement should report nonzero
+`dx`/`dy` events and a summary with nonzero `vmware=` packets.
 
 ## "ext2: bad MBR signature", "ext2: MBR partition type mismatch", or "ext2: partition entry not populated"
 

@@ -117,6 +117,11 @@ typedef struct sys_netinfo {
     unsigned int tcp_max_tx_buffer_bytes;
 } sys_netinfo_t;
 
+#define SYS_USB_DIAG_OP_PORTS 1u
+#define SYS_USB_DIAG_OP_DIAG  2u
+#define SYS_USB_DIAG_OP_PEEK  3u
+#define SYS_USB_DIAG_OP_POWER 4u
+
 #define SYS_NET_OP_SEND_TEST_FRAME 1u
 #define SYS_NET_OP_POLL_ONCE       2u
 #define SYS_NET_OP_ARP             3u
@@ -128,6 +133,62 @@ typedef struct sys_netinfo {
 #define SYS_USB_MOUSE_OP_OPEN      1u
 #define SYS_USB_MOUSE_OP_POLL      2u
 #define SYS_USB_MOUSE_OP_CLOSE     3u
+
+typedef struct sys_usbinfo {
+    unsigned int controller_count;
+    unsigned int uhci_count;
+    unsigned int ohci_count;
+    unsigned int ehci_count;
+    unsigned int xhci_count;
+    unsigned int powered_port_count;
+    unsigned int keyboard_active;
+    unsigned int keyboard_port;
+    unsigned int keyboard_endpoint;
+    unsigned int keyboard_packet_size;
+    unsigned int keyboard_interval;
+    unsigned int keyboard_poll_count;
+    unsigned int keyboard_report_count;
+    unsigned int keyboard_fail_count;
+    unsigned int keyboard_last_cc;
+    unsigned int mouse_active;
+    unsigned int mouse_port;
+    unsigned int mouse_endpoint;
+    unsigned int mouse_packet_size;
+    unsigned int mouse_interval;
+    unsigned int mouse_poll_count;
+    unsigned int mouse_report_count;
+    unsigned int mouse_fail_count;
+    unsigned int mouse_last_cc;
+    unsigned int service_active;
+    unsigned int storage_active;
+    unsigned int storage_port;
+    unsigned int last_bar;
+    unsigned int last_ports;
+    unsigned int last_port_status0;
+    unsigned int last_port_status1;
+    unsigned char last_bus;
+    unsigned char last_slot;
+    unsigned char last_func;
+    unsigned char last_prog_if;
+} sys_usbinfo_t;
+
+typedef struct sys_mousedebug {
+    unsigned int irq_count;
+    unsigned int byte_count;
+    unsigned int aux_status_count;
+    unsigned int packet_count;
+    unsigned int vmware_packet_count;
+    unsigned int sync_drop_count;
+    unsigned int overflow_drop_count;
+    unsigned int vmware_enabled;
+    unsigned int packet_size;
+    unsigned int device_id;
+    unsigned int ready;
+    unsigned int init_step;
+    unsigned int init_fail;
+    unsigned int config_before;
+    unsigned int config_after;
+} sys_mousedebug_t;
 
 typedef struct sys_net_op_request {
     unsigned int op;
@@ -255,7 +316,10 @@ enum {
     SYS_PTY_SET_SIZE    = 84, /* set pseudo-terminal rows/cols */
     SYS_STAT_FULL       = 85, /* copy full POSIX-shaped stat info for path */
     SYS_FSTAT_FULL      = 86, /* copy full POSIX-shaped stat info for fd */
-    SYS_USB_MOUSE_OP    = 87  /* temporary USB mouse diagnostic session */
+    SYS_USB_MOUSE_OP    = 87, /* temporary USB mouse diagnostic session */
+    SYS_USBINFO         = 88, /* write USB controller/HID diagnostic summary */
+    SYS_MOUSE_DEBUG     = 89, /* write PS/2 mouse diagnostic counters */
+    SYS_USB_DIAG_OP     = 90  /* perform narrow USB diagnostic action */
 };
 
 #endif

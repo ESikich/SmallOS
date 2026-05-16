@@ -2,11 +2,8 @@
 #include "shell.h"
 #include "terminal.h"
 #include "elf_loader.h"
-#include "usb.h"
-#include "mouse.h"
 #include "vfs.h"
 #include "process.h"
-#include "timer.h"
 #include "klib.h"
 
 static void print_command_list(void);
@@ -17,35 +14,6 @@ static int command_name_has_path_sep(const char* name);
 static int path_has_dot(const char* path);
 static int path_copy3(char* out, unsigned int out_size, const char* a, const char* b, const char* c);
 static void terminal_put_cwd(void);
-static void terminal_put_int(int value);
-
-static void terminal_put_int(int value) {
-    if (value < 0) {
-        terminal_putc('-');
-        terminal_put_uint((unsigned int)(-value));
-        return;
-    }
-    terminal_put_uint((unsigned int)value);
-}
-
-static int parse_uint_arg(const char* s, unsigned int* out) {
-    unsigned int value = 0;
-
-    if (!s || !*s || !out) {
-        return 0;
-    }
-
-    while (*s) {
-        if (*s < '0' || *s > '9') {
-            return 0;
-        }
-        value = value * 10u + (unsigned int)(*s - '0');
-        s++;
-    }
-
-    *out = value;
-    return 1;
-}
 
 static void cmd_help(command_t* cmd) {
     (void)cmd;
@@ -229,263 +197,6 @@ static void cmd_cd(command_t* cmd) {
     terminal_putc('\n');
 }
 
-static void cmd_mousetest(command_t* cmd) {
-    sys_mouse_state_t mouse;
-    mouse_debug_state_t before;
-    mouse_debug_state_t after;
-    unsigned int deadline;
-    unsigned int last_sequence;
-    unsigned int events = 0;
-    int usb_open;
-
-    (void)cmd;
-
-    usb_open = usb_mouse_open_port(0u);
-    if (usb_open) {
-        terminal_puts("mousetest: usb poll active\n");
-    }
-
-    if (!mouse_read_state(&mouse)) {
-        terminal_puts("mousetest: mouse unavailable\n");
-        mouse_debug_snapshot(&after);
-        terminal_puts("mousetest: ready=");
-        terminal_put_uint(after.ready);
-        terminal_puts(" init_step=");
-        terminal_put_uint(after.init_step);
-        terminal_puts(" init_fail=");
-        terminal_put_uint(after.init_fail);
-        terminal_puts(" cfg=");
-        terminal_put_hex(after.config_before);
-        terminal_putc('/');
-        terminal_put_hex(after.config_after);
-        terminal_puts(" irq=");
-        terminal_put_uint(after.irq_count);
-        terminal_puts(" bytes=");
-        terminal_put_uint(after.byte_count);
-        terminal_puts(" aux=");
-        terminal_put_uint(after.aux_status_count);
-        terminal_puts(" packets=");
-        terminal_put_uint(after.packet_count);
-        terminal_puts(" packet_size=");
-        terminal_put_uint(after.packet_size);
-        terminal_puts(" device_id=");
-        terminal_put_uint(after.device_id);
-        terminal_putc('\n');
-        if (usb_open) {
-            usb_mouse_close();
-        }
-        return;
-    }
-
-    last_sequence = mouse.sequence;
-    mouse_debug_snapshot(&before);
-    deadline = timer_get_ticks() + timer_ms_to_ticks_round_up(5000u);
-    terminal_puts("mousetest: move/click mouse for 5 seconds\n");
-
-    while ((int)(timer_get_ticks() - deadline) < 0) {
-        if (usb_open) {
-            int usb_poll = usb_mouse_poll_once();
-            if (usb_poll < 0) {
-                usb_open = 0;
-            }
-        }
-        if (!mouse_read_state(&mouse)) {
-            terminal_puts("mousetest: mouse became unavailable\n");
-            if (usb_open) {
-                usb_mouse_close();
-            }
-            return;
-        }
-        if (mouse.sequence != last_sequence ||
-            mouse.dx != 0 || mouse.dy != 0 || mouse.wheel != 0) {
-            last_sequence = mouse.sequence;
-            events++;
-            terminal_puts("mousetest: seq=");
-            terminal_put_uint(mouse.sequence);
-            terminal_puts(" dx=");
-            terminal_put_int(mouse.dx);
-            terminal_puts(" dy=");
-            terminal_put_int(mouse.dy);
-            terminal_puts(" wheel=");
-            terminal_put_int(mouse.wheel);
-            terminal_puts(" buttons=");
-            terminal_put_uint(mouse.buttons);
-            terminal_putc('\n');
-        }
-    }
-
-    terminal_puts("mousetest: events=");
-    terminal_put_uint(events);
-    terminal_putc('\n');
-    mouse_debug_snapshot(&after);
-    terminal_puts("mousetest: irq=");
-    terminal_put_uint(after.irq_count - before.irq_count);
-    terminal_puts(" bytes=");
-    terminal_put_uint(after.byte_count - before.byte_count);
-    terminal_puts(" aux=");
-    terminal_put_uint(after.aux_status_count - before.aux_status_count);
-    terminal_puts(" packets=");
-    terminal_put_uint(after.packet_count - before.packet_count);
-    terminal_puts(" vmware=");
-    terminal_put_uint(after.vmware_packet_count - before.vmware_packet_count);
-    terminal_puts(" vmware_on=");
-    terminal_put_uint(after.vmware_enabled);
-    terminal_puts(" packet_size=");
-    terminal_put_uint(after.packet_size);
-    terminal_puts(" device_id=");
-    terminal_put_uint(after.device_id);
-    terminal_puts(" ready=");
-    terminal_put_uint(after.ready);
-    terminal_puts(" init=");
-    terminal_put_uint(after.init_step);
-    terminal_putc('/');
-    terminal_put_uint(after.init_fail);
-    terminal_puts(" syncdrop=");
-    terminal_put_uint(after.sync_drop_count - before.sync_drop_count);
-    terminal_puts(" overflow=");
-    terminal_put_uint(after.overflow_drop_count - before.overflow_drop_count);
-    terminal_putc('\n');
-    if (usb_open) {
-        usb_mouse_close();
-    }
-}
-
-static void cmd_usbinfo(command_t* cmd) {
-    usb_debug_state_t usb;
-
-    (void)cmd;
-
-    usb_debug_snapshot(&usb);
-    terminal_puts("usbinfo: controllers=");
-    terminal_put_uint(usb.controller_count);
-    terminal_puts(" uhci=");
-    terminal_put_uint(usb.uhci_count);
-    terminal_puts(" ohci=");
-    terminal_put_uint(usb.ohci_count);
-    terminal_puts(" ehci=");
-    terminal_put_uint(usb.ehci_count);
-    terminal_puts(" xhci=");
-    terminal_put_uint(usb.xhci_count);
-    terminal_puts(" powered_ports=");
-    terminal_put_uint(usb.powered_port_count);
-    terminal_putc('\n');
-
-    terminal_puts("usbinfo: hid keyboard=");
-    terminal_put_uint(usb.keyboard_active);
-    terminal_puts(" port=");
-    terminal_put_uint(usb.keyboard_port);
-    terminal_puts(" ep=");
-    terminal_put_uint(usb.keyboard_endpoint);
-    terminal_puts(" pkt=");
-    terminal_put_uint(usb.keyboard_packet_size);
-    terminal_puts(" int=");
-    terminal_put_uint(usb.keyboard_interval);
-    terminal_puts(" polls=");
-    terminal_put_uint(usb.keyboard_poll_count);
-    terminal_puts(" reports=");
-    terminal_put_uint(usb.keyboard_report_count);
-    terminal_puts(" fail=");
-    terminal_put_uint(usb.keyboard_fail_count);
-    terminal_puts(" cc=");
-    terminal_put_hex(usb.keyboard_last_cc);
-    terminal_putc('\n');
-
-    terminal_puts("usbinfo: hid mouse=");
-    terminal_put_uint(usb.mouse_active);
-    terminal_puts(" port=");
-    terminal_put_uint(usb.mouse_port);
-    terminal_puts(" ep=");
-    terminal_put_uint(usb.mouse_endpoint);
-    terminal_puts(" pkt=");
-    terminal_put_uint(usb.mouse_packet_size);
-    terminal_puts(" int=");
-    terminal_put_uint(usb.mouse_interval);
-    terminal_puts(" polls=");
-    terminal_put_uint(usb.mouse_poll_count);
-    terminal_puts(" reports=");
-    terminal_put_uint(usb.mouse_report_count);
-    terminal_puts(" fail=");
-    terminal_put_uint(usb.mouse_fail_count);
-    terminal_puts(" cc=");
-    terminal_put_hex(usb.mouse_last_cc);
-    terminal_putc('\n');
-
-    terminal_puts("usbinfo: hid service=");
-    terminal_put_uint(usb.service_active);
-    terminal_puts(" storage=");
-    terminal_put_uint(usb.storage_active);
-    terminal_puts(" port=");
-    terminal_put_uint(usb.storage_port);
-    terminal_putc('\n');
-
-    terminal_puts("usbinfo: last=");
-    terminal_put_hex(((unsigned int)usb.last_bus << 8) |
-                     ((unsigned int)usb.last_slot << 3) |
-                     (unsigned int)usb.last_func);
-    terminal_puts(" prog=");
-    terminal_put_hex(usb.last_prog_if);
-    terminal_puts(" bar=");
-    terminal_put_hex(usb.last_bar);
-    terminal_puts(" ports=");
-    terminal_put_uint(usb.last_ports);
-    terminal_puts(" status=");
-    terminal_put_hex(usb.last_port_status0);
-    terminal_putc('/');
-    terminal_put_hex(usb.last_port_status1);
-    terminal_putc('\n');
-}
-
-static void cmd_usbports(command_t* cmd) {
-    (void)cmd;
-
-    usb_dump_ports();
-}
-
-static void cmd_usbdiag(command_t* cmd) {
-    (void)cmd;
-
-    usb_diag();
-}
-
-static void cmd_usbpeek(command_t* cmd) {
-    unsigned int port;
-
-    if (cmd->argc < 2 || !parse_uint_arg(cmd->argv[1], &port)) {
-        terminal_puts("usbpeek usage: usbpeek <ohci-port>\n");
-        return;
-    }
-
-    usb_peek_port(port);
-}
-
-static void cmd_usbpower(command_t* cmd) {
-    unsigned int powered;
-
-    (void)cmd;
-
-    terminal_puts("usbpower: OHCI root-hub power only\n");
-    powered = usb_power_ohci_ports();
-    terminal_puts("usbpower: total_powered=");
-    terminal_put_uint(powered);
-    terminal_putc('\n');
-}
-
-static void cmd_usbmouse(command_t* cmd) {
-    unsigned int port = 0u;
-    unsigned int seconds = 3u;
-
-    if (cmd->argc >= 2 && !parse_uint_arg(cmd->argv[1], &port)) {
-        terminal_puts("usbmouse usage: usbmouse [port] [seconds]\n");
-        return;
-    }
-    if (cmd->argc >= 3 && !parse_uint_arg(cmd->argv[2], &seconds)) {
-        terminal_puts("usbmouse usage: usbmouse [port] [seconds]\n");
-        return;
-    }
-
-    (void)usb_mouse_poll_port(seconds, port);
-}
-
 static void cmd_runelf(command_t* cmd) {
     if (cmd->argc < 2) {
         terminal_puts("Usage: runelf <n>\n");
@@ -537,13 +248,6 @@ static void cmd_runelf_nowait(command_t* cmd) {
 static command_entry_t commands[] = {
     { "help",          "show shell commands",           cmd_help },
     { "clear",         "clear the screen",              cmd_clear },
-    { "mousetest",     "print mouse events for 5 seconds", cmd_mousetest },
-    { "usbinfo",       "show USB controller power diagnostics", cmd_usbinfo },
-    { "usbdiag",       "run USB port and descriptor diagnostics", cmd_usbdiag },
-    { "usbports",      "dump passive USB port status", cmd_usbports },
-    { "usbpeek",       "read OHCI address-0 device descriptor", cmd_usbpeek },
-    { "usbpower",      "try OHCI root-hub port power", cmd_usbpower },
-    { "usbmouse",      "probe OHCI boot mouse", cmd_usbmouse },
     { "cd",            "change the shell working directory", cmd_cd },
     { "runelf",        "run an ext2 ELF and wait",      cmd_runelf },
     { "runelf_nowait", "run an ext2 ELF and return",    cmd_runelf_nowait },
@@ -564,6 +268,13 @@ static command_entry_t app_commands[] = {
     { "pingpublic",    "try public ICMP",              0 },
     { "netcheck",      "check gateway and public connectivity", 0 },
     { "ataread",       "dump raw sector bytes",        0 },
+    { "mousetest",     "print mouse events for 5 seconds", 0 },
+    { "usbinfo",       "show USB controller power diagnostics", 0 },
+    { "usbdiag",       "run USB port and descriptor diagnostics", 0 },
+    { "usbports",      "dump passive USB port status", 0 },
+    { "usbpeek",       "read OHCI address-0 device descriptor", 0 },
+    { "usbpower",      "try OHCI root-hub port power", 0 },
+    { "usbmouse",      "probe OHCI boot mouse",        0 },
     { "echo",          "print arguments via ELF",       0 },
     { "about",         "show the OS version via ELF",   0 },
     { "halt",          "halt the machine via ELF",      0 },

@@ -147,10 +147,9 @@ kernel shell task as a fallback/debug monitor.
 ## 1. Shell commands and app commands
 
 In the kernel fallback shell, commands like `help`, `clear`, `cd`, `runelf`,
-`runelf_nowait`, and the low-level USB diagnostics are normal kernel C
-functions dispatched by `commands_execute()`. The full `shelltest` and
-`selftest` regression commands live in `/bin/shell.elf`, not in this fallback
-monitor.
+and `runelf_nowait` are normal kernel C functions dispatched by
+`commands_execute()`. The full `shelltest` and `selftest` regression commands
+live in `/bin/shell.elf`, not in this fallback monitor.
 
 They:
 
@@ -164,9 +163,10 @@ the current filesystem namespace. Path-like command names are resolved relative
 to the shell cwd and may omit the `.elf` suffix. Commands like `echo`, `about`,
 `uptime`, `halt`, `reboot`, `date`, `pwd`, `cat`, `fsread`, `ls`, `tree`,
 `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, `edit`, `meminfo`, `memmap`,
-`netinfo`, `ping`, `dhcp`, `ataread`, `ip`, and `ipconfig` are shipped this
-way under `/bin/`. The kernel fallback shell keeps a similar app fallback after
-checking its built-in command table.
+`netinfo`, `ping`, `dhcp`, `ataread`, `usbinfo`, `usbports`, `usbdiag`,
+`usbpeek`, `usbpower`, `usbmouse`, `mousetest`, `ip`, and `ipconfig` are
+shipped this way under `/bin/`. The kernel fallback shell keeps a similar app
+fallback after checking its built-in command table.
 
 `/bin/ip.elf` and `/bin/ipconfig.elf` are the user-facing runtime network
 configuration tools. They read e1000/IPv4/TCP state through `SYS_NETINFO` and

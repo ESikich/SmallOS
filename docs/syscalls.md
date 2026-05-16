@@ -1221,6 +1221,64 @@ Updates the terminal dimensions associated with a PTY master or slave. Programs
 that call `SYS_TERMINAL_SIZE` through the PTY slave observe these rows and
 columns.
 
+### SYS_USB_MOUSE_OP (87)
+
+```c
+int sys_usb_mouse_op(uint32_t op, uint32_t port);
+```
+
+Temporary USB boot-mouse diagnostic session control. `op` is one of:
+
+| Operation | Meaning |
+| --- | --- |
+| `SYS_USB_MOUSE_OP_OPEN` | Claim and initialize an OHCI boot mouse on `port`, or auto-scan when `port == 0`. Returns `1` when a mouse is opened, `0` when none is found, or a negative errno. |
+| `SYS_USB_MOUSE_OP_POLL` | Poll the active USB boot mouse once and inject any relative report into the normal mouse state. Returns a positive event count, `0` for no event, or a negative errno. |
+| `SYS_USB_MOUSE_OP_CLOSE` | Close the active diagnostic USB mouse session. |
+
+This syscall is intentionally narrow: userland controls a diagnostic session,
+but the OHCI driver and report injection remain kernel-owned.
+
+### SYS_USBINFO (88)
+
+```c
+int sys_usbinfo(sys_usbinfo_t* out_info);
+```
+
+Copies the current USB controller, boot HID, USB storage, and last-probed OHCI
+diagnostic counters into `out_info`. This backs `/bin/usbinfo.elf` and returns
+`0` on success or `-EFAULT` for an invalid output pointer.
+
+### SYS_MOUSE_DEBUG (89)
+
+```c
+int sys_mouse_debug(sys_mousedebug_t* out_info);
+```
+
+Copies PS/2, VMware, and injected USB mouse diagnostic counters into
+`out_info`, including IRQ/byte/packet counts, packet size, device id, init
+state, and drop counters. This backs `/bin/mousetest.elf` and returns `0` on
+success or `-EFAULT` for an invalid output pointer.
+
+### SYS_USB_DIAG_OP (90)
+
+```c
+int sys_usb_diag_op(uint32_t op, uint32_t arg);
+```
+
+Performs a narrow USB diagnostic action while keeping controller access inside
+the kernel. Supported `op` values:
+
+| Operation | Meaning |
+| --- | --- |
+| `SYS_USB_DIAG_OP_PORTS` | Print the passive USB port dump used by `/bin/usbports.elf`. |
+| `SYS_USB_DIAG_OP_DIAG` | Run the USB port/descriptor diagnostic path used by `/bin/usbdiag.elf`. |
+| `SYS_USB_DIAG_OP_PEEK` | Run the OHCI address-0 descriptor peek for one-based port `arg`, used by `/bin/usbpeek.elf`. |
+| `SYS_USB_DIAG_OP_POWER` | Try OHCI root-hub port power and return the powered-port count, used by `/bin/usbpower.elf`. |
+
+The output-heavy operations still print through the kernel terminal path today;
+future versions can replace them with structured port/descriptor records while
+leaving the user command names stable.
+
 ---
 
 ## Kernel Entry Point

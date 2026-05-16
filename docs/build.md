@@ -645,6 +645,7 @@ Shipped ext2 programs:
 - `bin/meminfo` / `bin/memmap` - inspect kernel memory accounting and BIOS E820 entries
 - `bin/netinfo`, `bin/dhcp`, `bin/netsend`, `bin/netrecv`, `bin/arpgw`, `bin/ping`, `bin/pinggw`, `bin/pingpublic`, `bin/netcheck` - inspect or exercise runtime network diagnostics
 - `bin/ataread` - dump raw ATA sector diagnostics
+- `bin/usbinfo`, `bin/usbports`, `bin/usbdiag`, `bin/usbpeek`, `bin/usbpower`, `bin/usbmouse`, `bin/mousetest` - inspect or exercise USB controller/HID and mouse diagnostics through narrow kernel diagnostic syscalls
 - `bin/cat` - print an ext2 file
 - `bin/more` - page an ext2 file or piped stdin
 - `bin/fsread` - dump ext2 file metadata and first bytes
@@ -1009,8 +1010,9 @@ storage is mounted and the shell ELF has been loaded. A failed first probe does
 not freeze input discovery: the `usb` kernel task retries once per second until
 both supported boot HID devices are found, while skipping the active
 USB-storage port and already-claimed HID ports. The visible `Input:` lines and
-`usbinfo` command report keyboard/mouse endpoint, packet, poll, report, and
-condition-code counters for hardware bring-up.
+`/bin/usbinfo.elf` report keyboard/mouse endpoint, packet, poll, report, and
+condition-code counters for hardware bring-up; `/bin/mousetest.elf` can poll
+the shared mouse state and USB boot mouse path from userland.
 
 ---
 

@@ -119,6 +119,12 @@ PS/2, VMware absolute-pointer translation, or the OHCI USB boot mouse path, then
 clears the movement counters. This is a raw polling helper, not a
 descriptor-backed event stream.
 
+USB and mouse diagnostic commands use the same raw syscall layer instead of
+running as kernel shell built-ins. `sys_usbinfo()`, `sys_mouse_debug()`,
+`sys_usb_diag_op()`, and `sys_usb_mouse_op()` expose snapshots or explicit
+diagnostic actions for `/bin/usb*.elf` and `/bin/mousetest.elf`; the USB driver
+still owns controller access and report injection.
+
 The kernel dispatches descriptors through per-handle ops:
 
 ```text

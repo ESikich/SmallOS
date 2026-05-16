@@ -362,6 +362,18 @@ static inline int sys_usb_mouse_op(uint32_t op, uint32_t port) {
     return syscall2(SYS_USB_MOUSE_OP, op, port);
 }
 
+static inline int sys_usbinfo(sys_usbinfo_t* out_info) {
+    return syscall1(SYS_USBINFO, (uint32_t)out_info);
+}
+
+static inline int sys_mouse_debug(sys_mousedebug_t* out_info) {
+    return syscall1(SYS_MOUSE_DEBUG, (uint32_t)out_info);
+}
+
+static inline int sys_usb_diag_op(uint32_t op, uint32_t arg) {
+    return syscall2(SYS_USB_DIAG_OP, op, arg);
+}
+
 static inline int sys_input_read(sys_input_event_t* out_events,
                                  uint32_t max_events,
                                  uint32_t flags) {

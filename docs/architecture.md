@@ -506,6 +506,11 @@ is released; if either the boot keyboard or boot mouse is missing, the `usb`
 kernel task retries once per second and skips any port already owned by USB
 storage or an active HID endpoint. USB keyboard reports are translated into
 set-1 scancodes; USB mouse reports are injected into the normal mouse state.
+The shell-facing USB and mouse diagnostics are userland programs
+(`/bin/usbinfo.elf`, `/bin/usbports.elf`, `/bin/usbdiag.elf`,
+`/bin/usbpeek.elf`, `/bin/usbpower.elf`, `/bin/usbmouse.elf`, and
+`/bin/mousetest.elf`) that call narrow diagnostic syscalls. The kernel still
+owns OHCI/MMIO access, boot-HID session state, and mouse report injection.
 
 ---
 
@@ -806,6 +811,7 @@ physical memory manager (bitmap, all frames reclaimed on exit — no leak)
 per-process kernel stacks (PMM frame per process, freed on exit)
 SYS_READ / fd 0 — true blocking keyboard input through the console handle: parks process in PROCESS_STATE_WAITING, woken by keyboard IRQ via process_key_consumer()
 SYS_MOUSE_READ — polling mouse state for graphics demos: returns accumulated relative deltas/buttons and clears the movement counters
+SYS_USBINFO / SYS_MOUSE_DEBUG / SYS_USB_DIAG_OP / SYS_USB_MOUSE_OP — USB and mouse diagnostic interfaces used by `/bin/usb*.elf` and `/bin/mousetest.elf`; userland owns command formatting while controller access remains in the kernel
 SYS_YIELD — voluntary preemption via sched_yield_now()
 SYS_SLEEP — timed sleep: parks process in PROCESS_STATE_SLEEPING and wakes via the timer IRQ once the deadline is reached
 SYS_EXEC / SYS_FORK / SYS_EXECVE / SYS_WAITPID / SYS_KILL — legacy async ELF spawn plus POSIX-shaped fork/replace; userland can collect exit/signal status or terminate a child by pid

@@ -2362,6 +2362,94 @@ static int sys_mouse_read_impl(sys_mouse_state_t* out_state) {
     return 0;
 }
 
+static int sys_mouse_debug_impl(sys_mousedebug_t* out_info) {
+    mouse_debug_state_t debug;
+    sys_mousedebug_t info;
+
+    if (!out_info) return -EFAULT;
+    mouse_debug_snapshot(&debug);
+    info.irq_count = debug.irq_count;
+    info.byte_count = debug.byte_count;
+    info.aux_status_count = debug.aux_status_count;
+    info.packet_count = debug.packet_count;
+    info.vmware_packet_count = debug.vmware_packet_count;
+    info.sync_drop_count = debug.sync_drop_count;
+    info.overflow_drop_count = debug.overflow_drop_count;
+    info.vmware_enabled = debug.vmware_enabled;
+    info.packet_size = debug.packet_size;
+    info.device_id = debug.device_id;
+    info.ready = debug.ready;
+    info.init_step = debug.init_step;
+    info.init_fail = debug.init_fail;
+    info.config_before = debug.config_before;
+    info.config_after = debug.config_after;
+    if (copy_to_user(out_info, &info, sizeof(info)) < 0) return -EFAULT;
+    return 0;
+}
+
+static int sys_usbinfo_impl(sys_usbinfo_t* out_info) {
+    usb_debug_state_t debug;
+    sys_usbinfo_t info;
+
+    if (!out_info) return -EFAULT;
+    usb_debug_snapshot(&debug);
+    info.controller_count = debug.controller_count;
+    info.uhci_count = debug.uhci_count;
+    info.ohci_count = debug.ohci_count;
+    info.ehci_count = debug.ehci_count;
+    info.xhci_count = debug.xhci_count;
+    info.powered_port_count = debug.powered_port_count;
+    info.keyboard_active = debug.keyboard_active;
+    info.keyboard_port = debug.keyboard_port;
+    info.keyboard_endpoint = debug.keyboard_endpoint;
+    info.keyboard_packet_size = debug.keyboard_packet_size;
+    info.keyboard_interval = debug.keyboard_interval;
+    info.keyboard_poll_count = debug.keyboard_poll_count;
+    info.keyboard_report_count = debug.keyboard_report_count;
+    info.keyboard_fail_count = debug.keyboard_fail_count;
+    info.keyboard_last_cc = debug.keyboard_last_cc;
+    info.mouse_active = debug.mouse_active;
+    info.mouse_port = debug.mouse_port;
+    info.mouse_endpoint = debug.mouse_endpoint;
+    info.mouse_packet_size = debug.mouse_packet_size;
+    info.mouse_interval = debug.mouse_interval;
+    info.mouse_poll_count = debug.mouse_poll_count;
+    info.mouse_report_count = debug.mouse_report_count;
+    info.mouse_fail_count = debug.mouse_fail_count;
+    info.mouse_last_cc = debug.mouse_last_cc;
+    info.service_active = debug.service_active;
+    info.storage_active = debug.storage_active;
+    info.storage_port = debug.storage_port;
+    info.last_bar = debug.last_bar;
+    info.last_ports = debug.last_ports;
+    info.last_port_status0 = debug.last_port_status0;
+    info.last_port_status1 = debug.last_port_status1;
+    info.last_bus = debug.last_bus;
+    info.last_slot = debug.last_slot;
+    info.last_func = debug.last_func;
+    info.last_prog_if = debug.last_prog_if;
+    if (copy_to_user(out_info, &info, sizeof(info)) < 0) return -EFAULT;
+    return 0;
+}
+
+static int sys_usb_diag_op_impl(unsigned int op, unsigned int arg) {
+    switch (op) {
+        case SYS_USB_DIAG_OP_PORTS:
+            usb_dump_ports();
+            return 0;
+        case SYS_USB_DIAG_OP_DIAG:
+            usb_diag();
+            return 0;
+        case SYS_USB_DIAG_OP_PEEK:
+            usb_peek_port(arg);
+            return 0;
+        case SYS_USB_DIAG_OP_POWER:
+            return (int)usb_power_ohci_ports();
+        default:
+            return -EINVAL;
+    }
+}
+
 static int sys_usb_mouse_op_impl(unsigned int op, unsigned int port) {
     switch (op) {
         case SYS_USB_MOUSE_OP_OPEN:
@@ -3125,6 +3213,22 @@ void syscall_handler_main(syscall_regs_t* regs) {
 
         case SYS_USB_MOUSE_OP:
             regs->eax = (unsigned int)sys_usb_mouse_op_impl(
+                            regs->ebx,
+                            regs->ecx);
+            break;
+
+        case SYS_USBINFO:
+            regs->eax = (unsigned int)sys_usbinfo_impl(
+                            (sys_usbinfo_t*)regs->ebx);
+            break;
+
+        case SYS_MOUSE_DEBUG:
+            regs->eax = (unsigned int)sys_mouse_debug_impl(
+                            (sys_mousedebug_t*)regs->ebx);
+            break;
+
+        case SYS_USB_DIAG_OP:
+            regs->eax = (unsigned int)sys_usb_diag_op_impl(
                             regs->ebx,
                             regs->ecx);
             break;
