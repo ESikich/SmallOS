@@ -177,8 +177,8 @@ in that order. The DHCP-provided network config is runtime state; after boot,
 anything to the filesystem. The storage policy tries ATA first, USB mass storage
 second, and the loader2-published boot RAM fallback last. During the early
 storage probe, only timer IRQ0 is temporarily unmasked so boot timestamps and
-USB/OHCI waits advance without letting keyboard/process IRQ paths run before the
-scheduler has a current task.
+USB/OHCI waits advance without letting keyboard/mouse/process IRQ paths run
+before the scheduler has a current task.
 
 ## `ata_init()`
 

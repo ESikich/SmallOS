@@ -23,6 +23,7 @@ typedef struct mouse_debug_state {
 
 int mouse_init(void);
 void mouse_handle_irq(void);
+void mouse_enable_external_source(void);
 void mouse_inject_relative(int dx, int dy, int wheel, unsigned int buttons);
 int mouse_read_state(sys_mouse_state_t* out);
 int mouse_available(void);

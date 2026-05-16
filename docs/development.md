@@ -23,10 +23,9 @@ command, feeds the interactive `readline` prompt, and verifies both the
 built-in shell commands (`tests/shell/`) and shipped ELFs
 (`tests/elfs/`).
 
-The scripted shell/selftest tables are kept in static storage because the
-shell task only has a 4 KB kernel stack. If you add more scripted command
-cases, keep the large tables off the stack so the process state stays safe
-during the full regression run.
+The scripted shell/selftest tables live in the user shell and are kept in static
+storage. If you add more scripted command cases, keep the large tables off the
+stack so the full regression run stays predictable.
 
 `make smoke` runs the dedicated reboot/halt checks.  Use
 `make smoke-reboot` or `make smoke-halt` when you want to verify those
@@ -65,13 +64,13 @@ prompt.
 
 After diagnostics, `kernel_main()` queues the `bootseq` kernel task and the
 zombie reaper, then enters the scheduler on `bootseq`. The boot sequence task
-loads `/bin/shell.elf` suspended, probes OHCI boot HID, queues the retrying USB
-service, refreshes `/var/log/boot.txt`, then runs `/bin/bootsplash.elf
-boot/splash.bmp`. After the splash exits, it re-enables display output, prints
-`SmallOS ready`, and releases `/bin/shell.elf` as the default user shell. If
-that user shell exits or fails to load, `bootseq` queues the kernel shell
-fallback. This keeps framebuffer splash rendering and normal interactive shell
-work in userland while preserving a low-level debug monitor.
+loads `/bin/shell.elf` suspended, probes OHCI boot keyboard/mouse HID, queues
+the retrying USB service, refreshes `/var/log/boot.txt`, then runs
+`/bin/bootsplash.elf boot/splash.bmp`. After the splash exits, it re-enables
+display output, prints `SmallOS ready`, and releases `/bin/shell.elf` as the
+default user shell. If that user shell exits or fails to load, `bootseq` queues
+the kernel shell fallback. This keeps framebuffer splash rendering and normal
+interactive shell work in userland while preserving a low-level debug monitor.
 
 Descriptor slots are owned by `process.c`, not the syscall dispatcher. fd `0`,
 `1`, and `2` are real console handles created with each process and may be
@@ -160,9 +159,11 @@ modify the driver.
 Mouse input follows the same driver-boundary rule at a smaller scale:
 `mouse.c` owns PS/2 auxiliary-port setup, standard and IntelliMouse packet
 decoding, and the VMware absolute-pointer path that converts vmmouse positions
-into relative deltas. It does not know about shells, processes, windows,
-cursors, or graphics ownership. Userland can poll accumulated relative motion
-and wheel movement through
+into relative deltas. OHCI USB boot mouse reports enter by injecting relative
+motion into this same mouse state, and mark the mouse device available even
+when PS/2 mouse init is absent. It does not know about shells, processes,
+windows, cursors, or graphics ownership. Userland can poll accumulated relative
+motion and wheel movement through
 `SYS_MOUSE_READ`, while mixed keyboard/mouse consumers should use the higher
 level `SYS_INPUT_READ` event queue rather than adding routing policy to the raw
 driver.
@@ -344,8 +345,9 @@ Exited tasks must be marked `PROCESS_STATE_ZOMBIE` and destroyed later from a sa
 ## ATA / ext2 Rules
 
 * Try writable ATA before read-only USB storage, and use the loader2 boot RAM fallback only as the final fallback
-* During pre-scheduler storage probing, only timer IRQ0 may be unmasked; do not let keyboard/process IRQ paths run before `sched_start()`
-* Claim USB boot HID only after storage mount and shell ELF load; if the first keyboard probe fails, keep retrying from the USB service task instead of treating absence as permanent
+* During pre-scheduler storage probing, only timer IRQ0 may be unmasked; do not let keyboard/mouse/process IRQ paths run before `sched_start()`
+* Enter the first `sched_start()` with interrupts masked; kernel-task bootstrap enables interrupts after the stack handoff is complete
+* Claim USB boot HID only after storage mount and shell ELF load; if the first keyboard or mouse probe fails, keep retrying from the USB service task instead of treating absence as permanent
 * `ext2_init()` must be called before `ext2_load()` or `ext2_ls()`
 * `ext2_load()` returns a pointer into the static `s_load_buf` buffer — the caller must not hold this pointer across another `ext2_load()` call
 * `elf_run_image()` copies all ELF segment data into PMM frames before returning, so the buffer is safe to reuse immediately after `elf_run_named()` returns

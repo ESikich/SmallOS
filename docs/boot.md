@@ -217,16 +217,19 @@ cannot yet validate ext2.
 
 During early storage probing, the kernel temporarily unmasks only timer IRQ0.
 That keeps `[ms=... tick=... cyc=...]` boot timestamps advancing while avoiding
-keyboard/process IRQ delivery before the scheduler owns a current task.
+keyboard/mouse/process IRQ delivery before the scheduler owns a current task.
 
 After the filesystem is mounted and the user shell image has been loaded, the
 boot sequence probes OHCI boot HID devices. The shell process stays suspended
 until this first HID pass finishes, so the serial log captures either
-`usb: boot keyboard port=N` or `usb: WARN boot HID unavailable` before the first
-prompt. A failed first pass is not final: the `usb` service task retries boot
-keyboard discovery once per second, skips the already-mounted USB-storage port,
-and preserves USB addresses for failed attempts so a late keyboard can still be
-claimed after the shell is visible.
+`usb: boot keyboard port=N`, `usb: boot mouse port=N`, or
+`usb: WARN boot HID unavailable` before the first prompt. A failed first pass is
+not final: the `usb` service task retries boot keyboard and mouse discovery
+once per second, skips the already-mounted USB-storage port and already-active
+HID ports, and preserves USB addresses for failed attempts so late devices can
+still be claimed after the shell is visible. The visible `Input:` lines show
+keyboard and mouse endpoint/poll/report counters so hardware bring-up can be
+debugged even when only one input device is working.
 
 ---
 
@@ -554,7 +557,9 @@ The smoke target expects the serial transcript to show `usbms: ready`,
 `dev=usb0`, and `boot: PASS ext2: volume mounted from USB`. The QEMU fixture
 does not attach a boot keyboard, so `usb: WARN boot HID unavailable` is
 acceptable as long as `usb: HID service task queued` follows it; on hardware the
-same service continues retrying until it logs `usb: boot keyboard port=N`.
+same service continues retrying until it logs `usb: boot keyboard port=N` and,
+when a boot mouse is attached on a supported OHCI root port, `usb: boot mouse
+port=N`.
 
 ---
 
@@ -589,7 +594,9 @@ USB HID is deliberately claimed after storage. That keeps shell ELF loading on
 the storage path that just mounted, then starts a retrying OHCI boot-HID service
 before the shell process is released. Keyboard input enters the normal keyboard
 consumer path as injected set-1 scancodes; no separate shell routing exists for
-USB keyboards.
+USB keyboards. USB mouse packets enter the normal mouse accumulator, so
+`SYS_MOUSE_READ` and the higher-level input queue see the same movement state as
+PS/2 and VMware mouse input.
 
 ---
 
@@ -614,9 +621,10 @@ Kernel   →  zero BSS
          →  ntp_sync (best-effort realtime clock sync through DHCP gateway)
          →  mount ext2 from ATA, USB storage, or boot RAM fallback
          →  save /var/log/boot.txt when the filesystem is writable
-         →  create bootseq task and zombie reaper, sti, sched_start
+         →  create bootseq task and zombie reaper, sched_start with IF masked
 Bootseq  →  load /bin/shell.elf suspended
-         →  probe OHCI boot HID and queue retrying usb service
+         →  enable interrupts in kernel-task bootstrap
+         →  probe OHCI boot keyboard/mouse HID and queue retrying usb service
          →  refresh /var/log/boot.txt
          →  run /bin/bootsplash.elf boot/splash.bmp
          →  print SmallOS ready

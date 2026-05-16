@@ -56,8 +56,8 @@ kernel_main()
   ext2_init()       ← mount ATA, USB storage, or loader2 boot RAM fallback
   bootseq task      ← load shell, finish HID/logging, show splash, resume shell
   process_start_reaper() ← create and enqueue zombie reaper task
-  sti
-  sched_start()     ← switch from boot stack into bootseq task
+  sched_start()     ← switch from boot stack into bootseq task with IF masked
+  kernel task bootstrap enables IF on the task stack
 ```
 
 ---
@@ -129,14 +129,14 @@ Inside `kernel_main()`:
 13. `dhcp_configure()` — briefly enables interrupts and requests IPv4 configuration from the attached network. The runtime network config is shared by ARP, TCP, NTP, `netinfo`, and the `/bin/ip.elf` and `/bin/ipconfig.elf` configuration tools. Static IPv4 settings use the same `SYS_NET_OP` path and remain runtime-only.
 14. `tcp_init()` — create and enqueue the TCP/network service kernel task
 15. `ntp_sync()` — briefly enables interrupts so PIT-backed timeout logic works, queries the default NTP server through UDP over the e1000 path and DHCP gateway, sets `CLOCK_REALTIME`, and prints the synchronized UTC time. Failure is a boot warning, not a halt.
-16. `boot_mount_ext2()` — prefer writable ATA, then read-only USB mass storage, then the loader2 RAM fallback when one was published. The storage probe briefly enables only timer IRQ0 so boot timestamps and USB waits advance without delivering keyboard/process IRQs before scheduling starts. After mount succeeds, the accumulated boot log is saved to `/var/log/boot.txt` when the filesystem is writable.
-17. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` keeps the active display muted while it loads `/bin/shell.elf` suspended, probes OHCI boot HID, starts the retrying USB HID service, and refreshes `/var/log/boot.txt`. It then runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, re-enables display output, prints `SmallOS ready`, and releases `/bin/shell.elf` as the default user shell. If that fails or exits, it queues the kernel shell fallback.
+16. `boot_mount_ext2()` — prefer writable ATA, then read-only USB mass storage, then the loader2 RAM fallback when one was published. The storage probe briefly enables only timer IRQ0 so boot timestamps and USB waits advance without delivering keyboard/mouse/process IRQs before scheduling starts. After mount succeeds, the accumulated boot log is saved to `/var/log/boot.txt` when the filesystem is writable.
+17. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` keeps the active display muted while it loads `/bin/shell.elf` suspended, probes OHCI boot keyboard/mouse HID, starts the retrying USB HID service, and refreshes `/var/log/boot.txt`. It then runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, re-enables display output, prints `SmallOS ready`, and releases `/bin/shell.elf` as the default user shell. If that fails or exits, it queues the kernel shell fallback.
 18. `sched_enqueue(boot_proc)` — make the boot sequence task runnable
 19. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
-20. `sti` — enable interrupts
-21. `sched_start(boot_proc)` - switch from the boot stack into the boot sequence task
+20. `sched_start(boot_proc)` - switch from the boot stack into the boot sequence task with interrupts still masked
+21. kernel-task bootstrap enables interrupts before entering the task body
 
-`sched_init()` must still be called before `sti`, and `sched_start()` must happen only after the first runnable task has been created.
+`sched_init()` must still be called before interrupts are enabled, and `sched_start()` must happen only after the first runnable task has been created. The first scheduler handoff is intentionally atomic so early IRQ0/IRQ12 delivery cannot interrupt the stack switch.
 
 ---
 
@@ -184,10 +184,9 @@ For runnable tasks, `sched_esp` is the saved kernel resume stack pointer used by
 storage is independent of the shell input buffer or syscall caller memory and
 remains valid until the process exits.
 
-The shell task itself is just another kernel task with a small 4 KB kernel stack,
-so the scripted `shelltest` / `selftest` command tables are kept in static
-storage rather than on the stack. That avoids trampling `process_t` state during
-the longest regression paths.
+The kernel fallback shell is intentionally a compact debug monitor. The full
+scripted `shelltest` / `selftest` command paths live in `/bin/shell.elf`, where
+the command lists are kept in static storage for predictable regression runs.
 
 The handle table is generic rather than file-specific now. `process_create()`
 pre-opens fd `0`, `1`, and `2` as console handles for stdin/stdout/stderr;
@@ -329,13 +328,13 @@ SYS_FORK + SYS_EXECVE (POSIX-shaped):
   child may dup2 pipe ends, close unused fds, then execve()
   execve replaces user image and closes FD_CLOEXEC descriptors
 
-bg / runelf_bg (reattachable background):
+user shell bg / runelf_bg (reattachable background):
   process_create()
   allocate proc->kernel_stack_frame
   seed proc->sched_esp         → first entry via elf_user_task_bootstrap()
   sched_enqueue(proc)
-  process_claim_for_wait(proc) → reaper skips it
-  shell job table stores proc  → jobs / fg / kill own cleanup
+  parent shell receives child pid
+  user shell job table stores pid → jobs / fg / kill own waitpid/kill flow
 
 Ctrl+Z during fg:
   process_key_consumer()
@@ -351,7 +350,7 @@ sys_exit:
   [foreground] process_destroy() called by process_wait() in shell
   [background] process_destroy() called by process-registry reaper
   [SYS_EXEC/SYS_FORK] process_destroy() called by waitpid(), or by reaper after parent exit
-  [shell job] process_destroy() called by fg or kill
+  [user shell job] process_destroy() called by waitpid(), or by reaper after parent exit
 
 reaper task (permanent kernel task):
   loop:
@@ -494,17 +493,19 @@ The kernel shell path above remains available as a fallback/debug monitor if
 the user shell exits or fails to load.
 
 Mouse input is intentionally lower-level today. `mouse.c` initializes the PS/2
-auxiliary port, decodes 3-byte relative-motion packets on IRQ12, and also
-drains VMware absolute-pointer events when the VMware backdoor is present.
-Both paths store accumulated `dx`/`dy` plus button bits. User programs can call
-`SYS_MOUSE_READ` to copy and clear the accumulated movement, or use
-`SYS_INPUT_READ` when they want queued keyboard and mouse events together.
+auxiliary port, decodes 3-byte relative-motion packets on IRQ12, drains VMware
+absolute-pointer events when the VMware backdoor is present, and accepts
+relative packets injected by the OHCI USB boot mouse path. All paths store
+accumulated `dx`/`dy` plus button bits. User programs can call `SYS_MOUSE_READ`
+to copy and clear the accumulated movement, or use `SYS_INPUT_READ` when they
+want queued keyboard and mouse events together.
 
 OHCI USB boot HID is claimed after storage mount so real USB boots can load the
 shell from the same device path first. The first HID probe runs before the shell
-is released; if no boot keyboard is ready yet, the `usb` kernel task retries
-once per second and skips any port already owned by USB storage or an active HID
-endpoint.
+is released; if either the boot keyboard or boot mouse is missing, the `usb`
+kernel task retries once per second and skips any port already owned by USB
+storage or an active HID endpoint. USB keyboard reports are translated into
+set-1 scancodes; USB mouse reports are injected into the normal mouse state.
 
 ---
 
@@ -634,9 +635,10 @@ INQUIRY, TEST UNIT READY, REQUEST SENSE, READ CAPACITY(10), and READ(10). The
 device is mounted read-only today, so `/var/log/boot.txt` and guest file writes
 are not persisted when ext2 is mounted from USB storage.
 
-`src/drivers/usb.c` also owns OHCI boot HID enumeration. Keyboard discovery is
-retryable after the first failed pass; failed attempts restore the controller's
-next address slot so late or slow devices do not exhaust address space.
+`src/drivers/usb.c` also owns OHCI boot HID enumeration. Keyboard and mouse
+discovery remain retryable after the first failed pass; failed attempts restore
+the controller's next address slot so late or slow devices do not exhaust
+address space.
 
 ```text
 ata_init()

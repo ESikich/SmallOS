@@ -361,9 +361,11 @@ static void boot_print_utc_time(unsigned int unix_time) {
 
 static void boot_print_hardware_diag_summary(void) {
     usb_debug_state_t usb_dbg;
+    keyboard_debug_state_t keyboard_dbg;
     mouse_debug_state_t mouse_dbg;
 
     usb_debug_snapshot(&usb_dbg);
+    keyboard_debug_snapshot(&keyboard_dbg);
     mouse_debug_snapshot(&mouse_dbg);
 
     boot_puts("diag: build usb-hid-diag1\n");
@@ -381,6 +383,22 @@ static void boot_print_hardware_diag_summary(void) {
     boot_put_hex(usb_dbg.last_prog_if);
     boot_puts(" last_bar=");
     boot_put_hex(usb_dbg.last_bar);
+    boot_putc('\n');
+
+    boot_puts("diag: keyboard ps2=");
+    boot_put_uint(keyboard_dbg.ps2_init_ok);
+    boot_puts(" init=");
+    boot_put_uint(keyboard_dbg.ps2_init_step);
+    boot_putc('/');
+    boot_put_uint(keyboard_dbg.ps2_init_fail);
+    boot_puts(" cfg=");
+    boot_put_hex(keyboard_dbg.ps2_config_before);
+    boot_putc('/');
+    boot_put_hex(keyboard_dbg.ps2_config_after);
+    boot_puts(" irq=");
+    boot_put_uint(keyboard_dbg.irq_count);
+    boot_puts(" inject=");
+    boot_put_uint(keyboard_dbg.injected_scancode_count);
     boot_putc('\n');
 
     boot_puts("diag: mouse ready=");
@@ -581,6 +599,9 @@ static void boot_show_splash(void) {
 }
 
 static void boot_sequence_task_main(void) {
+    usb_debug_state_t usb_dbg;
+    keyboard_debug_state_t keyboard_dbg;
+
     boot_print_hardware_diag_summary();
     boot_log_save();
 
@@ -609,6 +630,60 @@ static void boot_sequence_task_main(void) {
     terminal_set_display_enabled(1);
     terminal_clear();
     terminal_puts("SmallOS ready\n");
+    usb_debug_snapshot(&usb_dbg);
+    keyboard_debug_snapshot(&keyboard_dbg);
+    terminal_puts("Input: ");
+    if (usb_dbg.keyboard_active) {
+        terminal_puts("USB boot keyboard ready on port ");
+        terminal_put_uint(usb_dbg.keyboard_port);
+    } else {
+        terminal_puts("no USB boot keyboard yet");
+    }
+    terminal_puts("  controllers=");
+    terminal_put_uint(usb_dbg.controller_count);
+    terminal_puts(" uhci=");
+    terminal_put_uint(usb_dbg.uhci_count);
+    terminal_puts(" ohci=");
+    terminal_put_uint(usb_dbg.ohci_count);
+    terminal_puts(" ehci=");
+    terminal_put_uint(usb_dbg.ehci_count);
+    terminal_puts(" xhci=");
+    terminal_put_uint(usb_dbg.xhci_count);
+    terminal_putc('\n');
+    terminal_puts("Input: usb_mouse=");
+    terminal_put_uint(usb_dbg.mouse_active);
+    terminal_puts(" port=");
+    terminal_put_uint(usb_dbg.mouse_port);
+    terminal_puts(" ep=");
+    terminal_put_uint(usb_dbg.mouse_endpoint);
+    terminal_puts(" pkt=");
+    terminal_put_uint(usb_dbg.mouse_packet_size);
+    terminal_puts(" int=");
+    terminal_put_uint(usb_dbg.mouse_interval);
+    terminal_puts(" polls=");
+    terminal_put_uint(usb_dbg.mouse_poll_count);
+    terminal_puts(" reports=");
+    terminal_put_uint(usb_dbg.mouse_report_count);
+    terminal_puts(" cc=");
+    terminal_put_hex(usb_dbg.mouse_last_cc);
+    terminal_putc('\n');
+    terminal_puts("Input: ps2=");
+    terminal_put_uint(keyboard_dbg.ps2_init_ok);
+    terminal_puts(" irq=");
+    terminal_put_uint(keyboard_dbg.irq_count);
+    terminal_puts(" usb_ep=");
+    terminal_put_uint(usb_dbg.keyboard_endpoint);
+    terminal_puts(" pkt=");
+    terminal_put_uint(usb_dbg.keyboard_packet_size);
+    terminal_puts(" int=");
+    terminal_put_uint(usb_dbg.keyboard_interval);
+    terminal_puts(" polls=");
+    terminal_put_uint(usb_dbg.keyboard_poll_count);
+    terminal_puts(" reports=");
+    terminal_put_uint(usb_dbg.keyboard_report_count);
+    terminal_puts(" cc=");
+    terminal_put_hex(usb_dbg.keyboard_last_cc);
+    terminal_putc('\n');
 
     if (user_shell_proc) {
         terminal_puts("Launching user shell\n");
@@ -776,7 +851,7 @@ void kernel_main(void) {
                        "zombie reaper task could not be started");
     boot_log_save();
 
-    __asm__ __volatile__("sti");
+    __asm__ __volatile__("cli");
     sched_start(boot_proc);
 
     for (;;) {

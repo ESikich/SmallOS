@@ -482,6 +482,13 @@ int mouse_available(void) {
     return s_mouse_ready;
 }
 
+void mouse_enable_external_source(void) {
+    unsigned int flags = irq_save();
+
+    s_mouse_ready = 1;
+    irq_restore(flags);
+}
+
 void mouse_handle_irq(void) {
     unsigned char status = inb(PS2_STATUS);
     unsigned char data;
@@ -552,6 +559,7 @@ void mouse_inject_relative(int dx, int dy, int wheel, unsigned int buttons) {
     unsigned int old_buttons;
 
     flags = irq_save();
+    s_mouse_ready = 1;
     old_buttons = s_buttons;
     s_dx += dx;
     s_dy += dy;

@@ -86,6 +86,22 @@ typedef struct {
     char ascii;
 } key_event_t;
 
+typedef struct {
+    unsigned int ps2_init_ok;
+    unsigned int ps2_init_step;
+    unsigned int ps2_init_fail;
+    unsigned int ps2_config_before;
+    unsigned int ps2_config_after;
+    unsigned int irq_count;
+    unsigned int injected_scancode_count;
+    unsigned int event_count;
+    unsigned int pressed_event_count;
+    unsigned int ascii_event_count;
+    unsigned int buffer_count;
+    unsigned int waiting;
+    unsigned int consumer;
+} keyboard_debug_state_t;
+
 /*
  * keyboard_consumer_fn — called from keyboard_handle_irq() for every
  * key-press event after scancode decoding.  The registered consumer
@@ -103,6 +119,7 @@ void keyboard_init(void);
 void keyboard_handle_irq(void);
 void keyboard_reset_modifiers(void);
 void keyboard_inject_scancode(unsigned char scancode);
+void keyboard_debug_snapshot(keyboard_debug_state_t* out);
 
 /*
  * keyboard_set_consumer(fn)

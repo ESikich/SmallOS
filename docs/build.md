@@ -997,10 +997,17 @@ when intentionally testing a no-fallback USB boot. The USB storage driver
 implements enough BOT/SCSI to enumerate the device, read capacity, and issue
 READ(10) requests for ext2 blocks.
 
-USB boot keyboard discovery is handled by the same OHCI driver after storage is
-mounted and the shell ELF has been loaded. A failed first probe does not freeze
-input discovery: the `usb` kernel task retries once per second until a boot
-keyboard is found, while skipping the active USB-storage port.
+`make usb-image` also refreshes `build/usb/smallos-wyse-s10-direct-usb.img` and
+its `.sha256` file, so hardware flashing can use the stable `build/usb` path
+instead of the intermediate `build/img/smallos.img`.
+
+USB boot keyboard and mouse discovery are handled by the same OHCI driver after
+storage is mounted and the shell ELF has been loaded. A failed first probe does
+not freeze input discovery: the `usb` kernel task retries once per second until
+both supported boot HID devices are found, while skipping the active
+USB-storage port and already-claimed HID ports. The visible `Input:` lines and
+`usbinfo` command report keyboard/mouse endpoint, packet, poll, report, and
+condition-code counters for hardware bring-up.
 
 ---
 

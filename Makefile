@@ -46,6 +46,8 @@ BIN_DIR=$(BIN_ROOT)/$(DISPLAY_BACKEND)$(SERIAL_SUFFIX)
 GEN_DIR=$(BUILD_DIR)/gen/$(DISPLAY_BACKEND)$(SERIAL_SUFFIX)
 IMG_DIR=$(BUILD_DIR)/img
 IMG_FILE=$(IMG_DIR)/smallos.img
+USB_DIR=$(BUILD_DIR)/usb
+USB_IMG_FILE=$(USB_DIR)/smallos-wyse-s10-direct-usb.img
 ESXI_VMDK_SIZE ?=
 ESXI_RAW_FILE=$(IMG_DIR)/smallos-vmdk.raw
 ESXI_VMDK_FILE=$(IMG_DIR)/smallos.vmdk
@@ -200,7 +202,7 @@ OBJ_SUBDIRS=$(sort \
 	$(dir $(USER_SHELL_OBJS)) \
 )
 
-BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(dir $(IMG_FILE)) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
+BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(dir $(IMG_FILE)) $(USB_DIR) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
 BUILD_SUBDIRS+=$(TINYCC_SMALOS_OBJ_DIR) $(CSERVER_OBJ_DIR)
 
 all: artifacts
@@ -440,8 +442,10 @@ img: image
 usb-image usb-vbe-image run-usb-storage run-headless-usb-storage: BOOT_RAMDISK_FALLBACK=always
 
 usb-image: image
-	@printf 'USB/raw image: %s\n' "$(IMG_FILE)"
-	@sha256sum "$(IMG_FILE)"
+	@cp "$(IMG_FILE)" "$(USB_IMG_FILE)"
+	@sha256sum "$(USB_IMG_FILE)" > "$(USB_IMG_FILE).sha256"
+	@printf 'USB/raw image: %s\n' "$(USB_IMG_FILE)"
+	@cat "$(USB_IMG_FILE).sha256"
 
 usb-vbe-image: image
 	@printf 'USB/VBE raw image: %s\n' "$(IMG_FILE)"

@@ -1134,15 +1134,17 @@ static int process_handle_console_read_common(fd_entry_t* ent, char* buf, unsign
     if (!buf) return -EFAULT;
     if (len == 0) return 0;
 
-    __asm__ volatile ("sti");
-
     while (n < len) {
-        while (!keyboard_buf_available()) {
+        for (;;) {
+            __asm__ volatile ("cli");
+            if (keyboard_buf_available()) {
+                break;
+            }
             if (proc) {
                 proc->state = PROCESS_STATE_WAITING;
                 keyboard_set_waiting_process(proc);
             }
-            __asm__ volatile ("hlt");
+            __asm__ volatile ("sti; hlt");
         }
 
         char c = keyboard_buf_pop();
@@ -2277,6 +2279,7 @@ static void process_kernel_task_bootstrap(void) {
         }
     }
 
+    __asm__ __volatile__("sti");
     proc->kernel_entry();
 
     terminal_puts("process: kernel task returned\n");

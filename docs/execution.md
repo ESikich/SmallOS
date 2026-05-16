@@ -43,7 +43,7 @@ user shell command or kernel fallback command
   → sched_enqueue(proc)
   → return immediately
 
-user shell command or kernel fallback command
+user shell command
   → bg <name> [args] / runelf_bg <name> [args]
   → vfs_load_file()
   → elf_run_image()
@@ -62,10 +62,10 @@ Important current-state facts:
 - the **kernel fallback shell consumer** (`shell_key_consumer` in `shell.c`) enqueues `shell_event_t` entries; the shell task drains them in `shell_poll()` outside IRQ context
 - the **process consumer** (`process_key_consumer` in `process.c`) pushes ASCII into `kb_buf`; terminal signals such as Ctrl+C target the foreground process group
 - consumer ownership transfers via `process_set_foreground()` - process consumer while the user shell or another user process owns the foreground reader/group, kernel shell consumer restored only for the fallback shell
-- **Mouse IRQ12** decodes PS/2 relative packets or VMware absolute-pointer events into accumulated `dx`/`dy` and button state; user graphics code polls that state with `SYS_MOUSE_READ`
+- **Mouse input** decodes PS/2 relative packets, VMware absolute-pointer events, or OHCI USB boot mouse reports into accumulated `dx`/`dy` and button state; user graphics code polls that state with `SYS_MOUSE_READ`
 - **ELF user programs** are loaded into their own page directory and do execute in ring 3
 - ELF launch and exit are now scheduler-owned: `elf_run_image()` seeds a bootstrap context, enqueues the task, and returns `process_t*`
-- the scheduler supports kernel tasks, ELF tasks, voluntary yielding, timer-driven sleeping, and timer-driven switching; `runelf` blocks with `process_wait()`, `runelf_nowait` returns immediately, and `bg` / `runelf_bg` return while keeping a reattachable shell job
+- the scheduler supports kernel tasks, ELF tasks, voluntary yielding, timer-driven sleeping, and timer-driven switching; `runelf` blocks with `process_wait()`, `runelf_nowait` returns immediately, and the user shell's `bg` / `runelf_bg` return while keeping a reattachable shell job
 - user ELFs have a small freestanding runtime layer with a heap allocator,
   fd-backed console streams, streaming VFS-backed file handles,
   `stat`/`rename`/`unlink`, `lseek`, and socket wrappers, which is enough for
@@ -123,22 +123,22 @@ elf_run_named()
 Mouse input is separate from the foreground keyboard consumer path:
 
 ```text
-Mouse IRQ12
+Mouse IRQ12 / OHCI USB boot mouse poll
   ↓
-mouse_handle_irq()
+mouse_handle_irq() or mouse_inject_relative()
   ↓
-decode PS/2 packet or VMware event → accumulate dx/dy/buttons
+decode PS/2 packet, VMware event, or USB boot report → accumulate dx/dy/buttons
   ↓
 SYS_MOUSE_READ copies state to userland and clears dx/dy
 ```
 
 After kernel diagnostics, `kernel_main()` creates a `bootseq` kernel task and
 enters the scheduler on it. `bootseq` loads `/bin/shell.elf` suspended, probes
-boot HID, refreshes `/var/log/boot.txt`, then runs `/bin/bootsplash.elf
-boot/splash.bmp`. After the splash exits, it prints `SmallOS ready` and
-launches `/bin/shell.elf` as the default user shell. If that user shell exits or
-cannot be loaded, `bootseq` creates and queues the older kernel shell task as a
-fallback/debug monitor.
+boot keyboard/mouse HID, refreshes `/var/log/boot.txt`, then runs
+`/bin/bootsplash.elf boot/splash.bmp`. After the splash exits, it prints
+`SmallOS ready` and launches `/bin/shell.elf` as the default user shell. If that
+user shell exits or cannot be loaded, `bootseq` creates and queues the older
+kernel shell task as a fallback/debug monitor.
 
 ---
 
@@ -148,7 +148,9 @@ fallback/debug monitor.
 
 In the kernel fallback shell, commands like `help`, `clear`, `meminfo`,
 `memmap`, `cd`, `ataread`, `runelf`, `runelf_nowait`, and the low-level network
-diagnostics are normal kernel C functions dispatched by `commands_execute()`.
+or USB diagnostics are normal kernel C functions dispatched by
+`commands_execute()`. The full `shelltest` and `selftest` regression commands
+live in `/bin/shell.elf`, not in this fallback monitor.
 
 They:
 
@@ -317,12 +319,11 @@ The code currently does all of the following:
 
 `tss_set_kernel_stack()` is **not** called during `elf_run_image()` setup. That update happens later inside `elf_user_task_bootstrap()`, at the moment the scheduler first enters the new process. This avoids clobbering the currently running task's ESP0 during async launch paths such as `runelf_nowait` and `SYS_EXEC`.
 
-For `runelf`, the shell then calls `process_wait(proc)` and blocks until the child reaches `PROCESS_STATE_ZOMBIE`. For `runelf_nowait`, the shell returns immediately after enqueue. For `bg` / `runelf_bg`, the shell calls `process_claim_for_wait(proc)` and stores the `process_t*` in a small shell job table so the reaper leaves the process around for `fg` or `kill`.
+For `runelf`, the shell then calls `process_wait(proc)` and blocks until the child reaches `PROCESS_STATE_ZOMBIE`. For `runelf_nowait`, the shell returns immediately after enqueue. For the user shell's `bg` / `runelf_bg`, the shell claims the child and stores its pid in a small job table so the process can be listed, foregrounded, or killed later.
 
-The shell-side launch helpers keep their larger scripted command tables out of
-the shell task's 4 KB kernel stack. That matters for `shelltest`, `selftest`,
-and `runelf_nowait`, which run through the same foreground shell context while
-launching and waiting on many child tasks.
+The user shell keeps its larger scripted regression command lists in static
+storage. That matters for `shelltest` and `selftest`, which run through the same
+foreground shell context while launching and waiting on many child tasks.
 
 `elf_enter_ring3()` then:
 
@@ -345,7 +346,7 @@ small process registry, and automatic zombie reaping:
 
 - `runelf` launches the child, then waits with `process_wait(proc)`
 - `runelf_nowait` launches the child and returns immediately; the reaper task frees it after exit
-- `bg` / `runelf_bg` launch the child and return immediately, but shell job control owns cleanup until `fg <jobid>` reaps it or `kill <jobid>` stops it
+- user-shell `bg` / `runelf_bg` launch the child and return immediately, but shell job control owns cleanup until `fg <jobid>` reaps it or `kill <jobid>` stops it
 - Ctrl+Z while a shell-owned job is foregrounded detaches it back to the shell job table without killing it
 - `SYS_EXEC` returns the child pid and claims the child for its parent so userland can call `waitpid()`
 - if a parent exits without waiting, its children are orphaned and any unclaimed zombies become reaper-owned
@@ -469,9 +470,9 @@ kernel_main()
   create bootseq kernel task
   sched_enqueue(boot_proc)
   process_start_reaper()    ← creates and enqueues reaper task
-  sti
-  sched_start(boot_proc)
-  bootseq loads user shell suspended, probes OHCI boot HID, saves boot log
+  sched_start(boot_proc)    ← IF remains masked for the first stack switch
+  kernel task bootstrap enables IF
+  bootseq loads user shell suspended, probes OHCI boot keyboard/mouse HID, saves boot log
   bootseq runs late splash, clears display, foregrounds and resumes user shell
 ```
 
@@ -491,7 +492,7 @@ The active execution path is:
 - **foreground `runelf` waits with `process_wait()`**
 - **`runelf_nowait` children are reaped automatically by the reaper task**
 - **`SYS_EXEC` children are collected by `waitpid()` or orphaned to the reaper when the parent exits**
-- **`bg` / `runelf_bg` children are claimed by shell job control so they can be listed, foregrounded, or killed**
+- **user-shell `bg` / `runelf_bg` children are claimed by shell job control so they can be listed, foregrounded, or killed**
 
 ---
 
@@ -626,5 +627,5 @@ The execution model is fully scheduler-owned.
 - timer-driven preemption
 - `SYS_YIELD`, `SYS_EXEC`, `SYS_FORK`, `SYS_EXECVE`, `SYS_EXIT` all scheduler-owned
 - ELF processes have real per-process page directories
-- foreground `runelf` waits with `process_wait()`; `runelf_nowait` children are reaped automatically; `SYS_EXEC` and `SYS_FORK` children are parent-waitable with `waitpid()`; `bg` / `runelf_bg` children are shell-owned jobs until `fg` or `kill`
+- foreground `runelf` waits with `process_wait()`; `runelf_nowait` children are reaped automatically; `SYS_EXEC` and `SYS_FORK` children are parent-waitable with `waitpid()`; user-shell `bg` / `runelf_bg` children are shell-owned jobs until `fg` or `kill`
 - no known zombie or frame leaks

@@ -869,16 +869,17 @@ int sys_mouse_read(sys_mouse_state_t* out_state);
 
 Copies the current mouse state into user memory and clears the accumulated
 relative movement counters. The driver may source those deltas from standard
-PS/2 packets or from VMware absolute-pointer events converted to relative
-motion. `dx` and `dy` are signed screen-space deltas since the previous
+PS/2 packets, from VMware absolute-pointer events converted to relative motion,
+or from an OHCI USB boot mouse injecting relative reports into the same mouse
+state. `dx` and `dy` are signed screen-space deltas since the previous
 successful read, with positive `dy` moving downward. `wheel` is the accumulated
 vertical wheel delta. `buttons` uses
 `SYS_MOUSE_BUTTON_LEFT`, `SYS_MOUSE_BUTTON_RIGHT`, and
 `SYS_MOUSE_BUTTON_MIDDLE`; `sequence` increments when a mouse event is decoded.
 
 Returns `0` on success, `-EFAULT` for an invalid output pointer, or `-EIO` when
-the mouse driver is unavailable. This small polling primitive is kept for
-existing graphics demos.
+no PS/2, VMware, or USB mouse source has made the mouse driver available. This
+small polling primitive is kept for existing graphics demos.
 
 ---
 

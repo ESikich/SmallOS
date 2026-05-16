@@ -2,6 +2,20 @@
 #include "ports.h"
 #include "input.h"
 
+#define PS2_DATA        0x60
+#define PS2_STATUS      0x64
+#define PS2_COMMAND     0x64
+
+#define PS2_STATUS_OUT  0x01
+#define PS2_STATUS_IN   0x02
+
+#define PS2_CMD_READ_CONFIG   0x20
+#define PS2_CMD_WRITE_CONFIG  0x60
+#define PS2_CMD_ENABLE_FIRST  0xAE
+
+#define KEYBOARD_ACK               0xFA
+#define KEYBOARD_CMD_ENABLE_SCAN   0xF4
+
 /* ------------------------------------------------------------------ */
 /* Process-input buffer                                               */
 /* ------------------------------------------------------------------ */
@@ -12,6 +26,141 @@ static char kb_buf[KB_BUF_SIZE];
 static int  kb_buf_head  = 0;
 static int  kb_buf_tail  = 0;
 static int  kb_buf_count = 0;
+
+static unsigned int s_ps2_init_ok = 0;
+static unsigned int s_ps2_init_step = 0;
+static unsigned int s_ps2_init_fail = 0;
+static unsigned int s_ps2_config_before = 0;
+static unsigned int s_ps2_config_after = 0;
+static unsigned int s_irq_count = 0;
+static unsigned int s_injected_scancode_count = 0;
+static unsigned int s_event_count = 0;
+static unsigned int s_pressed_event_count = 0;
+static unsigned int s_ascii_event_count = 0;
+
+enum {
+    KBD_INIT_START = 1,
+    KBD_INIT_ENABLE_PORT,
+    KBD_INIT_READ_CONFIG,
+    KBD_INIT_WRITE_CONFIG,
+    KBD_INIT_ENABLE_SCAN,
+    KBD_INIT_READY
+};
+
+static int keyboard_fail(unsigned int step) {
+    s_ps2_init_fail = step;
+    return 0;
+}
+
+static int ps2_wait_write(void) {
+    for (unsigned int i = 0; i < 100000u; i++) {
+        if ((inb(PS2_STATUS) & PS2_STATUS_IN) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int ps2_wait_read(void) {
+    for (unsigned int i = 0; i < 100000u; i++) {
+        if (inb(PS2_STATUS) & PS2_STATUS_OUT) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void ps2_flush_output(void) {
+    for (unsigned int i = 0; i < 16u; i++) {
+        if ((inb(PS2_STATUS) & PS2_STATUS_OUT) == 0) {
+            break;
+        }
+        (void)inb(PS2_DATA);
+    }
+}
+
+static int ps2_write_command(unsigned char command) {
+    if (!ps2_wait_write()) {
+        return 0;
+    }
+    outb(PS2_COMMAND, command);
+    return 1;
+}
+
+static int ps2_write_data(unsigned char data) {
+    if (!ps2_wait_write()) {
+        return 0;
+    }
+    outb(PS2_DATA, data);
+    return 1;
+}
+
+static int ps2_read_config(unsigned char* config) {
+    if (!config) {
+        return 0;
+    }
+    if (!ps2_write_command(PS2_CMD_READ_CONFIG)) {
+        return 0;
+    }
+    if (!ps2_wait_read()) {
+        return 0;
+    }
+    *config = inb(PS2_DATA);
+    return 1;
+}
+
+static int ps2_write_config(unsigned char config) {
+    return ps2_write_command(PS2_CMD_WRITE_CONFIG) && ps2_write_data(config);
+}
+
+static int keyboard_write(unsigned char command) {
+    if (!ps2_write_data(command)) {
+        return 0;
+    }
+    if (!ps2_wait_read()) {
+        return 0;
+    }
+    return inb(PS2_DATA) == KEYBOARD_ACK;
+}
+
+static int keyboard_enable_ps2(void) {
+    unsigned char config;
+
+    s_ps2_init_ok = 0;
+    s_ps2_init_fail = 0;
+    s_ps2_config_before = 0;
+    s_ps2_config_after = 0;
+
+    ps2_flush_output();
+    s_ps2_init_step = KBD_INIT_ENABLE_PORT;
+    if (!ps2_write_command(PS2_CMD_ENABLE_FIRST)) {
+        return keyboard_fail(s_ps2_init_step);
+    }
+
+    s_ps2_init_step = KBD_INIT_READ_CONFIG;
+    if (!ps2_read_config(&config)) {
+        return keyboard_fail(s_ps2_init_step);
+    }
+    s_ps2_config_before = config;
+
+    config |= 0x01u;   /* enable IRQ1 */
+    config &= ~0x10u;  /* enable first PS/2 port clock */
+    s_ps2_config_after = config;
+    s_ps2_init_step = KBD_INIT_WRITE_CONFIG;
+    if (!ps2_write_config(config)) {
+        return keyboard_fail(s_ps2_init_step);
+    }
+
+    s_ps2_init_step = KBD_INIT_ENABLE_SCAN;
+    if (!keyboard_write(KEYBOARD_CMD_ENABLE_SCAN)) {
+        return keyboard_fail(s_ps2_init_step);
+    }
+
+    ps2_flush_output();
+    s_ps2_init_ok = 1;
+    s_ps2_init_step = KBD_INIT_READY;
+    return 1;
+}
 
 int keyboard_buf_available(void) {
     return kb_buf_count;
@@ -388,6 +537,14 @@ static void keyboard_emit_event(key_event_t ev) {
         return;
     }
 
+    s_event_count++;
+    if (ev.pressed) {
+        s_pressed_event_count++;
+    }
+    if (ev.ascii) {
+        s_ascii_event_count++;
+    }
+
     input_push_key_event(ev);
 
     if (!ev.pressed) {
@@ -401,11 +558,19 @@ static void keyboard_emit_event(key_event_t ev) {
 
 void keyboard_handle_irq(void) {
     unsigned char scancode = inb(0x60);
+    s_irq_count++;
     keyboard_emit_event(decode_scancode(scancode));
 }
 
 void keyboard_inject_scancode(unsigned char scancode) {
+    unsigned int flags;
+
+    __asm__ __volatile__("pushf; pop %0; cli" : "=r"(flags) : : "memory");
+    s_injected_scancode_count++;
     keyboard_emit_event(decode_scancode(scancode));
+    if (flags & 0x200u) {
+        __asm__ __volatile__("sti");
+    }
 }
 
 void keyboard_reset_modifiers(void) {
@@ -424,5 +589,30 @@ void keyboard_init(void) {
     num_lock_on = 0;
     scroll_lock_on = 0;
     s_waiting_proc = 0;
+    s_irq_count = 0;
+    s_injected_scancode_count = 0;
+    s_event_count = 0;
+    s_pressed_event_count = 0;
+    s_ascii_event_count = 0;
     keyboard_buf_clear();
+    s_ps2_init_step = KBD_INIT_START;
+    (void)keyboard_enable_ps2();
+}
+
+void keyboard_debug_snapshot(keyboard_debug_state_t* out) {
+    if (!out) return;
+
+    out->ps2_init_ok = s_ps2_init_ok;
+    out->ps2_init_step = s_ps2_init_step;
+    out->ps2_init_fail = s_ps2_init_fail;
+    out->ps2_config_before = s_ps2_config_before;
+    out->ps2_config_after = s_ps2_config_after;
+    out->irq_count = s_irq_count;
+    out->injected_scancode_count = s_injected_scancode_count;
+    out->event_count = s_event_count;
+    out->pressed_event_count = s_pressed_event_count;
+    out->ascii_event_count = s_ascii_event_count;
+    out->buffer_count = (unsigned int)kb_buf_count;
+    out->waiting = s_waiting_proc ? 1u : 0u;
+    out->consumer = s_consumer ? 1u : 0u;
 }

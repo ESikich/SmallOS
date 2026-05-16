@@ -114,8 +114,9 @@ programs launched by the shell inherit those descriptors unless marked
 close-on-exec.
 
 Graphics programs that need mouse motion can call `sys_mouse_read()` from
-`user_syscall.h`. It returns accumulated PS/2 relative movement and button
-bits, then clears the movement counters. This is a raw polling helper, not a
+`user_syscall.h`. It returns accumulated relative movement and button bits from
+PS/2, VMware absolute-pointer translation, or the OHCI USB boot mouse path, then
+clears the movement counters. This is a raw polling helper, not a
 descriptor-backed event stream.
 
 The kernel dispatches descriptors through per-handle ops:

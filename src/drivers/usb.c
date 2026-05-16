@@ -201,6 +201,14 @@ static int s_usb_service_active = 0;
 static int s_usb_service_started = 0;
 static int s_usb_service_probe_done = 0;
 static unsigned int s_usb_service_next_probe_tick = 0;
+static unsigned int s_usb_keyboard_poll_count = 0;
+static unsigned int s_usb_keyboard_report_count = 0;
+static unsigned int s_usb_keyboard_fail_count = 0;
+static unsigned int s_usb_keyboard_last_cc = OHCI_TD_CC_NOT_ACCESSED;
+static unsigned int s_usb_mouse_poll_count = 0;
+static unsigned int s_usb_mouse_report_count = 0;
+static unsigned int s_usb_mouse_fail_count = 0;
+static unsigned int s_usb_mouse_last_cc = OHCI_TD_CC_NOT_ACCESSED;
 static int s_usb_hid_no_device_logged = 0;
 static int s_usb_mouse_active_log = 1;
 static unsigned int s_usb_mouse_last_buttons = 0;
@@ -2194,6 +2202,8 @@ static void usb_keyboard_process_report(void) {
     unsigned int old_mod = s_keyboard_last_report[0];
     unsigned int new_mod = s_keyboard_report_buf[0];
 
+    s_usb_keyboard_report_count++;
+
     for (unsigned int bit = 0; bit < 8u; bit++) {
         unsigned int mask = 1u << bit;
         if ((old_mod & mask) != (new_mod & mask)) {
@@ -2231,10 +2241,14 @@ static int usb_keyboard_poll_once(void) {
         return 0;
     }
 
+    s_usb_keyboard_poll_count++;
+
     if (!ohci_td_done(&s_keyboard_intr_td[0])) {
+        s_usb_keyboard_last_cc = OHCI_TD_CC_NOT_ACCESSED;
         return 0;
     }
 
+    s_usb_keyboard_last_cc = (s_keyboard_intr_td[0].control >> OHCI_TD_CC_SHIFT) & 0xFu;
     if (ohci_td_ok(&s_keyboard_intr_td[0])) {
         usb_keyboard_process_report();
         usb_keyboard_queue_intr_td(&s_usb_keyboard_active_dev);
@@ -2242,8 +2256,9 @@ static int usb_keyboard_poll_once(void) {
     }
 
     terminal_puts("usbkbd: intr fail cc=");
-    terminal_put_hex((s_keyboard_intr_td[0].control >> OHCI_TD_CC_SHIFT) & 0xFu);
+    terminal_put_hex(s_usb_keyboard_last_cc);
     terminal_putc('\n');
+    s_usb_keyboard_fail_count++;
     s_usb_keyboard_active = 0;
     usb_rebuild_periodic_schedule();
     return -1;
@@ -2284,6 +2299,11 @@ int usb_mouse_open_port(unsigned int one_based_port) {
     s_usb_mouse_last_buttons = 0;
     s_usb_mouse_active_log = s_usb_mouse_log;
     s_usb_mouse_active = 1;
+    s_usb_mouse_poll_count = 0;
+    s_usb_mouse_report_count = 0;
+    s_usb_mouse_fail_count = 0;
+    s_usb_mouse_last_cc = OHCI_TD_CC_NOT_ACCESSED;
+    mouse_enable_external_source();
     usb_mouse_setup_interrupt(&s_usb_mouse_active_dev);
     usb_mouse_queue_intr_td(&s_usb_mouse_active_dev);
     usb_rebuild_periodic_schedule();
@@ -2310,11 +2330,16 @@ static int usb_mouse_poll_once_echo(int echo) {
         return 0;
     }
 
+    s_usb_mouse_poll_count++;
+
     if (!ohci_td_done(&s_intr_td[0])) {
+        s_usb_mouse_last_cc = OHCI_TD_CC_NOT_ACCESSED;
         return 0;
     }
 
+    s_usb_mouse_last_cc = (s_intr_td[0].control >> OHCI_TD_CC_SHIFT) & 0xFu;
     if (ohci_td_ok(&s_intr_td[0])) {
+        s_usb_mouse_report_count++;
         buttons = s_report_buf[0] & 0x07u;
         dx = (int)(signed char)s_report_buf[1];
         dy = (int)(signed char)s_report_buf[2];
@@ -2342,7 +2367,7 @@ static int usb_mouse_poll_once_echo(int echo) {
 
     if (echo || s_usb_mouse_active_log) {
         terminal_puts("usbmouse: intr fail cc=");
-        terminal_put_hex((s_intr_td[0].control >> OHCI_TD_CC_SHIFT) & 0xFu);
+        terminal_put_hex(s_usb_mouse_last_cc);
         terminal_puts(" ep=");
         terminal_put_uint(s_usb_mouse_active_dev.endpoint);
         terminal_puts(" pkt=");
@@ -2354,6 +2379,13 @@ static int usb_mouse_poll_once_echo(int echo) {
         terminal_puts(" td=");
         terminal_put_hex(s_intr_td[0].control);
         terminal_putc('\n');
+    }
+    s_usb_mouse_fail_count++;
+    if (s_usb_service_active) {
+        s_usb_mouse_active = 0;
+        s_usb_mouse_last_buttons = 0;
+        usb_rebuild_periodic_schedule();
+        return -1;
     }
     usb_mouse_close();
     return -1;
@@ -2430,7 +2462,7 @@ static void usb_hid_service_enable_periodic(volatile u32* regs) {
 static int usb_hid_service_open(void) {
     int old_log = s_usb_mouse_log;
 
-    if (s_usb_keyboard_active) {
+    if (s_usb_keyboard_active && s_usb_mouse_active) {
         return 1;
     }
 
@@ -2465,6 +2497,7 @@ static int usb_hid_service_open(void) {
             u32 st = regs[(OHCI_HC_RH_PORT_BASE + port * 4u) / 4u];
             unsigned int saved_next_address;
             unsigned int address;
+            unsigned int desired_protocol;
 
             if (s_usb_storage_active &&
                 s_usb_storage_controller_index == i &&
@@ -2490,7 +2523,13 @@ static int usb_hid_service_open(void) {
             if (address == 0u) {
                 break;
             }
-            if (!usb_try_hid_on_port(regs, port, &dev, 0u, address)) {
+            desired_protocol = 0u;
+            if (s_usb_keyboard_active && !s_usb_mouse_active) {
+                desired_protocol = USB_HID_PROTOCOL_MOUSE;
+            } else if (!s_usb_keyboard_active && s_usb_mouse_active) {
+                desired_protocol = USB_HID_PROTOCOL_KEYBOARD;
+            }
+            if (!usb_try_hid_on_port(regs, port, &dev, desired_protocol, address)) {
                 s_usb_next_address[i] = saved_next_address;
                 continue;
             }
@@ -2500,6 +2539,10 @@ static int usb_hid_service_open(void) {
                 s_usb_keyboard_active_dev = dev;
                 s_usb_keyboard_active = 1;
                 activated_on_controller = 1;
+                s_usb_keyboard_poll_count = 0;
+                s_usb_keyboard_report_count = 0;
+                s_usb_keyboard_fail_count = 0;
+                s_usb_keyboard_last_cc = OHCI_TD_CC_NOT_ACCESSED;
                 k_memset(s_keyboard_last_report, 0, sizeof(s_keyboard_last_report));
                 usb_init_interrupt_ed(&s_usb_keyboard_active_dev,
                                       &s_keyboard_intr_ed,
@@ -2514,6 +2557,11 @@ static int usb_hid_service_open(void) {
                 activated_on_controller = 1;
                 s_usb_mouse_active_log = 0;
                 s_usb_mouse_last_buttons = 0;
+                s_usb_mouse_poll_count = 0;
+                s_usb_mouse_report_count = 0;
+                s_usb_mouse_fail_count = 0;
+                s_usb_mouse_last_cc = OHCI_TD_CC_NOT_ACCESSED;
+                mouse_enable_external_source();
                 usb_init_interrupt_ed(&s_usb_mouse_active_dev, &s_intr_ed, s_intr_td);
                 usb_mouse_queue_intr_td(&s_usb_mouse_active_dev);
                 terminal_puts("usb: boot mouse port=");
@@ -2534,6 +2582,7 @@ static int usb_hid_service_open(void) {
 
     s_usb_mouse_log = old_log;
     if (s_usb_service_active) {
+        usb_rebuild_periodic_schedule();
         return 1;
     }
     if (!s_usb_hid_no_device_logged) {
@@ -2546,7 +2595,7 @@ static int usb_hid_service_open(void) {
 static int usb_hid_probe_due(void) {
     unsigned int now;
 
-    if (s_usb_keyboard_active) {
+    if (s_usb_keyboard_active && s_usb_mouse_active) {
         return 0;
     }
     if (!s_usb_service_probe_done) {
@@ -2566,7 +2615,7 @@ static int usb_hid_probe_due(void) {
 
 static void usb_service_main(void) {
     for (;;) {
-        if (!s_usb_keyboard_active && usb_hid_probe_due()) {
+        if ((!s_usb_keyboard_active || !s_usb_mouse_active) && usb_hid_probe_due()) {
             (void)usb_probe_hid();
         }
         if (s_usb_service_active) {
@@ -2581,7 +2630,7 @@ int usb_probe_hid(void) {
     int ok;
     unsigned int now;
 
-    if (s_usb_keyboard_active) {
+    if (s_usb_keyboard_active && s_usb_mouse_active) {
         return 1;
     }
 
@@ -2616,4 +2665,25 @@ int usb_start_service(void) {
 void usb_debug_snapshot(usb_debug_state_t* out) {
     if (!out) return;
     *out = s_usb_debug;
+    out->keyboard_active = s_usb_keyboard_active ? 1u : 0u;
+    out->keyboard_port = s_usb_keyboard_active ? s_usb_keyboard_active_dev.port_index + 1u : 0u;
+    out->keyboard_endpoint = s_usb_keyboard_active ? s_usb_keyboard_active_dev.endpoint : 0u;
+    out->keyboard_packet_size = s_usb_keyboard_active ? s_usb_keyboard_active_dev.packet_size : 0u;
+    out->keyboard_interval = s_usb_keyboard_active ? s_usb_keyboard_active_dev.interval : 0u;
+    out->keyboard_poll_count = s_usb_keyboard_poll_count;
+    out->keyboard_report_count = s_usb_keyboard_report_count;
+    out->keyboard_fail_count = s_usb_keyboard_fail_count;
+    out->keyboard_last_cc = s_usb_keyboard_last_cc;
+    out->mouse_active = s_usb_mouse_active ? 1u : 0u;
+    out->mouse_port = s_usb_mouse_active ? s_usb_mouse_active_dev.port_index + 1u : 0u;
+    out->mouse_endpoint = s_usb_mouse_active ? s_usb_mouse_active_dev.endpoint : 0u;
+    out->mouse_packet_size = s_usb_mouse_active ? s_usb_mouse_active_dev.packet_size : 0u;
+    out->mouse_interval = s_usb_mouse_active ? s_usb_mouse_active_dev.interval : 0u;
+    out->mouse_poll_count = s_usb_mouse_poll_count;
+    out->mouse_report_count = s_usb_mouse_report_count;
+    out->mouse_fail_count = s_usb_mouse_fail_count;
+    out->mouse_last_cc = s_usb_mouse_last_cc;
+    out->service_active = s_usb_service_active ? 1u : 0u;
+    out->storage_active = s_usb_storage_active ? 1u : 0u;
+    out->storage_port = s_usb_storage_active ? s_usb_storage_port_index + 1u : 0u;
 }
