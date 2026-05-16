@@ -9,7 +9,7 @@ void _start(int argc, char** argv) {
         sys_exit(1);
     }
 
-    if (sys_ata_read_sector(lba, sector) < 0) {
+    if (sys_block_read_sector(lba, sector) < 0) {
         u_puts("ataread: read failed\n");
         sys_exit(1);
     }

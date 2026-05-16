@@ -608,7 +608,7 @@ blocks 4-11         inode table
 block 12+           file and directory data blocks
 ```
 
-The ext2 start LBA is computed during final image assembly by `mkimage` as `kernel_lba + kernel_sectors` and written into partition entry 1 of the MBR partition table. `loader2.asm` reads partition entry 0 to load the kernel. With the default `BOOT_RAMDISK_FALLBACK=auto` policy, it preloads the used portion of partition entry 1 as a fallback ext2 image for non-USB BIOS disks and skips that copy when EDD identifies the boot drive as USB. Explicit USB image/run targets force `BOOT_RAMDISK_FALLBACK=always` so USB-specific builds remain bootable even when protected-mode USB storage cannot validate ext2 on a given controller. At runtime, the storage policy normally reads sector 0 through ATA, extracts the ext2 partition metadata, and uses it to locate the live writable volume. If ATA cannot validate the volume, the kernel probes USB mass storage (`usb0`, read-only). If that also fails, it retries against the preloaded RAM fallback when one exists.
+The ext2 start LBA is computed during final image assembly by `mkimage` as `kernel_lba + kernel_sectors` and written into partition entry 1 of the MBR partition table. `loader2.asm` reads partition entry 0 to load the kernel. With the default `BOOT_RAMDISK_FALLBACK=auto` policy, it preloads the used portion of partition entry 1 as a fallback ext2 image for non-USB BIOS disks and skips that copy when EDD identifies the boot drive as USB. Explicit USB image/run targets force `BOOT_RAMDISK_FALLBACK=always` so USB-specific builds remain bootable even when protected-mode USB storage cannot validate ext2 on a given controller. At runtime, the storage policy selects a block backend, reads sector 0 through that backend, extracts the ext2 partition metadata, and uses it to locate the live volume. It tries writable ATA first, then USB mass storage (`usb0`, read-only), then the preloaded RAM fallback when one exists.
 
 Verified by `make image-layout-check`: partition entry 1 has type `0x83` and
 points at the appended ext2 image; the runtime then validates magic `0xEF53` in
@@ -779,7 +779,7 @@ build/obj/<backend>/kernel/sched_switch.o
 | user process       | sys_write / sys_putc / sys_read                         |
 | memory accounting  | meminfo command                                         |
 | BIOS memory map    | memmap command                                          |
-| disk reads         | ataread <lba> command                                   |
+| disk reads         | ataread <lba> command, via mounted block device         |
 | crash analysis     | QEMU -d int,cpu_reset,guest_errors -D qemu.log          |
 
 ---

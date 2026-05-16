@@ -54,6 +54,7 @@ typedef struct {
 
 int ext2_init(void);
 int ext2_is_read_only(void);
+block_device_t* ext2_block_device(void);
 void ext2_use_block_device(block_device_t* dev);
 void ext2_use_boot_ramdisk(int enable);
 

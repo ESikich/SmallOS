@@ -285,7 +285,7 @@ static void sh_help(void) {
     u_puts("  pingpublic      try public ICMP through gateway\n");
     u_puts("  netcheck        check gateway and public connectivity\n");
     u_puts("  mousetest       print mouse events for 5 seconds\n");
-    u_puts("  ataread         read ATA sector diagnostics\n");
+    u_puts("  ataread         read mounted block sector diagnostics\n");
     u_puts("  cd              change the shell working directory\n");
     u_puts("  pwd             print the shell working directory\n");
     u_puts("  runelf          run an ext2 ELF and wait\n");

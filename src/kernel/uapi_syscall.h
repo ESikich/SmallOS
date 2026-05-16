@@ -336,7 +336,8 @@ enum {
     SYS_E820_ENTRY      = 78, /* copy one E820 entry; returns total entries */
     SYS_NETINFO         = 79, /* write NIC/IP/socket/TCP diagnostic summary */
     SYS_NET_OP          = 80, /* perform narrow network diagnostic action */
-    SYS_ATA_READ_SECTOR = 81, /* copy one ATA sector into a user buffer */
+    SYS_BLOCK_READ_SECTOR = 81, /* copy one mounted block-device sector */
+    SYS_ATA_READ_SECTOR = SYS_BLOCK_READ_SECTOR, /* legacy alias */
     SYS_EXEC_FG         = 82, /* spawn an ELF in its own foreground job group */
     SYS_PTY_OPEN        = 83, /* create master/slave pseudo-terminal fds */
     SYS_PTY_SET_SIZE    = 84, /* set pseudo-terminal rows/cols */

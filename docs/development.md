@@ -454,7 +454,7 @@ Useful signals:
 
 1. `make clean && make` — fix compile errors
 2. Boot — confirm shell appears and `ext2: ok` prints with the expected `dev=...` or `ramdisk=...` source
-3. ATA boots: `ataread 0` — confirm `sig: 0x55 0xAA` and the correct ext2 partition LBA value
+3. Sector-backed boots: `ataread 0` — confirm `sig: 0x55 0xAA` and the correct ext2 partition LBA value
 4. `ls /` — confirm ext2 root directory lists correctly
 5. `tree` — confirm recursive directory traversal works from the ext2 root
 6. `mkdir TESTDIR` / `rmdir TESTDIR` — confirm directory creation and removal

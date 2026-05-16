@@ -1259,6 +1259,10 @@ int ext2_is_read_only(void) {
     return !s_ramdisk && s_block_dev && s_block_dev->read_only;
 }
 
+block_device_t* ext2_block_device(void) {
+    return s_ramdisk ? 0 : s_block_dev;
+}
+
 static int ext2_read_only(void) {
     return ext2_is_read_only();
 }

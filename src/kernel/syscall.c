@@ -10,7 +10,6 @@
 #include "boot_info.h"
 #include "system.h"
 #include "klib.h"
-#include "../drivers/ata.h"
 #include "../drivers/e1000.h"
 #include "../drivers/net.h"
 #include "../drivers/dhcp.h"
@@ -2715,12 +2714,14 @@ static int sys_net_op_impl(sys_net_op_request_t* user_req) {
     }
 }
 
-static int sys_ata_read_sector_impl(unsigned int lba, void* user_buf) {
+static int sys_block_read_sector_impl(unsigned int lba, void* user_buf) {
     unsigned char sector[512];
+    block_device_t* dev = ext2_block_device();
 
     if (!user_buf) return -EFAULT;
     if (!user_buf_ok((unsigned int)user_buf, sizeof(sector))) return -EFAULT;
-    if (!ata_read_sectors(lba, 1, sector)) return -EIO;
+    if (!dev || dev->sector_size != sizeof(sector)) return -EIO;
+    if (!block_read(dev, lba, 1, sector)) return -EIO;
     if (copy_to_user(user_buf, sector, sizeof(sector)) < 0) return -EFAULT;
     return 0;
 }
@@ -3283,8 +3284,8 @@ void syscall_handler_main(syscall_regs_t* regs) {
                             (sys_net_op_request_t*)regs->ebx);
             break;
 
-        case SYS_ATA_READ_SECTOR:
-            regs->eax = (unsigned int)sys_ata_read_sector_impl(
+        case SYS_BLOCK_READ_SECTOR:
+            regs->eax = (unsigned int)sys_block_read_sector_impl(
                             regs->ebx,
                             (void*)regs->ecx);
             break;

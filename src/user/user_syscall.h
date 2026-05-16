@@ -312,8 +312,12 @@ static inline int sys_net_op(sys_net_op_request_t* req) {
     return syscall1(SYS_NET_OP, (uint32_t)req);
 }
 
+static inline int sys_block_read_sector(uint32_t lba, void* buf) {
+    return syscall2(SYS_BLOCK_READ_SECTOR, lba, (uint32_t)buf);
+}
+
 static inline int sys_ata_read_sector(uint32_t lba, void* buf) {
-    return syscall2(SYS_ATA_READ_SECTOR, lba, (uint32_t)buf);
+    return sys_block_read_sector(lba, buf);
 }
 
 static inline int sys_terminal_size(uint32_t* out_rows, uint32_t* out_cols) {

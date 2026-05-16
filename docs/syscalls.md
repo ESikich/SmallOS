@@ -1182,14 +1182,19 @@ Addresses are host-order IPv4 values in the same format used by the kernel
 network drivers. These settings are runtime-only; they are not persisted to
 disk.
 
-### SYS_ATA_READ_SECTOR (81)
+### SYS_BLOCK_READ_SECTOR (81)
 
 ```c
-int sys_ata_read_sector(uint32_t lba, void* buf);
+int sys_block_read_sector(uint32_t lba, void* buf);
 ```
 
-Copies one 512-byte ATA sector into a user buffer for diagnostics. Returns `0`
-on success, `-EIO` for read failure, or `-EFAULT` for an invalid buffer.
+Copies one 512-byte sector from the mounted block device into a user buffer for
+diagnostics. This follows the root filesystem's selected block backend, so the
+same userspace tool can inspect ATA or USB storage. Returns `0` on success,
+`-EIO` when no sector-backed root device is available or the read fails, or
+`-EFAULT` for an invalid buffer.
+
+`SYS_ATA_READ_SECTOR` remains a legacy alias for the same syscall number.
 
 ### SYS_EXEC_FG (82)
 
@@ -1423,7 +1428,7 @@ sys_meminfo(out_info)
 sys_e820_entry(index, out_entry)
 sys_netinfo(out_info)
 sys_net_op(req)
-sys_ata_read_sector(lba, buf)
+sys_block_read_sector(lba, buf)
 sys_exec_foreground(name, argc, argv)
 sys_pty_open(fds, master_flags)
 sys_pty_set_size(fd, rows, cols)

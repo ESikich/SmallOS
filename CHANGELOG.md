@@ -44,6 +44,7 @@
   * The kernel now mounts ext2 from writable ATA first, read-only `usb0` second, and the loader2-published RAM fallback last.
   * Kept the public image at 16 MB while letting loader2 preload only the used ext2 prefix and zero-fill the rest of the RAM fallback.
   * Added `make run-usb-storage` and `make usb-storage-smoke` to exercise the same raw image through QEMU USB storage.
+  * Generalized raw sector diagnostics from ATA-only reads to the mounted block device via `SYS_BLOCK_READ_SECTOR`, keeping `SYS_ATA_READ_SECTOR` as a legacy alias.
 * **Boot timing diagnostics** (`src/drivers/terminal.*`, `src/kernel/kernel.c`, `docs/`)
   * Added visible `[ms=... tick=... cyc=...]` prefixes while boot diagnostics are captured.
   * During early storage probing, the kernel temporarily unmasks only timer IRQ0 so PIT timestamps and USB waits advance without letting keyboard/process IRQ paths run before the scheduler is live.

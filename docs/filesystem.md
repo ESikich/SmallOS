@@ -106,8 +106,9 @@ smallos.img = boot.bin + loader2.bin + kernel_padded.bin + .state/ext2.img
 
 ## Why kernel padding matters
 
-The ext2 volume is addressed through ATA sectors even though allocation uses
-4 KiB blocks. If the kernel were appended without 512-byte padding, the
+The ext2 volume is addressed through 512-byte block-device sectors even though
+allocation uses 4 KiB blocks. If the kernel were appended without 512-byte
+padding, the
 computed `ext2_lba` would no longer point at the real start of the ext2 volume
 and all filesystem reads would be offset into the wrong bytes.
 
@@ -127,10 +128,10 @@ sector 0, partition entry 1
 
 That location is in the MBR partition table and does not overlap the boot signature at bytes 510–511.
 
-At runtime on IDE-style disks:
+At runtime on sector-backed disks:
 
 1. `ata_init()` brings up the ATA driver, including bus-master DMA when available
-2. `ext2_init()` reads ATA sector 0
+2. `ext2_init()` reads sector 0 from the selected block device
 3. `ext2_init()` extracts the ext2 LBA from partition entry 1
 4. `ext2_init()` reads the ext2 superblock from that partition
 5. `ext2_init()` validates the ext2 superblock and fixed geometry
@@ -302,7 +303,7 @@ read start block and file size
   ↓
 map logical file blocks through direct/single-indirect/double-indirect pointers
   ↓
-read each 4 KiB block via ATA sectors
+read each 4 KiB block via block-device sectors
   ↓
 copy file bytes into static s_load_buf
   ↓
@@ -463,7 +464,8 @@ A filesystem API was called before `ext2_init()` succeeded.
 
 ## `ext2: cannot read sector 0`
 
-ATA could not read the image boot sector, so the ext2 start LBA could not be discovered.
+The selected block device could not read the image boot sector, so the ext2
+start LBA could not be discovered.
 
 ## `ext2: bad MBR signature`
 
@@ -516,7 +518,7 @@ The final path component is not a valid native directory name.
 
 ## `ext2: dir read error` / `ext2: block read error`
 
-ATA read failed during directory scan or block read.
+The selected storage backend failed during a directory scan or block read.
 
 ## `ext2: block map failed`
 

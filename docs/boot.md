@@ -429,7 +429,7 @@ The ext2 partition start LBA cannot be a compile-time constant in `ext2.c` witho
 1. The Makefile discovers source-owned layout constants from `boot.asm` and `loader2.asm`
 2. `mkimage` computes `kernel_lba = 1 + loader2_sectors` and then `ext2_lba = kernel_lba + kernel_sectors` during final image assembly
 3. `mkimage` writes the kernel and ext2 spans into the MBR partition table entries declared by `MBR_PARTITION_TABLE_OFFSET` and `MBR_PARTITION_ENTRY_SIZE` in `boot.asm`
-4. At runtime, `ext2_init()` normally reads ATA sector 0 and extracts the partition metadata; if that mount fails, the kernel tries USB storage; if that also fails and loader2 published the preloaded ext2 fallback, the kernel retries against the RAM-backed volume
+4. At runtime, `ext2_init()` reads sector 0 through the selected block device and extracts the partition metadata; the kernel tries writable ATA first, read-only USB storage second, and the loader2-published RAM fallback last
 
 The partition table lives in the declared boot-sector padding area before the `0x55AA` signature and is safe to overwrite.
 
