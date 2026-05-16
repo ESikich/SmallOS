@@ -45,9 +45,11 @@
 #define OHCI_HC_RH_PORT_BASE  0x54u
 #define OHCI_CONTROL_PLE      0x00000004u
 #define OHCI_CONTROL_CLE      0x00000010u
+#define OHCI_CONTROL_BLE      0x00000020u
 #define OHCI_CONTROL_USB_OPERATIONAL 0x00000080u
 #define OHCI_CONTROL_INTERRUPT_ROUTING 0x00000100u
 #define OHCI_CMD_CLF          0x00000002u
+#define OHCI_CMD_BLF          0x00000004u
 #define OHCI_INT_ALL          0xC000007Fu
 #define OHCI_RHDA_NPS         0x00000200u
 #define OHCI_RHDA_PSM         0x00000100u
@@ -93,8 +95,12 @@
 #define USB_HID_SUBCLASS_BOOT  0x01u
 #define USB_HID_PROTOCOL_KEYBOARD 0x01u
 #define USB_HID_PROTOCOL_MOUSE 0x02u
+#define USB_CLASS_MASS_STORAGE 0x08u
+#define USB_MASS_SUBCLASS_SCSI 0x06u
+#define USB_MASS_PROTOCOL_BOT  0x50u
 
 #define USB_ENDPOINT_DIR_IN    0x80u
+#define USB_ENDPOINT_TYPE_BULK 0x02u
 #define USB_ENDPOINT_TYPE_INTERRUPT 0x03u
 
 #define EHCI_CAP_HCS_PARAMS   0x04u
@@ -166,9 +172,11 @@ typedef struct {
 
 static ohci_hcca_t s_ohci_hcca __attribute__((aligned(256)));
 static ohci_ed_t s_control_ed __attribute__((aligned(16)));
+static ohci_ed_t s_bulk_ed __attribute__((aligned(16)));
 static ohci_ed_t s_intr_ed __attribute__((aligned(16)));
 static ohci_ed_t s_keyboard_intr_ed __attribute__((aligned(16)));
 static ohci_td_t s_tds[8] __attribute__((aligned(16)));
+static ohci_td_t s_bulk_td[2] __attribute__((aligned(16)));
 static ohci_td_t s_intr_td[2] __attribute__((aligned(16)));
 static ohci_td_t s_keyboard_intr_td[2] __attribute__((aligned(16)));
 static usb_setup_packet_t s_setup __attribute__((aligned(16)));
@@ -179,6 +187,7 @@ static u8 s_keyboard_last_report[8] __attribute__((aligned(16)));
 
 static usb_debug_state_t s_usb_debug;
 static usb_controller_t s_usb_controllers[USB_MAX_CONTROLLERS];
+static unsigned int s_usb_next_address[USB_MAX_CONTROLLERS];
 static unsigned int s_usb_controller_count = 0;
 static int s_ohci_dry_run = 0;
 static int s_ohci_verbose = 0;
@@ -192,6 +201,26 @@ static int s_usb_service_started = 0;
 static int s_usb_service_probe_done = 0;
 static int s_usb_mouse_active_log = 1;
 static unsigned int s_usb_mouse_last_buttons = 0;
+static int s_usb_storage_active = 0;
+static unsigned int s_usb_storage_controller_index = 0;
+static unsigned int s_usb_storage_port_index = 0;
+
+static unsigned int usb_alloc_address(unsigned int controller_index) {
+    unsigned int address;
+
+    if (controller_index >= USB_MAX_CONTROLLERS) {
+        return 0;
+    }
+    address = s_usb_next_address[controller_index];
+    if (address == 0u) {
+        address = 1u;
+    }
+    if (address > 127u) {
+        return 0;
+    }
+    s_usb_next_address[controller_index] = address + 1u;
+    return address;
+}
 
 static void usb_delay(void) {
     for (volatile unsigned int i = 0; i < 100000u; i++) {
@@ -369,6 +398,7 @@ static void usb_log_controller(const pci_device_t* dev) {
 void usb_init(void) {
     s_usb_debug = (usb_debug_state_t){0};
     k_memset(s_usb_controllers, 0, sizeof(s_usb_controllers));
+    k_memset(s_usb_next_address, 0, sizeof(s_usb_next_address));
     s_usb_controller_count = 0;
     terminal_puts("usb: passive probe\n");
 
@@ -979,6 +1009,155 @@ static int usb_parse_hid_config(const u8* data,
     return 0;
 }
 
+static int usb_parse_mass_storage_config(const u8* data,
+                                         unsigned int len,
+                                         usb_mass_device_t* out) {
+    unsigned int i = 0;
+    int in_mass_interface = 0;
+
+    while (i + 2u <= len) {
+        unsigned int dlen = data[i];
+        unsigned int dtype = data[i + 1u];
+        if (dlen < 2u || i + dlen > len) {
+            break;
+        }
+
+        if (dtype == 4u && dlen >= 9u) {
+            in_mass_interface =
+                data[i + 5u] == USB_CLASS_MASS_STORAGE &&
+                data[i + 6u] == USB_MASS_SUBCLASS_SCSI &&
+                data[i + 7u] == USB_MASS_PROTOCOL_BOT;
+            if (in_mass_interface) {
+                out->interface_number = data[i + 2u];
+                out->bulk_in_endpoint = 0;
+                out->bulk_out_endpoint = 0;
+            }
+        } else if (dtype == 5u && dlen >= 7u && in_mass_interface) {
+            unsigned int ep = data[i + 2u];
+            unsigned int attrs = data[i + 3u] & 0x03u;
+            unsigned int mps = (unsigned int)data[i + 4u] |
+                               ((unsigned int)data[i + 5u] << 8);
+            if (attrs == USB_ENDPOINT_TYPE_BULK && mps != 0u) {
+                if (ep & USB_ENDPOINT_DIR_IN) {
+                    out->bulk_in_endpoint = ep & 0x0Fu;
+                    out->bulk_in_packet_size = mps;
+                } else {
+                    out->bulk_out_endpoint = ep & 0x0Fu;
+                    out->bulk_out_packet_size = mps;
+                }
+                if (out->bulk_in_endpoint != 0u &&
+                    out->bulk_out_endpoint != 0u) {
+                    return 1;
+                }
+            }
+        }
+
+        i += dlen;
+    }
+
+    return 0;
+}
+
+static int ohci_bulk_transfer(usb_mass_device_t* dev,
+                              unsigned int in,
+                              void* data,
+                              unsigned int len,
+                              unsigned int* out_len) {
+    volatile u32* regs;
+    ohci_td_t* td;
+    unsigned int endpoint;
+    unsigned int mps;
+    unsigned int toggle;
+    unsigned int actual = len;
+    unsigned int packets;
+    u32 dp;
+
+    if (!dev || !dev->regs || !data || len == 0u) {
+        return 0;
+    }
+    regs = dev->regs;
+    endpoint = in ? dev->bulk_in_endpoint : dev->bulk_out_endpoint;
+    mps = in ? dev->bulk_in_packet_size : dev->bulk_out_packet_size;
+    toggle = in ? dev->bulk_in_toggle : dev->bulk_out_toggle;
+    if (endpoint == 0u || mps == 0u || mps > 1024u) {
+        return 0;
+    }
+
+    ohci_quiet_interrupts(regs);
+    k_memset(&s_bulk_ed, 0, sizeof(s_bulk_ed));
+    k_memset(s_bulk_td, 0, sizeof(s_bulk_td));
+
+    s_bulk_ed.control =
+        (dev->address & 0x7Fu) |
+        ((endpoint & 0xFu) << 7u) |
+        (in ? OHCI_ED_CTRL_DIR_IN : OHCI_ED_CTRL_DIR_OUT) |
+        (dev->low_speed ? OHCI_ED_CTRL_SPEED_LOW : 0u) |
+        ((mps & 0x7FFu) << OHCI_ED_CTRL_MPS_SHIFT);
+    s_bulk_ed.head_td = (u32)(unsigned int)&s_bulk_td[0];
+    s_bulk_ed.tail_td = (u32)(unsigned int)&s_bulk_td[1];
+    s_bulk_ed.next_ed = 0;
+
+    dp = in ? OHCI_TD_DP_IN : OHCI_TD_DP_OUT;
+    td = &s_bulk_td[0];
+    td->control = (OHCI_TD_CC_NOT_ACCESSED << OHCI_TD_CC_SHIFT) |
+                  dp | OHCI_TD_DI_NONE |
+                  (toggle ? OHCI_TD_TOGGLE_DATA1 : OHCI_TD_TOGGLE_DATA0);
+    if (in) {
+        td->control |= OHCI_TD_BUFFER_ROUNDING;
+    }
+    td->cbp = (u32)(unsigned int)data;
+    td->be = (u32)(unsigned int)data + len - 1u;
+    td->next_td = (u32)(unsigned int)&s_bulk_td[1];
+
+    regs[OHCI_HC_BULK_HEAD / 4u] = (u32)(unsigned int)&s_bulk_ed;
+    regs[OHCI_HC_CONTROL / 4u] =
+        regs[OHCI_HC_CONTROL / 4u] | OHCI_CONTROL_BLE | OHCI_CONTROL_USB_OPERATIONAL;
+    regs[OHCI_HC_COMMAND_STATUS / 4u] = OHCI_CMD_BLF;
+
+    if (!ohci_wait_td(td, 2000u)) {
+        terminal_puts("usbbulk: fail ep=");
+        terminal_put_uint(endpoint);
+        terminal_puts(in ? " in" : " out");
+        terminal_puts(" cc=");
+        terminal_put_hex((td->control >> OHCI_TD_CC_SHIFT) & 0xFu);
+        terminal_putc('\n');
+        s_bulk_ed.control |= OHCI_ED_CTRL_SKIP;
+        return 0;
+    }
+
+    if (td->cbp != 0u && td->cbp <= td->be) {
+        unsigned int remain = td->be - td->cbp + 1u;
+        if (remain <= len) {
+            actual = len - remain;
+        }
+    }
+    packets = actual == 0u ? 0u : (actual + mps - 1u) / mps;
+    if (packets & 1u) {
+        if (in) {
+            dev->bulk_in_toggle ^= 1u;
+        } else {
+            dev->bulk_out_toggle ^= 1u;
+        }
+    }
+    if (out_len) {
+        *out_len = actual;
+    }
+    return 1;
+}
+
+int usb_bulk_in(usb_mass_device_t* dev, void* data, unsigned int len, unsigned int* out_len) {
+    return ohci_bulk_transfer(dev, 1u, data, len, out_len);
+}
+
+int usb_bulk_out(usb_mass_device_t* dev, const void* data, unsigned int len) {
+    unsigned int actual = 0;
+    if (!ohci_bulk_transfer(dev, 0u, (void*)data, len, &actual)) {
+        return 0;
+    }
+    (void)actual;
+    return 1;
+}
+
 static int ohci_reset_port(volatile u32* regs, unsigned int port, unsigned int* low_speed) {
     volatile u32* port_reg = &regs[(OHCI_HC_RH_PORT_BASE + port * 4u) / 4u];
     u32 status = *port_reg;
@@ -1033,6 +1212,7 @@ static int usb_try_hid_on_port(volatile u32* regs,
                                usb_mouse_dev_t* out,
                                unsigned int desired_protocol,
                                unsigned int address);
+static void ohci_power_root_hub_quiet(volatile u32* regs);
 
 static int usb_try_mouse_on_port(volatile u32* regs, unsigned int port, usb_mouse_dev_t* out) {
     return usb_try_hid_on_port(regs, port, out, USB_HID_PROTOCOL_MOUSE, 1u);
@@ -1208,6 +1388,169 @@ static int usb_try_hid_on_port(volatile u32* regs,
         terminal_putc('\n');
     }
     return 1;
+}
+
+static int usb_try_mass_on_port(usb_controller_t* ctrl,
+                                unsigned int ctrl_index,
+                                unsigned int port,
+                                usb_mass_device_t* out,
+                                unsigned int address) {
+    volatile u32* regs = ctrl->regs;
+    unsigned int low_speed = 0;
+    unsigned int len;
+    unsigned int mps = 8;
+    unsigned int total_len;
+    unsigned int config_value;
+
+    if (!regs || address == 0u || address > 127u) {
+        return 0;
+    }
+    if (!ohci_reset_port(regs, port, &low_speed)) {
+        return 0;
+    }
+    if (low_speed) {
+        return 0;
+    }
+
+    k_memset(s_usb_buf, 0, sizeof(s_usb_buf));
+    len = 8u;
+    if (!ohci_control_transfer(regs, 0, low_speed, 8u,
+                               0x80u, USB_REQ_GET_DESCRIPTOR,
+                               (USB_DESC_DEVICE << 8), 0, 8u,
+                               s_usb_buf, &len)) {
+        return 0;
+    }
+    mps = s_usb_buf[7u] ? s_usb_buf[7u] : 8u;
+    if (mps > 64u) mps = 8u;
+
+    if (!ohci_control_transfer(regs, 0, low_speed, mps,
+                               0x00u, USB_REQ_SET_ADDRESS,
+                               (unsigned short)address, 0, 0, 0, 0)) {
+        return 0;
+    }
+    for (unsigned int i = 0; i < 3u; i++) {
+        ohci_wait_frame();
+    }
+
+    k_memset(s_usb_buf, 0, sizeof(s_usb_buf));
+    len = 18u;
+    if (!ohci_control_transfer(regs, address, low_speed, mps,
+                               0x80u, USB_REQ_GET_DESCRIPTOR,
+                               (USB_DESC_DEVICE << 8), 0, 18u,
+                               s_usb_buf, &len)) {
+        return 0;
+    }
+
+    k_memset(s_usb_buf, 0, sizeof(s_usb_buf));
+    len = 9u;
+    if (!ohci_control_transfer(regs, address, low_speed, mps,
+                               0x80u, USB_REQ_GET_DESCRIPTOR,
+                               (USB_DESC_CONFIGURATION << 8), 0, 9u,
+                               s_usb_buf, &len)) {
+        return 0;
+    }
+    total_len = (unsigned int)s_usb_buf[2u] | ((unsigned int)s_usb_buf[3u] << 8);
+    config_value = s_usb_buf[5u];
+    if (total_len > sizeof(s_usb_buf)) total_len = sizeof(s_usb_buf);
+
+    k_memset(s_usb_buf, 0, sizeof(s_usb_buf));
+    len = total_len;
+    if (!ohci_control_transfer(regs, address, low_speed, mps,
+                               0x80u, USB_REQ_GET_DESCRIPTOR,
+                               (USB_DESC_CONFIGURATION << 8), 0,
+                               (unsigned short)total_len,
+                               s_usb_buf, &len)) {
+        return 0;
+    }
+
+    k_memset(out, 0, sizeof(*out));
+    out->controller = ctrl;
+    out->regs = regs;
+    out->address = address;
+    out->low_speed = low_speed;
+    out->controller_index = ctrl_index;
+    out->port_index = port;
+    if (!usb_parse_mass_storage_config(s_usb_buf, len, out)) {
+        return 0;
+    }
+
+    if (!ohci_control_transfer(regs, address, low_speed, mps,
+                               0x00u, USB_REQ_SET_CONFIGURATION,
+                               (unsigned short)config_value, 0, 0, 0, 0)) {
+        return 0;
+    }
+    for (unsigned int i = 0; i < 20u; i++) {
+        ohci_wait_frame();
+    }
+
+    out->bulk_in_toggle = 0;
+    out->bulk_out_toggle = 0;
+    terminal_puts("usbms: mass storage port=");
+    terminal_put_uint(port + 1u);
+    terminal_puts(" addr=");
+    terminal_put_uint(address);
+    terminal_puts(" in=");
+    terminal_put_uint(out->bulk_in_endpoint);
+    terminal_puts(" out=");
+    terminal_put_uint(out->bulk_out_endpoint);
+    terminal_putc('\n');
+    return 1;
+}
+
+int usb_find_mass_storage(usb_mass_device_t* out) {
+    int old_log = s_usb_mouse_log;
+
+    if (!out) {
+        return 0;
+    }
+    s_usb_mouse_log = 0;
+
+    for (unsigned int i = 0; i < s_usb_controller_count; i++) {
+        usb_controller_t* ctrl = &s_usb_controllers[i];
+        volatile u32* regs;
+        u32 ports;
+
+        if (!ctrl->present || ctrl->pci.prog_if != USB_PROG_OHCI || !ctrl->regs) {
+            continue;
+        }
+
+        regs = ctrl->regs;
+        ohci_quiet_interrupts(regs);
+        regs[OHCI_HC_CONTROL / 4u] =
+            (regs[OHCI_HC_CONTROL / 4u] & ~OHCI_CONTROL_INTERRUPT_ROUTING) |
+            OHCI_CONTROL_CLE | OHCI_CONTROL_BLE | OHCI_CONTROL_USB_OPERATIONAL;
+        ohci_bind_hcca(regs);
+        ohci_power_root_hub_quiet(regs);
+
+        ports = ctrl->ports;
+        if (ports == 0u) {
+            ports = regs[OHCI_HC_RH_DESC_A / 4u] & 0xFFu;
+            if (ports > 15u) ports = 15u;
+        }
+
+        for (u32 port = 0; port < ports; port++) {
+            u32 st = regs[(OHCI_HC_RH_PORT_BASE + port * 4u) / 4u];
+            unsigned int address;
+            if (!(st & OHCI_PORT_CCS)) {
+                continue;
+            }
+            address = usb_alloc_address(i);
+            if (address == 0u) {
+                break;
+            }
+            if (usb_try_mass_on_port(ctrl, i, port, out, address)) {
+                s_usb_storage_active = 1;
+                s_usb_storage_controller_index = i;
+                s_usb_storage_port_index = port;
+                s_usb_mouse_log = old_log;
+                return 1;
+            }
+        }
+    }
+
+    s_usb_mouse_log = old_log;
+    terminal_puts("usbms: no OHCI BOT storage found\n");
+    return 0;
 }
 
 static void usb_print_device_descriptor(const u8* data, unsigned int len) {
@@ -2094,7 +2437,6 @@ static int usb_hid_service_open(void) {
         usb_controller_t* ctrl = &s_usb_controllers[i];
         volatile u32* regs;
         u32 ports;
-        unsigned int next_addr = 1u;
 
         if (!ctrl->present || ctrl->pci.prog_if != USB_PROG_OHCI || !ctrl->regs) {
             continue;
@@ -2114,18 +2456,27 @@ static int usb_hid_service_open(void) {
             if (ports > 15u) ports = 15u;
         }
 
-        for (u32 port = 0; port < ports && next_addr < 8u; port++) {
+        for (u32 port = 0; port < ports; port++) {
             usb_mouse_dev_t dev;
             u32 st = regs[(OHCI_HC_RH_PORT_BASE + port * 4u) / 4u];
+            unsigned int address;
 
+            if (s_usb_storage_active &&
+                s_usb_storage_controller_index == i &&
+                s_usb_storage_port_index == port) {
+                continue;
+            }
             if (!(st & OHCI_PORT_CCS)) {
                 continue;
             }
 
-            if (!usb_try_hid_on_port(regs, port, &dev, 0u, next_addr)) {
+            address = usb_alloc_address(i);
+            if (address == 0u) {
+                break;
+            }
+            if (!usb_try_hid_on_port(regs, port, &dev, 0u, address)) {
                 continue;
             }
-            next_addr++;
 
             dev.has_saved_state = 0;
             if (dev.protocol == USB_HID_PROTOCOL_KEYBOARD && !s_usb_keyboard_active) {
@@ -2162,14 +2513,14 @@ static int usb_hid_service_open(void) {
     }
 
     s_usb_mouse_log = old_log;
+    terminal_puts("usb: no boot HID device found\n");
     return 0;
 }
 
 static void usb_service_main(void) {
     for (;;) {
         if (!s_usb_service_active && !s_usb_service_probe_done) {
-            (void)usb_hid_service_open();
-            s_usb_service_probe_done = 1;
+            (void)usb_probe_hid();
         }
         if (s_usb_service_active) {
             (void)usb_keyboard_poll_once();
@@ -2177,6 +2528,17 @@ static void usb_service_main(void) {
         }
         __asm__ __volatile__("sti; hlt");
     }
+}
+
+int usb_probe_hid(void) {
+    int ok;
+
+    if (s_usb_service_probe_done) {
+        return s_usb_service_active;
+    }
+    ok = usb_hid_service_open();
+    s_usb_service_probe_done = 1;
+    return ok;
 }
 
 int usb_start_service(void) {

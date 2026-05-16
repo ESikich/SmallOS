@@ -11,6 +11,7 @@ static int csi_value = 0;
 static int csi_has_value = 0;
 static int csi_private = 0;
 static utf8_decoder_t utf8_decoder;
+static terminal_output_hook_t output_hook = 0;
 
 static int clamp_int(int value, int min, int max) {
     if (value < min) return min;
@@ -198,6 +199,10 @@ void terminal_set_backend(const terminal_backend_t* backend) {
     utf8_decoder_reset(&utf8_decoder);
 }
 
+void terminal_set_output_hook(terminal_output_hook_t hook) {
+    output_hook = hook;
+}
+
 void terminal_clear(void) {
     if (active_backend && active_backend->clear) {
         active_backend->clear();
@@ -215,6 +220,9 @@ void terminal_putc(char c) {
 #ifdef SMALLOS_SERIAL_CONSOLE
     serial_putc(c);
 #endif
+    if (output_hook) {
+        output_hook(c);
+    }
 }
 
 void terminal_write(const char* s, unsigned int len) {
@@ -237,6 +245,9 @@ void terminal_write(const char* s, unsigned int len) {
 #ifdef SMALLOS_SERIAL_CONSOLE
         serial_putc((char)b);
 #endif
+        if (output_hook) {
+            output_hook((char)b);
+        }
     }
 
     if (active_backend && active_backend->end_update) {

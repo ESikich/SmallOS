@@ -1,6 +1,8 @@
 #ifndef EXT2_H
 #define EXT2_H
 
+#include "block.h"
+
 typedef unsigned int   u32;
 typedef unsigned short u16;
 typedef unsigned char  u8;
@@ -51,6 +53,8 @@ typedef struct {
 } ext2_stat_info_t;
 
 int ext2_init(void);
+int ext2_is_read_only(void);
+void ext2_use_block_device(block_device_t* dev);
 void ext2_use_boot_ramdisk(int enable);
 
 void ext2_ls(void);

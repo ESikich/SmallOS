@@ -1,5 +1,4 @@
 #include "ext2.h"
-#include "ata.h"
 #include "../drivers/terminal.h"
 #include "../kernel/boot_info.h"
 #include "../kernel/klib.h"
@@ -107,6 +106,7 @@ static u32 s_ext2_sectors = 0;
 static u8* s_ramdisk = 0;
 static u32 s_ramdisk_size = 0;
 static int s_use_boot_ramdisk = 0;
+static block_device_t* s_block_dev = 0;
 static u8* s_load_buf = 0;
 
 static u8 s_sector[SECTOR_SIZE];
@@ -169,9 +169,10 @@ static int read_block(u32 block, u8* out) {
         return 1;
     }
 
-    return ata_read_sectors(abs_lba_for_block(block),
-                            (unsigned char)EXT2_SECTORS_PER_BLOCK,
-                            out);
+    return block_read(s_block_dev,
+                      abs_lba_for_block(block),
+                      EXT2_SECTORS_PER_BLOCK,
+                      out);
 }
 
 static int write_block(u32 block, const u8* data) {
@@ -184,9 +185,10 @@ static int write_block(u32 block, const u8* data) {
         return 1;
     }
 
-    return ata_write_sectors(abs_lba_for_block(block),
-                             (unsigned char)EXT2_SECTORS_PER_BLOCK,
-                             data);
+    return block_write(s_block_dev,
+                       abs_lba_for_block(block),
+                       EXT2_SECTORS_PER_BLOCK,
+                       data);
 }
 
 static int write_blocks(u32 first_block, u32 block_count, const u8* data) {
@@ -203,9 +205,10 @@ static int write_blocks(u32 first_block, u32 block_count, const u8* data) {
         return 1;
     }
     if (sectors > 255u) return 0;
-    return ata_write_sectors(abs_lba_for_block(first_block),
-                             (unsigned char)sectors,
-                             data);
+    return block_write(s_block_dev,
+                       abs_lba_for_block(first_block),
+                       sectors,
+                       data);
 }
 
 static int read_bitmaps(void) {
@@ -1252,12 +1255,30 @@ static int dirent_name_to_buf(const ext2_dirent_t* de, char* out, u32 out_size, 
     return 1;
 }
 
+int ext2_is_read_only(void) {
+    return !s_ramdisk && s_block_dev && s_block_dev->read_only;
+}
+
+static int ext2_read_only(void) {
+    return ext2_is_read_only();
+}
+
 void ext2_use_boot_ramdisk(int enable) {
     s_use_boot_ramdisk = enable ? 1 : 0;
 }
 
+void ext2_use_block_device(block_device_t* dev) {
+    s_block_dev = dev;
+    s_use_boot_ramdisk = 0;
+}
+
 int ext2_init(void) {
     s_initialised = 0;
+    s_bitmaps_loaded = 0;
+    s_block_bitmap_dirty = 0;
+    s_inode_bitmap_dirty = 0;
+    s_bitmap_write_defer_depth = 0;
+    s_next_alloc_block = EXT2_FIRST_DATA_BLOCK;
 
     if (!s_load_buf) {
         s_load_buf = (u8*)kmalloc(EXT2_MAX_LOAD_FILE_BYTES);
@@ -1275,7 +1296,15 @@ int ext2_init(void) {
     } else {
         s_ramdisk = 0;
         s_ramdisk_size = 0;
-        if (!ata_read_sectors(0, 1, s_sector)) {
+        if (!s_block_dev) {
+            terminal_puts("ext2: no block device selected\n");
+            return 0;
+        }
+        if (s_block_dev->sector_size != SECTOR_SIZE) {
+            terminal_puts("ext2: unsupported block sector size\n");
+            return 0;
+        }
+        if (!block_read(s_block_dev, 0, 1, s_sector)) {
             terminal_puts("ext2: cannot read sector 0\n");
             return 0;
         }
@@ -1328,6 +1357,8 @@ int ext2_init(void) {
     } else {
         terminal_puts("lba=");
         terminal_put_uint(s_ext2_lba);
+        terminal_puts(" dev=");
+        terminal_puts(s_block_dev && s_block_dev->name ? s_block_dev->name : "?");
     }
     terminal_putc('\n');
     return 1;
@@ -1532,6 +1563,7 @@ int ext2_write_path_from_source(const char* path,
                                 const ext2_data_source_t* source,
                                 u32 size) {
     if (!s_initialised || size > EXT2_MAX_WRITE_FILE_BYTES) return 0;
+    if (ext2_read_only()) return 0;
     create_path_t create;
     if (!resolve_create_path(path, &create)) return 0;
     u32 ino = 0;
@@ -1557,6 +1589,7 @@ int ext2_write_at_path(const char* path,
                        u32* inout_size,
                        int create) {
     if (!s_initialised || !path || (!data && len > 0) || !inout_size) return 0;
+    if (ext2_read_only()) return 0;
     if (offset + len < offset) return 0;
     u32 new_size = offset + len;
     if (new_size < *inout_size) new_size = *inout_size;
@@ -1581,6 +1614,7 @@ int ext2_write_at_path(const char* path,
 
 int ext2_mkdir(const char* path) {
     if (!s_initialised) return 0;
+    if (ext2_read_only()) return 0;
     create_path_t create;
     if (!resolve_create_path(path, &create)) return 0;
     if (dir_find_entry(create.parent_ino, &create.parent, create.leaf, 0, 0)) return 0;
@@ -1610,6 +1644,7 @@ int ext2_mkdir(const char* path) {
 
 int ext2_rm(const char* path) {
     if (!s_initialised) return 0;
+    if (ext2_read_only()) return 0;
     create_path_t create;
     if (!resolve_create_path(path, &create)) return 0;
     u32 ino = 0;
@@ -1625,6 +1660,7 @@ int ext2_rm(const char* path) {
 
 int ext2_rmdir(const char* path) {
     if (!s_initialised) return 0;
+    if (ext2_read_only()) return 0;
     create_path_t create;
     if (!resolve_create_path(path, &create)) return 0;
     u32 ino = 0;
@@ -1751,6 +1787,7 @@ int ext2_dirents_read(const char* path,
 }
 
 int ext2_copy(const char* src, const char* dst) {
+    if (ext2_read_only()) return 0;
     u32 size = 0;
     const u8* data = ext2_load(src, &size);
     if (!data) return 0;
@@ -1772,6 +1809,7 @@ int ext2_copy(const char* src, const char* dst) {
 
 int ext2_move(const char* src, const char* dst) {
     if (!s_initialised) return 0;
+    if (ext2_read_only()) return 0;
     create_path_t src_path;
     if (!resolve_create_path(src, &src_path)) return 0;
     u32 ino = 0;

@@ -1,6 +1,8 @@
 #ifndef ATA_H
 #define ATA_H
 
+#include "block.h"
+
 typedef unsigned int  u32;
 typedef unsigned short u16;
 
@@ -51,5 +53,7 @@ int ata_read_sectors(u32 lba, unsigned char count, void* buf);
  * and only supports the primary channel master drive.
  */
 int ata_write_sectors(u32 lba, unsigned char count, const void* buf);
+
+block_device_t* ata_block_device(void);
 
 #endif /* ATA_H */

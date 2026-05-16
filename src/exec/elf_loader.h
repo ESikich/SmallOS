@@ -12,6 +12,7 @@
 
 process_t* elf_run_named(const char* name, int argc, char** argv);
 process_t* elf_run_named_new_group(const char* name, int argc, char** argv);
+process_t* elf_run_named_suspended(const char* name, int argc, char** argv);
 int elf_exec_image_into(process_t* proc,
                         const unsigned char* image,
                         int argc,

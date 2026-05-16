@@ -463,3 +463,49 @@ int ata_write_sectors(u32 lba, unsigned char count, const void* buf) {
     }
     return ata_pio_write_sectors(lba, count, buf);
 }
+
+static int ata_block_read(block_device_t* dev, u32 lba, u32 count, void* buf) {
+    u8* out = (u8*)buf;
+    (void)dev;
+
+    while (count != 0u) {
+        unsigned char chunk = count > 255u ? 255u : (unsigned char)count;
+        if (!ata_read_sectors(lba, chunk, out)) {
+            return 0;
+        }
+        lba += chunk;
+        count -= chunk;
+        out += (u32)chunk * 512u;
+    }
+    return 1;
+}
+
+static int ata_block_write(block_device_t* dev, u32 lba, u32 count, const void* buf) {
+    const u8* in = (const u8*)buf;
+    (void)dev;
+
+    while (count != 0u) {
+        unsigned char chunk = count > 255u ? 255u : (unsigned char)count;
+        if (!ata_write_sectors(lba, chunk, in)) {
+            return 0;
+        }
+        lba += chunk;
+        count -= chunk;
+        in += (u32)chunk * 512u;
+    }
+    return 1;
+}
+
+static block_device_t s_ata_block_device = {
+    "ata0",
+    512u,
+    0u,
+    0,
+    0,
+    ata_block_read,
+    ata_block_write
+};
+
+block_device_t* ata_block_device(void) {
+    return &s_ata_block_device;
+}

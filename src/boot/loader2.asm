@@ -15,8 +15,8 @@ bits 16
 LOADER2_SEGMENT      equ 0x4000
 KERNEL_OFFSET        equ 0x1000
 KERNEL_SEGMENT       equ KERNEL_OFFSET / 16
-KERNEL_READ_CHUNK    equ 120        ; 120 sectors = 61440 bytes, fits below 64 KiB
-RAMDISK_READ_CHUNK   equ 120        ; keep BIOS reads below the 64 KiB DMA boundary
+KERNEL_READ_CHUNK    equ 127        ; 127 sectors = 65024 bytes, fits below 64 KiB
+RAMDISK_READ_CHUNK   equ 127        ; common INT 13h max, below the 64 KiB boundary
 STAGE2_STACK_TOP     equ __STAGE2_STACK_TOP__
 STAGE2_STACK_TOP_32  equ __STAGE2_STACK_TOP_32__
 FORCE_VGA_BACKEND    equ __FORCE_VGA_BACKEND__
@@ -55,6 +55,8 @@ EXT2_PARTITION_INDEX       equ 1
 RAMDISK_PHYS               equ 0x00800000
 RAMDISK_BOUNCE_SEG         equ 0x5000
 RAMDISK_BOUNCE_PHYS        equ 0x00050000
+EXT2_SECTORS_PER_BLOCK     equ 8
+EXT2_BLOCK_BITMAP_SECTOR   equ 16
 
 start:
     cli
@@ -91,6 +93,8 @@ start:
     mov si, ext_ok_msg
     call print_string
     mov byte [DISK_USE_LBA], 1
+    mov [DISK_EDD_VERSION], ah
+    call read_edd_parameters
     call read_chs_geometry
     call print_drive_diag
     jmp .load
@@ -195,6 +199,30 @@ lba_read:
     popad
     ret
 
+lba_read_high_ramdisk:
+    pushad
+    push ds
+    push es
+    push fs
+    push gs
+    mov ax, LOADER2_SEGMENT
+    mov ds, ax
+    mov ah, 0x42
+    mov dl, [BOOT_DRIVE]
+    mov si, dap_high
+    int 0x13
+    mov [DISK_ERROR_CODE], ah
+    pushf
+    pop word [DISK_HIGH_READ_FLAGS]
+    pop gs
+    pop fs
+    pop es
+    pop ds
+    popad
+    push word [DISK_HIGH_READ_FLAGS]
+    popf
+    ret
+
 disk_read:
     cmp byte [DISK_USE_LBA], 0
     je chs_read_sector
@@ -224,6 +252,27 @@ read_chs_geometry:
     mov word [CHS_HEADS], 16
 .done:
     pop es
+    popa
+    ret
+
+read_edd_parameters:
+    pusha
+    push ds
+    mov ax, LOADER2_SEGMENT
+    mov ds, ax
+    mov word [edd_params], 0x0042
+    mov ah, 0x48
+    mov dl, [BOOT_DRIVE]
+    mov si, edd_params
+    int 0x13
+    jc .done
+    cmp word [edd_params], 0x0042
+    jb .done
+    cmp dword [edd_params + 43], 0x20425355 ; "USB "
+    jne .done
+    mov byte [DISK_IS_USB], 1
+.done:
+    pop ds
     popa
     ret
 
@@ -391,10 +440,18 @@ load_ramdisk:
     mov edx, [RAMDISK_SECTORS]
     test dx, dx
     jz disk_error
+    call probe_high_ramdisk_read
+    call detect_ramdisk_preload_sectors
 
+    mov eax, [RAMDISK_LBA]
+    mov edx, [RAMDISK_PRELOAD_SECTORS]
     mov ebx, RAMDISK_PHYS
     mov dword [RAMDISK_SECTORS_READ], 0
     mov dword [RAMDISK_NEXT_DOT], 2048
+    cmp byte [DISK_HIGH_READ_ENABLED], 0
+    je .read_loop
+    mov si, ramdisk_direct_msg
+    call print_string
 
 .read_loop:
     xor ecx, ecx
@@ -413,6 +470,23 @@ load_ramdisk:
     mov cx, RAMDISK_READ_CHUNK
 
 .chunk_ok:
+    cmp byte [DISK_USE_LBA], 0
+    je .bounce_read
+    cmp byte [DISK_HIGH_READ_ENABLED], 0
+    je .bounce_read
+    mov word [dap_high_count], cx
+    mov dword [dap_high_lba], eax
+    mov dword [dap_high_lba+4], 0
+    mov dword [dap_high_addr], ebx
+    mov dword [dap_high_addr+4], 0
+    call lba_read_high_ramdisk
+    jc .high_read_failed
+    jmp .read_done
+
+.high_read_failed:
+    mov byte [DISK_HIGH_READ_ENABLED], 0
+
+.bounce_read:
     mov word [dap_count], cx
     mov word [dap_seg], RAMDISK_BOUNCE_SEG
     mov word [dap_off], 0x0000
@@ -432,6 +506,7 @@ load_ramdisk:
     call enter_unreal
     call copy_ramdisk_chunk
 
+.read_done:
     add eax, ecx
     push eax
     xor eax, eax
@@ -443,6 +518,9 @@ load_ramdisk:
     sub dx, cx
     jnz .read_loop
 
+    call enter_unreal
+    call zero_ramdisk_tail
+
     mov eax, [RAMDISK_SECTORS]
     shl eax, 9
     mov [RAMDISK_SIZE_BYTES], eax
@@ -451,6 +529,163 @@ load_ramdisk:
     call print_string
 
     popa
+    ret
+
+probe_high_ramdisk_read:
+    pusha
+    mov byte [DISK_HIGH_READ_ENABLED], 0
+    cmp byte [DISK_USE_LBA], 0
+    je .done
+    cmp byte [DISK_IS_USB], 0
+    je .done
+    cmp byte [DISK_EDD_VERSION], 0x30
+    jb .done
+
+    mov cx, [RAMDISK_SECTORS]
+    cmp cx, RAMDISK_READ_CHUNK
+    jbe .count_ok
+    mov cx, RAMDISK_READ_CHUNK
+.count_ok:
+    test cx, cx
+    jz .done
+    mov [DISK_HIGH_TEST_SECTORS], cx
+
+    mov word [dap_high_count], cx
+    mov eax, [RAMDISK_LBA]
+    mov dword [dap_high_lba], eax
+    mov dword [dap_high_lba+4], 0
+    mov dword [dap_high_addr], RAMDISK_PHYS
+    mov dword [dap_high_addr+4], 0
+    call lba_read_high_ramdisk
+    jc .done
+
+    mov word [dap_count], cx
+    mov word [dap_seg], RAMDISK_BOUNCE_SEG
+    mov word [dap_off], 0x0000
+    mov eax, [RAMDISK_LBA]
+    mov dword [dap_lba], eax
+    mov dword [dap_lba+4], 0
+    call lba_read
+
+    call enter_unreal
+    xor ecx, ecx
+    mov cx, [DISK_HIGH_TEST_SECTORS]
+    shl ecx, 7              ; sector count * 512 / 4 dwords
+    mov esi, RAMDISK_PHYS
+    mov edi, RAMDISK_BOUNCE_PHYS
+
+.compare:
+    mov eax, [fs:esi]
+    cmp eax, [fs:edi]
+    jne .done
+    add esi, 4
+    add edi, 4
+    dec ecx
+    jnz .compare
+    mov byte [DISK_HIGH_READ_ENABLED], 1
+
+.done:
+    popa
+    ret
+
+detect_ramdisk_preload_sectors:
+    pusha
+    mov eax, [RAMDISK_SECTORS]
+    mov [RAMDISK_PRELOAD_SECTORS], eax
+
+    mov eax, [RAMDISK_LBA]
+    add eax, EXT2_BLOCK_BITMAP_SECTOR
+    xor di, di
+    mov cx, EXT2_SECTORS_PER_BLOCK
+
+.read_bitmap:
+    mov word [dap_count], 1
+    mov word [dap_seg], RAMDISK_BOUNCE_SEG
+    mov word [dap_off], di
+    mov dword [dap_lba], eax
+    mov dword [dap_lba+4], 0
+    cmp byte [DISK_USE_LBA], 0
+    jne .read_now
+    push eax
+    mov ax, RAMDISK_BOUNCE_SEG
+    mov es, ax
+    pop eax
+    mov bx, di
+.read_now:
+    call disk_read
+    inc eax
+    add di, 512
+    loop .read_bitmap
+
+    mov ax, RAMDISK_BOUNCE_SEG
+    mov es, ax
+    mov eax, [RAMDISK_SECTORS]
+    shr eax, 6              ; sectors / 8 blocks / 8 bits
+    test ax, ax
+    jz .done
+    mov di, ax
+    dec di
+
+.scan_byte:
+    mov al, [es:di]
+    test al, al
+    jnz .found_byte
+    test di, di
+    jz .done
+    dec di
+    jmp .scan_byte
+
+.found_byte:
+    mov dl, 7
+    mov ah, 0x80
+.scan_bit:
+    test al, ah
+    jnz .found_bit
+    shr ah, 1
+    dec dl
+    jmp .scan_bit
+
+.found_bit:
+    xor eax, eax
+    mov ax, di
+    shl eax, 3
+    xor ebx, ebx
+    mov bl, dl
+    add eax, ebx
+    inc eax                 ; load through the last used block
+    shl eax, 3              ; blocks -> sectors
+    cmp eax, [RAMDISK_SECTORS]
+    jbe .store
+    mov eax, [RAMDISK_SECTORS]
+.store:
+    mov [RAMDISK_PRELOAD_SECTORS], eax
+
+.done:
+    popa
+    ret
+
+zero_ramdisk_tail:
+    push eax
+    push ecx
+    push edi
+
+    mov eax, [RAMDISK_SECTORS]
+    sub eax, [RAMDISK_PRELOAD_SECTORS]
+    jz .done
+    shl eax, 7              ; sector count * 512 / 4 dwords
+    mov ecx, eax
+    mov edi, RAMDISK_PHYS
+    mov eax, [RAMDISK_PRELOAD_SECTORS]
+    shl eax, 9
+    add edi, eax
+    xor eax, eax
+    cld
+    a32 rep stosd
+
+.done:
+    pop edi
+    pop ecx
+    pop eax
     ret
 
 ramdisk_progress:
@@ -496,16 +731,8 @@ copy_ramdisk_chunk:
     mov ecx, eax
     mov esi, RAMDISK_BOUNCE_PHYS
     mov edi, ebx
-
-.copy_loop:
-    test ecx, ecx
-    jz .done
-    mov eax, [fs:esi]
-    mov [gs:edi], eax
-    add esi, 4
-    add edi, 4
-    dec ecx
-    jmp .copy_loop
+    cld
+    fs a32 rep movsd
 
 .done:
     pop edi
@@ -542,6 +769,7 @@ enter_unreal:
     or eax, 0x1
     mov cr0, eax
     mov ax, DATA_SEG
+    mov es, ax
     mov fs, ax
     mov gs, ax
     mov eax, cr0
@@ -550,7 +778,6 @@ enter_unreal:
 
     mov ax, LOADER2_SEGMENT
     mov ds, ax
-    mov es, ax
 
     pop ax
     pop eax
@@ -1020,6 +1247,20 @@ dap_lba:
     dd 0
     dd 0
 
+dap_high:
+    db 0x18
+    db 0x00
+dap_high_count:
+    dw 0
+    dw 0xFFFF
+    dw 0xFFFF
+dap_high_lba:
+    dd 0
+    dd 0
+dap_high_addr:
+    dd 0
+    dd 0
+
 ; ---------------------------
 ; Temporary GDT
 gdt_start:
@@ -1070,7 +1311,12 @@ init_pm:
 [bits 16]
 BOOT_DRIVE           db 0
 DISK_USE_LBA         db 0
+DISK_EDD_VERSION     db 0
+DISK_IS_USB          db 0
+DISK_HIGH_READ_ENABLED db 0
 DISK_ERROR_CODE      db 0
+DISK_HIGH_READ_FLAGS dw 0
+DISK_HIGH_TEST_SECTORS dw 0
 CHS_SECTOR           db 0
 CHS_HEAD             db 0
 CHS_CYLINDER         dw 0
@@ -1081,6 +1327,7 @@ vbe_candidate_mode   dw 0
 RAMDISK_SIZE_BYTES   dd 0
 RAMDISK_LBA          dd 0
 RAMDISK_SECTORS      dd 0
+RAMDISK_PRELOAD_SECTORS dd 0
 RAMDISK_SECTORS_READ dd 0
 RAMDISK_NEXT_DOT     dd 0
 ext_ok_msg           db "LBA ok ", 0
@@ -1088,6 +1335,7 @@ no_ext_msg           db "NO LBA; CHS fallback ", 0
 forced_chs_msg       db "FORCE CHS ", 0
 loader_msg           db "Loading kernel... ", 0
 kernel_loaded_msg    db "done", 13, 10, "Preloading ext2 fallback... ", 0
+ramdisk_direct_msg   db "direct ", 0
 ramdisk_loaded_msg   db "done", 13, 10, 0
 disk_msg             db "Disk err!", 0
 drive_msg            db " drive=", 0
@@ -1113,6 +1361,7 @@ vbe_set_fail_msg     db "VBE set fail ax=", 0
 vbe_no_mode_msg      db "VBE no usable 32bpp LFB mode", 13, 10, 0
 crlf_msg             db 13, 10, 0
 align 4
+edd_params           times 74 db 0
 vbe_info             times 512 db 0
 vbe_mode_info        times 256 db 0
 

@@ -138,8 +138,10 @@ KERNEL_C_SRCS=\
 	$(KERNEL_DIR)/gdt.c \
 	$(KERNEL_DIR)/paging.c \
 	$(DRIVERS_DIR)/ata.c \
+	$(DRIVERS_DIR)/block.c \
 	$(DRIVERS_DIR)/pci.c \
 	$(DRIVERS_DIR)/usb.c \
+	$(DRIVERS_DIR)/usb_storage.c \
 	$(DRIVERS_DIR)/e1000.c \
 	$(DRIVERS_DIR)/net.c \
 	$(DRIVERS_DIR)/dhcp.c \
@@ -500,8 +502,14 @@ QEMU_NETFLAGS=$(if $(filter tap,$(QEMU_NET_MODE)),$(QEMU_NETFLAGS_TAP),$(QEMU_NE
 QEMUFLAGS=-drive format=raw,file=$(IMG_FILE) -boot c -m $(QEMU_MEMORY_MB) \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
+QEMU_USB_STORAGE_FLAGS=-drive if=none,id=stick,format=raw,file=$(IMG_FILE) \
+          -device pci-ohci,id=ohci \
+          -device usb-storage,bus=ohci.0,drive=stick,bootindex=1 \
+          -boot order=d -m $(QEMU_MEMORY_MB) \
+          -serial file:$(SERIAL_LOG) \
+          $(QEMU_NETFLAGS)
 
-.PHONY: all image img artifacts dirs deps check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap test framebuffer-smoke vga-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean FORCE
+.PHONY: all image img artifacts dirs deps check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage usb-storage-smoke test framebuffer-smoke vga-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean FORCE
 
 FORCE:
 
@@ -524,6 +532,25 @@ run-headless: image-layout-check
 
 run-headless-tap: image-layout-check
 	$(MAKE) run-headless QEMU_NET_MODE=tap
+
+run-usb-storage: image-layout-check
+	$(QEMU) $(QEMU_USB_STORAGE_FLAGS) -display $(QEMU_DISPLAY)
+
+run-headless-usb-storage: image-layout-check
+	$(QEMU) $(QEMU_USB_STORAGE_FLAGS) -display $(QEMU_HEADLESS_DISPLAY) \
+	    -monitor unix:/tmp/smallos-monitor.sock,server,nowait \
+	    -daemonize -pidfile /tmp/smallos.pid
+
+usb-storage-smoke:
+	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1
+	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
+	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
+	$(MAKE) run-headless-usb-storage SERIAL_CONSOLE=1
+	$(PYTHON3) tools/usb_storage_smoke.py \
+		--monitor $(MONITOR_SOCK) \
+		--serial $(SERIAL_LOG) \
+		--pidfile $(PIDFILE) \
+		--timeout $(SMOKE_TIMEOUT)
 
 test:
 	@mkdir -p $(BUILD_DIR)

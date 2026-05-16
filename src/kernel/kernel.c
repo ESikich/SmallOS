@@ -17,6 +17,7 @@
 #include "pci.h"
 #include "e1000.h"
 #include "usb.h"
+#include "usb_storage.h"
 #include "fb_console.h"
 #include "elf_loader.h"
 #include "vfs.h"
@@ -28,17 +29,89 @@
 extern unsigned char bss_end;
 
 #define BOOT_LOG_PATH "var/log/boot.log"
-#define BOOT_LOG_CAPACITY 8192u
+#define BOOT_LOG_CAPACITY 32768u
 static char s_boot_log[BOOT_LOG_CAPACITY];
 static unsigned int s_boot_log_len = 0;
 static int s_boot_log_enabled = 1;
 static int s_boot_log_fs_ready = 0;
+static int s_boot_log_terminal_hooked = 0;
+static int s_boot_log_read_only_notice = 0;
+static int s_boot_log_line_start = 1;
 
-static void boot_log_append_char(char ch) {
-    if (!s_boot_log_enabled) return;
+static unsigned long long boot_read_cycles(void) {
+    unsigned int lo;
+    unsigned int hi;
+    __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((unsigned long long)hi << 32) | lo;
+}
+
+static void boot_log_append_raw_char(char ch) {
     if (s_boot_log_len + 1u >= BOOT_LOG_CAPACITY) return;
     s_boot_log[s_boot_log_len++] = ch;
     s_boot_log[s_boot_log_len] = '\0';
+}
+
+static void boot_log_append_raw(const char* s) {
+    if (!s) return;
+    while (*s) {
+        boot_log_append_raw_char(*s++);
+    }
+}
+
+static void boot_log_append_raw_uint(unsigned int value) {
+    char buf[10];
+    unsigned int i = 0;
+
+    do {
+        buf[i++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    } while (value > 0u && i < sizeof(buf));
+    while (i > 0u) {
+        boot_log_append_raw_char(buf[--i]);
+    }
+}
+
+static void boot_log_append_raw_hex64(unsigned long long value) {
+    static const char hex[] = "0123456789ABCDEF";
+
+    boot_log_append_raw("0x");
+    for (int i = 15; i >= 0; i--) {
+        boot_log_append_raw_char(hex[(value >> (unsigned int)(i * 4)) & 0xFu]);
+    }
+}
+
+static unsigned int boot_log_elapsed_ms(void) {
+    unsigned int hz = timer_get_hz();
+    unsigned int ticks = timer_get_ticks();
+    unsigned int seconds;
+    unsigned int rem;
+
+    if (hz == 0u) return 0u;
+    seconds = ticks / hz;
+    rem = ticks % hz;
+    return seconds * 1000u + (rem * 1000u) / hz;
+}
+
+static void boot_log_append_prefix(void) {
+    boot_log_append_raw("[ms=");
+    boot_log_append_raw_uint(boot_log_elapsed_ms());
+    boot_log_append_raw(" tick=");
+    boot_log_append_raw_uint(timer_get_ticks());
+    boot_log_append_raw(" cyc=");
+    boot_log_append_raw_hex64(boot_read_cycles());
+    boot_log_append_raw("] ");
+}
+
+static void boot_log_append_char(char ch) {
+    if (!s_boot_log_enabled) return;
+    if (s_boot_log_line_start) {
+        boot_log_append_prefix();
+        s_boot_log_line_start = 0;
+    }
+    boot_log_append_raw_char(ch);
+    if (ch == '\n') {
+        s_boot_log_line_start = 1;
+    }
 }
 
 static void boot_log_append(const char* s) {
@@ -48,18 +121,43 @@ static void boot_log_append(const char* s) {
     }
 }
 
+static void boot_log_terminal_hook(char ch) {
+    boot_log_append_char(ch);
+}
+
+static void boot_log_capture_begin(void) {
+    terminal_set_output_hook(boot_log_terminal_hook);
+    s_boot_log_terminal_hooked = 1;
+}
+
+static void boot_log_capture_end(void) {
+    terminal_set_output_hook(0);
+    s_boot_log_terminal_hooked = 0;
+}
+
 static void boot_putc(char ch) {
     terminal_putc(ch);
-    boot_log_append_char(ch);
+    if (!s_boot_log_terminal_hooked) {
+        boot_log_append_char(ch);
+    }
 }
 
 static void boot_puts(const char* s) {
     terminal_puts(s);
-    boot_log_append(s);
+    if (!s_boot_log_terminal_hooked) {
+        boot_log_append(s);
+    }
 }
 
 static void boot_log_save(void) {
     if (!s_boot_log_fs_ready || s_boot_log_len == 0u) return;
+    if (ext2_is_read_only()) {
+        if (!s_boot_log_read_only_notice) {
+            s_boot_log_read_only_notice = 1;
+            terminal_puts("boot: INFO boot log not saved on read-only filesystem\n");
+        }
+        return;
+    }
     if (!vfs_write_path(BOOT_LOG_PATH, (const u8*)s_boot_log, s_boot_log_len)) {
         terminal_puts("boot: WARN var/log/boot.log write failed\n");
     }
@@ -271,22 +369,36 @@ static void boot_mount_ext2(int ata_ready) {
      * the loader-provided ext2 copy remains a second-chance mount fallback.
      */
     if (ata_ready) {
-        ext2_use_boot_ramdisk(0);
+        ext2_use_block_device(ata_block_device());
         if (ext2_init()) {
             boot_splash_pass("ext2: volume mounted");
             return;
         }
-        if (boot_info_ramdisk_valid()) {
-            boot_splash_warn("ext2: ATA mount failed, using boot ramdisk");
-            ext2_use_boot_ramdisk(1);
-            boot_splash_expect(ext2_init(),
-                               "ext2: volume mounted",
-                               "ext2 volume failed on ATA and boot ramdisk");
-            return;
+        boot_splash_warn("ext2: ATA mount failed");
+    }
+
+    if (usb_storage_init()) {
+        block_device_t* usb_dev = usb_storage_block_device();
+        if (usb_dev) {
+            ext2_use_block_device(usb_dev);
+            if (ext2_init()) {
+                if (usb_dev->read_only) {
+                    boot_puts("usb: storage read-only\n");
+                }
+                boot_splash_pass("ext2: volume mounted from USB");
+                return;
+            }
+            boot_splash_warn("ext2: USB mount failed");
         }
-    } else if (boot_info_ramdisk_valid()) {
+    }
+
+    if (boot_info_ramdisk_valid()) {
         ext2_use_boot_ramdisk(1);
-        boot_splash_warn("ata: unavailable, using boot ramdisk");
+        if (ata_ready) {
+            boot_splash_warn("storage: using boot ramdisk fallback");
+        } else {
+            boot_splash_warn("ata: unavailable, using boot ramdisk");
+        }
         boot_splash_pass("storage: boot ramdisk fallback");
         boot_splash_expect(ext2_init(),
                            "ext2: volume mounted",
@@ -380,14 +492,36 @@ static void boot_sequence_task_main(void) {
     boot_puts("SmallOS ready\n");
     boot_log_save();
 
+    /*
+     * Keep this ordering for real Wyse USB boot: the shell image is loaded
+     * from USB storage before boot HID is claimed, but it stays suspended so
+     * all boot/HID diagnostics are captured before the first prompt appears.
+     */
     char* user_shell_argv[] = { "shell", 0 };
-    process_t* user_shell_proc = elf_run_named("bin/shell", 1, user_shell_argv);
+    process_t* user_shell_proc = elf_run_named_suspended("bin/shell", 1, user_shell_argv);
+
+    if (usb_probe_hid()) {
+        boot_puts("usb: boot HID ready\n");
+    } else {
+        boot_puts("usb: WARN boot HID unavailable\n");
+    }
+    if (usb_start_service()) {
+        boot_puts("usb: HID service task queued\n");
+    } else {
+        boot_puts("usb: WARN HID service task unavailable\n");
+    }
+
     if (user_shell_proc) {
         boot_puts("Launching user shell\n");
+        boot_log_save();
+        boot_log_capture_end();
+        user_shell_proc->state = PROCESS_STATE_RUNNING;
         process_wait(user_shell_proc);
         boot_puts("User shell exited; starting kernel shell fallback\n");
     } else {
         boot_puts("User shell unavailable; starting kernel shell fallback\n");
+        boot_log_save();
+        boot_log_capture_end();
     }
 
     process_t* shell_proc = process_create_kernel_task("shell", shell_task_main);
@@ -414,6 +548,7 @@ static void boot_sequence_task_main(void) {
 
 void kernel_main(void) {
     terminal_init();
+    boot_log_capture_begin();
     boot_splash_begin();
     boot_splash_terminal_ready();
     boot_splash_boot_info();
@@ -484,8 +619,7 @@ void kernel_main(void) {
     } else if (boot_info_ramdisk_valid()) {
         boot_splash_warn("ata: unavailable, boot ramdisk available");
     } else {
-        boot_splash_fail("storage: boot device available",
-                         "ATA is unavailable and stage 2 did not provide a boot ramdisk");
+        boot_splash_warn("ata: unavailable, probing USB storage");
     }
 
     /*
@@ -514,10 +648,6 @@ void kernel_main(void) {
     boot_splash_expect(tcp_init(),
                        "tcp: service task queued",
                        "TCP service task could not be created");
-
-    boot_splash_expect(usb_start_service(),
-                       "usb: HID service task queued",
-                       "USB HID service task could not be created");
 
     boot_sync_clock();
 

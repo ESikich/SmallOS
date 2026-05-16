@@ -274,6 +274,8 @@ after that  mutable ext2 partition
 The boot sector stores MBR-style entries for the kernel region and the ext2
 partition. Stage 2 reads the kernel location from the image metadata; the
 kernel normally mounts ext2 through ATA/MBR discovery, but stage 2 also
-preloads the whole ext2 partition as a 16 MB fallback for USB BIOS boots and
-hardware whose ATA path cannot validate the filesystem. `make boot-layout-check`
-and `make image-layout-check` keep those contracts honest before QEMU runs.
+preloads the used ext2 prefix as a 16 MB zero-filled fallback for USB BIOS boots
+and hardware whose ATA path cannot validate the filesystem. USB EDD boots probe
+and byte-check direct high-memory reads before using them; otherwise the loader
+falls back to its low-memory bounce buffer. `make boot-layout-check` and
+`make image-layout-check` keep those contracts honest before QEMU runs.

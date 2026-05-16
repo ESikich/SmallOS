@@ -257,7 +257,8 @@ static void elf_inherit_launch_context(process_t* proc, process_t* parent) {
 static process_t* elf_run_image_with_group(const unsigned char* image,
                                            int argc,
                                            char** argv,
-                                           int new_process_group) {
+                                           int new_process_group,
+                                           int suspended) {
     const Elf32_Ehdr* eh = (const Elf32_Ehdr*)image;
     process_t* parent;
 
@@ -379,7 +380,7 @@ static process_t* elf_run_image_with_group(const unsigned char* image,
         return 0;
     }
 
-    proc->state = PROCESS_STATE_RUNNING;
+    proc->state = suspended ? PROCESS_STATE_WAITING : PROCESS_STATE_RUNNING;
 
     if (!sched_enqueue(proc)) {
         process_destroy(proc);
@@ -390,7 +391,7 @@ static process_t* elf_run_image_with_group(const unsigned char* image,
 }
 
 process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
-    return elf_run_image_with_group(image, argc, argv, 0);
+    return elf_run_image_with_group(image, argc, argv, 0, 0);
 }
 
 int elf_exec_image_into(process_t* proc,
@@ -484,7 +485,8 @@ int elf_exec_image_into(process_t* proc,
 static process_t* elf_run_named_with_group(const char* name,
                                            int argc,
                                            char** argv,
-                                           int new_process_group) {
+                                           int new_process_group,
+                                           int suspended) {
     u32 size = 0;
     const u8* data = 0;
     char alt_name[40];
@@ -522,15 +524,19 @@ static process_t* elf_run_named_with_group(const char* name,
         return 0;
     }
 
-    return elf_run_image_with_group(data, argc, argv, new_process_group);
+    return elf_run_image_with_group(data, argc, argv, new_process_group, suspended);
 }
 
 process_t* elf_run_named(const char* name, int argc, char** argv) {
-    return elf_run_named_with_group(name, argc, argv, 0);
+    return elf_run_named_with_group(name, argc, argv, 0, 0);
 }
 
 process_t* elf_run_named_new_group(const char* name, int argc, char** argv) {
-    return elf_run_named_with_group(name, argc, argv, 1);
+    return elf_run_named_with_group(name, argc, argv, 1, 0);
+}
+
+process_t* elf_run_named_suspended(const char* name, int argc, char** argv) {
+    return elf_run_named_with_group(name, argc, argv, 0, 1);
 }
 
 int elf_exec_named_into(process_t* proc,

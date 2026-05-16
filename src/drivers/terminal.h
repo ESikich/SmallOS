@@ -14,8 +14,11 @@ typedef struct {
     void (*write_at)(int row, int col, char c);
 } terminal_backend_t;
 
+typedef void (*terminal_output_hook_t)(char c);
+
 void terminal_init(void);
 void terminal_set_backend(const terminal_backend_t* backend);
+void terminal_set_output_hook(terminal_output_hook_t hook);
 void terminal_clear(void);
 void terminal_putc(char c);
 void terminal_write(const char* s, unsigned int len);
