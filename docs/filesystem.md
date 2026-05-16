@@ -139,9 +139,16 @@ When ATA is unavailable, or when ATA resets successfully but ext2 cannot be
 mounted from sector 0, the kernel tries USB mass storage through the generic
 block-device interface. The USB path exposes the first supported OHCI
 Bulk-Only Transport device as `usb0` and mounts it read-only. If USB storage
-also fails, the kernel retries with the loader2-published boot RAM fallback. The
-RAM-backed path is for BIOS USB boots and marginal storage hardware; it accepts
-in-memory writes, but those writes are not persisted back to the disk image.
+also fails, the kernel retries with the loader2-published boot RAM fallback when
+one exists. The RAM-backed path is for marginal storage hardware and non-USB
+BIOS disks; it accepts in-memory writes, but those writes are not persisted back
+to the disk image. The default `BOOT_RAMDISK_FALLBACK=auto` build policy skips
+the loader2 fallback preload for BIOS USB boot drives so the live USB block
+device is the normal root.
+
+The explicit USB build/run targets force `BOOT_RAMDISK_FALLBACK=always` so real
+USB images still boot when protected-mode USB storage cannot validate ext2 on a
+specific controller.
 
 If the partition entry is missing or malformed, `ext2_init()` prints:
 

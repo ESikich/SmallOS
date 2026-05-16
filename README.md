@@ -33,8 +33,8 @@ guest.
   `/etc`, `/boot`, `/var`, and `/tmp`, with boot diagnostics persisted at
   `/var/log/boot.log` when the mounted filesystem is writable.
 - Framebuffer terminal with VGA text fallback, visible boot timing prefixes,
-  graphical boot splash, PS/2 keyboard, USB boot keyboard/mouse probing, PS/2
-  plus VMware mouse input, and several graphics demos.
+  graphical boot splash, PS/2 keyboard, retrying OHCI USB boot keyboard/mouse
+  probing, PS/2 plus VMware mouse input, and several graphics demos.
 - PCI and e1000 networking with DHCP, ARP, IPv4, UDP/NTP clock sync, a compact
   TCP service task, passive sockets, `poll`/`epoll` readiness, FTP, echo, and
   HTTP server smoke paths.
@@ -120,9 +120,12 @@ make run-sdl   # graphical SDL display
 `make run` uses QEMU user-network NAT with an e1000 NIC, and the guest acquires
 its IPv4 configuration with DHCP. `make run-usb-storage` boots the same raw
 image through QEMU OHCI USB mass storage, which exercises the protected-mode
-USB storage path instead of the IDE disk path. If terminal input feels sluggish
-through curses, use `make run-gtk` or `make run QEMU_DISPLAY=gtk`. Mouse-driven
-graphics demos need a graphical QEMU backend and a grabbed QEMU window.
+USB storage path instead of the IDE disk path. The USB image/run targets keep
+the loader2 RAM fallback enabled for hardware safety while the kernel still
+prefers the live `usb0` mount when it validates. If terminal input feels
+sluggish through curses, use `make run-gtk` or `make run QEMU_DISPLAY=gtk`.
+Mouse-driven graphics demos need a graphical QEMU backend and a grabbed QEMU
+window.
 
 Headless run with serial logging:
 
@@ -280,13 +283,16 @@ after that  mutable ext2 partition
 The boot sector stores MBR-style entries for the kernel region and the ext2
 partition. Stage 2 reads the kernel location from the image metadata; the
 kernel mounts ext2 through the first storage path that validates: writable ATA,
-read-only USB mass storage, then the loader2-published RAM fallback. Stage 2
-still preloads the used ext2 prefix as a 16 MB zero-filled fallback for BIOS USB
-boots and hardware whose protected-mode storage path cannot validate the
-filesystem. USB EDD boots probe and byte-check direct high-memory reads before
-using them; otherwise the loader falls back to its low-memory bounce buffer.
-Boot diagnostics are prefixed with `[ms=... tick=... cyc=...]`; during early
-storage probing the kernel allows timer IRQ0 only, so the timestamps advance
-without letting keyboard/process IRQ paths run before the scheduler is live.
-`make boot-layout-check`, `make image-layout-check`, and
-`make usb-storage-smoke` keep those contracts honest before hardware runs.
+read-only USB mass storage, then the loader2-published RAM fallback. The default
+`BOOT_RAMDISK_FALLBACK=auto` policy skips the fallback preload for BIOS USB
+drives, but the explicit USB image/run targets force it on so hardware boots
+remain recoverable when protected-mode USB storage is not happy yet. USB EDD
+boots probe and byte-check direct high-memory reads before using them; otherwise
+the loader falls back to its low-memory bounce buffer. Boot diagnostics are
+prefixed with `[ms=... tick=... cyc=...]`; during early storage probing the
+kernel allows timer IRQ0 only, so the timestamps advance without letting
+keyboard/process IRQ paths run before the scheduler is live. After the scheduler
+starts, the USB service keeps retrying OHCI boot-keyboard discovery once per
+second until a keyboard is claimed. `make boot-layout-check`,
+`make image-layout-check`, and `make usb-storage-smoke` keep those contracts
+honest before hardware runs.

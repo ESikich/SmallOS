@@ -23,6 +23,7 @@ FORCE_VGA_BACKEND    equ __FORCE_VGA_BACKEND__
 FORCE_CHS_BOOT       equ __FORCE_CHS_BOOT__
 VBE_DIAG             equ __VBE_DIAG__
 VBE_RELAXED          equ __VBE_RELAXED__
+RAMDISK_FALLBACK_POLICY equ __RAMDISK_FALLBACK_POLICY__
 BOOT_SECTOR_ADDR     equ 0x7C00
 BOOT_INFO_SEG        equ 0x9000
 BOOT_FONT_SEG        equ 0x9100
@@ -116,7 +117,14 @@ start:
     call print_string
 
     call enable_a20
+%if RAMDISK_FALLBACK_POLICY == 1
     call load_ramdisk
+%elif RAMDISK_FALLBACK_POLICY == 2
+    cmp byte [DISK_IS_USB], 0
+    jne .skip_ramdisk_preload
+    call load_ramdisk
+.skip_ramdisk_preload:
+%endif
 %if FORCE_VGA_BACKEND
     call vga_setup
 %else
@@ -268,7 +276,7 @@ read_edd_parameters:
     jc .done
     cmp word [edd_params], 0x0042
     jb .done
-    cmp dword [edd_params + 43], 0x20425355 ; "USB "
+    cmp dword [edd_params + 40], 0x20425355 ; "USB "
     jne .done
     mov byte [DISK_IS_USB], 1
 .done:
@@ -436,6 +444,8 @@ load_kernel:
 
 load_ramdisk:
     pusha
+    mov si, ramdisk_preload_msg
+    call print_string
     mov eax, [RAMDISK_LBA]
     mov edx, [RAMDISK_SECTORS]
     test dx, dx
@@ -1334,7 +1344,8 @@ ext_ok_msg           db "LBA ok ", 0
 no_ext_msg           db "NO LBA; CHS fallback ", 0
 forced_chs_msg       db "FORCE CHS ", 0
 loader_msg           db "Loading kernel... ", 0
-kernel_loaded_msg    db "done", 13, 10, "Preloading ext2 fallback... ", 0
+kernel_loaded_msg    db "done", 13, 10, 0
+ramdisk_preload_msg  db "Preloading ext2 fallback... ", 0
 ramdisk_direct_msg   db "direct ", 0
 ramdisk_loaded_msg   db "done", 13, 10, 0
 disk_msg             db "Disk err!", 0

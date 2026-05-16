@@ -129,8 +129,8 @@ Inside `kernel_main()`:
 13. `dhcp_configure()` — briefly enables interrupts and requests IPv4 configuration from the attached network. The runtime network config is shared by ARP, TCP, NTP, and shell diagnostics.
 14. `tcp_init()` — create and enqueue the TCP/network service kernel task
 15. `ntp_sync()` — briefly enables interrupts so PIT-backed timeout logic works, queries the default NTP server through UDP over the e1000 path and DHCP gateway, sets `CLOCK_REALTIME`, and prints the synchronized UTC time. Failure is a boot warning, not a halt.
-16. `boot_mount_ext2()` — prefer writable ATA, then read-only USB mass storage, then the loader2 RAM fallback. The storage probe briefly enables only timer IRQ0 so boot timestamps and USB waits advance without delivering keyboard/process IRQs before scheduling starts. After mount succeeds, the accumulated boot log is saved to `/var/log/boot.log` when the filesystem is writable.
-17. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, prints `SmallOS ready`, refreshes `/var/log/boot.log`, and launches `/bin/shell.elf` as the default user shell. If that fails or exits, it queues the kernel shell fallback.
+16. `boot_mount_ext2()` — prefer writable ATA, then read-only USB mass storage, then the loader2 RAM fallback when one was published. The storage probe briefly enables only timer IRQ0 so boot timestamps and USB waits advance without delivering keyboard/process IRQs before scheduling starts. After mount succeeds, the accumulated boot log is saved to `/var/log/boot.log` when the filesystem is writable.
+17. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, prints `SmallOS ready`, refreshes `/var/log/boot.log`, loads `/bin/shell.elf` suspended, probes OHCI boot HID, starts the retrying USB HID service, and then releases `/bin/shell.elf` as the default user shell. If that fails or exits, it queues the kernel shell fallback.
 18. `sched_enqueue(boot_proc)` — make the boot sequence task runnable
 19. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
 20. `sti` — enable interrupts
@@ -486,7 +486,7 @@ The active consumer is managed by `keyboard_set_consumer()`:
 - Ctrl+C is handled by `process_key_consumer` as a terminal interrupt for the foreground process group. Matching signalfds receive `SIGINT`; otherwise the group gets exit status `130`, pending console/socket waits are cleared, and any actively running member is switched away from the IRQ1 frame.
 - `process_set_foreground(0)` calls `shell_register_consumer()` to restore the shell consumer on exit
 
-The keyboard driver makes no routing decisions. It decodes scancodes and calls whoever is registered.
+The keyboard driver makes no routing decisions. It decodes scancodes and calls whoever is registered. USB boot keyboards feed this same path by translating HID boot reports into set-1 scancodes and injecting them through `keyboard_inject_scancode()`.
 
 The boot sequence launches `/bin/shell.elf` as the normal interactive shell.
 The kernel shell path above remains available as a fallback/debug monitor if
@@ -498,6 +498,12 @@ drains VMware absolute-pointer events when the VMware backdoor is present.
 Both paths store accumulated `dx`/`dy` plus button bits. User programs can call
 `SYS_MOUSE_READ` to copy and clear the accumulated movement, or use
 `SYS_INPUT_READ` when they want queued keyboard and mouse events together.
+
+OHCI USB boot HID is claimed after storage mount so real USB boots can load the
+shell from the same device path first. The first HID probe runs before the shell
+is released; if no boot keyboard is ready yet, the `usb` kernel task retries
+once per second and skips any port already owned by USB storage or an active HID
+endpoint.
 
 ---
 
@@ -603,7 +609,7 @@ blocks 4-11         inode table
 block 12+           file and directory data blocks
 ```
 
-The ext2 start LBA is computed during final image assembly by `mkimage` as `kernel_lba + kernel_sectors` and written into partition entry 1 of the MBR partition table. `loader2.asm` reads partition entry 0 to load the kernel and preloads the used portion of partition entry 1 as a fallback ext2 image. At runtime, the storage policy normally reads sector 0 through ATA, extracts the ext2 partition metadata, and uses it to locate the live writable volume. If ATA cannot validate the volume, the kernel probes USB mass storage (`usb0`, read-only). If that also fails, it retries against the preloaded RAM fallback.
+The ext2 start LBA is computed during final image assembly by `mkimage` as `kernel_lba + kernel_sectors` and written into partition entry 1 of the MBR partition table. `loader2.asm` reads partition entry 0 to load the kernel. With the default `BOOT_RAMDISK_FALLBACK=auto` policy, it preloads the used portion of partition entry 1 as a fallback ext2 image for non-USB BIOS disks and skips that copy when EDD identifies the boot drive as USB. Explicit USB image/run targets force `BOOT_RAMDISK_FALLBACK=always` so USB-specific builds remain bootable even when protected-mode USB storage cannot validate ext2 on a given controller. At runtime, the storage policy normally reads sector 0 through ATA, extracts the ext2 partition metadata, and uses it to locate the live writable volume. If ATA cannot validate the volume, the kernel probes USB mass storage (`usb0`, read-only). If that also fails, it retries against the preloaded RAM fallback when one exists.
 
 Verified by `make image-layout-check`: partition entry 1 has type `0x83` and
 points at the appended ext2 image; the runtime then validates magic `0xEF53` in
@@ -626,6 +632,10 @@ implements USB Bulk-Only Transport with enough SCSI for boot-time reads:
 INQUIRY, TEST UNIT READY, REQUEST SENSE, READ CAPACITY(10), and READ(10). The
 device is mounted read-only today, so boot logs and guest file writes are not
 persisted when ext2 is mounted from USB storage.
+
+`src/drivers/usb.c` also owns OHCI boot HID enumeration. Keyboard discovery is
+retryable after the first failed pass; failed attempts restore the controller's
+next address slot so late or slow devices do not exhaust address space.
 
 ```text
 ata_init()
@@ -807,7 +817,7 @@ TCP service task — drains NIC RX, dispatches ARP/IPv4/TCP frames, advertises r
 page-aware copy-from-user validation — syscall pointer arguments are checked against user address space [USER_CODE_BASE, USER_STACK_TOP), mapped user pages, page-crossing buffers/structs, and wrapped variable-length byte counts before dereference
 preemptive round-robin scheduler — timer IRQ context switch, `SCHED_QUANTUM_MS` quantum
 ATA disk driver — 28-bit LBA reads/writes from primary IDE channel (0x1F0), with bus-master DMA and PIO fallback
-USB storage driver — OHCI Bulk-Only Transport/SCSI read-only block device used as `usb0`
+USB storage/HID driver — OHCI Bulk-Only Transport/SCSI read-only block device used as `usb0`, plus retrying boot keyboard/mouse polling
 ext2 filesystem — ELF programs loaded from ATA, USB storage, or the boot RAM fallback
 run/runimg infrastructure removed — `runelf` is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
 interactive shell with meminfo / memmap / ataread / ls / tree / fsread / mkdir / rmdir / runelf commands

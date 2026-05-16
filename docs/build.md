@@ -324,7 +324,10 @@ It holds 32 clients by default. Override `CSERVE_SMOKE_CLIENTS` or
 mass storage (`-device pci-ohci` plus `-device usb-storage`). It verifies that
 ATA mount failure is tolerated, `usbms` reaches ready state, ext2 mounts from
 `dev=usb0`, and the user shell prompt appears. That path is read-only today,
-so boot log persistence is skipped with an informational boot message.
+so boot log persistence is skipped with an informational boot message. The smoke
+fixture intentionally has no USB keyboard; `usb: WARN boot HID unavailable`
+followed by `usb: HID service task queued` means the retrying HID service is
+alive for real hardware.
 
 For networking, the default `run` and `test` targets keep using QEMU's
 user-network NAT so CI stays simple. The guest still uses DHCP in that mode,
@@ -969,9 +972,22 @@ make usb-storage-smoke
 ```
 
 The kernel uses the generic block layer to try writable ATA first, then
-read-only USB mass storage, then the loader2 RAM fallback. The USB storage
-driver implements enough BOT/SCSI to enumerate the device, read capacity, and
-issue READ(10) requests for ext2 blocks.
+read-only USB mass storage, then the loader2 RAM fallback when one was
+published. With the default `BOOT_RAMDISK_FALLBACK=auto`, loader2 skips the
+fallback preload for BIOS USB boot drives so USB boots mount the live `usb0`
+device instead of paying the real-mode copy cost when firmware reports USB
+through EDD. The explicit `usb-image`, `run-usb-storage`, and
+`run-headless-usb-storage` targets force `BOOT_RAMDISK_FALLBACK=always`, which is
+the reliable setting for USB-specific images while the protected-mode USB
+storage path is still hardware-dependent. Use `BOOT_RAMDISK_FALLBACK=never` only
+when intentionally testing a no-fallback USB boot. The USB storage driver
+implements enough BOT/SCSI to enumerate the device, read capacity, and issue
+READ(10) requests for ext2 blocks.
+
+USB boot keyboard discovery is handled by the same OHCI driver after storage is
+mounted and the shell ELF has been loaded. A failed first probe does not freeze
+input discovery: the `usb` kernel task retries once per second until a boot
+keyboard is found, while skipping the active USB-storage port.
 
 ---
 

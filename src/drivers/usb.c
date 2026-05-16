@@ -107,6 +107,7 @@
 #define EHCI_OP_PORT_BASE     0x44u
 
 #define USB_MAX_CONTROLLERS   8u
+#define USB_HID_RETRY_MS      1000u
 
 typedef struct {
     volatile u32 control;
@@ -199,6 +200,8 @@ static int s_usb_keyboard_active = 0;
 static int s_usb_service_active = 0;
 static int s_usb_service_started = 0;
 static int s_usb_service_probe_done = 0;
+static unsigned int s_usb_service_next_probe_tick = 0;
+static int s_usb_hid_no_device_logged = 0;
 static int s_usb_mouse_active_log = 1;
 static unsigned int s_usb_mouse_last_buttons = 0;
 static int s_usb_storage_active = 0;
@@ -1999,7 +2002,7 @@ static void usb_rebuild_periodic_schedule(void) {
     if (s_usb_keyboard_active) {
         first = &s_keyboard_intr_ed;
     }
-    if (s_usb_mouse_active) {
+    if (s_usb_mouse_active && s_usb_mouse_active_dev.regs == regs) {
         if (!first) {
             first = &s_intr_ed;
         } else {
@@ -2427,7 +2430,7 @@ static void usb_hid_service_enable_periodic(volatile u32* regs) {
 static int usb_hid_service_open(void) {
     int old_log = s_usb_mouse_log;
 
-    if (s_usb_service_active) {
+    if (s_usb_keyboard_active) {
         return 1;
     }
 
@@ -2437,6 +2440,7 @@ static int usb_hid_service_open(void) {
         usb_controller_t* ctrl = &s_usb_controllers[i];
         volatile u32* regs;
         u32 ports;
+        int activated_on_controller = 0;
 
         if (!ctrl->present || ctrl->pci.prog_if != USB_PROG_OHCI || !ctrl->regs) {
             continue;
@@ -2459,6 +2463,7 @@ static int usb_hid_service_open(void) {
         for (u32 port = 0; port < ports; port++) {
             usb_mouse_dev_t dev;
             u32 st = regs[(OHCI_HC_RH_PORT_BASE + port * 4u) / 4u];
+            unsigned int saved_next_address;
             unsigned int address;
 
             if (s_usb_storage_active &&
@@ -2466,15 +2471,27 @@ static int usb_hid_service_open(void) {
                 s_usb_storage_port_index == port) {
                 continue;
             }
+            if (s_usb_keyboard_active &&
+                s_usb_keyboard_active_dev.regs == regs &&
+                s_usb_keyboard_active_dev.port_index == port) {
+                continue;
+            }
+            if (s_usb_mouse_active &&
+                s_usb_mouse_active_dev.regs == regs &&
+                s_usb_mouse_active_dev.port_index == port) {
+                continue;
+            }
             if (!(st & OHCI_PORT_CCS)) {
                 continue;
             }
 
+            saved_next_address = s_usb_next_address[i];
             address = usb_alloc_address(i);
             if (address == 0u) {
                 break;
             }
             if (!usb_try_hid_on_port(regs, port, &dev, 0u, address)) {
+                s_usb_next_address[i] = saved_next_address;
                 continue;
             }
 
@@ -2482,6 +2499,7 @@ static int usb_hid_service_open(void) {
             if (dev.protocol == USB_HID_PROTOCOL_KEYBOARD && !s_usb_keyboard_active) {
                 s_usb_keyboard_active_dev = dev;
                 s_usb_keyboard_active = 1;
+                activated_on_controller = 1;
                 k_memset(s_keyboard_last_report, 0, sizeof(s_keyboard_last_report));
                 usb_init_interrupt_ed(&s_usb_keyboard_active_dev,
                                       &s_keyboard_intr_ed,
@@ -2493,6 +2511,7 @@ static int usb_hid_service_open(void) {
             } else if (dev.protocol == USB_HID_PROTOCOL_MOUSE && !s_usb_mouse_active) {
                 s_usb_mouse_active_dev = dev;
                 s_usb_mouse_active = 1;
+                activated_on_controller = 1;
                 s_usb_mouse_active_log = 0;
                 s_usb_mouse_last_buttons = 0;
                 usb_init_interrupt_ed(&s_usb_mouse_active_dev, &s_intr_ed, s_intr_td);
@@ -2503,9 +2522,10 @@ static int usb_hid_service_open(void) {
             }
         }
 
-        if (s_usb_keyboard_active || s_usb_mouse_active) {
+        if (activated_on_controller) {
             usb_hid_service_enable_periodic(regs);
             s_usb_service_active = 1;
+            s_usb_hid_no_device_logged = 0;
             usb_rebuild_periodic_schedule();
             s_usb_mouse_log = old_log;
             return 1;
@@ -2513,13 +2533,40 @@ static int usb_hid_service_open(void) {
     }
 
     s_usb_mouse_log = old_log;
-    terminal_puts("usb: no boot HID device found\n");
+    if (s_usb_service_active) {
+        return 1;
+    }
+    if (!s_usb_hid_no_device_logged) {
+        terminal_puts("usb: no boot HID device found\n");
+        s_usb_hid_no_device_logged = 1;
+    }
     return 0;
+}
+
+static int usb_hid_probe_due(void) {
+    unsigned int now;
+
+    if (s_usb_keyboard_active) {
+        return 0;
+    }
+    if (!s_usb_service_probe_done) {
+        return 1;
+    }
+
+    now = timer_get_ticks();
+    if (s_usb_service_next_probe_tick != 0u &&
+        (int)(now - s_usb_service_next_probe_tick) < 0) {
+        return 0;
+    }
+
+    s_usb_service_next_probe_tick =
+        now + timer_ms_to_ticks_round_up(USB_HID_RETRY_MS);
+    return 1;
 }
 
 static void usb_service_main(void) {
     for (;;) {
-        if (!s_usb_service_active && !s_usb_service_probe_done) {
+        if (!s_usb_keyboard_active && usb_hid_probe_due()) {
             (void)usb_probe_hid();
         }
         if (s_usb_service_active) {
@@ -2532,12 +2579,17 @@ static void usb_service_main(void) {
 
 int usb_probe_hid(void) {
     int ok;
+    unsigned int now;
 
-    if (s_usb_service_probe_done) {
-        return s_usb_service_active;
+    if (s_usb_keyboard_active) {
+        return 1;
     }
+
     ok = usb_hid_service_open();
     s_usb_service_probe_done = 1;
+    now = timer_get_ticks();
+    s_usb_service_next_probe_tick =
+        now + timer_ms_to_ticks_round_up(USB_HID_RETRY_MS);
     return ok;
 }
 

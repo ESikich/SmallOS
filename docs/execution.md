@@ -58,7 +58,7 @@ Important current-state facts:
 - the default **shell** is `/bin/shell.elf`, a scheduler-owned ring-3 user
   process launched by `bootseq`; the older kernel shell is kept as a fallback
   and debug monitor if the user shell exits or cannot be loaded
-- **keyboard IRQ1** decodes scancodes and calls a registered `keyboard_consumer_fn` — it makes no routing decisions itself
+- **keyboard IRQ1** decodes scancodes and calls a registered `keyboard_consumer_fn` — it makes no routing decisions itself; USB boot keyboards inject translated set-1 scancodes into the same path
 - the **kernel fallback shell consumer** (`shell_key_consumer` in `shell.c`) enqueues `shell_event_t` entries; the shell task drains them in `shell_poll()` outside IRQ context
 - the **process consumer** (`process_key_consumer` in `process.c`) pushes ASCII into `kb_buf`; terminal signals such as Ctrl+C target the foreground process group
 - consumer ownership transfers via `process_set_foreground()` - process consumer while the user shell or another user process owns the foreground reader/group, kernel shell consumer restored only for the fallback shell
@@ -465,6 +465,7 @@ kernel_main()
   process_start_reaper()    ← creates and enqueues reaper task
   sti
   sched_start(boot_proc)
+  bootseq loads user shell, probes OHCI boot HID, starts retrying usb service
 ```
 
 ## What the scheduler owns

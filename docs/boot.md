@@ -170,10 +170,12 @@ number and CHS geometry, then attempts classic INT 0x13 sector reads.
 
 On BIOS USB boot, the firmware can read sectors while the bootloader is still in
 real mode, but the protected-mode kernel cannot assume that the USB stick exists
-as primary ATA hardware. Stage 2 therefore preloads the used ext2 prefix into
-RAM before entering protected mode and publishes the 16 MB zero-filled fallback
-through boot info. It prefers INT 0x13 LBA reads and falls back to CHS reads
-when the BIOS reports no LBA extensions.
+as primary ATA hardware. By default, stage 2 now treats this as a live USB block
+boot: if EDD identifies the boot drive as USB, it skips the ext2 RAM fallback and
+lets the protected-mode USB mass-storage driver mount the stick through `usb0`.
+For non-USB BIOS disks, stage 2 still preloads the used ext2 prefix into RAM and
+publishes the 16 MB zero-filled fallback through boot info. It prefers INT 0x13
+LBA reads and falls back to CHS reads when the BIOS reports no LBA extensions.
 
 The protected-mode kernel now has three storage choices:
 
@@ -187,9 +189,24 @@ mount the same on-stick ext2 volume through `usb0`; writes are disabled on that
 path until USB storage write support exists. The RAM fallback remains useful
 when protected-mode storage cannot validate the disk.
 
+`BOOT_RAMDISK_FALLBACK=auto` is the default. `always` / `1` forces the old
+preload path, and `never` / `0` disables publication of the loader2 RAM fallback
+for all boot devices. The explicit USB image/run targets set `always` so direct
+USB builds remain bootable on hardware whose protected-mode USB storage path
+cannot yet validate ext2.
+
 During early storage probing, the kernel temporarily unmasks only timer IRQ0.
 That keeps `[ms=... tick=... cyc=...]` boot timestamps advancing while avoiding
 keyboard/process IRQ delivery before the scheduler owns a current task.
+
+After the filesystem is mounted and the user shell image has been loaded, the
+boot sequence probes OHCI boot HID devices. The shell process stays suspended
+until this first HID pass finishes, so the serial log captures either
+`usb: boot keyboard port=N` or `usb: WARN boot HID unavailable` before the first
+prompt. A failed first pass is not final: the `usb` service task retries boot
+keyboard discovery once per second, skips the already-mounted USB-storage port,
+and preserves USB addresses for failed attempts so a late keyboard can still be
+claimed after the shell is visible.
 
 ---
 
@@ -387,7 +404,7 @@ The ext2 partition start LBA cannot be a compile-time constant in `ext2.c` witho
 1. The Makefile discovers source-owned layout constants from `boot.asm` and `loader2.asm`
 2. `mkimage` computes `kernel_lba = 1 + loader2_sectors` and then `ext2_lba = kernel_lba + kernel_sectors` during final image assembly
 3. `mkimage` writes the kernel and ext2 spans into the MBR partition table entries declared by `MBR_PARTITION_TABLE_OFFSET` and `MBR_PARTITION_ENTRY_SIZE` in `boot.asm`
-4. At runtime, `ext2_init()` normally reads ATA sector 0 and extracts the partition metadata; if that mount fails and loader2 published the preloaded ext2 fallback, the kernel retries against the RAM-backed volume
+4. At runtime, `ext2_init()` normally reads ATA sector 0 and extracts the partition metadata; if that mount fails, the kernel tries USB storage; if that also fails and loader2 published the preloaded ext2 fallback, the kernel retries against the RAM-backed volume
 
 The partition table lives in the declared boot-sector padding area before the `0x55AA` signature and is safe to overwrite.
 
@@ -514,7 +531,10 @@ make usb-storage-smoke
 ```
 
 The smoke target expects the serial transcript to show `usbms: ready`,
-`dev=usb0`, and `boot: PASS ext2: volume mounted from USB`.
+`dev=usb0`, and `boot: PASS ext2: volume mounted from USB`. The QEMU fixture
+does not attach a boot keyboard, so `usb: WARN boot HID unavailable` is
+acceptable as long as `usb: HID service task queued` follows it; on hardware the
+same service continues retrying until it logs `usb: boot keyboard port=N`.
 
 ---
 
@@ -539,9 +559,17 @@ Cons: the image builder and consumers need to agree on partition-table offsets a
 
 Programs are loaded from the mounted ext2 partition at runtime. The kernel
 tries ATA first because it is writable, then USB mass storage as a read-only
-block device, then the loader2-published RAM fallback. Loader2 still preloads
-the ext2 used prefix into RAM so BIOS USB boots have a last-resort filesystem
-even when protected-mode storage cannot see the boot device.
+block device, then the loader2-published RAM fallback. With the default
+`BOOT_RAMDISK_FALLBACK=auto` policy, loader2 skips that preload for BIOS USB
+boot drives and keeps it for non-USB BIOS disks. USB image targets override this
+to `always` because real USB firmware and controllers are less predictable than
+QEMU.
+
+USB HID is deliberately claimed after storage. That keeps shell ELF loading on
+the storage path that just mounted, then starts a retrying OHCI boot-HID service
+before the shell process is released. Keyboard input enters the normal keyboard
+consumer path as injected set-1 scancodes; no separate shell routing exists for
+USB keyboards.
 
 ---
 
@@ -569,6 +597,8 @@ Kernel   →  zero BSS
          →  create bootseq task and zombie reaper, sti, sched_start
 Bootseq  →  run /bin/bootsplash.elf boot/splash.bmp
          →  print SmallOS ready and refresh /var/log/boot.log
+         →  load /bin/shell.elf suspended
+         →  probe OHCI boot HID and queue retrying usb service
          →  launch /bin/shell.elf
          →  create kernel shell fallback if the user shell exits or fails
 ```

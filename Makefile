@@ -19,6 +19,7 @@ SERIAL_CONSOLE ?= 1
 BOOT_FORCE_CHS ?= 0
 BOOT_VBE_DIAG ?= 1
 BOOT_VBE_RELAXED ?= 1
+BOOT_RAMDISK_FALLBACK ?= auto
 ifneq ($(filter $(DISPLAY_BACKEND),auto vga),$(DISPLAY_BACKEND))
 $(error DISPLAY_BACKEND must be one of: auto vga)
 endif
@@ -34,6 +35,10 @@ endif
 ifneq ($(filter $(BOOT_VBE_RELAXED),0 1),$(BOOT_VBE_RELAXED))
 $(error BOOT_VBE_RELAXED must be one of: 0 1)
 endif
+ifneq ($(filter $(BOOT_RAMDISK_FALLBACK),auto always never 0 1),$(BOOT_RAMDISK_FALLBACK))
+$(error BOOT_RAMDISK_FALLBACK must be one of: auto always never 0 1)
+endif
+LOADER2_RAMDISK_FALLBACK_POLICY=$(if $(filter always 1,$(BOOT_RAMDISK_FALLBACK)),1,$(if $(filter never 0,$(BOOT_RAMDISK_FALLBACK)),0,2))
 SERIAL_SUFFIX=$(if $(filter 1,$(SERIAL_CONSOLE)),-serial,)
 OBJ_DIR=$(BUILD_DIR)/obj/$(DISPLAY_BACKEND)$(SERIAL_SUFFIX)
 BIN_ROOT=$(BUILD_DIR)/bin
@@ -366,6 +371,7 @@ $(GEN_DIR)/loader2.gen.asm: $(BOOT_DIR)/loader2.asm FORCE | dirs
 		-e "s/__FORCE_CHS_BOOT__/$(BOOT_FORCE_CHS)/" \
 		-e "s/__VBE_DIAG__/$(BOOT_VBE_DIAG)/" \
 		-e "s/__VBE_RELAXED__/$(BOOT_VBE_RELAXED)/" \
+		-e "s/__RAMDISK_FALLBACK_POLICY__/$(LOADER2_RAMDISK_FALLBACK_POLICY)/" \
 		$< > $@
 
 $(BIN_DIR)/loader2.bin: $(GEN_DIR)/loader2.gen.asm | dirs
@@ -430,6 +436,8 @@ image-layout-check: $(IMG_FILE)
 qemu-image: image
 
 img: image
+
+usb-image usb-vbe-image run-usb-storage run-headless-usb-storage: BOOT_RAMDISK_FALLBACK=always
 
 usb-image: image
 	@printf 'USB/raw image: %s\n' "$(IMG_FILE)"
@@ -542,10 +550,10 @@ run-headless-usb-storage: image-layout-check
 	    -daemonize -pidfile /tmp/smallos.pid
 
 usb-storage-smoke:
-	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1
+	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1 BOOT_RAMDISK_FALLBACK=always
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
-	$(MAKE) run-headless-usb-storage SERIAL_CONSOLE=1
+	$(MAKE) run-headless-usb-storage SERIAL_CONSOLE=1 BOOT_RAMDISK_FALLBACK=always
 	$(PYTHON3) tools/usb_storage_smoke.py \
 		--monitor $(MONITOR_SOCK) \
 		--serial $(SERIAL_LOG) \

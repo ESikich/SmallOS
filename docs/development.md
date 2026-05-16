@@ -137,7 +137,10 @@ Use it for basic string and memory primitives that would normally come from libc
 
 ### 6. The keyboard driver must not know about processes, the scheduler, or the shell
 
-`keyboard.c` decodes scancodes and calls the registered `keyboard_consumer_fn`. That is its entire job.
+`keyboard.c` decodes scancodes and calls the registered `keyboard_consumer_fn`.
+That is its entire job. PS/2 IRQ1 and USB boot keyboards both enter here; USB
+HID reports are translated to set-1 scancodes before calling
+`keyboard_inject_scancode()`.
 
 Routing decisions - whether input goes to the kernel fallback shell or a user
 process - belong to the consumer, not the driver. The consumer is registered
@@ -146,7 +149,10 @@ via `keyboard_set_consumer()`:
 - `process_set_foreground(proc)` registers `process_key_consumer` and records the foreground process group for terminal signals
 - `process_set_foreground(0)` restores the shell consumer via `shell_register_consumer()`
 
-Do not add imports of `process.h`, `scheduler.h`, or `shell.h` to `keyboard.c` or `keyboard.h`. Do not add routing logic to `keyboard_handle_irq()`. If a new input consumer is needed, register it — do not modify the driver.
+Do not add imports of `process.h`, `scheduler.h`, or `shell.h` to `keyboard.c`
+or `keyboard.h`. Do not add routing logic to `keyboard_handle_irq()` or the USB
+HID injection path. If a new input consumer is needed, register it — do not
+modify the driver.
 
 Mouse input follows the same driver-boundary rule at a smaller scale:
 `mouse.c` owns PS/2 auxiliary-port setup, standard and IntelliMouse packet
@@ -336,6 +342,7 @@ Exited tasks must be marked `PROCESS_STATE_ZOMBIE` and destroyed later from a sa
 
 * Try writable ATA before read-only USB storage, and use the loader2 boot RAM fallback only as the final fallback
 * During pre-scheduler storage probing, only timer IRQ0 may be unmasked; do not let keyboard/process IRQ paths run before `sched_start()`
+* Claim USB boot HID only after storage mount and shell ELF load; if the first keyboard probe fails, keep retrying from the USB service task instead of treating absence as permanent
 * `ext2_init()` must be called before `ext2_load()` or `ext2_ls()`
 * `ext2_load()` returns a pointer into the static `s_load_buf` buffer — the caller must not hold this pointer across another `ext2_load()` call
 * `elf_run_image()` copies all ELF segment data into PMM frames before returning, so the buffer is safe to reuse immediately after `elf_run_named()` returns
