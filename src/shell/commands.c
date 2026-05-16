@@ -2,21 +2,10 @@
 #include "shell.h"
 #include "terminal.h"
 #include "elf_loader.h"
-#include "memory.h"
-#include "boot_info.h"
-#include "pmm.h"
-#include "ata.h"
-#include "dhcp.h"
-#include "e1000.h"
 #include "usb.h"
 #include "mouse.h"
-#include "net.h"
-#include "tcp.h"
-#include "arp.h"
-#include "ipv4.h"
 #include "vfs.h"
 #include "process.h"
-#include "socket.h"
 #include "timer.h"
 #include "klib.h"
 
@@ -238,191 +227,6 @@ static void cmd_cd(command_t* cmd) {
     terminal_puts("cd: ");
     terminal_put_cwd();
     terminal_putc('\n');
-}
-
-static void cmd_meminfo(command_t* cmd) {
-    (void)cmd;
-
-    unsigned int heap_base = memory_get_heap_base();
-    unsigned int heap_top  = memory_get_heap_top();
-    unsigned int heap_used = heap_top - heap_base;
-
-    terminal_puts("heap:   base ");
-    terminal_put_hex(heap_base);
-    terminal_puts("  top ");
-    terminal_put_hex(heap_top);
-    terminal_puts("  used ");
-    terminal_put_uint(heap_used / 1024);
-    terminal_puts(" KB\n");
-
-    unsigned int free_frames  = pmm_free_count();
-    unsigned int total_frames = PMM_NUM_FRAMES;
-    unsigned int used_frames  = total_frames - free_frames;
-
-    terminal_puts("frames: ");
-    terminal_put_uint(free_frames);
-    terminal_puts(" free / ");
-    terminal_put_uint(total_frames);
-    terminal_puts(" total  (");
-    terminal_put_uint(free_frames * 4);
-    terminal_puts(" KB / ");
-    terminal_put_uint(total_frames * 4);
-    terminal_puts(" KB)\n");
-
-    terminal_puts("used:   ");
-    terminal_put_uint(used_frames);
-    terminal_puts(" frames (");
-    terminal_put_uint(used_frames * 4);
-    terminal_puts(" KB)\n");
-
-    terminal_puts("e820:   ");
-    if (boot_info_e820_valid()) {
-        terminal_put_uint(boot_info_e820_count());
-        terminal_puts(" entries\n");
-    } else {
-        terminal_puts("unavailable\n");
-    }
-}
-
-static void terminal_put_u64_hex(u64 value) {
-    u32 high = (u32)(value >> 32);
-    u32 low = (u32)value;
-
-    if (high) {
-        terminal_put_hex(high);
-        terminal_putc('_');
-        terminal_put_hex(low);
-    } else {
-        terminal_put_hex(low);
-    }
-}
-
-static const char* e820_type_name(u32 type) {
-    switch (type) {
-    case 1: return "usable";
-    case 2: return "reserved";
-    case 3: return "acpi";
-    case 4: return "nvs";
-    case 5: return "bad";
-    default: return "other";
-    }
-}
-
-static void cmd_memmap(command_t* cmd) {
-    (void)cmd;
-
-    if (!boot_info_e820_valid()) {
-        terminal_puts("memmap: E820 unavailable\n");
-        return;
-    }
-
-    const boot_info_t* info = boot_info_get();
-    terminal_puts("memmap: ");
-    terminal_put_uint(info->e820_count);
-    terminal_puts(" E820 entries\n");
-
-    for (u32 i = 0; i < info->e820_count; i++) {
-        const boot_e820_entry_t* ent = &info->e820[i];
-        terminal_put_uint(i);
-        terminal_puts(": base ");
-        terminal_put_u64_hex(ent->base);
-        terminal_puts("  length ");
-        terminal_put_u64_hex(ent->length);
-        terminal_puts("  type ");
-        terminal_put_uint(ent->type);
-        terminal_puts(" ");
-        terminal_puts(e820_type_name(ent->type));
-        terminal_putc('\n');
-    }
-}
-
-static void cmd_netinfo(command_t* cmd) {
-    socket_stats_t socket_stats;
-    tcp_stats_t tcp_stats;
-
-    (void)cmd;
-
-    terminal_puts("netinfo: ");
-    e1000_print_info();
-    net_ipv4_print_config();
-
-    socket_get_stats(&socket_stats);
-    terminal_puts("sockets: ");
-    terminal_put_uint(socket_stats.used_sockets);
-    terminal_putc('/');
-    terminal_put_uint(socket_stats.max_sockets);
-    terminal_puts(" used tcp=");
-    terminal_put_uint(socket_stats.tcp_sockets);
-    terminal_puts(" open=");
-    terminal_put_uint(socket_stats.open_sockets);
-    terminal_puts(" bound=");
-    terminal_put_uint(socket_stats.bound_sockets);
-    terminal_puts(" listen=");
-    terminal_put_uint(socket_stats.listening_sockets);
-    terminal_puts(" conn=");
-    terminal_put_uint(socket_stats.connected_sockets);
-    terminal_putc('\n');
-
-    tcp_get_stats(&tcp_stats);
-    terminal_puts("tcp: listeners ");
-    terminal_put_uint(tcp_stats.listeners);
-    terminal_putc('/');
-    terminal_put_uint(tcp_stats.max_listeners);
-    terminal_puts(" conns ");
-    terminal_put_uint(tcp_stats.connections);
-    terminal_putc('/');
-    terminal_put_uint(tcp_stats.max_connections);
-    terminal_puts(" established=");
-    terminal_put_uint(tcp_stats.established_connections);
-    terminal_puts(" accepted=");
-    terminal_put_uint(tcp_stats.accepted_connections);
-    terminal_puts(" pending=");
-    terminal_put_uint(tcp_stats.pending_connections);
-    terminal_puts(" syn=");
-    terminal_put_uint(tcp_stats.syn_recv_connections);
-    terminal_puts(" fin=");
-    terminal_put_uint(tcp_stats.fin_wait_connections);
-    terminal_putc('\n');
-
-    terminal_puts("tcp buffers: rx ");
-    terminal_put_uint(tcp_stats.rx_rings);
-    terminal_puts(" rings ");
-    terminal_put_uint(tcp_stats.rx_bytes);
-    terminal_puts(" bytes queued / ");
-    terminal_put_uint(tcp_stats.rx_buffer_bytes / 1024u);
-    terminal_puts(" KB allocated / ");
-    terminal_put_uint(tcp_stats.max_rx_buffer_bytes / 1024u);
-    terminal_puts(" KB cap, tx ");
-    terminal_put_uint(tcp_stats.tx_rings);
-    terminal_puts(" rings ");
-    terminal_put_uint(tcp_stats.tx_bytes);
-    terminal_puts(" bytes queued / ");
-    terminal_put_uint(tcp_stats.tx_buffer_bytes / 1024u);
-    terminal_puts(" KB allocated / ");
-    terminal_put_uint(tcp_stats.max_tx_buffer_bytes / 1024u);
-    terminal_puts(" KB cap\n");
-}
-
-static void cmd_netsend(command_t* cmd) {
-    (void)cmd;
-
-    if (!e1000_send_test_frame()) {
-        terminal_puts("netsend: failed\n");
-        return;
-    }
-
-    terminal_puts("netsend: queued test frame\n");
-}
-
-static void cmd_netrecv(command_t* cmd) {
-    (void)cmd;
-
-    if (!net_poll_once()) {
-        terminal_puts("netrecv: no packet\n");
-        return;
-    }
-
-    terminal_puts("netrecv: dispatched packet\n");
 }
 
 static void cmd_mousetest(command_t* cmd) {
@@ -682,240 +486,6 @@ static void cmd_usbmouse(command_t* cmd) {
     (void)usb_mouse_poll_port(seconds, port);
 }
 
-static int net_route_for_target(u32 target_ip, u32* out_sender_ip, u32* out_next_hop) {
-    u32 sender_ip = net_ipv4_local_ip();
-    u32 netmask = net_ipv4_netmask();
-    u32 gateway = net_ipv4_gateway();
-    u32 next_hop = target_ip;
-
-    if (!net_ipv4_is_configured() || sender_ip == 0u) {
-        terminal_puts("net: IPv4 is not configured\n");
-        return 0;
-    }
-
-    if (netmask != 0u && (target_ip & netmask) != (sender_ip & netmask)) {
-        if (gateway == 0u) {
-            terminal_puts("net: no default gateway\n");
-            return 0;
-        }
-        next_hop = gateway;
-    }
-
-    if (out_sender_ip) *out_sender_ip = sender_ip;
-    if (out_next_hop) *out_next_hop = next_hop;
-    return 1;
-}
-
-static void cmd_dhcp(command_t* cmd) {
-    (void)cmd;
-
-    if (!dhcp_configure()) {
-        terminal_puts("dhcp: failed\n");
-        return;
-    }
-    terminal_puts("dhcp: ok\n");
-}
-
-static void cmd_arpgw(command_t* cmd) {
-    (void)cmd;
-
-    u32 sender_ip = net_ipv4_local_ip();
-    u32 target_ip  = net_ipv4_gateway();
-    u8 mac[6];
-
-    if (!net_ipv4_is_configured() || sender_ip == 0u || target_ip == 0u) {
-        terminal_puts("arpgw: IPv4 gateway is not configured\n");
-        return;
-    }
-
-    terminal_puts("arpgw: who-has ");
-    arp_print_ip(target_ip);
-    terminal_puts(" from ");
-    arp_print_ip(sender_ip);
-    terminal_putc('\n');
-
-    if (!arp_resolve(sender_ip, target_ip, mac)) {
-        terminal_puts("arpgw: no reply\n");
-        return;
-    }
-
-    terminal_puts("arpgw: ");
-    arp_print_ip(target_ip);
-    terminal_puts(" is-at ");
-    static const char hex[] = "0123456789ABCDEF";
-    for (unsigned int i = 0; i < 6; i++) {
-        terminal_putc(hex[mac[i] >> 4]);
-        terminal_putc(hex[mac[i] & 0xF]);
-        if (i != 5) {
-            terminal_putc(':');
-        }
-    }
-    terminal_putc('\n');
-}
-
-static void cmd_ping_target(const char* label, u32 sender_ip, u32 target_ip, u32 gateway_ip) {
-    terminal_puts(label);
-    terminal_puts(": ");
-    ipv4_print_ip(target_ip);
-    terminal_puts(" from ");
-    ipv4_print_ip(sender_ip);
-    terminal_putc('\n');
-
-    if (!ipv4_ping_via_gateway(sender_ip, target_ip, gateway_ip)) {
-        terminal_puts(label);
-        terminal_puts(": failed\n");
-        return;
-    }
-
-    terminal_puts(label);
-    terminal_puts(": ok\n");
-}
-
-static void cmd_ping(command_t* cmd) {
-    u32 sender_ip;
-    u32 next_hop;
-    u32 target_ip = 0;
-
-    if (cmd->argc < 2) {
-        target_ip = net_ipv4_gateway();
-        if (target_ip == 0u) {
-            terminal_puts("usage: ping <ip>\n");
-            return;
-        }
-    } else if (!ipv4_parse_ip(cmd->argv[1], &target_ip)) {
-        terminal_puts("ping: invalid ip\n");
-        return;
-    }
-
-    if (!net_route_for_target(target_ip, &sender_ip, &next_hop)) {
-        return;
-    }
-    cmd_ping_target("ping", sender_ip, target_ip, next_hop);
-}
-
-static void cmd_pinggw(command_t* cmd) {
-    (void)cmd;
-
-    if (!net_ipv4_is_configured() || net_ipv4_gateway() == 0u) {
-        terminal_puts("pinggw: IPv4 gateway is not configured\n");
-        return;
-    }
-    cmd_ping_target("pinggw", net_ipv4_local_ip(), net_ipv4_gateway(), net_ipv4_gateway());
-}
-
-static void cmd_pingpublic(command_t* cmd) {
-    u32 sender_ip;
-    u32 next_hop;
-
-    (void)cmd;
-
-    if (!net_route_for_target(0x01010101u, &sender_ip, &next_hop)) {
-        return;
-    }
-    cmd_ping_target("pingpublic", sender_ip, 0x01010101u, next_hop);
-    terminal_puts("pingpublic: note: some hypervisors do not forward public ICMP\n");
-    terminal_puts("pingpublic: use pinggw for the supported gateway check\n");
-}
-
-static void cmd_netcheck(command_t* cmd) {
-    (void)cmd;
-
-    u8 mac[6];
-    u32 sender_ip = net_ipv4_local_ip();
-    u32 gateway_ip = net_ipv4_gateway();
-
-    if (!net_ipv4_is_configured() || sender_ip == 0u || gateway_ip == 0u) {
-        terminal_puts("netcheck: IPv4 gateway is not configured\n");
-        return;
-    }
-
-    terminal_puts("netcheck: gateway arp\n");
-    if (!arp_resolve(sender_ip, gateway_ip, mac)) {
-        terminal_puts("netcheck: gateway arp failed\n");
-        return;
-    }
-    terminal_puts("netcheck: gateway arp ok\n");
-
-    terminal_puts("netcheck: gateway ping\n");
-    if (!ipv4_ping(sender_ip, gateway_ip)) {
-        terminal_puts("netcheck: gateway ping failed\n");
-        return;
-    }
-    terminal_puts("netcheck: gateway ping ok\n");
-
-    terminal_puts("netcheck: public ping\n");
-    if (!ipv4_ping_via_gateway(sender_ip, 0x01010101u, gateway_ip)) {
-        terminal_puts("netcheck: public ping failed\n");
-        terminal_puts("netcheck: note: some hypervisors do not forward public ICMP\n");
-        terminal_puts("netcheck: gateway is ok\n");
-        return;
-    }
-    terminal_puts("netcheck: public ping ok\n");
-}
-
-/*
- * ataread <lba>
- *
- * Reads one sector at the given decimal LBA and dumps the first 32 bytes
- * as hex.  Prints boot signature at offsets 510-511 when LBA is 0.
- */
-static void cmd_ataread(command_t* cmd) {
-    if (cmd->argc < 2) {
-        terminal_puts("usage: ataread <lba>\n");
-        return;
-    }
-
-    unsigned int lba = 0;
-    const char* s = cmd->argv[1];
-    while (*s >= '0' && *s <= '9') {
-        lba = lba * 10 + (unsigned int)(*s - '0');
-        s++;
-    }
-
-    static unsigned char sector[512];
-    if (!ata_read_sectors(lba, 1, sector)) {
-        terminal_puts("ataread: read failed\n");
-        return;
-    }
-
-    terminal_puts("lba ");
-    terminal_put_uint(lba);
-    terminal_puts(" bytes 0-31:\n  ");
-
-    static const char hex[] = "0123456789ABCDEF";
-    for (int i = 0; i < 32; i++) {
-        unsigned char b = sector[i];
-        terminal_putc(hex[b >> 4]);
-        terminal_putc(hex[b & 0xF]);
-        terminal_putc(' ');
-        if (i == 15) terminal_puts("\n  ");
-    }
-    terminal_putc('\n');
-
-    if (lba == 0) {
-        enum {
-            MBR_PARTITION_TABLE_OFFSET = 446,
-            MBR_PARTITION_ENTRY_SIZE = 16,
-            MBR_PARTITION_LBA_OFFSET = 8,
-            EXT2_PARTITION_ENTRY_INDEX = 1,
-        };
-        unsigned int entry_off = MBR_PARTITION_TABLE_OFFSET +
-                                 EXT2_PARTITION_ENTRY_INDEX * MBR_PARTITION_ENTRY_SIZE;
-        terminal_puts("sig: ");
-        terminal_put_hex(sector[510]);
-        terminal_putc(' ');
-        terminal_put_hex(sector[511]);
-        terminal_puts(" (expect 0x55 0xAA)\n");
-        terminal_puts("ext2 partition lba: ");
-        unsigned int partition_lba = sector[entry_off + MBR_PARTITION_LBA_OFFSET]
-                                   | ((unsigned int)sector[entry_off + MBR_PARTITION_LBA_OFFSET + 1] << 8)
-                                   | ((unsigned int)sector[entry_off + MBR_PARTITION_LBA_OFFSET + 2] << 16)
-                                   | ((unsigned int)sector[entry_off + MBR_PARTITION_LBA_OFFSET + 3] << 24);
-        terminal_put_uint(partition_lba);
-        terminal_putc('\n');
-    }
-}
-
 static void cmd_runelf(command_t* cmd) {
     if (cmd->argc < 2) {
         terminal_puts("Usage: runelf <n>\n");
@@ -967,12 +537,6 @@ static void cmd_runelf_nowait(command_t* cmd) {
 static command_entry_t commands[] = {
     { "help",          "show shell commands",           cmd_help },
     { "clear",         "clear the screen",              cmd_clear },
-    { "meminfo",       "show heap and frame usage",     cmd_meminfo },
-    { "memmap",        "show BIOS E820 memory map",     cmd_memmap },
-    { "netinfo",       "show PCI NIC status",          cmd_netinfo },
-    { "dhcp",          "request IPv4 config via DHCP", cmd_dhcp },
-    { "netsend",       "queue a test Ethernet frame",  cmd_netsend },
-    { "netrecv",       "poll and dispatch one Ethernet frame", cmd_netrecv },
     { "mousetest",     "print mouse events for 5 seconds", cmd_mousetest },
     { "usbinfo",       "show USB controller power diagnostics", cmd_usbinfo },
     { "usbdiag",       "run USB port and descriptor diagnostics", cmd_usbdiag },
@@ -980,13 +544,7 @@ static command_entry_t commands[] = {
     { "usbpeek",       "read OHCI address-0 device descriptor", cmd_usbpeek },
     { "usbpower",      "try OHCI root-hub port power", cmd_usbpower },
     { "usbmouse",      "probe OHCI boot mouse", cmd_usbmouse },
-    { "arpgw",         "resolve the IPv4 gateway via ARP", cmd_arpgw },
-    { "ping",          "ping an IPv4 address",        cmd_ping },
-    { "pinggw",        "ping the IPv4 gateway",       cmd_pinggw },
-    { "pingpublic",    "try public ICMP",             cmd_pingpublic },
-    { "netcheck",      "check gateway and public connectivity", cmd_netcheck },
     { "cd",            "change the shell working directory", cmd_cd },
-    { "ataread",       "dump raw sector bytes",         cmd_ataread },
     { "runelf",        "run an ext2 ELF and wait",      cmd_runelf },
     { "runelf_nowait", "run an ext2 ELF and return",    cmd_runelf_nowait },
 };
@@ -994,6 +552,18 @@ static command_entry_t commands[] = {
 #define COMMAND_COUNT (sizeof(commands) / sizeof(commands[0]))
 
 static command_entry_t app_commands[] = {
+    { "meminfo",       "show heap and frame usage",    0 },
+    { "memmap",        "show BIOS E820 memory map",    0 },
+    { "netinfo",       "show PCI NIC status",          0 },
+    { "dhcp",          "request IPv4 config via DHCP", 0 },
+    { "netsend",       "queue a test Ethernet frame",  0 },
+    { "netrecv",       "poll and dispatch one Ethernet frame", 0 },
+    { "arpgw",         "resolve the IPv4 gateway via ARP", 0 },
+    { "ping",          "ping an IPv4 address",         0 },
+    { "pinggw",        "ping the IPv4 gateway",        0 },
+    { "pingpublic",    "try public ICMP",              0 },
+    { "netcheck",      "check gateway and public connectivity", 0 },
+    { "ataread",       "dump raw sector bytes",        0 },
     { "echo",          "print arguments via ELF",       0 },
     { "about",         "show the OS version via ELF",   0 },
     { "halt",          "halt the machine via ELF",      0 },

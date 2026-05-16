@@ -642,6 +642,9 @@ Shipped ext2 programs:
 - `bin/reboot` - reboot the machine
 - `bin/date` - print UTC realtime, or `date -s [server-ip]` to sync from NTP
 - `bin/pwd` - print the process cwd inherited from the shell
+- `bin/meminfo` / `bin/memmap` - inspect kernel memory accounting and BIOS E820 entries
+- `bin/netinfo`, `bin/dhcp`, `bin/netsend`, `bin/netrecv`, `bin/arpgw`, `bin/ping`, `bin/pinggw`, `bin/pingpublic`, `bin/netcheck` - inspect or exercise runtime network diagnostics
+- `bin/ataread` - dump raw ATA sector diagnostics
 - `bin/cat` - print an ext2 file
 - `bin/more` - page an ext2 file or piped stdin
 - `bin/fsread` - dump ext2 file metadata and first bytes

@@ -4,6 +4,10 @@
 
 ### Changed
 
+* **Diagnostic commands as userland ELFs** (`src/user/{meminfo,memmap,netinfo,dhcp,netsend,netrecv,arpgw,ping,pinggw,pingpublic,netcheck,ataread}.c`, `src/shell/commands.c`, `src/user/shell/app.c`, `Makefile`, `docs/`)
+  * Moved memory, E820, network, and ATA diagnostic command presentation out of the user shell and kernel fallback shell into standalone `/bin/*.elf` programs.
+  * Kept the syscall/device boundary in the kernel while letting both shells resolve these commands through the normal app-command path.
+  * Updated the shipped ext2 image manifest and documentation so `/bin/meminfo.elf`, `/bin/memmap.elf`, `/bin/netinfo.elf`, `/bin/dhcp.elf`, `/bin/netsend.elf`, `/bin/netrecv.elf`, `/bin/arpgw.elf`, `/bin/ping*.elf`, `/bin/netcheck.elf`, and `/bin/ataread.elf` are built and packed.
 * **Unicode terminal output** (`src/drivers/unicode.*`, `src/drivers/terminal.c`, `src/user/tree.c`)
   * Added a small UTF-8 decoder and Unicode-to-CP437 compatibility mapper for the active terminal backend, keeping COM1 serial output byte-for-byte UTF-8 for headless logs.
   * Kept ANSI/control handling in `terminal.c` while moving Unicode decoding and glyph mapping into `src/drivers/unicode.*`.

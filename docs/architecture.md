@@ -823,7 +823,7 @@ ATA disk driver — 28-bit LBA reads/writes from primary IDE channel (0x1F0), wi
 USB storage/HID driver — OHCI Bulk-Only Transport/SCSI read-only block device used as `usb0`, plus retrying boot keyboard/mouse polling
 ext2 filesystem — ELF programs loaded from ATA, USB storage, or the boot RAM fallback
 run/runimg infrastructure removed — `runelf` is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
-interactive shell with meminfo / memmap / ataread / ls / tree / fsread / mkdir / rmdir / runelf commands
+interactive shell with builtin job control plus `/bin` command ELFs such as meminfo / memmap / ataread / ls / tree / fsread / mkdir / rmdir
 guest TinyCC compiler path — `usr/bin/tcc.elf` runs inside SmallOS through `user_crt0` and TinyCC's normal `main`, then compiles guest C samples during `make test`
 ```
 
