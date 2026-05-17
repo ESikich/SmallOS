@@ -56,7 +56,7 @@ Important current-state facts:
 - the default **shell** is `/bin/shell.elf`, a scheduler-owned ring-3 user
   process launched by `bootseq`; no kernel shell fallback is linked
 - **keyboard IRQ1** decodes scancodes and calls a registered `keyboard_consumer_fn` — it makes no routing decisions itself; USB boot keyboards inject translated set-1 scancodes into the same path
-- the **process consumer** (`process_key_consumer` in `process.c`) pushes ASCII into `kb_buf`; terminal signals such as Ctrl+C target the foreground process group
+- the **process consumer** (`process_key_consumer` in `process.c`) pushes ASCII into `kb_buf`; Ctrl+C is delivered as raw byte `0x03` to a foreground `SYS_READ_RAW` prompt reader, and otherwise targets the foreground process group as a terminal signal
 - consumer ownership transfers via `process_set_foreground()` - the process consumer is active while the user shell or another user process owns the foreground reader/group; `process_set_foreground(0)` keeps the router installed but ignores events until a new foreground owner is set
 - **Mouse input** decodes PS/2 relative packets, VMware absolute-pointer events, or OHCI USB boot mouse reports into accumulated `dx`/`dy` and button state; user graphics code polls that state with `SYS_MOUSE_READ`
 - **ELF user programs** are loaded into their own page directory and do execute in ring 3
@@ -134,6 +134,12 @@ to the shell cwd and may omit the `.elf` suffix. Commands like `echo`, `about`,
 `netinfo`, `ping`, `dhcp`, `ataread`, `usbinfo`, `usbports`, `usbdiag`,
 `usbpeek`, `usbpower`, `usbmouse`, `mousetest`, `ip`, and `ipconfig` are
 shipped this way under `/bin/`.
+
+The interactive shell editor keeps a short command history and command/path
+completion. History stores the full input line before tokenization, so recalled
+entries retain all arguments even when the command failed. Completion merges
+duplicate visible candidates, such as a built-in command that also exists as a
+`/bin/*.elf`, before deciding whether there is a unique match.
 
 `/bin/ip.elf` and `/bin/ipconfig.elf` are the user-facing runtime network
 configuration tools. They read NIC/IPv4/TCP state through `SYS_NETINFO` and
@@ -319,7 +325,7 @@ small process registry, and automatic zombie reaping:
 - `SYS_EXEC` returns the child pid and claims the child for its parent so userland can call `waitpid()`
 - if a parent exits without waiting, its children are orphaned and any unclaimed zombies become reaper-owned
 - interactive foreground input is tracked with `process_set_foreground(proc)` / `process_get_foreground()`, while terminal signals target `process_get_foreground_group()`
-- Ctrl+C is delivered to the current foreground process group as a terminal interrupt. Matching signalfds receive `SIGINT`; otherwise group members exit with status `130` and the waiting shell path is restored. Ctrl+C is not delivered as a byte from `SYS_READ`.
+- Ctrl+C is delivered to the current foreground process group as a terminal interrupt during normal `SYS_READ` input. Matching signalfds receive `SIGINT`; otherwise group members exit with status `130` and the waiting shell path is restored. A foreground process waiting in `SYS_READ_RAW`, including the shell prompt editor, receives byte `0x03` instead so it can handle line cancellation itself.
 - process destruction is explicit via `process_wait()` / `waitpid()` or automatic via `sched_reap_zombies()`
 - POSIX-shaped process replacement is available through `fork()` + `dup2()` +
   `execve()` / `execvp()`; the legacy `SYS_EXEC` spawn path remains supported.

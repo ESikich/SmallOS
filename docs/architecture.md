@@ -462,7 +462,8 @@ keyboard IRQ → keyboard_handle_irq()
   [process consumer]
   process_key_consumer()
   ASCII → keyboard_buf_push_char()
-  Ctrl+C → signal/terminate foreground group
+  Ctrl+C → raw byte for SYS_READ_RAW prompt readers,
+           otherwise signal/terminate foreground group
   ↓
   SYS_READ drains kb_buf for the foreground user process
 ```
@@ -471,7 +472,7 @@ The active consumer is managed by `keyboard_set_consumer()`:
 - `process_set_foreground(proc)` clears `kb_buf` (discarding any stale input, e.g. the Enter that launched `runelf`), records the foreground process group, then registers `process_key_consumer` when a user process takes the foreground
 - `process_set_foreground_preserve_input(proc)` keeps already-buffered input while refreshing the same foreground owner; bootseq uses an explicit `process_set_foreground(shell)` before resuming the suspended user shell so PS/2 and USB keyboard events are routed to the prompt immediately
 - `process_key_consumer` pushes ASCII into `kb_buf`; after each push it checks `keyboard_get_waiting_process()` and, if a process is parked in `PROCESS_STATE_WAITING`, sets it back to `PROCESS_STATE_RUNNING` and clears the waiter slot so the scheduler picks it up
-- Ctrl+C is handled by `process_key_consumer` as a terminal interrupt for the foreground process group. Matching signalfds receive `SIGINT`; otherwise the group gets exit status `130`, pending console/socket waits are cleared, and any actively running member is switched away from the IRQ1 frame.
+- Ctrl+C is normally handled by `process_key_consumer` as a terminal interrupt for the foreground process group. Matching signalfds receive `SIGINT`; otherwise the group gets exit status `130`, pending console/socket waits are cleared, and any actively running member is switched away from the IRQ1 frame. If the foreground console owner is parked in `SYS_READ_RAW`, as the user shell is while editing its prompt, Ctrl+C is queued as byte `0x03` so the editor can cancel the current line without killing the shell.
 - `process_set_foreground(0)` leaves the process input router registered but clears the foreground reader/group, so key events are ignored until a new foreground process is installed
 
 The keyboard driver makes no routing decisions. It decodes scancodes and calls whoever is registered. USB boot keyboards feed this same path by translating HID boot reports into set-1 scancodes and injecting them through `keyboard_inject_scancode()`.

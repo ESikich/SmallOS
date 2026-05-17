@@ -40,7 +40,8 @@ The normal path forks a child, duplicates the PTY slave onto fd `0`, `1`, and
 `2`, then execs `/bin/shell.elf`. The parent keeps the PTY master nonblocking
 so the desktop can poll shell output without freezing pointer or window input.
 The user shell owns command dispatch, history, completion, pipelines, and
-external program launch.
+external program launch. The GUI fallback shell keeps matching history and
+completion semantics for the older non-PTY backends.
 
 The terminal renderer stores fixed-width rows, not C strings, so spaces and
 short redraws from line editing remain visible. It handles the CSI/ESC controls

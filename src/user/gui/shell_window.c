@@ -993,6 +993,7 @@ static void gui_shell_match_add(const char* candidate,
                                 char* common,
                                 unsigned int common_cap) {
     if (!candidate || !s_starts_with(candidate, prefix)) return;
+    if (*count > 0 && s_eq(common, candidate)) return;
     if (*count == 0) {
         s_copy(common, candidate, common_cap);
     } else {

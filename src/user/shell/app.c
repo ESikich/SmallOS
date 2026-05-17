@@ -359,6 +359,7 @@ static void sh_match_add(const char* candidate,
                          char* common,
                          unsigned int common_cap) {
     if (!candidate || !prefix || !sh_starts_with(candidate, prefix)) return;
+    if (*count > 0 && sh_streq(common, candidate)) return;
     if (*count == 0) {
         sh_copy(common, candidate, common_cap);
     } else {
@@ -1463,6 +1464,7 @@ int shell_main(int argc, char** argv) {
     while (!should_exit) {
         char* cmd_argv[SHELL_ARG_MAX + 1];
         int cmd_argc;
+        int has_input = 0;
 
         if (line_mode) {
             sh_prompt();
@@ -1478,10 +1480,17 @@ int shell_main(int argc, char** argv) {
             }
         }
 
+        for (unsigned int i = 0; line[i]; i++) {
+            if (!sh_is_space(line[i])) {
+                has_input = 1;
+                break;
+            }
+        }
+        if (!has_input) continue;
+
+        sh_history_add(line);
         cmd_argc = sh_tokenize(line, cmd_argv, SHELL_ARG_MAX);
         cmd_argv[cmd_argc] = 0;
-        if (cmd_argc == 0) continue;
-        sh_history_add(line);
 
         (void)sh_execute_argv(cmd_argc, cmd_argv, &should_exit);
         sh_jobs_reap_completed();

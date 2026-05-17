@@ -29,6 +29,7 @@ static u32 s_next_pid = 1;
 static process_t* s_process_registry[PROCESS_REGISTRY_MAX];
 static volatile int s_terminal_interrupt_pending = 0;
 static process_t* s_terminal_interrupt_target = 0;
+static process_t* s_raw_console_reader = 0;
 static volatile process_t* s_detach_requested = 0;
 static volatile int s_detach_allowed = 0;
 
@@ -206,6 +207,18 @@ static void process_key_consumer(key_event_t ev) {
     if (ev.ctrl && ev.key == KEY_C) {
         u32 pgid = s_foreground_pgid;
         int defaulted;
+
+        if (s_raw_console_reader && s_raw_console_reader == s_foreground_reader) {
+            process_t* waiter;
+            keyboard_buf_push_char(3);
+            waiter = (process_t*)keyboard_get_waiting_process();
+            if (waiter && waiter->state == PROCESS_STATE_WAITING) {
+                waiter->state = PROCESS_STATE_RUNNING;
+                keyboard_set_waiting_process(0);
+            }
+            return;
+        }
+
         if (pgid == 0) return;
 
         keyboard_buf_clear();
@@ -1145,11 +1158,13 @@ static int process_handle_console_read_common(fd_entry_t* ent, char* buf, unsign
             if (proc) {
                 proc->state = PROCESS_STATE_WAITING;
                 keyboard_set_waiting_process(proc);
+                if (!echo) s_raw_console_reader = proc;
             }
             __asm__ volatile ("sti; hlt");
         }
 
         char c = keyboard_buf_pop();
+        if (s_raw_console_reader == proc) s_raw_console_reader = 0;
         if (echo) {
             terminal_putc(c);
         }
@@ -2162,6 +2177,9 @@ int process_kill_pid(int pid, int status, unsigned int esp) {
     if (keyboard_get_waiting_process() == (void*)proc) {
         keyboard_set_waiting_process(0);
     }
+    if (s_raw_console_reader == proc) {
+        s_raw_console_reader = 0;
+    }
     input_forget_waiting_process(proc);
     socket_wait_clear_process(proc);
 
@@ -2627,6 +2645,9 @@ static int process_group_force_exit(u32 pgid,
         if (keyboard_get_waiting_process() == (void*)proc) {
             keyboard_set_waiting_process(0);
         }
+        if (s_raw_console_reader == proc) {
+            s_raw_console_reader = 0;
+        }
         input_forget_waiting_process(proc);
         socket_wait_clear_process(proc);
 
@@ -2659,6 +2680,9 @@ void process_deliver_pending_terminal_interrupt(unsigned int esp) {
     proc->exit_status = PROCESS_TERMINATED_BY_CTRL_C;
     if (keyboard_get_waiting_process() == (void*)proc) {
         keyboard_set_waiting_process(0);
+    }
+    if (s_raw_console_reader == proc) {
+        s_raw_console_reader = 0;
     }
     input_forget_waiting_process(proc);
     socket_wait_clear_process(proc);
