@@ -82,8 +82,19 @@ typedef struct sys_e820_entry {
 } sys_e820_entry_t;
 
 typedef struct sys_netinfo {
-    unsigned int e1000_link_up;
+    unsigned int net_link_up;
+    char net_driver[16];
     unsigned char mac[6];
+    unsigned int nic_tx_packets;
+    unsigned int nic_rx_packets;
+    unsigned int nic_tx_errors;
+    unsigned int nic_rx_errors;
+    unsigned int nic_status;
+    unsigned int nic_command;
+    unsigned int nic_rx_config;
+    unsigned int nic_tx_config;
+    unsigned int nic_rx_cursor;
+    unsigned int nic_rx_hw_cursor;
     unsigned int ipv4_configured;
     unsigned int ip;
     unsigned int netmask;

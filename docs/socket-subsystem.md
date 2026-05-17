@@ -126,7 +126,7 @@ large inline arrays.
   can share one local listener without fd-local stream arrays.
 - RX windows are derived from ring space. Data that cannot be queued is not
   acknowledged.
-- Socket readiness checks drain pending e1000 RX descriptors before reporting
+- Socket readiness checks drain pending NIC RX descriptors before reporting
   TCP readability, so user-space services can consume already-arrived packets
   without waiting for the background TCP task's next timer wakeup.
 - TX data remains in the ring until ACKed, which supports retry and makes

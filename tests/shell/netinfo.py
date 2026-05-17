@@ -4,7 +4,7 @@ CASES = [
         "must_contain": [
             "shelltest: netinfo begin",
             "netinfo:",
-            "e1000:",
+            "nic:",
             "sockets:",
             "tcp:",
             "tcp buffers:",

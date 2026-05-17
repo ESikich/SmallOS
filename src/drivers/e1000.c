@@ -1,5 +1,6 @@
 #include "e1000.h"
 
+#include "nic.h"
 #include "pci.h"
 #include "../kernel/klib.h"
 #include "../kernel/paging.h"
@@ -86,6 +87,10 @@ static u8 s_tx_buf[E1000_TX_DESC_COUNT][E1000_RX_BUF_SIZE] __attribute__((aligne
 static unsigned int s_rx_head = 0;
 static unsigned int s_tx_head = 0;
 static unsigned int s_tx_tail = 0;
+static u32 s_tx_packets = 0;
+static u32 s_rx_packets = 0;
+static u32 s_tx_errors = 0;
+static u32 s_rx_errors = 0;
 static int s_present = 0;
 
 static inline u32 e1000_reg_read(u32 reg) {
@@ -175,6 +180,10 @@ static void e1000_setup_rings(void) {
     s_rx_head = 0;
     s_tx_head = 0;
     s_tx_tail = 0;
+    s_tx_packets = 0;
+    s_rx_packets = 0;
+    s_tx_errors = 0;
+    s_rx_errors = 0;
 }
 
 static void e1000_program_rx_tx(void) {
@@ -280,16 +289,32 @@ const u8* e1000_mac(void) {
     return s_mac;
 }
 
+void e1000_get_stats(nic_stats_t* out) {
+    if (!out) return;
+    out->tx_packets = s_tx_packets;
+    out->rx_packets = s_rx_packets;
+    out->tx_errors = s_tx_errors;
+    out->rx_errors = s_rx_errors;
+    out->status = s_present ? e1000_reg_read(E1000_STATUS) : 0;
+    out->command = s_present ? e1000_reg_read(E1000_CTRL) : 0;
+    out->rx_config = s_present ? e1000_reg_read(E1000_RCTL) : 0;
+    out->tx_config = s_present ? e1000_reg_read(E1000_TCTL) : 0;
+    out->rx_cursor = s_rx_head;
+    out->rx_hw_cursor = s_present ? e1000_reg_read(E1000_RDH) : 0;
+}
+
 int e1000_send(const void* data, u32 len) {
     unsigned int next;
     void* dst;
 
     if (!s_present || !data || len == 0 || len > E1000_MAX_FRAME_SIZE) {
+        s_tx_errors++;
         return 0;
     }
 
     next = s_tx_tail;
     if ((s_tx_desc[next].status & E1000_TXD_STAT_DD) == 0) {
+        s_tx_errors++;
         return 0;
     }
 
@@ -304,6 +329,7 @@ int e1000_send(const void* data, u32 len) {
     /* Advance the tail so the NIC starts DMA on this descriptor. */
     s_tx_tail = (next + 1u) % E1000_TX_DESC_COUNT;
     e1000_reg_write(E1000_TDT, s_tx_tail);
+    s_tx_packets++;
 
     return 1;
 }
@@ -313,6 +339,7 @@ int e1000_recv(void* out, u32 out_size, u32* out_len) {
     u32 len;
 
     if (!s_present || !out || out_size == 0) {
+        s_rx_errors++;
         return 0;
     }
 
@@ -335,6 +362,7 @@ int e1000_recv(void* out, u32 out_size, u32* out_len) {
     desc->status = 0;
     e1000_reg_write(E1000_RDT, s_rx_head);
     s_rx_head = (s_rx_head + 1u) % E1000_RX_DESC_COUNT;
+    s_rx_packets++;
 
     return 1;
 }

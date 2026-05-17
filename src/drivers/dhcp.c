@@ -1,7 +1,7 @@
 #include "dhcp.h"
 
-#include "e1000.h"
 #include "ipv4.h"
+#include "nic.h"
 #include "net.h"
 #include "../kernel/klib.h"
 #include "../kernel/timer.h"
@@ -37,7 +37,7 @@
 #define DHCP_REQUEST_LEN 298u
 #define DHCP_FRAME_MAX 590u
 #define DHCP_TIMEOUT_TICKS (4u * SMALLOS_TIMER_HZ)
-#define DHCP_ATTEMPTS 4u
+#define DHCP_ATTEMPTS 8u
 
 typedef unsigned short u16;
 
@@ -117,7 +117,7 @@ static void build_ipv4_udp_header(u8* frame, u32 src_ip, u32 udp_len, u16 ip_id)
 }
 
 static void build_bootp_base(u8* frame, u32 xid, u32 requested_ip) {
-    const u8* mac = e1000_mac();
+    const u8* mac = nic_mac();
     u32 bootp_off = 14u + 20u + 8u;
 
     for (unsigned int i = 0; i < 6u; i++) {
@@ -213,7 +213,7 @@ static int wait_for_message(u8 message_type) {
             return 1;
         }
         if (!net_poll_once()) {
-            __asm__ __volatile__("hlt");
+            __asm__ __volatile__("sti; hlt; cli");
         }
     }
     return 0;
@@ -316,7 +316,7 @@ int dhcp_configure(void) {
         reset_reply_state();
         s_waiting = 1;
         frame_len = build_discover(frame, s_xid);
-        if (!e1000_send(frame, frame_len)) {
+        if (!nic_send(frame, frame_len)) {
             s_waiting = 0;
             return 0;
         }
@@ -331,7 +331,7 @@ int dhcp_configure(void) {
 
         s_message_type = 0;
         frame_len = build_request(frame, s_xid, s_offered_ip, s_server_ip);
-        if (!e1000_send(frame, frame_len)) {
+        if (!nic_send(frame, frame_len)) {
             s_waiting = 0;
             return 0;
         }

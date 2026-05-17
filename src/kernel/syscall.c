@@ -10,7 +10,7 @@
 #include "boot_info.h"
 #include "system.h"
 #include "klib.h"
-#include "../drivers/e1000.h"
+#include "../drivers/nic.h"
 #include "../drivers/net.h"
 #include "../drivers/dhcp.h"
 #include "../drivers/arp.h"
@@ -2604,17 +2604,30 @@ static int sys_netinfo_impl(sys_netinfo_t* out_info) {
     sys_netinfo_t info;
     const u8* mac;
     const net_ipv4_config_t* cfg;
+    nic_stats_t nic_stats;
     socket_stats_t socket_stats;
     tcp_stats_t tcp_stats;
 
     if (!out_info) return -EFAULT;
     k_memset(&info, 0, sizeof(info));
 
-    info.e1000_link_up = e1000_link_up() ? 1u : 0u;
-    mac = e1000_mac();
+    info.net_link_up = nic_link_up() ? 1u : 0u;
+    k_strncpy(info.net_driver, nic_driver_name(), sizeof(info.net_driver));
+    mac = nic_mac();
     if (mac) {
         for (unsigned int i = 0; i < 6u; i++) info.mac[i] = mac[i];
     }
+    nic_get_stats(&nic_stats);
+    info.nic_tx_packets = nic_stats.tx_packets;
+    info.nic_rx_packets = nic_stats.rx_packets;
+    info.nic_tx_errors = nic_stats.tx_errors;
+    info.nic_rx_errors = nic_stats.rx_errors;
+    info.nic_status = nic_stats.status;
+    info.nic_command = nic_stats.command;
+    info.nic_rx_config = nic_stats.rx_config;
+    info.nic_tx_config = nic_stats.tx_config;
+    info.nic_rx_cursor = nic_stats.rx_cursor;
+    info.nic_rx_hw_cursor = nic_stats.rx_hw_cursor;
 
     cfg = net_ipv4_config();
     if (cfg) {
@@ -2685,7 +2698,7 @@ static int sys_net_op_impl(sys_net_op_request_t* user_req) {
 
     switch (req.op) {
     case SYS_NET_OP_SEND_TEST_FRAME:
-        return e1000_send_test_frame() ? 1 : -EIO;
+        return nic_send_test_frame() ? 1 : -EIO;
     case SYS_NET_OP_POLL_ONCE:
         return net_poll_once() ? 1 : 0;
     case SYS_NET_OP_DHCP:

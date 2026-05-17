@@ -1,9 +1,9 @@
 #include "tcp.h"
 
 #include "arp.h"
-#include "e1000.h"
 #include "ipv4.h"
 #include "net.h"
+#include "nic.h"
 #include "../kernel/uapi_poll.h"
 #include "../kernel/klib.h"
 #include "../kernel/paging.h"
@@ -912,7 +912,7 @@ static u32 tcp_build_frame(u8* frame,
 
     for (unsigned int i = 0; i < 6; i++) {
         frame[i] = dst_mac[i];
-        frame[6 + i] = e1000_mac()[i];
+        frame[6 + i] = nic_mac()[i];
     }
     tcp_write_u16_be(frame, 12, TCP_ETHERTYPE);
 
@@ -1473,7 +1473,7 @@ static int tcp_send_segment(u32 src_ip,
     u32 frame_len = tcp_build_frame(s_tx_frame, dst_mac, src_ip, dst_ip,
                                     src_port, dst_port, seq, ack,
                                     flags, window, payload, payload_len);
-    return e1000_send(s_tx_frame, frame_len);
+    return nic_send(s_tx_frame, frame_len);
 }
 
 static void tcp_accept_syn(const u8* frame,

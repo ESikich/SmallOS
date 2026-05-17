@@ -2,12 +2,14 @@
 
 #include "arp.h"
 #include "dhcp.h"
-#include "e1000.h"
 #include "ipv4.h"
+#include "nic.h"
 #include "ntp.h"
 #include "tcp.h"
 #include "../kernel/types.h"
 #include "terminal.h"
+
+typedef unsigned short u16;
 
 #define NET_ETHERTYPE_ARP  0x0806u
 #define NET_ETHERTYPE_IPV4 0x0800u
@@ -27,7 +29,7 @@ int net_poll_once(void) {
     u32 len = 0;
     u16 ether_type;
 
-    if (!e1000_recv(s_net_frame, sizeof(s_net_frame), &len)) {
+    if (!nic_recv(s_net_frame, sizeof(s_net_frame), &len)) {
         return 0;
     }
 

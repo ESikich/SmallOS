@@ -49,7 +49,7 @@ kernel_main()
   sched_init()      ← initialise runnable task table
   ata_init()        ← prefer writable ATA storage when sector reads validate
   pci_init()        ← scan PCI config space and log network controllers
-  e1000_init()      ← bind a supported Intel PRO/1000 NIC and set up DMA rings
+  nic_init()        ← bind a supported Ethernet adapter and set up packet IO
   dhcp_configure()  ← acquire IPv4 address, netmask, gateway, DNS, DHCP server, and lease
   tcp_init()        ← start TCP/network service task
   ntp_sync()        ← set CLOCK_REALTIME and print synchronized UTC time
@@ -125,10 +125,10 @@ Inside `kernel_main()`:
 9. `sched_init()` — initialise the scheduler data structures
 10. `ata_init()` — software reset ATA primary channel (`0x1F0`), poll until ready
 11. `pci_init()` — scan PCI config space and log discovered network controllers
-12. `e1000_init()` — bind a supported Intel PRO/1000 NIC and set up DMA rings
+12. `nic_init()` — bind a supported Ethernet adapter. QEMU/ESXi use the e1000 driver; the WYSE S10-class Realtek `10EC:8139` path uses the RTL8139 driver.
 13. `dhcp_configure()` — briefly enables interrupts and requests IPv4 configuration from the attached network. The runtime network config is shared by ARP, TCP, NTP, `netinfo`, and the `/bin/ip.elf` and `/bin/ipconfig.elf` configuration tools. Static IPv4 settings use the same `SYS_NET_OP` path and remain runtime-only.
 14. `tcp_init()` — create and enqueue the TCP/network service kernel task
-15. `ntp_sync()` — briefly enables interrupts so PIT-backed timeout logic works, queries the default NTP server through UDP over the e1000 path and DHCP gateway, sets `CLOCK_REALTIME`, and prints the synchronized UTC time. Failure is a boot warning, not a halt.
+15. `ntp_sync()` — briefly enables interrupts so PIT-backed timeout logic works, queries the default NTP server through UDP over the active NIC and DHCP gateway, sets `CLOCK_REALTIME`, and prints the synchronized UTC time. Failure is a boot warning, not a halt.
 16. `boot_mount_ext2()` — prefer writable ATA, then read-only USB mass storage, then the loader2 RAM fallback when one was published. The storage probe briefly enables only timer IRQ0 so boot timestamps and USB waits advance without delivering keyboard/mouse/process IRQs before scheduling starts. After mount succeeds, the accumulated boot log is saved to `/var/log/boot.txt` when the filesystem is writable.
 17. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` keeps the active display muted while it loads `/bin/shell.elf` suspended, probes OHCI boot keyboard/mouse HID, starts the retrying USB HID service, and refreshes `/var/log/boot.txt`. It then runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, re-enables display output, prints `SmallOS ready`, and releases `/bin/shell.elf` as the default user shell. If that fails or exits, it reports that no kernel shell fallback is linked and idles.
 18. `sched_enqueue(boot_proc)` — make the boot sequence task runnable

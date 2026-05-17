@@ -36,7 +36,7 @@ guest.
   `/var/log/boot.txt`, late graphical boot splash, PS/2 keyboard, retrying OHCI
   USB boot keyboard/mouse probing, PS/2 plus VMware mouse input, and several
   graphics demos.
-- PCI and e1000 networking with DHCP, ARP, IPv4, UDP/NTP clock sync,
+- PCI networking with e1000 and RTL8139 NIC support, DHCP, ARP, IPv4, UDP/NTP clock sync,
   runtime `ip`/`ipconfig` inspection and configuration, a compact TCP service
   task, passive sockets, `poll`/`epoll` readiness, FTP, echo, and HTTP server
   smoke paths.
@@ -120,7 +120,7 @@ make run-gtk   # graphical GTK display
 make run-sdl   # graphical SDL display
 ```
 
-`make run` uses QEMU user-network NAT with an e1000 NIC, and the guest acquires
+`make run` uses QEMU user-network NAT with an e1000 NIC by default, and the guest acquires
 its IPv4 configuration with DHCP. `make run-usb-storage` boots the same raw
 image through QEMU OHCI USB mass storage, which exercises the protected-mode
 USB storage path instead of the IDE disk path. The USB image/run targets keep
@@ -197,7 +197,7 @@ ip dhcp
 ipconfig /all
 ```
 
-VMware ESXi deploys use the same VMDK and the same DHCP/e1000 path:
+VMware ESXi deploys use the same VMDK and the same DHCP/NIC path:
 
 ```bash
 make esxi-smoke ESXI_SMOKE_FLAGS="--host 10.10.0.13"

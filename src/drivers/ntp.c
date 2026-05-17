@@ -1,10 +1,12 @@
 #include "ntp.h"
 
 #include "arp.h"
-#include "e1000.h"
 #include "net.h"
+#include "nic.h"
 #include "../kernel/klib.h"
 #include "../kernel/timer.h"
+
+typedef unsigned short u16;
 
 #define NTP_ETHERTYPE_IPV4 0x0800u
 #define NTP_IPV4_VERSION_IHL 0x45u
@@ -62,7 +64,7 @@ static u16 checksum16(const u8* data, u32 len) {
 }
 
 static void build_request(u8* frame, const u8* dst_mac, u32 server_ip) {
-    const u8* src_mac = e1000_mac();
+    const u8* src_mac = nic_mac();
     u32 ip_off = 14u;
     u32 udp_off = ip_off + 20u;
     u32 ntp_off = udp_off + 8u;
@@ -145,7 +147,7 @@ int ntp_sync(u32 server_ip, u32* out_unix_time) {
     s_server_ip = server_ip;
     s_unix_time = 0;
 
-    if (!e1000_send(frame, sizeof(frame))) {
+    if (!nic_send(frame, sizeof(frame))) {
         s_waiting = 0;
         return 0;
     }
@@ -158,7 +160,7 @@ int ntp_sync(u32 server_ip, u32* out_unix_time) {
             return 1;
         }
         if (!net_poll_once()) {
-            __asm__ __volatile__("hlt");
+            __asm__ __volatile__("sti; hlt; cli");
         }
     }
 

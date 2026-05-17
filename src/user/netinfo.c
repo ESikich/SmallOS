@@ -12,10 +12,33 @@ void _start(int argc, char** argv) {
     }
 
     u_puts("netinfo:\n");
-    u_puts("e1000: mac=");
+    u_puts("nic: driver=");
+    u_puts(info.net_driver);
+    u_puts(" mac=");
     diag_put_mac(info.mac);
     u_puts(" link=");
-    u_puts(info.e1000_link_up ? "up" : "down");
+    u_puts(info.net_link_up ? "up" : "down");
+    u_putc('\n');
+    u_puts("nic stats: tx=");
+    u_put_uint(info.nic_tx_packets);
+    u_puts(" rx=");
+    u_put_uint(info.nic_rx_packets);
+    u_puts(" txerr=");
+    u_put_uint(info.nic_tx_errors);
+    u_puts(" rxerr=");
+    u_put_uint(info.nic_rx_errors);
+    u_puts(" status=");
+    diag_put_hex32(info.nic_status);
+    u_puts(" cmd=");
+    diag_put_hex32(info.nic_command);
+    u_puts(" rcr=");
+    diag_put_hex32(info.nic_rx_config);
+    u_puts(" tcr=");
+    diag_put_hex32(info.nic_tx_config);
+    u_puts(" rxcur=");
+    u_put_uint(info.nic_rx_cursor);
+    u_puts(" rxhw=");
+    u_put_uint(info.nic_rx_hw_cursor);
     u_putc('\n');
 
     if (info.ipv4_configured) {

@@ -71,7 +71,7 @@ Important current-state facts:
   draw inside the window instead of the global console
 - the shipped `usr/bin/tcc.elf` compiler binary links the generic SmallOS `user_crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from ext2, write the results back to disk, and then those generated ELFs can be executed immediately
 - QEMU user networking is still the default for `make run` / `make test`, but the guest now learns its IPv4 address, netmask, gateway, DNS server, and lease time through DHCP instead of assuming QEMU's NAT addresses. `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT.
-- Boot performs a best-effort NTP sync through the e1000 path before the shell starts. On success, `CLOCK_REALTIME` is set and the boot log prints the UTC time; on failure, boot continues with a warning.
+- Boot performs a best-effort NTP sync through the active NIC path before the shell starts. On success, `CLOCK_REALTIME` is set and the boot log prints the UTC time; on failure, boot continues with a warning.
 - Boot diagnostics are mirrored to serial and `/var/log/boot.txt` with
   `[ms=... tick=... cyc=...]` prefixes while the active display is muted. The
   prefix hook is removed before the late splash and user shell prompt.
@@ -136,7 +136,7 @@ to the shell cwd and may omit the `.elf` suffix. Commands like `echo`, `about`,
 shipped this way under `/bin/`.
 
 `/bin/ip.elf` and `/bin/ipconfig.elf` are the user-facing runtime network
-configuration tools. They read e1000/IPv4/TCP state through `SYS_NETINFO` and
+configuration tools. They read NIC/IPv4/TCP state through `SYS_NETINFO` and
 update the runtime IPv4 address, route, DNS, or DHCP lease through `SYS_NET_OP`.
 Those settings are intentionally volatile; rebooting returns to boot-time DHCP.
 

@@ -617,7 +617,7 @@ Kernel   →  zero BSS
          →  terminal_init, gdt_init, paging_init
          →  memory_init(page-aligned bss_end), pmm_init
          →  keyboard, mouse, timer, idt, sched_init
-         →  ata_init, pci_init, e1000_init
+         →  ata_init, pci_init, nic_init
          →  dhcp_configure (best-effort IPv4 lease; runtime config can later be inspected or replaced with ip/ipconfig)
          →  tcp_init
          →  ntp_sync (best-effort realtime clock sync through DHCP gateway)

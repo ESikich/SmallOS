@@ -149,8 +149,10 @@ static int get_info(sys_netinfo_t* info) {
 
 static void show_link(const sys_netinfo_t* info) {
     u_puts("link: ");
-    u_puts(info->e1000_link_up ? "up" : "down");
-    u_puts("  driver e1000  mac ");
+    u_puts(info->net_link_up ? "up" : "down");
+    u_puts("  driver ");
+    u_puts(info->net_driver);
+    u_puts("  mac ");
     put_mac(info->mac);
     u_putc('\n');
 }

@@ -166,7 +166,7 @@ The kernel boot path calls:
 ```text
 ata_init()
 pci_init()
-e1000_init()
+nic_init()
 dhcp_configure()
 tcp_init()
 ntp_sync()   # best-effort CLOCK_REALTIME setup; warning-only on failure

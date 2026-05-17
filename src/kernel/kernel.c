@@ -14,7 +14,7 @@
 #include "ata.h"
 #include "ext2.h"
 #include "pci.h"
-#include "e1000.h"
+#include "../drivers/nic.h"
 #include "usb.h"
 #include "usb_storage.h"
 #include "fb_console.h"
@@ -319,6 +319,33 @@ static void boot_put_hex(unsigned int value) {
     }
 }
 
+static void boot_print_nic_stats(void) {
+    nic_stats_t stats;
+
+    nic_get_stats(&stats);
+    boot_puts("nic: stats tx=");
+    boot_put_uint(stats.tx_packets);
+    boot_puts(" rx=");
+    boot_put_uint(stats.rx_packets);
+    boot_puts(" txerr=");
+    boot_put_uint(stats.tx_errors);
+    boot_puts(" rxerr=");
+    boot_put_uint(stats.rx_errors);
+    boot_puts(" status=");
+    boot_put_hex(stats.status);
+    boot_puts(" cmd=");
+    boot_put_hex(stats.command);
+    boot_puts(" rcr=");
+    boot_put_hex(stats.rx_config);
+    boot_puts(" tcr=");
+    boot_put_hex(stats.tx_config);
+    boot_puts(" rxcur=");
+    boot_put_uint(stats.rx_cursor);
+    boot_puts(" rxhw=");
+    boot_put_uint(stats.rx_hw_cursor);
+    boot_putc('\n');
+}
+
 static void boot_print_utc_time(unsigned int unix_time) {
     static const unsigned int month_days[] = {
         31u, 28u, 31u, 30u, 31u, 30u, 31u, 31u, 30u, 31u, 30u, 31u
@@ -528,6 +555,7 @@ static void boot_configure_network(void) {
         boot_splash_pass("dhcp: IPv4 lease acquired");
     } else {
         __asm__ __volatile__("cli");
+        boot_print_nic_stats();
         boot_splash_warn("dhcp: IPv4 lease unavailable");
     }
 }
@@ -794,14 +822,14 @@ void kernel_main(void) {
     boot_splash_pass("pci: config-space scan complete");
 
     /*
-     * e1000 NIC — bind to a supported Intel PRO/1000 device and set up
-     * basic DMA rings so networking can grow from a known-good device.
+     * NIC — bind to a supported Ethernet adapter and set up packet IO before
+     * the network stack requests DHCP.
      */
-    if (e1000_init()) {
-        boot_splash_pass("e1000: Intel PRO/1000 ready");
+    if (nic_init()) {
+        boot_splash_pass("nic: Ethernet adapter ready");
         boot_configure_network();
     } else {
-        boot_splash_warn("e1000: Intel PRO/1000 not present");
+        boot_splash_warn("nic: supported Ethernet adapter not present");
         net_ipv4_clear_config();
     }
 

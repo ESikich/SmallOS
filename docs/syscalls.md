@@ -1153,7 +1153,9 @@ an out-of-range index, or `-EFAULT` for an invalid output pointer.
 int sys_netinfo(sys_netinfo_t* out_info);
 ```
 
-Copies the current e1000, IPv4, socket, and TCP diagnostic state. The IPv4
+Copies the current NIC, IPv4, socket, and TCP diagnostic state. The NIC fields
+include the active driver name, MAC/link state, TX/RX counters, error counters,
+and selected hardware cursors/config registers. The IPv4
 fields include whether an address is configured, address, netmask, gateway,
 DNS server, DHCP server, and lease time. `/bin/ip.elf`, `/bin/ipconfig.elf`,
 `netinfo`, and network smoke tests use this as the read side of runtime network
@@ -1170,7 +1172,7 @@ values are:
 
 | Operation | Behavior |
 | --- | --- |
-| `SYS_NET_OP_SEND_TEST_FRAME` | Queue a raw e1000 test frame. |
+| `SYS_NET_OP_SEND_TEST_FRAME` | Queue a raw test frame on the active NIC. |
 | `SYS_NET_OP_POLL_ONCE` | Drain at most one received network frame through the dispatcher. |
 | `SYS_NET_OP_ARP` | Resolve `target_ip` or the configured gateway and write the next-hop MAC to `req->mac`. |
 | `SYS_NET_OP_PING` | Send one ICMP echo to `target_ip` or the configured gateway. |

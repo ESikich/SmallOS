@@ -145,6 +145,8 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/usb.c \
 	$(DRIVERS_DIR)/usb_storage.c \
 	$(DRIVERS_DIR)/e1000.c \
+	$(DRIVERS_DIR)/rtl8139.c \
+	$(DRIVERS_DIR)/nic.c \
 	$(DRIVERS_DIR)/net.c \
 	$(DRIVERS_DIR)/dhcp.c \
 	$(DRIVERS_DIR)/arp.c \

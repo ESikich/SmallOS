@@ -1,7 +1,7 @@
 #include "arp.h"
 
-#include "e1000.h"
 #include "ext2.h"
+#include "nic.h"
 #include "net.h"
 #include "../kernel/klib.h"
 #include "terminal.h"
@@ -46,7 +46,7 @@ static u32 arp_read_u32_be(const u8* buf, u32 off) {
 
 static void arp_reply(const u8* frame) {
     u8 reply[ARP_FRAME_SIZE];
-    const u8* src_mac = e1000_mac();
+    const u8* src_mac = nic_mac();
     u32 local_ip = net_ipv4_local_ip();
 
     k_memset(reply, 0, sizeof(reply));
@@ -73,7 +73,7 @@ static void arp_reply(const u8* frame) {
     }
     arp_write_u32_be(reply, 38, arp_read_u32_be(frame, 28));
 
-    e1000_send(reply, sizeof(reply));
+    nic_send(reply, sizeof(reply));
 }
 
 void arp_print_ip(u32 ip) {
@@ -158,7 +158,7 @@ static void arp_wait(void) {
      * Give the guest a chance to advance timers and device emulation
      * instead of burning the whole poll window in a tight busy loop.
      */
-    __asm__ __volatile__("hlt");
+    __asm__ __volatile__("sti; hlt; cli");
 }
 
 int arp_lookup(u32 sender_ip, u32 target_ip, u8* out_mac) {
@@ -177,7 +177,7 @@ int arp_lookup(u32 sender_ip, u32 target_ip, u8* out_mac) {
 
 static int arp_send_request(u32 sender_ip, u32 target_ip) {
     u8 frame[ARP_FRAME_SIZE];
-    const u8* src_mac = e1000_mac();
+    const u8* src_mac = nic_mac();
 
     k_memset(frame, 0, sizeof(frame));
 
@@ -209,7 +209,7 @@ static int arp_send_request(u32 sender_ip, u32 target_ip) {
     /* target MAC stays zero */
     arp_write_u32_be(frame, 38, target_ip);
 
-    return e1000_send(frame, sizeof(frame));
+    return nic_send(frame, sizeof(frame));
 }
 
 int arp_resolve(u32 sender_ip, u32 target_ip, u8* out_mac) {

@@ -52,7 +52,7 @@ image path.
 `kernel_main()` runs startup diagnostics during boot. The early self-checks
 report the live TSS selector, boot stack, page-aligned heap start after high
 kernel BSS, and PMM free-frame baseline. Later network diagnostics include a
-best-effort NTP clock sync after e1000/TCP initialization; success prints the
+best-effort NTP clock sync after NIC/TCP initialization; success prints the
 synchronized UTC time, while failure is a warning and boot continues. If a
 hard startup invariant drifts, the kernel halts before the post-diagnostics
 boot sequence starts. Once ext2 is mounted, the collected boot diagnostics are

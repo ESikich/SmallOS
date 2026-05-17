@@ -336,6 +336,14 @@ so the old QEMU `10.0.2.15/24` address is no longer hardcoded in the kernel.
 TAP device instead. That is the right path when you want the guest on a bridged
 LAN or otherwise reachable beyond QEMU's built-in NAT layer.
 
+The generic NIC layer currently binds QEMU/ESXi e1000 adapters and Realtek
+RTL8139 (`10EC:8139`) adapters such as the WYSE S10 onboard NIC. To exercise
+the RTL8139 path in QEMU, override the user-network device model:
+
+```bash
+make test QEMU_NETFLAGS_USER='-nic user,model=rtl8139,mac=52:54:00:12:34:56$(QEMU_NET_HOSTFWD)$(QEMU_NET_GUESTFWD)'
+```
+
 Inside the guest, `ip`, `ipconfig /all`, `ip dhcp`, `ip addr add <addr>/<prefix>`,
 `ip route add default via <gateway>`, and `ip dns set <server>` inspect or
 replace the runtime IPv4 settings. Static settings use the same volatile kernel

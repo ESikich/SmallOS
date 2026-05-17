@@ -1,8 +1,8 @@
 #include "ipv4.h"
 
 #include "arp.h"
-#include "e1000.h"
 #include "net.h"
+#include "nic.h"
 #include "../kernel/klib.h"
 #include "../kernel/timer.h"
 #include "terminal.h"
@@ -267,7 +267,7 @@ int ipv4_ping_via_gateway(u32 sender_ip, u32 target_ip, u32 gateway_ip) {
         terminal_put_uint(IPV4_PING_ATTEMPTS);
         terminal_putc('\n');
 
-        ipv4_build_echo_request(frame, e1000_mac(), target_mac, sender_ip, target_ip, ident, seq);
+        ipv4_build_echo_request(frame, nic_mac(), target_mac, sender_ip, target_ip, ident, seq);
         s_ping_waiting = 1;
         s_ping_got_reply = 0;
         s_ping_sender_ip = sender_ip;
@@ -275,7 +275,7 @@ int ipv4_ping_via_gateway(u32 sender_ip, u32 target_ip, u32 gateway_ip) {
         s_ping_ident = ident;
         s_ping_seq = seq;
 
-        if (!e1000_send(frame, IPV4_PACKET_SIZE)) {
+        if (!nic_send(frame, IPV4_PACKET_SIZE)) {
             s_ping_waiting = 0;
             terminal_puts("ping: send failed\n");
             return 0;
@@ -296,7 +296,7 @@ int ipv4_ping_via_gateway(u32 sender_ip, u32 target_ip, u32 gateway_ip) {
             }
 
             if (!net_poll_once()) {
-                __asm__ __volatile__("hlt");
+                __asm__ __volatile__("sti; hlt; cli");
                 continue;
             }
 
