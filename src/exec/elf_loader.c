@@ -482,6 +482,24 @@ int elf_exec_image_into(process_t* proc,
     return 1;
 }
 
+static void elf_set_process_name_from_path(process_t* proc, const char* path) {
+    const char* base;
+    int len;
+
+    if (!proc || !path) return;
+
+    base = path;
+    for (const char* p = path; *p; p++) {
+        if (*p == '/') base = p + 1;
+    }
+
+    k_strncpy(proc->name, base, sizeof(proc->name));
+    len = k_strlen(proc->name);
+    if (len > 4 && k_strcmp(proc->name + len - 4, ".elf")) {
+        proc->name[len - 4] = '\0';
+    }
+}
+
 static process_t* elf_run_named_with_group(const char* name,
                                            int argc,
                                            char** argv,
@@ -490,6 +508,7 @@ static process_t* elf_run_named_with_group(const char* name,
     u32 size = 0;
     const u8* data = 0;
     char alt_name[40];
+    const char* loaded_name = name;
 
     if (name) {
         int has_dot = 0;
@@ -508,12 +527,14 @@ static process_t* elf_run_named_with_group(const char* name,
                 data = vfs_load_file(alt_name, &size);
                 if (data) {
                     name = alt_name;
+                    loaded_name = alt_name;
                 }
             }
         }
 
         if (!data) {
             data = vfs_load_file(name, &size);
+            loaded_name = name;
         }
     }
 
@@ -524,7 +545,13 @@ static process_t* elf_run_named_with_group(const char* name,
         return 0;
     }
 
-    return elf_run_image_with_group(data, argc, argv, new_process_group, suspended);
+    {
+        process_t* proc = elf_run_image_with_group(data, argc, argv,
+                                                   new_process_group,
+                                                   suspended);
+        elf_set_process_name_from_path(proc, loaded_name);
+        return proc;
+    }
 }
 
 process_t* elf_run_named(const char* name, int argc, char** argv) {
@@ -550,6 +577,7 @@ int elf_exec_named_into(process_t* proc,
     u32 size = 0;
     const u8* data = 0;
     char alt_name[40];
+    const char* loaded_name = name;
 
     if (name) {
         int has_dot = 0;
@@ -565,14 +593,20 @@ int elf_exec_named_into(process_t* proc,
                 k_memcpy(alt_name, name, len);
                 k_memcpy(alt_name + len, ".elf", 5);
                 data = vfs_load_file(alt_name, &size);
+                if (data) loaded_name = alt_name;
             }
         }
         if (!data) {
             data = vfs_load_file(name, &size);
+            loaded_name = name;
         }
     }
 
     (void)size;
     if (!data) return 0;
-    return elf_exec_image_into(proc, data, argc, argv, envc, envp, out_entry, out_user_esp);
+    if (!elf_exec_image_into(proc, data, argc, argv, envc, envp, out_entry, out_user_esp)) {
+        return 0;
+    }
+    elf_set_process_name_from_path(proc, loaded_name);
+    return 1;
 }

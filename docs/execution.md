@@ -131,7 +131,7 @@ the current filesystem namespace. Path-like command names are resolved relative
 to the shell cwd and may omit the `.elf` suffix. Commands like `echo`, `about`,
 `uptime`, `halt`, `reboot`, `date`, `pwd`, `cat`, `fsread`, `ls`, `tree`,
 `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, `edit`, `meminfo`, `memmap`,
-`netinfo`, `ping`, `dhcp`, `ataread`, `usbinfo`, `usbports`, `usbdiag`,
+`top`, `netinfo`, `ping`, `dhcp`, `ataread`, `usbinfo`, `usbports`, `usbdiag`,
 `usbpeek`, `usbpower`, `usbmouse`, `mousetest`, `ip`, and `ipconfig` are
 shipped this way under `/bin/`.
 

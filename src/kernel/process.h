@@ -112,6 +112,7 @@ typedef struct process {
     u32             parent_pid;         /* process that spawned this task, if any */
     u32             pgid;               /* lightweight process group id */
     unsigned int    sched_esp;
+    unsigned int    cpu_ticks;
     volatile process_state_t state;
     int             exit_status;
     volatile int    reaper_claimed;  /* 1 once a waiter owns zombie cleanup */

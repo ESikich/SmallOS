@@ -187,7 +187,9 @@ void sched_tick(unsigned int esp) {
 
     /* Always refresh the current task's saved resume point. */
     if (s_current_idx >= 0 && s_current_idx < s_count) {
-        s_table[s_current_idx]->sched_esp = esp;
+        process_t* current = s_table[s_current_idx];
+        current->sched_esp = esp;
+        current->cpu_ticks++;
     }
 
     sched_wake_sleepers(timer_get_ticks());
@@ -288,6 +290,22 @@ int sched_snapshot_process_group(unsigned int pgid, process_t** out, int max) {
             continue;
         }
         out[copied++] = proc;
+    }
+
+    return copied;
+}
+
+int sched_snapshot_all(process_t** out, int max) {
+    int copied = 0;
+
+    if (!out || max <= 0) {
+        return 0;
+    }
+
+    for (int i = 0; i < s_count && copied < max; i++) {
+        if (s_table[i]) {
+            out[copied++] = s_table[i];
+        }
     }
 
     return copied;

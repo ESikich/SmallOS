@@ -651,6 +651,7 @@ Shipped ext2 programs:
 - `bin/date` - print UTC realtime, or `date -s [server-ip]` to sync from NTP
 - `bin/pwd` - print the process cwd inherited from the shell
 - `bin/meminfo` / `bin/memmap` - inspect kernel memory accounting and BIOS E820 entries
+- `bin/top` - live process CPU/RAM table backed by scheduler process snapshots; press `q` to exit
 - `bin/netinfo`, `bin/dhcp`, `bin/netsend`, `bin/netrecv`, `bin/arpgw`, `bin/ping`, `bin/pinggw`, `bin/pingpublic`, `bin/netcheck` - inspect or exercise runtime network diagnostics
 - `bin/ataread` - dump raw mounted-block sector diagnostics
 - `bin/usbinfo`, `bin/usbports`, `bin/usbdiag`, `bin/usbpeek`, `bin/usbpower`, `bin/usbmouse`, `bin/mousetest` - inspect or exercise USB controller/HID and mouse diagnostics through narrow kernel diagnostic syscalls; `usbports` and passive `usbdiag` output is formatted from userspace snapshots

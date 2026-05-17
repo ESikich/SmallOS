@@ -2582,6 +2582,57 @@ static int sys_meminfo_impl(sys_meminfo_t* out_info) {
     return 0;
 }
 
+static unsigned int process_ram_bytes(process_t* proc) {
+    unsigned int frames = 0;
+
+    if (!proc) return 0;
+
+    frames += 1u; /* process_t */
+    frames += proc->kernel_stack_frames;
+    frames += proc->fd_table_frames;
+    frames += process_pd_count_private_frames(proc->pd);
+
+    return frames * PAGE_SIZE;
+}
+
+static int sys_procinfo_impl(sys_procinfo_t* out_info) {
+    process_t* procs[SYS_PROCINFO_MAX];
+    sys_procinfo_t info;
+    int count;
+    unsigned int total_ticks = timer_get_ticks();
+
+    if (!out_info) return -EFAULT;
+
+    k_memset(&info, 0, sizeof(info));
+    count = sched_snapshot_all(procs, SYS_PROCINFO_MAX);
+    info.total_count = (unsigned int)count;
+    info.out_count = (unsigned int)count;
+    info.total_ticks = total_ticks;
+
+    for (int i = 0; i < count; i++) {
+        process_t* proc = procs[i];
+        sys_procinfo_entry_t* ent = &info.entries[i];
+        unsigned int heap_bytes = 0;
+
+        if (!proc) continue;
+        if (proc->heap_brk >= proc->heap_base) {
+            heap_bytes = proc->heap_brk - proc->heap_base;
+        }
+
+        ent->pid = proc->pid;
+        ent->parent_pid = proc->parent_pid;
+        ent->pgid = proc->pgid;
+        ent->state = (unsigned int)proc->state;
+        ent->cpu_ticks = proc->cpu_ticks;
+        ent->ram_bytes = process_ram_bytes(proc);
+        ent->heap_bytes = heap_bytes;
+        k_strncpy(ent->name, proc->name, sizeof(ent->name));
+    }
+
+    if (copy_to_user(out_info, &info, sizeof(info)) < 0) return -EFAULT;
+    return 0;
+}
+
 static int sys_e820_entry_impl(unsigned int index, sys_e820_entry_t* out_entry) {
     const boot_info_t* info;
     sys_e820_entry_t entry;
@@ -3296,6 +3347,11 @@ void syscall_handler_main(syscall_regs_t* regs) {
         case SYS_MEMINFO:
             regs->eax = (unsigned int)sys_meminfo_impl(
                             (sys_meminfo_t*)regs->ebx);
+            break;
+
+        case SYS_PROCINFO:
+            regs->eax = (unsigned int)sys_procinfo_impl(
+                            (sys_procinfo_t*)regs->ebx);
             break;
 
         case SYS_E820_ENTRY:

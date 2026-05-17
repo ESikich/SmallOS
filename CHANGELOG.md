@@ -13,6 +13,10 @@
   * Kept the syscall/device boundary in the kernel while letting both shells resolve these commands through the normal app-command path.
   * Added narrow USB/mouse diagnostic syscalls (`SYS_USBINFO`, `SYS_MOUSE_DEBUG`, `SYS_USB_DIAG_OP`) so userland can print snapshots or request explicit diagnostic actions without owning controller registers directly.
   * Updated the shipped ext2 image manifest and documentation so `/bin/meminfo.elf`, `/bin/memmap.elf`, `/bin/netinfo.elf`, `/bin/dhcp.elf`, `/bin/netsend.elf`, `/bin/netrecv.elf`, `/bin/arpgw.elf`, `/bin/ping*.elf`, `/bin/netcheck.elf`, `/bin/ataread.elf`, `/bin/usb*.elf`, and `/bin/mousetest.elf` are built and packed.
+* **Live process monitor** (`src/kernel/{scheduler,paging,syscall}.c`, `src/user/top.c`, `docs/`)
+  * Added `SYS_PROCINFO` process snapshots with pid, state, accumulated CPU ticks, task-owned RAM estimates, heap usage, and process names.
+  * Added `/bin/top.elf`, a live ANSI-updating process monitor that refreshes CPU/RAM rows in place and exits on `q`, Esc, or Ctrl+C.
+  * Kept `top -r <count>` for finite shell regression runs while plain `top` behaves like an interactive full-screen monitor.
 * **Unicode terminal output** (`src/drivers/unicode.*`, `src/drivers/terminal.c`, `src/user/tree.c`)
   * Added a small UTF-8 decoder and Unicode-to-CP437 compatibility mapper for the active terminal backend, keeping COM1 serial output byte-for-byte UTF-8 for headless logs.
   * Kept ANSI/control handling in `terminal.c` while moving Unicode decoding and glyph mapping into `src/drivers/unicode.*`.

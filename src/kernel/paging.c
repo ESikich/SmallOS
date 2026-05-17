@@ -333,6 +333,32 @@ void process_pd_destroy(u32* pd) {
     pmm_free_frame((u32)pd);
 }
 
+unsigned int process_pd_count_private_frames(u32* pd) {
+    unsigned int frames = 0;
+
+    if (!pd) return 0;
+
+    u32* pd_virt = paging_pd_virt(pd);
+    frames = 1;
+
+    for (u32 i = 0; i < PD_ENTRIES; i++) {
+        if (pd_virt[i] == kernel_page_directory[i]) continue;
+        if (!(pd_virt[i] & PAGE_PRESENT)) continue;
+
+        u32 pt_phys = pd_virt[i] & ~0xFFFu;
+        u32* pt = paging_pt_virt(pt_phys);
+
+        frames++;
+        for (u32 j = 0; j < PT_ENTRIES; j++) {
+            if ((pt[j] & (PAGE_PRESENT | PAGE_USER)) == (PAGE_PRESENT | PAGE_USER)) {
+                frames++;
+            }
+        }
+    }
+
+    return frames;
+}
+
 void paging_switch(u32* pd) {
     if (pd == kernel_page_directory) {
         flush_cr3((u32)pd);

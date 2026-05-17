@@ -129,6 +129,14 @@ u32* process_pd_clone_user(u32* src_pd);
 void process_pd_destroy(u32* pd);
 
 /*
+ * process_pd_count_private_frames(pd)
+ *
+ * Count PMM frames privately owned by a process page directory, including the
+ * page directory itself, private user page tables, and present user frames.
+ */
+unsigned int process_pd_count_private_frames(u32* pd);
+
+/*
  * paging_switch(pd)
  *
  * Load a page directory into CR3, flushing the TLB.

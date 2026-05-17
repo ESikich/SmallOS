@@ -74,6 +74,26 @@ typedef struct sys_meminfo {
     unsigned int e820_count;
 } sys_meminfo_t;
 
+#define SYS_PROCINFO_MAX 16u
+
+typedef struct sys_procinfo_entry {
+    unsigned int pid;
+    unsigned int parent_pid;
+    unsigned int pgid;
+    unsigned int state;
+    unsigned int cpu_ticks;
+    unsigned int ram_bytes;
+    unsigned int heap_bytes;
+    char name[32];
+} sys_procinfo_entry_t;
+
+typedef struct sys_procinfo {
+    unsigned int out_count;
+    unsigned int total_count;
+    unsigned int total_ticks;
+    sys_procinfo_entry_t entries[SYS_PROCINFO_MAX];
+} sys_procinfo_t;
+
 typedef struct sys_e820_entry {
     unsigned long long base;
     unsigned long long length;
@@ -357,7 +377,8 @@ enum {
     SYS_USB_MOUSE_OP    = 87, /* temporary USB mouse diagnostic session */
     SYS_USBINFO         = 88, /* write USB controller/HID diagnostic summary */
     SYS_MOUSE_DEBUG     = 89, /* write PS/2 mouse diagnostic counters */
-    SYS_USB_DIAG_OP     = 90  /* perform narrow USB diagnostic action */
+    SYS_USB_DIAG_OP     = 90, /* perform narrow USB diagnostic action */
+    SYS_PROCINFO        = 91  /* write process CPU/RAM diagnostic summary */
 };
 
 #endif

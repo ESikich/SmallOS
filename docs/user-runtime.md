@@ -107,6 +107,10 @@ keyboard input without kernel echo. Foreground process input reports ordinary
 characters plus ANSI-style special-key sequences for arrows, Home/End,
 Delete, PageUp/PageDown, and function keys; `edit` uses this path together
 with normal fd-backed writes to edit ext2 text files.
+Programs that redraw a whole screen, such as `top`, combine raw reads with
+nonblocking `sys_poll()` on fd `0` and ANSI cursor/screen control written to fd
+`1`. That keeps live tools responsive to single-key commands such as `q`
+without waiting for a newline.
 
 PTY-backed GUI shells use the same descriptor contract. The GUI owns the PTY
 master, the shell process inherits the slave on fd `0`/`1`/`2`, and child

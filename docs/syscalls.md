@@ -1293,6 +1293,24 @@ controller-specific root-hub/capability words. Port entries carry the same
 controller identity plus one-based port number and raw port status. If the
 snapshot fills, `truncated` is set and userland should print the partial data.
 
+### SYS_PROCINFO (91)
+
+```c
+int sys_procinfo(sys_procinfo_t* out_info);
+```
+
+Copies a scheduler/process diagnostic snapshot into `out_info`. The snapshot
+contains the current tick count, the number of copied tasks, and one
+`sys_procinfo_entry_t` per scheduled process up to `SYS_PROCINFO_MAX`. Each
+entry includes pid, parent pid, process group, state, accumulated CPU timer
+ticks, estimated task-owned RAM bytes, user heap bytes, and display name.
+
+The RAM estimate is frame-based: `process_t`, kernel stack frames, dynamic fd
+table frames, and private user page-directory/page-table/user frames. Kernel
+mappings shared into every process are not charged per process. `/bin/top.elf`
+uses repeated snapshots to compute per-refresh CPU percentages and render the
+live process table.
+
 ---
 
 ## Kernel Entry Point
@@ -1427,6 +1445,7 @@ sys_fork()
 sys_execve(path, argv, envp)
 sys_waitpid_foreground(pid, status)
 sys_meminfo(out_info)
+sys_procinfo(out_info)
 sys_e820_entry(index, out_entry)
 sys_netinfo(out_info)
 sys_net_op(req)

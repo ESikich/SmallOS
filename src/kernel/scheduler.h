@@ -125,6 +125,14 @@ process_t* sched_current(void);
 int sched_snapshot_process_group(unsigned int pgid, process_t** out, int max);
 
 /*
+ * sched_snapshot_all(out, max)
+ *
+ * Copy the current scheduler table into caller-provided storage. The snapshot
+ * is intended for diagnostics and does not transfer ownership.
+ */
+int sched_snapshot_all(process_t** out, int max);
+
+/*
  * sched_start(first_proc)
  *
  * Enter the scheduler for the first time by switching away from the

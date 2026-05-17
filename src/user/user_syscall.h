@@ -300,6 +300,10 @@ static inline int sys_meminfo(sys_meminfo_t* out_info) {
     return syscall1(SYS_MEMINFO, (uint32_t)out_info);
 }
 
+static inline int sys_procinfo(sys_procinfo_t* out_info) {
+    return syscall1(SYS_PROCINFO, (uint32_t)out_info);
+}
+
 static inline int sys_e820_entry(uint32_t index, sys_e820_entry_t* out_entry) {
     return syscall2(SYS_E820_ENTRY, index, (uint32_t)out_entry);
 }

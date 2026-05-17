@@ -779,6 +779,7 @@ build/obj/<backend>/kernel/sched_switch.o
 | kernel             | terminal_puts (active backend, optional serial mirror)  |
 | user process       | sys_write / sys_putc / sys_read                         |
 | memory accounting  | meminfo command                                         |
+| process accounting | top command via scheduler process snapshots             |
 | BIOS memory map    | memmap command                                          |
 | disk reads         | ataread <lba> command, via mounted block device         |
 | crash analysis     | QEMU -d int,cpu_reset,guest_errors -D qemu.log          |
@@ -815,6 +816,7 @@ SYS_OPEN_WRITE / SYS_WRITEFD / SYS_LSEEK / SYS_FSYNC / SYS_UNLINK / SYS_RENAME /
 SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_ACCEPT4 / SYS_CONNECT / SYS_SEND / SYS_RECV / SYS_SHUTDOWN / SYS_GETSOCKNAME / SYS_GETPEERNAME — socket ABI for passive TCP servers, FTP userland, and client-style active opens; fd handles point at kernel socket objects, TCP streams are backed by a global 4-tuple TCP table plus lazy 4 KiB RX rings and 16 KiB TX rings, basic `shutdown()` half-close state is implemented, and socket readiness plugs into the same handle poll path
 SYS_PIPE / SYS_PIPE2 / SYS_DUP* / SYS_FCNTL / SYS_POLL / SYS_EPOLL_* / SYS_TIMERFD_* / SYS_SIGNALFD — pipes, descriptor duplication, descriptor flags, and event-loop shims for shell pipelines and cserve-style guest services; socket waits register on socket wait queues, timerfd handles register read waiters that timer IRQs can wake when timerfds expire, and signalfd handles can be woken by kernel SIGINT/SIGTERM delivery
 SYS_CLOCK_GETTIME / SYS_CLOCK_SETTIME / SYS_NTP_SYNC — realtime clock syscalls; `CLOCK_MONOTONIC` reports uptime, `CLOCK_REALTIME` is maintained as an offset from uptime and can be set directly or by the tiny NTP client
+SYS_PROCINFO — scheduler/process diagnostic snapshot used by `/bin/top.elf` for live CPU tick deltas, process state, and task-owned RAM estimates
 TCP service task — drains NIC RX, dispatches ARP/IPv4/TCP frames, advertises receive windows from per-connection RX rings, services retransmit/idle timers for control handshakes, buffered TX payloads, active-open SYNs, and FIN paths, handles duplicate peer-FIN ACKs and close-driven final writes, and wakes socket wait queues
 page-aware copy-from-user validation — syscall pointer arguments are checked against user address space [USER_CODE_BASE, USER_STACK_TOP), mapped user pages, page-crossing buffers/structs, and wrapped variable-length byte counts before dereference
 preemptive round-robin scheduler — timer IRQ context switch, `SCHED_QUANTUM_MS` quantum
@@ -822,7 +824,7 @@ ATA disk driver — 28-bit LBA reads/writes from primary IDE channel (0x1F0), wi
 USB storage/HID driver — OHCI Bulk-Only Transport/SCSI read-only block device used as `usb0`, plus retrying boot keyboard/mouse polling
 ext2 filesystem — ELF programs loaded from ATA, USB storage, or the boot RAM fallback
 run/runimg infrastructure removed — `runelf` is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
-interactive shell with builtin job control plus `/bin` command ELFs such as meminfo / memmap / ataread / ls / tree / fsread / mkdir / rmdir
+interactive shell with builtin job control plus `/bin` command ELFs such as meminfo / memmap / top / ataread / ls / tree / fsread / mkdir / rmdir
 guest TinyCC compiler path — `usr/bin/tcc.elf` runs inside SmallOS through `user_crt0` and TinyCC's normal `main`, then compiles guest C samples during `make test`
 ```
 
