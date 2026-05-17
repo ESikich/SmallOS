@@ -22,6 +22,7 @@ static void ftp_session_exit(int code);
 
 #define FTPD_PORT 2121u
 #define FTPD_PASV_PORT 30000u
+#define FTPD_LOG_PATH "/var/log/ftpd.log"
 
 static jmp_buf s_session_exit_env;
 static int s_session_exit_code;
@@ -29,6 +30,30 @@ static int s_session_exit_code;
 static void ftp_session_exit(int code) {
     s_session_exit_code = code;
     longjmp(s_session_exit_env, 1);
+}
+
+static int redirect_service_log(void) {
+    int fd = sys_open_mode(FTPD_LOG_PATH,
+                           SYS_OPEN_MODE_WRITE |
+                           SYS_OPEN_MODE_CREATE |
+                           SYS_OPEN_MODE_APPEND);
+    if (fd < 0) {
+        u_puts("ftpd: cannot open ");
+        u_puts(FTPD_LOG_PATH);
+        u_puts("\n");
+        return -1;
+    }
+
+    if (sys_dup2(fd, 1) < 0 || sys_dup2(fd, 2) < 0) {
+        u_puts("ftpd: cannot redirect log\n");
+        sys_close(fd);
+        return -1;
+    }
+
+    if (fd > 2) {
+        sys_close(fd);
+    }
+    return 0;
 }
 
 static int start_listener(void) {
@@ -85,6 +110,10 @@ void _start(int argc, char** argv) {
     (void)argv;
 
     init_config(&config);
+    if (redirect_service_log() < 0) {
+        sys_exit(1);
+    }
+
     listen_fd = start_listener();
     if (listen_fd < 0) {
         u_puts("ftpd: listen setup failed\n");

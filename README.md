@@ -166,6 +166,8 @@ bg usr/sbin/cserve --config /etc/cserve.ini
 ```
 
 Shell job control supports `jobs`, `fg <jobid>`, Ctrl+Z, and `kill <jobid>`.
+`ftpd` writes service output to `/var/log/ftpd.log`; `cserve` uses the log path
+from `/etc/cserve.ini`.
 
 For TAP networking, create and configure the TAP interface on the host first,
 then run:

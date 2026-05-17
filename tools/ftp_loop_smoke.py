@@ -263,8 +263,8 @@ def run_ftp_iteration(args, iteration):
         listing = ftp.download("LIST")
         list_text = listing.decode("ascii", errors="replace")
         print(f"LIST bytes: {len(listing)}")
-        if "APPS" not in list_text.upper():
-            raise RuntimeError("LIST did not include APPS")
+        if "USR" not in list_text.upper():
+            raise RuntimeError("LIST did not include USR")
 
         retr = ftp.download(f"RETR {args.retr_path}")
         print(f"RETR bytes: {len(retr)}")
@@ -300,7 +300,7 @@ def run_ftp_loop_smoke(args):
             offset = wait_for_prompt(log, args.timeout)
             send_text(monitor, "runelf_nowait usr/sbin/ftpd")
             send_key(monitor, "ret")
-            offset = wait_for_log(log, offset, "ftpd: listening", args.timeout)
+            offset = wait_for_prompt(log, args.timeout, offset)
             offset = capture_netinfo(monitor, log, offset, args.timeout, "before")
 
             for i in range(args.iterations):

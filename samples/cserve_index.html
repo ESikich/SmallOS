@@ -272,8 +272,8 @@
       <div class="grid">
         <div class="card">
           <strong>Static file path</strong>
-          <div class="metric">/www/index.html</div>
-          <p class="muted">The file is seeded into the FAT image from samples/cserve_index.html.</p>
+          <div class="metric">/var/www/index.html</div>
+          <p class="muted">The file is seeded into the ext2 image from samples/cserve_index.html.</p>
         </div>
         <div class="card">
           <strong>Server binary</strong>
@@ -282,7 +282,7 @@
         </div>
         <div class="card">
           <strong>Log destination</strong>
-          <div class="metric">/logs</div>
+          <div class="metric">/var/log</div>
           <p class="muted">Background output should stay quiet while request logs go to cserve.log.</p>
         </div>
         <div class="card">
@@ -325,8 +325,8 @@
         <tbody>
           <tr>
             <td>ext2 lookup</td>
-            <td>Server opens <code>/www/index.html</code> from the seeded volume.</td>
-            <td>Run <code>ls www</code> in the shell.</td>
+            <td>Server opens <code>/var/www/index.html</code> from the seeded volume.</td>
+            <td>Run <code>ls var/www</code> in the shell.</td>
             <td>Directory support is exercised before the server sends anything.</td>
           </tr>
           <tr>
@@ -343,7 +343,7 @@
           </tr>
           <tr>
             <td>Background process</td>
-            <td>The shell prompt returns after <code>bg apps/services/cserve --config cserve.ini</code>.</td>
+            <td>The shell prompt returns after <code>bg usr/sbin/cserve --config /etc/cserve.ini</code>.</td>
             <td>Make another request while typing in the shell.</td>
             <td>Request logs should not spill into the terminal.</td>
           </tr>
@@ -423,7 +423,7 @@ Expected:
   status: 200
   content-type: text/html or text/html; charset=utf-8
   body-marker: cserve on SmallOS
-  log-file: /logs/cserve.log</pre>
+  log-file: /var/log/cserve.log</pre>
     </section>
 
     <section id="payload">
@@ -436,7 +436,7 @@ Expected:
       <div class="payload">
         <article>
           <h3>Block 01: boot</h3>
-          <p>The image boots, mounts ext2, starts the shell, and leaves the cserver ELF available under apps/services.</p>
+          <p>The image boots, mounts ext2, starts the shell, and leaves the cserver ELF available under usr/sbin.</p>
           <p class="muted">Signal: if this card appears, the first payload segment arrived intact.</p>
         </article>
         <article>
@@ -481,7 +481,7 @@ Expected:
         </article>
         <article>
           <h3>Block 10: logging</h3>
-          <p>The server configuration writes request logs to /logs/cserve.log so background service output does not interrupt typing.</p>
+          <p>The server configuration writes request logs to /var/log/cserve.log so background service output does not interrupt typing.</p>
           <p class="muted">Signal: terminal output should show shell prompts, not access log lines.</p>
         </article>
         <article>

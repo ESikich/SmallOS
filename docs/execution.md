@@ -194,7 +194,8 @@ with `bg usr/sbin/tcpecho`, `bg usr/sbin/sockeof`, or
 you connect to them from the host through QEMU `hostfwd`. Use `jobs` to inspect
 them, `fg <jobid>` to wait on one in the foreground, Ctrl+Z to return a
 foregrounded job to the background, and `kill <jobid>` to stop one without
-rebooting the guest.
+rebooting the guest. `ftpd` redirects service output to `/var/log/ftpd.log` so
+background request logs do not interrupt the shell prompt.
 
 The FTP service uses passive data connections, so a host-driven smoke needs
 both the control port and passive data port forwarded:
