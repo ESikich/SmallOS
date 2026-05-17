@@ -302,6 +302,7 @@ static void sh_help(void) {
     u_puts("  halt            halt the machine\n");
     u_puts("  reboot          reboot the machine\n");
     u_puts("  uptime          print uptime\n");
+    u_puts("  cpuz            show hardware summary\n");
     u_puts("  top             show process CPU and RAM usage\n");
     u_puts("  ls              list an ext2 directory\n");
     u_puts("  tree            print an ext2 directory tree\n");
@@ -1306,6 +1307,7 @@ void sh_shelltest(void) {
     sh_shelltest_exec("about", "about");
     sh_shelltest_exec("uptime", "uptime");
     sh_shelltest_exec("meminfo", "meminfo");
+    sh_shelltest_exec("cpuz", "cpuz");
     sh_shelltest_exec("top", "top -r 1");
     sh_shelltest_exec("memmap", "memmap");
     sh_shelltest_exec("netinfo", "netinfo");

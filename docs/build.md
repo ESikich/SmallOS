@@ -651,6 +651,7 @@ Shipped ext2 programs:
 - `bin/date` - print UTC realtime, or `date -s [server-ip]` to sync from NTP
 - `bin/pwd` - print the process cwd inherited from the shell
 - `bin/meminfo` / `bin/memmap` - inspect kernel memory accounting and BIOS E820 entries
+- `bin/cpuz` - print a CPU-Z-style hardware summary: CPUID vendor/brand/features/cache plus memory, display, USB, network, and boot-disk diagnostics
 - `bin/top` - live process CPU/RAM table backed by scheduler process snapshots; press `q` to exit
 - `bin/netinfo`, `bin/dhcp`, `bin/netsend`, `bin/netrecv`, `bin/arpgw`, `bin/ping`, `bin/pinggw`, `bin/pingpublic`, `bin/netcheck` - inspect or exercise runtime network diagnostics
 - `bin/ataread` - dump raw mounted-block sector diagnostics

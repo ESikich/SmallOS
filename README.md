@@ -43,7 +43,7 @@ guest.
 - Guest userland includes familiar commands such as `ls`, `tree`, `cat`,
   `more`, `pwd`, `touch`, `mkdir`, `rm`, `cp`, `mv`, `edit`, `date`, `ip`,
   `ipconfig`, `uptime`, `halt`, and `reboot`, plus diagnostics such as
-  `usbinfo`, `usbports`, `usbpower`, `mousetest`, and demos.
+  `cpuz`, `usbinfo`, `usbports`, `usbpower`, `mousetest`, and demos.
 - TinyCC is built as `usr/bin/tcc.elf` and can compile sample C programs inside
   SmallOS.
 

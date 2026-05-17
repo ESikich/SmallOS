@@ -8,11 +8,12 @@
   * Made tab completion treat duplicate visible candidates as one match, so built-in commands that also exist as `/bin/*.elf` can still complete with the expected trailing space.
   * Recorded shell history before tokenization so recalled commands keep their full argument string, including commands that later fail.
   * Let Ctrl+C at the user shell prompt reach the raw shell editor as byte `0x03` instead of terminating the shell process group; foreground programs still receive normal terminal-interrupt handling.
-* **Diagnostic commands as userland ELFs** (`src/user/{meminfo,memmap,netinfo,dhcp,netsend,netrecv,arpgw,ping,pinggw,pingpublic,netcheck,ataread,usbinfo,usbports,usbdiag,usbpeek,usbpower,usbmouse,mousetest}.c`, `src/shell/commands.c`, `src/user/shell/app.c`, `Makefile`, `docs/`)
+* **Diagnostic commands as userland ELFs** (`src/user/{meminfo,memmap,cpuz,netinfo,dhcp,netsend,netrecv,arpgw,ping,pinggw,pingpublic,netcheck,ataread,usbinfo,usbports,usbdiag,usbpeek,usbpower,usbmouse,mousetest}.c`, `src/shell/commands.c`, `src/user/shell/app.c`, `Makefile`, `docs/`)
   * Moved memory, E820, network, ATA, USB, and mouse diagnostic command presentation out of the user shell and kernel fallback shell into standalone `/bin/*.elf` programs.
+  * Added `/bin/cpuz.elf`, a CPU-Z-style hardware summary that combines CPUID data with existing memory, display, USB, network, and storage diagnostic syscalls.
   * Kept the syscall/device boundary in the kernel while letting both shells resolve these commands through the normal app-command path.
   * Added narrow USB/mouse diagnostic syscalls (`SYS_USBINFO`, `SYS_MOUSE_DEBUG`, `SYS_USB_DIAG_OP`) so userland can print snapshots or request explicit diagnostic actions without owning controller registers directly.
-  * Updated the shipped ext2 image manifest and documentation so `/bin/meminfo.elf`, `/bin/memmap.elf`, `/bin/netinfo.elf`, `/bin/dhcp.elf`, `/bin/netsend.elf`, `/bin/netrecv.elf`, `/bin/arpgw.elf`, `/bin/ping*.elf`, `/bin/netcheck.elf`, `/bin/ataread.elf`, `/bin/usb*.elf`, and `/bin/mousetest.elf` are built and packed.
+  * Updated the shipped ext2 image manifest and documentation so `/bin/meminfo.elf`, `/bin/memmap.elf`, `/bin/cpuz.elf`, `/bin/netinfo.elf`, `/bin/dhcp.elf`, `/bin/netsend.elf`, `/bin/netrecv.elf`, `/bin/arpgw.elf`, `/bin/ping*.elf`, `/bin/netcheck.elf`, `/bin/ataread.elf`, `/bin/usb*.elf`, and `/bin/mousetest.elf` are built and packed.
 * **Live process monitor** (`src/kernel/{scheduler,paging,syscall}.c`, `src/user/top.c`, `docs/`)
   * Added `SYS_PROCINFO` process snapshots with pid, state, accumulated CPU ticks, task-owned RAM estimates, heap usage, and process names.
   * Added `/bin/top.elf`, a live ANSI-updating process monitor that refreshes CPU/RAM rows in place and exits on `q`, Esc, or Ctrl+C.

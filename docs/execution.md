@@ -131,9 +131,9 @@ the current filesystem namespace. Path-like command names are resolved relative
 to the shell cwd and may omit the `.elf` suffix. Commands like `echo`, `about`,
 `uptime`, `halt`, `reboot`, `date`, `pwd`, `cat`, `fsread`, `ls`, `tree`,
 `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, `edit`, `meminfo`, `memmap`,
-`top`, `netinfo`, `ping`, `dhcp`, `ataread`, `usbinfo`, `usbports`, `usbdiag`,
-`usbpeek`, `usbpower`, `usbmouse`, `mousetest`, `ip`, and `ipconfig` are
-shipped this way under `/bin/`.
+`cpuz`, `top`, `netinfo`, `ping`, `dhcp`, `ataread`, `usbinfo`, `usbports`,
+`usbdiag`, `usbpeek`, `usbpower`, `usbmouse`, `mousetest`, `ip`, and
+`ipconfig` are shipped this way under `/bin/`.
 
 The interactive shell editor keeps a short command history and command/path
 completion. History stores the full input line before tokenization, so recalled
