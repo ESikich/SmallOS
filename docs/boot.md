@@ -14,7 +14,7 @@ BIOS
  → protected mode
  → kernel_entry.asm  (zeros BSS, calls kernel_main)
  → kernel_main()     (timestamped diagnostics, storage selection, boot log save)
- → bootseq task      (shell preload, HID/log save, late splash, shell resume)
+ → bootseq task      (shell preload, HID/log save, services, late splash, shell resume)
 ```
 
 ---
@@ -627,6 +627,7 @@ Kernel   →  zero BSS
 Bootseq  →  load /bin/shell.elf suspended
          →  enable interrupts in kernel-task bootstrap
          →  probe OHCI boot keyboard/mouse HID and queue retrying usb service
+         →  start boot FTP and cserve user services
          →  refresh /var/log/boot.txt
          →  run /bin/bootsplash.elf boot/splash.bmp
          →  print SmallOS ready

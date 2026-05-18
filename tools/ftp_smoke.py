@@ -329,9 +329,7 @@ def main():
     ok = False
     try:
         with open(args.serial, "r", encoding="utf-8", errors="replace") as log:
-            offset = wait_for_prompt(log, args.timeout)
-            send_text(monitor, "runelf_nowait usr/sbin/ftpd")
-            send_key(monitor, "ret")
+            wait_for_prompt(log, args.timeout)
         run_ftp_smoke(args)
         ok = True
         return 0

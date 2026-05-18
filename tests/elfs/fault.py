@@ -7,7 +7,7 @@ CASES = [
         command="runelf usr/libexec/tests/fault ud",
         must_contain=[
             "fault: triggering #UD",
-            "ud term elf",
+            "ud term fault",
         ],
     ),
     case(
@@ -15,7 +15,7 @@ CASES = [
         command="runelf usr/libexec/tests/fault gp",
         must_contain=[
             "fault: triggering #GP",
-            "gp term elf",
+            "gp term fault",
         ],
     ),
     case(
@@ -23,7 +23,7 @@ CASES = [
         command="runelf usr/libexec/tests/fault de",
         must_contain=[
             "fault: triggering #DE",
-            "de term elf",
+            "de term fault",
         ],
     ),
     case(
@@ -31,7 +31,7 @@ CASES = [
         command="runelf usr/libexec/tests/fault br",
         must_contain=[
             "fault: triggering #BR",
-            "br term elf",
+            "br term fault",
         ],
     ),
     case(
@@ -39,7 +39,7 @@ CASES = [
         command="runelf usr/libexec/tests/fault pf",
         must_contain=[
             "fault: triggering #PF",
-            "pf term elf",
+            "pf term fault",
         ],
     ),
 ]

@@ -298,9 +298,6 @@ def run_ftp_loop_smoke(args):
     try:
         with open(args.serial, "r", encoding="utf-8", errors="replace") as log:
             offset = wait_for_prompt(log, args.timeout)
-            send_text(monitor, "runelf_nowait usr/sbin/ftpd")
-            send_key(monitor, "ret")
-            offset = wait_for_prompt(log, args.timeout, offset)
             offset = capture_netinfo(monitor, log, offset, args.timeout, "before")
 
             for i in range(args.iterations):

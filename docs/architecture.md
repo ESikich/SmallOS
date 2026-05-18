@@ -54,7 +54,7 @@ kernel_main()
   tcp_init()        ← start TCP/network service task
   ntp_sync()        ← set CLOCK_REALTIME and print synchronized UTC time
   ext2_init()       ← mount ATA, USB storage, or loader2 boot RAM fallback
-  bootseq task      ← load shell, finish HID/logging, show splash, resume shell
+  bootseq task      ← load shell, finish HID/logging, start services, show splash, resume shell
   process_start_reaper() ← create and enqueue zombie reaper task
   sched_start()     ← switch from boot stack into bootseq task with IF masked
   kernel task bootstrap enables IF on the task stack
@@ -130,7 +130,7 @@ Inside `kernel_main()`:
 14. `tcp_init()` — create and enqueue the TCP/network service kernel task
 15. `ntp_sync()` — briefly enables interrupts so PIT-backed timeout logic works, queries the default NTP server through UDP over the active NIC and DHCP gateway, sets `CLOCK_REALTIME`, and prints the synchronized UTC time. Failure is a boot warning, not a halt.
 16. `boot_mount_ext2()` — prefer writable ATA, then read-only USB mass storage, then the loader2 RAM fallback when one was published. The storage probe briefly enables only timer IRQ0 so boot timestamps and USB waits advance without delivering keyboard/mouse/process IRQs before scheduling starts. After mount succeeds, the accumulated boot log is saved to `/var/log/boot.txt` when the filesystem is writable.
-17. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` keeps the active display muted while it loads `/bin/shell.elf` suspended, probes OHCI boot keyboard/mouse HID, starts the retrying USB HID service, and refreshes `/var/log/boot.txt`. It then runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, re-enables display output, prints `SmallOS ready`, and releases `/bin/shell.elf` as the default user shell. If that fails or exits, it reports that no kernel shell fallback is linked and idles.
+17. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` keeps the active display muted while it loads `/bin/shell.elf` suspended, probes OHCI boot keyboard/mouse HID, starts the retrying USB HID service, queues the boot FTP and cserve user services, and refreshes `/var/log/boot.txt`. It then runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, re-enables display output, prints `SmallOS ready`, and releases `/bin/shell.elf` as the default user shell. If that fails or exits, it reports that no kernel shell fallback is linked and idles.
 18. `sched_enqueue(boot_proc)` — make the boot sequence task runnable
 19. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
 20. `sched_start(boot_proc)` - switch from the boot stack into the boot sequence task with interrupts still masked

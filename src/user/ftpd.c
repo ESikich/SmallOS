@@ -26,20 +26,29 @@ static void ftp_session_exit(int code);
 
 static jmp_buf s_session_exit_env;
 static int s_session_exit_code;
+static int s_quiet;
 
 static void ftp_session_exit(int code) {
     s_session_exit_code = code;
     longjmp(s_session_exit_env, 1);
 }
 
-static int redirect_service_log(void) {
-    int fd = sys_open_mode(FTPD_LOG_PATH,
+static int str_eq(const char* a, const char* b) {
+    while (*a && *b && *a == *b) {
+        a++;
+        b++;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+static int redirect_service_log(const char* path) {
+    int fd = sys_open_mode(path,
                            SYS_OPEN_MODE_WRITE |
                            SYS_OPEN_MODE_CREATE |
                            SYS_OPEN_MODE_APPEND);
     if (fd < 0) {
         u_puts("ftpd: cannot open ");
-        u_puts(FTPD_LOG_PATH);
+        u_puts(path);
         u_puts("\n");
         return -1;
     }
@@ -54,6 +63,24 @@ static int redirect_service_log(void) {
         sys_close(fd);
     }
     return 0;
+}
+
+static void parse_args(int argc, char** argv, const char** log_path) {
+    *log_path = FTPD_LOG_PATH;
+
+    for (int i = 1; i < argc; i++) {
+        if (str_eq(argv[i], "--quiet") || str_eq(argv[i], "--no-log")) {
+            s_quiet = 1;
+            *log_path = "";
+        } else if (str_eq(argv[i], "--log-file") && i + 1 < argc) {
+            *log_path = argv[++i];
+        } else {
+            u_puts("ftpd: unknown argument ");
+            u_puts(argv[i]);
+            u_puts("\n");
+            sys_exit(1);
+        }
+    }
 }
 
 static int start_listener(void) {
@@ -104,32 +131,41 @@ static void init_config(ftp_config_t* config) {
 
 void _start(int argc, char** argv) {
     ftp_config_t config;
+    const char* log_path;
     int listen_fd;
 
-    (void)argc;
-    (void)argv;
-
+    parse_args(argc, argv, &log_path);
     init_config(&config);
-    if (redirect_service_log() < 0) {
+    if (log_path[0] != '\0' && redirect_service_log(log_path) < 0) {
         sys_exit(1);
+    }
+    if (s_quiet) {
+        sys_close(1);
+        sys_close(2);
     }
 
     listen_fd = start_listener();
     if (listen_fd < 0) {
-        u_puts("ftpd: listen setup failed\n");
+        if (!s_quiet) {
+            u_puts("ftpd: listen setup failed\n");
+        }
         sys_exit(1);
     }
 
-    u_puts("ftpd: listening on 0.0.0.0:");
-    u_put_uint(FTPD_PORT);
-    u_puts("\n");
+    if (!s_quiet) {
+        u_puts("ftpd: listening on 0.0.0.0:");
+        u_put_uint(FTPD_PORT);
+        u_puts("\n");
+    }
 
     for (;;) {
         int client_fd;
 
         client_fd = accept(listen_fd, 0, 0);
         if (client_fd < 0) {
-            u_puts("ftpd: accept failed\n");
+            if (!s_quiet) {
+                u_puts("ftpd: accept failed\n");
+            }
             break;
         }
 

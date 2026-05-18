@@ -83,7 +83,8 @@ make clean && make
 ```
 
 This writes `build/img/smallos.img` and `build/img/smallos.vmdk`. QEMU boots
-the raw image directly, and the same file can be written to a whole USB device.
+the raw image directly. For hardware USB testing, `make usb-image` refreshes
+the stable burn target at `build/usb/smallos-wyse-s10-direct-usb.img`.
 The seeded ext2 image is built under `build/bin/<backend>/ext2.seed.img`, then
 copied to the mutable runtime partition at `.state/ext2.img`. Guest-created
 files survive normal rebuilds, while the `.state/ext2.img.stamp` dependency
@@ -94,10 +95,10 @@ change. Reset it from the current seed image with:
 make reset-disk
 ```
 
-Write the image to a whole USB device, not a partition:
+Write the USB image to a whole device, not a partition:
 
 ```bash
-sudo dd if=build/img/smallos.img of=/dev/sdX bs=4M conv=fsync status=progress
+sudo dd if=build/usb/smallos-wyse-s10-direct-usb.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
 To rebuild only the raw image:
@@ -157,17 +158,24 @@ make run-headless \
   QEMU_NET_HOSTFWD=',hostfwd=tcp::2323-:2323'
 ```
 
-Inside the guest, start a service from the shell:
+Inside the guest, the FTP and web services start by default:
+
+```text
+usr/sbin/ftpd --quiet
+usr/sbin/cserve --port 8080 --root /var/www --max-conn 28 --log off
+```
+
+Additional or replacement services can still be launched from the shell:
 
 ```text
 bg usr/sbin/tcpecho
-bg usr/sbin/ftpd
+bg usr/sbin/ftpd --log-file /var/log/ftpd.log
 bg usr/sbin/cserve --config /etc/cserve.ini
 ```
 
 Shell job control supports `jobs`, `fg <jobid>`, Ctrl+Z, and `kill <jobid>`.
-`ftpd` writes service output to `/var/log/ftpd.log`; `cserve` uses the log path
-from `/etc/cserve.ini`.
+Manual `ftpd` launches write service output to `/var/log/ftpd.log`; manual
+`cserve` launches use the log path from `/etc/cserve.ini`.
 
 For TAP networking, create and configure the TAP interface on the host first,
 then run:

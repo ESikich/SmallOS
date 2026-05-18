@@ -625,6 +625,33 @@ static void boot_show_splash(void) {
     }
 }
 
+static void boot_start_user_services(void) {
+    char* ftpd_argv[] = { "ftpd", "--quiet", 0 };
+    char* cserve_argv[] = {
+        "cserve",
+        "--port", "8080",
+        "--root", "/var/www",
+        "--max-conn", "28",
+        "--log", "off",
+        0
+    };
+    process_t* proc;
+
+    proc = elf_run_named_new_group("usr/sbin/ftpd", 2, ftpd_argv);
+    if (proc) {
+        boot_puts("service: ftpd queued on port 2121\n");
+    } else {
+        boot_puts("service: WARN ftpd unavailable\n");
+    }
+
+    proc = elf_run_named_new_group("usr/sbin/cserve", 9, cserve_argv);
+    if (proc) {
+        boot_puts("service: cserve queued on port 8080\n");
+    } else {
+        boot_puts("service: WARN cserve unavailable\n");
+    }
+}
+
 static void boot_sequence_task_main(void) {
     usb_debug_state_t usb_dbg;
     keyboard_debug_state_t keyboard_dbg;
@@ -650,6 +677,7 @@ static void boot_sequence_task_main(void) {
     } else {
         boot_puts("usb: WARN HID service task unavailable\n");
     }
+    boot_start_user_services();
 
     boot_log_save();
     boot_log_capture_end();

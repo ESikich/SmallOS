@@ -77,10 +77,11 @@ Important current-state facts:
   prefix hook is removed before the late splash and user shell prompt.
 - `pinggw` and bare `ping` target the DHCP-provided gateway. `ping <ip>` routes through the DHCP gateway when the target is off-subnet. Public ICMP may still be blocked by the surrounding hypervisor or NAT, so `pingpublic` is only a best-effort probe.
 - `netcheck` prints the gateway steps separately from the public ICMP probe so a `1.1.1.1` timeout does not imply the local NAT path is broken
-- `usr/sbin/tcpecho.elf`, `usr/sbin/sockeof.elf`, and `usr/sbin/ftpd.elf` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
+- `usr/sbin/tcpecho.elf`, `usr/sbin/sockeof.elf`, `usr/sbin/ftpd.elf`, and `usr/sbin/cserve.elf` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
 - `tcpecho.elf` listens on `2323` in the guest and is driven by `make socket-parallel-smoke` to verify multiple simultaneous echo clients
 - `sockeof.elf` listens on `2463` in the guest and is driven by `make socket-eof-smoke` to verify a multi-segment payload before EOF, `POLLHUP`, post-EOF response writes, and guest write-side shutdown
-- `ftpd.elf` listens on `2121` in the guest and expects passive data connections on `30000`; `make ftp-smoke` and `make ftp-loop-smoke` cover that path, and host-side clients such as `lftp`, WinSCP, and FileZilla should use passive mode
+- `ftpd.elf` listens on `2121` in the guest and expects passive data connections on `30000`; the boot sequence starts it in quiet mode, `make ftp-smoke` and `make ftp-loop-smoke` cover that path, and host-side clients such as `lftp`, WinSCP, and FileZilla should use passive mode
+- `cserve.elf` listens on `8080` from `/var/www` by default; the boot sequence starts it with logging disabled and `max-conn` set to 28
 
 ---
 
@@ -114,11 +115,11 @@ SYS_MOUSE_READ copies state to userland and clears dx/dy
 
 After kernel diagnostics, `kernel_main()` creates a `bootseq` kernel task and
 enters the scheduler on it. `bootseq` loads `/bin/shell.elf` suspended, probes
-boot keyboard/mouse HID, refreshes `/var/log/boot.txt`, then runs
-`/bin/bootsplash.elf boot/splash.bmp`. After the splash exits, it prints
-`SmallOS ready` and launches `/bin/shell.elf` as the default user shell. If that
-user shell exits or cannot be loaded, `bootseq` reports that no kernel shell
-fallback is linked and idles.
+boot keyboard/mouse HID, queues the boot FTP and cserve user services, refreshes
+`/var/log/boot.txt`, then runs `/bin/bootsplash.elf boot/splash.bmp`. After the
+splash exits, it prints `SmallOS ready` and launches `/bin/shell.elf` as the
+default user shell. If that user shell exits or cannot be loaded, `bootseq`
+reports that no kernel shell fallback is linked and idles.
 
 ---
 
@@ -188,14 +189,15 @@ The test suite uses this flow to compile several focused C samples inside the gu
 TinyCC's runtime expectations are part of the user runtime contract in
 [`docs/user-runtime.md`](user-runtime.md).
 
-For the TCP service path, the shell can launch a long-lived reattachable service
-with `bg usr/sbin/tcpecho`, `bg usr/sbin/sockeof`, or
-`bg usr/sbin/ftpd`. Those programs bind and listen inside the guest, and
-you connect to them from the host through QEMU `hostfwd`. Use `jobs` to inspect
-them, `fg <jobid>` to wait on one in the foreground, Ctrl+Z to return a
-foregrounded job to the background, and `kill <jobid>` to stop one without
-rebooting the guest. `ftpd` redirects service output to `/var/log/ftpd.log` so
-background request logs do not interrupt the shell prompt.
+For the TCP service path, FTP and cserve are boot-started by default. The shell
+can still launch additional long-lived reattachable services with commands such
+as `bg usr/sbin/tcpecho`, `bg usr/sbin/sockeof`, or
+`bg usr/sbin/ftpd --log-file /var/log/ftpd.log`. Those programs bind and listen
+inside the guest, and you connect to them from the host through QEMU `hostfwd`.
+Use `jobs` to inspect them, `fg <jobid>` to wait on one in the foreground,
+Ctrl+Z to return a foregrounded job to the background, and `kill <jobid>` to
+stop one without rebooting the guest. Boot-started `ftpd` runs in quiet mode so
+request logs do not interrupt the shell prompt.
 
 The FTP service uses passive data connections, so a host-driven smoke needs
 both the control port and passive data port forwarded:
@@ -204,13 +206,13 @@ both the control port and passive data port forwarded:
 hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000
 ```
 
-`make ftp-smoke` sets those forwards, launches `ftpd`, and verifies login,
-negative path replies, directory listing, download, upload readback, delete,
-and `RMD` cleanup.
+`make ftp-smoke` sets those forwards, uses the boot-started `ftpd`, and verifies
+login, negative path replies, directory listing, download, upload readback,
+delete, and `RMD` cleanup.
 
-`make ftp-loop-smoke` uses the same forwards, keeps `ftpd` running, and repeats
-fresh control sessions with passive `LIST`, `RETR`, `STOR`, uploaded-file
-readback, and cleanup cycles.
+`make ftp-loop-smoke` uses the same forwards and the same boot-started `ftpd`,
+then repeats fresh control sessions with passive `LIST`, `RETR`, `STOR`,
+uploaded-file readback, and cleanup cycles.
 
 `make socket-parallel-smoke` forwards guest port `2323`, launches `tcpecho`,
 opens 8 parallel echo clients by default, verifies small payload responses on
@@ -224,9 +226,9 @@ later writes and deliver EOF to the host. It then opens a second connection
 where a final guest write is delivered before guest `close()` sends FIN and the
 host observes EOF.
 
-`make cserve-smoke` forwards guest port `8080`, launches cserve with the seeded
-`/etc/cserve.ini`, checks the large `/var/www/index.html` static fixture, holds
-32 keep-alive clients by default, exercises a slow reader, verifies
+`make cserve-smoke` forwards guest port `8080`, uses the boot-started cserve
+instance, checks the large `/var/www/index.html` static fixture, holds
+24 keep-alive clients by default, exercises a slow reader, verifies
 `/favicon.ico` returns 404, and records the guest `netinfo` socket/TCP summary.
 
 ---
@@ -447,7 +449,7 @@ kernel_main()
   process_start_reaper()    ← creates and enqueues reaper task
   sched_start(boot_proc)    ← IF remains masked for the first stack switch
   kernel task bootstrap enables IF
-  bootseq loads user shell suspended, probes OHCI boot keyboard/mouse HID, saves boot log
+  bootseq loads user shell suspended, probes OHCI boot keyboard/mouse HID, starts services, saves boot log
   bootseq runs late splash, clears display, foregrounds and resumes user shell
 ```
 

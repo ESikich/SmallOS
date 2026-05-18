@@ -46,8 +46,8 @@ POSIX edge-semantics work.
   listener and connection counts, RX/TX ring usage, allocated ring capacity,
   and global RX/TX caps. `ip` and `ipconfig` also expose the runtime IPv4
   address, route, DNS, DHCP server, and lease state used by outbound sockets.
-- The sample cserve config uses `max_conn = 40`; the default cserve smoke gate
-  still holds 32 keep-alive clients and adds one slow-reader connection.
+- The boot-started cserve instance uses `max_conn = 28`; the default cserve
+  smoke gate holds 24 keep-alive clients and adds one slow-reader connection.
 
 ## Historical Baseline
 
@@ -118,7 +118,7 @@ large inline arrays.
 - Global TCP RX ring cap: 512 KiB.
 - Global TCP TX ring cap: 1 MiB.
 - cserve sample `max_conn`: 40.
-- Default cserve smoke hold: 32 keep-alive clients plus one slow reader.
+- Default cserve smoke hold: 24 keep-alive clients plus one slow reader.
 
 ### TCP Behavior Notes
 
@@ -160,9 +160,9 @@ Coverage highlights:
 - `make socket-parallel-smoke` drives parallel `tcpecho` clients.
 - `make ftp-smoke` verifies the FTP control and passive data path.
 - `make ftp-loop-smoke` repeats passive `LIST`, `RETR`, and `STOR` cycles.
-- `make cserve-smoke` launches cserve, fetches the large static fixture, checks
-  a 404, holds keep-alive clients, exercises a slow reader, and captures
-  `netinfo`.
+- `make cserve-smoke` uses the boot-started cserve instance, fetches the large
+  static fixture, checks a 404, holds keep-alive clients, exercises a slow
+  reader, and captures `netinfo`.
 - `make verify-network` runs the socket EOF, socket parallel, FTP, FTP loop,
   and cserve smoke targets in sequence.
 
