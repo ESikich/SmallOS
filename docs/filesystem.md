@@ -44,7 +44,7 @@ The ext2 start LBA is **not** compiled into the kernel. The Makefile computes it
 volume. Normal runs copy that seed to `.state/ext2.img`, which is the mutable
 volume appended to `smallos.img`. The seed includes `/var/log/boot.txt` from
 `samples/boot.txt` so the kernel can persist boot diagnostics by overwriting an
-existing file after `ext2_init()`.
+existing file after `bootseq` mounts ext2.
 
 ## Fixed geometry
 
@@ -167,10 +167,9 @@ The kernel boot path calls:
 ata_init()
 pci_init()
 nic_init()
-dhcp_configure()
 tcp_init()
-ntp_sync()   # best-effort CLOCK_REALTIME setup; warning-only on failure
-ext2_init()
+bootnet task  # DHCP, then best-effort CLOCK_REALTIME setup through NTP
+bootseq task  # ext2 mount and boot-log persistence
 ```
 
 in that order. The DHCP-provided network config is runtime state; after boot,

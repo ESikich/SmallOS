@@ -11,8 +11,9 @@
   * Changed the normal loader2 RAM fallback default to `BOOT_RAMDISK_FALLBACK=never`; explicit USB image/run targets still force `always` for hardware resilience.
   * Made `meminfo` and the welcome screen report the real PMM total captured after E820 filtering and boot reservations, instead of the allocator's fixed address-window ceiling.
 * **Boot diagnostics and welcome flow** (`src/kernel/kernel.c`, `docs/`)
-  * Kept early boot diagnostics visible on the display instead of muting them before the framebuffer splash replay.
-  * Printed input/HID diagnostics before the bitmap splash, then printed a post-splash welcome summary with UTC time, NIC/link/MAC/IP/gateway, and PMM memory before launching the shell.
+  * Muted protected-mode diagnostics on the active display while preserving serial output and `/var/log/boot.txt` capture with boot timing prefixes.
+  * Queued DHCP/NTP and default service startup as scheduler tasks, with their splash-covered output written to the boot log instead of the display.
+  * Preloaded the user shell before showing `/bin/bootsplash.elf boot/splash.bmp`, kept that splash visible through the remaining boot work, then replaced it with the welcome summary and shell prompt.
 * **User shell editing fixes** (`src/user/shell/app.c`, `src/user/gui/shell_window.c`, `src/kernel/process.c`, `docs/`)
   * Made tab completion treat duplicate visible candidates as one match, so built-in commands that also exist as `/bin/*.elf` can still complete with the expected trailing space.
   * Recorded shell history before tokenization so recalled commands keep their full argument string, including commands that later fail.

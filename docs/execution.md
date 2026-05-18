@@ -71,10 +71,11 @@ Important current-state facts:
   draw inside the window instead of the global console
 - the shipped `usr/bin/tcc.elf` compiler binary links the generic SmallOS `user_crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from ext2, write the results back to disk, and then those generated ELFs can be executed immediately
 - QEMU user networking is still the default for `make run` / `make test`, but the guest now learns its IPv4 address, netmask, gateway, DNS server, and lease time through DHCP instead of assuming QEMU's NAT addresses. `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT.
-- Boot performs a best-effort NTP sync through the active NIC path before the shell starts. On success, `CLOCK_REALTIME` is set and the boot log prints the UTC time; on failure, boot continues with a warning.
-- Boot diagnostics stay visible on the active display and are mirrored to
-  serial and `/var/log/boot.txt` with `[ms=... tick=... cyc=...]` prefixes.
-  The prefix hook is removed before the late splash and user shell prompt.
+- Boot queues DHCP and best-effort NTP as an async kernel task once the scheduler is live. On success, `CLOCK_REALTIME` is set and the boot log prints the UTC time; on failure, boot continues with a warning.
+- Protected-mode boot diagnostics are muted on the active display, mirrored to
+  serial, and saved to `/var/log/boot.txt` with `[ms=... tick=... cyc=...]`
+  prefixes. DHCP, NTP, and default-service messages produced while the splash
+  is visible are display-suppressed but still appended to the boot log.
 - `pinggw` and bare `ping` target the DHCP-provided gateway. `ping <ip>` routes through the DHCP gateway when the target is off-subnet. Public ICMP may still be blocked by the surrounding hypervisor or NAT, so `pingpublic` is only a best-effort probe.
 - `netcheck` prints the gateway steps separately from the public ICMP probe so a `1.1.1.1` timeout does not imply the local NAT path is broken
 - `usr/sbin/tcpecho.elf`, `usr/sbin/sockeof.elf`, `usr/sbin/ftpd.elf`, and `usr/sbin/cserve.elf` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
@@ -113,15 +114,16 @@ decode PS/2 packet, VMware event, or USB boot report → accumulate dx/dy/button
 SYS_MOUSE_READ copies state to userland and clears dx/dy
 ```
 
-After kernel diagnostics, `kernel_main()` creates a `bootseq` kernel task and
-enters the scheduler on it. `bootseq` loads `/bin/shell.elf` suspended, probes
-boot keyboard/mouse HID, queues the retrying USB HID service, prints input
-diagnostics, queues the boot FTP and cserve user services, refreshes
-`/var/log/boot.txt`, then runs `/bin/bootsplash.elf boot/splash.bmp`. After the
-splash exits, it prints a welcome/time/network/memory summary plus
-`SmallOS ready` and launches `/bin/shell.elf` as the default user shell. If that
-user shell exits or cannot be loaded, `bootseq`
-reports that no kernel shell fallback is linked and idles.
+After kernel diagnostics, `kernel_main()` creates `bootnet`, `bootsvc`, and
+`bootseq` kernel tasks and enters the scheduler on `bootseq`. `bootseq` mounts
+ext2, saves `/var/log/boot.txt`, switches async chatter to log-only mode, loads
+`/bin/shell.elf` suspended, and runs `/bin/bootsplash.elf boot/splash.bmp`.
+While the splash remains visible, boot input/HID diagnostics finish and
+`bootnet`/`bootsvc` append DHCP, NTP, FTP, and cserve status to the boot log.
+`bootseq` then clears the splash, prints a welcome/time/network/memory summary
+plus `SmallOS ready`, and launches `/bin/shell.elf` as the default user shell.
+If that user shell exits or cannot be loaded, `bootseq` reports that no kernel
+shell fallback is linked and idles.
 
 ---
 
@@ -451,8 +453,9 @@ kernel_main()
   process_start_reaper()    ← creates and enqueues reaper task
   sched_start(boot_proc)    ← IF remains masked for the first stack switch
   kernel task bootstrap enables IF
-  bootseq loads user shell suspended, probes OHCI boot keyboard/mouse HID, starts services, saves boot log
-  bootseq runs late splash, clears display, foregrounds and resumes user shell
+  bootseq mounts ext2, saves boot log, preloads user shell suspended
+  bootseq runs startup splash while async network/services log quietly
+  bootseq clears display, foregrounds and resumes user shell
 ```
 
 ## What the scheduler owns

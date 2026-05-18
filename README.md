@@ -33,9 +33,9 @@ guest.
   `/etc`, `/boot`, `/var`, and `/tmp`, with boot diagnostics persisted at
   `/var/log/boot.txt` when the mounted filesystem is writable.
 - Framebuffer terminal with VGA text fallback, boot timing prefixes captured in
-  `/var/log/boot.txt`, late graphical boot splash, PS/2 keyboard, retrying OHCI
-  USB boot keyboard/mouse probing, PS/2 plus VMware mouse input, and several
-  graphics demos.
+  `/var/log/boot.txt`, graphical boot splash that covers final startup work,
+  PS/2 keyboard, retrying OHCI USB boot keyboard/mouse probing, PS/2 plus
+  VMware mouse input, and several graphics demos.
 - PCI networking with e1000 and RTL8139 NIC support, DHCP, ARP, IPv4, UDP/NTP clock sync,
   runtime `ip`/`ipconfig` inspection and configuration, a compact TCP service
   task, passive sockets, `poll`/`epoll` readiness, FTP, echo, and HTTP server
@@ -317,10 +317,11 @@ identify the boot drive as USB or ATA, and the explicit USB image/run targets
 force it on so hardware boots remain recoverable when protected-mode USB
 storage is not happy yet. USB EDD boots probe and byte-check direct high-memory
 reads before using them; otherwise the loader falls back to its low-memory
-bounce buffer. Boot diagnostics are prefixed with `[ms=... tick=... cyc=...]`;
-during early storage probing the kernel allows timer IRQ0 only, so the
-timestamps advance without letting keyboard/process IRQ paths run before the
-scheduler is live. After the scheduler starts, input diagnostics print before
-the bitmap splash, then a welcome block shows time, MAC/IP, and memory before
-the shell launches. `make boot-layout-check`, `make image-layout-check`, and
+bounce buffer. Boot diagnostics are captured with `[ms=... tick=... cyc=...]`
+prefixes in `/var/log/boot.txt`; display output is muted once the protected-mode
+kernel owns the terminal, then the bitmap splash is shown as soon as the shell
+has been preloaded and remains visible until the welcome block and shell prompt
+replace it. DHCP, NTP, and default services continue asynchronously during that
+covered window, and their quiet-path messages are still appended to the boot
+log. `make boot-layout-check`, `make image-layout-check`, and
 `make usb-storage-smoke` keep those contracts honest before hardware runs.

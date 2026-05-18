@@ -51,6 +51,34 @@ static u32 s_gateway;
 static u32 s_dns;
 static u32 s_lease_seconds;
 static u8 s_message_type;
+static volatile int s_verbose = 1;
+static dhcp_log_hook_t s_log_hook = 0;
+
+void dhcp_set_verbose(int verbose) {
+    s_verbose = verbose ? 1 : 0;
+}
+
+void dhcp_set_log_hook(dhcp_log_hook_t hook) {
+    s_log_hook = hook;
+}
+
+static void dhcp_log_text(const char* text) {
+    if (s_verbose) {
+        terminal_puts(text);
+    } else if (s_log_hook) {
+        s_log_hook(text, 0, 0);
+    }
+}
+
+static void dhcp_log_ip_line(const char* text, u32 ip) {
+    if (s_verbose) {
+        terminal_puts(text);
+        ipv4_print_ip(ip);
+        terminal_putc('\n');
+    } else if (s_log_hook) {
+        s_log_hook(text, ip, 1);
+    }
+}
 
 static void write_u16_be(u8* buf, u32 off, u16 value) {
     buf[off] = (u8)(value >> 8);
@@ -312,7 +340,7 @@ int dhcp_configure(void) {
     s_xid = 0x534D0000u ^ timer_get_ticks();
 
     for (unsigned int attempt = 0; attempt < DHCP_ATTEMPTS; attempt++) {
-        terminal_puts("dhcp: discover\n");
+        dhcp_log_text("dhcp: discover\n");
         reset_reply_state();
         s_waiting = 1;
         frame_len = build_discover(frame, s_xid);
@@ -325,9 +353,7 @@ int dhcp_configure(void) {
             continue;
         }
 
-        terminal_puts("dhcp: offer ");
-        ipv4_print_ip(s_offered_ip);
-        terminal_putc('\n');
+        dhcp_log_ip_line("dhcp: offer ", s_offered_ip);
 
         s_message_type = 0;
         frame_len = build_request(frame, s_xid, s_offered_ip, s_server_ip);
@@ -342,10 +368,12 @@ int dhcp_configure(void) {
 
         s_waiting = 0;
         net_ipv4_configure(s_ack_ip, s_netmask, s_gateway, s_dns, s_server_ip, s_lease_seconds);
-        terminal_puts("dhcp: bound ");
-        ipv4_print_ip(s_ack_ip);
-        terminal_putc('\n');
-        net_ipv4_print_config();
+        dhcp_log_ip_line("dhcp: bound ", s_ack_ip);
+        if (s_verbose) {
+            net_ipv4_print_config();
+        } else if (s_log_hook) {
+            s_log_hook("net: ip=", s_ack_ip, 1);
+        }
         return 1;
     }
 

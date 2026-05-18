@@ -409,11 +409,11 @@ builds use profile-specific directories such as
 `build/obj/auto-serial-e1000/` internally but still produce the canonical
 `build/img/smallos.img`.
 
-While boot diagnostics are being captured, terminal output is prefixed with
-`[ms=... tick=... cyc=...]`. `ms` and `tick` come from the PIT tick counter;
-`cyc` is a raw `rdtsc` sample. The storage probe briefly allows timer IRQ0 only
-so those fields advance during ATA/USB probing without enabling keyboard or
-mouse IRQ delivery before the scheduler is ready.
+While boot diagnostics are being captured, serial output and `/var/log/boot.txt`
+entries are prefixed with `[ms=... tick=... cyc=...]`. `ms` and `tick` come from
+the PIT tick counter; `cyc` is a raw `rdtsc` sample. The protected-mode display
+is muted during diagnostic capture, then the bitmap splash covers the remaining
+startup work until the welcome text and shell prompt are ready.
 
 Userland framebuffer programs should use the small graphics helper in
 `src/user/gfx.c`. It validates the display mode, acquires exclusive graphics
@@ -645,8 +645,9 @@ representative shape rather than the complete invocation.
 `bin/`, `usr/bin/`, `usr/libexec/tests/`, `usr/sbin/`, plus config/data
 trees such as `/etc/`, `/var/`, and `/tmp/`. The image also seeds
 `/var/log/boot.txt` from `samples/boot.txt`; the kernel overwrites that file
-with the current boot diagnostics after ext2 mounts and again just before the
-late boot splash is shown.
+with the current boot diagnostics after ext2 mounts. DHCP, NTP, and default
+service startup may continue while the splash is visible; those quiet-path
+messages are display-suppressed but still appended to the same boot log.
 
 Shipped ext2 programs:
 - `bin/echo` - print command arguments

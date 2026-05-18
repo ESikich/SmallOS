@@ -20,6 +20,7 @@ typedef unsigned short u16;
 
 static u8 s_net_frame[NET_MAX_FRAME];
 static net_ipv4_config_t s_ipv4_config;
+static volatile int s_net_poll_locked = 0;
 
 static u16 net_read_u16_be(const u8* buf, u32 off) {
     return (u16)(((u16)buf[off] << 8) | (u16)buf[off + 1]);
@@ -29,21 +30,23 @@ int net_poll_once(void) {
     u32 len = 0;
     u16 ether_type;
 
+    if (!__sync_bool_compare_and_swap(&s_net_poll_locked, 0, 1)) {
+        return 0;
+    }
     if (!nic_recv(s_net_frame, sizeof(s_net_frame), &len)) {
+        __sync_lock_release(&s_net_poll_locked);
         return 0;
     }
 
     if (len < 14u) {
+        __sync_lock_release(&s_net_poll_locked);
         return 1;
     }
 
     ether_type = net_read_u16_be(s_net_frame, 12);
     if (ether_type == NET_ETHERTYPE_ARP) {
         (void)arp_handle_frame(s_net_frame, len);
-        return 1;
-    }
-
-    if (ether_type == NET_ETHERTYPE_IPV4 && len >= 34u) {
+    } else if (ether_type == NET_ETHERTYPE_IPV4 && len >= 34u) {
         if (s_net_frame[23] == NET_IPV4_PROTO_ICMP) {
             (void)ipv4_handle_frame(s_net_frame, len);
         } else if (s_net_frame[23] == NET_IPV4_PROTO_TCP) {
@@ -53,9 +56,9 @@ int net_poll_once(void) {
                 (void)ntp_handle_ipv4_frame(s_net_frame, len);
             }
         }
-        return 1;
     }
 
+    __sync_lock_release(&s_net_poll_locked);
     return 1;
 }
 

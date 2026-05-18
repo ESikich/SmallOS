@@ -42,7 +42,7 @@ kernel_main()
   paging_init()     ← identity-maps first 8 MB, enables CR0.PG
   memory_init()     ← bump allocator after high kernel BSS
   pmm_init()        ← E820-filtered bitmap allocator at 0x200000–0x7FFFFFF
-  boot diagnostics  ← visible display, serial/log PASS/WARN/FAIL checks
+  boot diagnostics  ← display-muted, serial/log PASS/WARN/FAIL checks
   fb_console_init() ← switch to framebuffer terminal when VBE boot info is valid
   keyboard/mouse/timer/idt
   #PF handler      ← logs CR2 / error code, kills user faults, panics on kernel faults
@@ -50,11 +50,10 @@ kernel_main()
   ata_init()        ← prefer writable ATA storage when sector reads validate
   pci_init()        ← scan PCI config space and log network controllers
   nic_init()        ← bind a supported Ethernet adapter and set up packet IO
-  dhcp_configure()  ← acquire IPv4 address, netmask, gateway, DNS, DHCP server, and lease
   tcp_init()        ← start TCP/network service task
-  ntp_sync()        ← set CLOCK_REALTIME and print synchronized UTC time
-  ext2_init()       ← mount ATA, USB storage, or loader2 boot RAM fallback
-  bootseq task      ← load shell, finish HID/logging, start services, show splash, resume shell
+  bootnet task      ← acquire DHCP lease, then best-effort NTP sync
+  bootsvc task      ← start default user services after ext2 and splash are ready
+  bootseq task      ← mount ext2, save log, preload shell, show splash, finish HID, resume shell
   process_start_reaper() ← create and enqueue zombie reaper task
   sched_start()     ← switch from boot stack into bootseq task with IF masked
   kernel task bootstrap enables IF on the task stack
@@ -126,15 +125,14 @@ Inside `kernel_main()`:
 10. `ata_init()` — software reset ATA primary channel (`0x1F0`), poll until ready
 11. `pci_init()` — scan PCI config space and log discovered network controllers
 12. `nic_init()` — bind a supported Ethernet adapter. QEMU/ESXi use the e1000 driver; the WYSE S10-class Realtek `10EC:8139` path uses the RTL8139 driver.
-13. `dhcp_configure()` — briefly enables interrupts and requests IPv4 configuration from the attached network. The runtime network config is shared by ARP, TCP, NTP, `netinfo`, and the `/bin/ip.elf` and `/bin/ipconfig.elf` configuration tools. Static IPv4 settings use the same `SYS_NET_OP` path and remain runtime-only.
-14. `tcp_init()` — create and enqueue the TCP/network service kernel task
-15. `ntp_sync()` — briefly enables interrupts so PIT-backed timeout logic works, queries the default NTP server through UDP over the active NIC and DHCP gateway, sets `CLOCK_REALTIME`, and prints the synchronized UTC time. Failure is a boot warning, not a halt.
-16. `boot_mount_ext2()` — prefer writable ATA, then read-only USB mass storage, then the loader2 RAM fallback when one was published. The storage probe briefly enables only timer IRQ0 so boot timestamps and USB waits advance without delivering keyboard/mouse/process IRQs before scheduling starts. After mount succeeds, the accumulated boot log is saved to `/var/log/boot.txt` when the filesystem is writable.
-17. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` loads `/bin/shell.elf` suspended, probes OHCI boot keyboard/mouse HID, starts the retrying USB HID service, prints input diagnostics before the bitmap splash, queues the boot FTP and cserve user services, and refreshes `/var/log/boot.txt`. It then runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, prints the welcome/time/network/memory summary plus `SmallOS ready`, and releases `/bin/shell.elf` as the default user shell. If that fails or exits, it reports that no kernel shell fallback is linked and idles.
-18. `sched_enqueue(boot_proc)` — make the boot sequence task runnable
-19. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
-20. `sched_start(boot_proc)` - switch from the boot stack into the boot sequence task with interrupts still masked
-21. kernel-task bootstrap enables interrupts before entering the task body
+13. `tcp_init()` — create and enqueue the TCP/network service kernel task
+14. `process_create_kernel_task("bootnet", ...)` — if a NIC is present, request DHCP IPv4 configuration from the attached network and then run best-effort NTP through the DHCP gateway. The runtime network config is shared by ARP, TCP, NTP, `netinfo`, and the `/bin/ip.elf` and `/bin/ipconfig.elf` configuration tools. Static IPv4 settings use the same `SYS_NET_OP` path and remain runtime-only.
+15. `process_create_kernel_task("bootsvc", ...)` — wait until ext2 is mounted and the splash has been presented, then queue the default FTP and cserve user services. Service status is appended to `/var/log/boot.txt` without drawing over the splash.
+16. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` mounts writable ATA, read-only USB mass storage, or loader2 RAM fallback, saves the accumulated boot log to `/var/log/boot.txt` when the filesystem is writable, loads `/bin/shell.elf` suspended, and runs `/bin/bootsplash.elf boot/splash.bmp`. While that splash remains visible, `bootseq` probes OHCI boot keyboard/mouse HID, starts the retrying USB HID service, captures input diagnostics, and refreshes the boot log. It then clears the splash, prints the welcome/time/network/memory summary plus `SmallOS ready`, and releases the shell. If that fails or exits, it reports that no kernel shell fallback is linked and idles.
+17. `sched_enqueue(boot_proc)` — make the boot sequence task runnable
+18. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
+19. `sched_start(boot_proc)` - switch from the boot stack into the boot sequence task with interrupts still masked
+20. kernel-task bootstrap enables interrupts before entering the task body
 
 `sched_init()` must still be called before interrupts are enabled, and `sched_start()` must happen only after the first runnable task has been created. The first scheduler handoff is intentionally atomic so early IRQ0/IRQ12 delivery cannot interrupt the stack switch.
 
@@ -444,9 +442,9 @@ User graphics programs sit above the framebuffer display syscalls. The shared
 helper in `src/user/gfx.c` queries display geometry, requires XRGB8888/32 bpp,
 acquires exclusive graphics mode, allocates a full-screen user backbuffer, and
 presents that buffer with one `SYS_DISPLAY_BLIT`. `bmpview` uses this path for
-scaled/centered BMP presentation, `bin/bootsplash` uses it for the
-post-diagnostics `/boot/splash.bmp` startup image, `bin/diskview` uses it for
-an ext2 used/free allocation map, and `usr/bin/plasma` uses it as a simple
+scaled/centered BMP presentation, `bin/bootsplash` uses it for the startup
+`/boot/splash.bmp` image that stays visible until the welcome screen,
+`bin/diskview` uses it for an ext2 used/free allocation map, and `usr/bin/plasma` uses it as a simple
 animated graphics smoke demo. `usr/bin/mandel` uses the same helper for an interactive
 Mandelbrot view and polls `SYS_MOUSE_READ` for cursor deltas.
 

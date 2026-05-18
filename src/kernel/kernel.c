@@ -37,11 +37,14 @@ static char* s_boot_log = s_boot_log_early;
 static unsigned int s_boot_log_capacity = BOOT_LOG_EARLY_CAPACITY;
 static unsigned int s_boot_log_len = 0;
 static int s_boot_log_enabled = 1;
-static int s_boot_log_fs_ready = 0;
+static volatile int s_boot_log_fs_ready = 0;
 static int s_boot_log_terminal_hooked = 0;
 static int s_boot_log_read_only_notice = 0;
 static int s_boot_log_line_start = 1;
 static int s_boot_clock_synced = 0;
+static volatile int s_boot_async_quiet = 0;
+static volatile int s_boot_splash_ready = 0;
+static int s_boot_ata_ready = 0;
 static char s_boot_terminal_prefix[80];
 
 static unsigned long long boot_read_cycles(void) {
@@ -226,6 +229,36 @@ static void boot_puts(const char* s) {
     if (!s_boot_log_terminal_hooked) {
         boot_log_append(s);
     }
+}
+
+static void boot_log_save(void);
+
+static void boot_log_only_puts(const char* s) {
+    boot_log_append(s);
+}
+
+static void boot_log_only_newline(void) {
+    boot_log_append_raw_char('\n');
+    s_boot_log_line_start = 1;
+}
+
+static void boot_log_only_ip(u32 ip) {
+    boot_log_append_raw_uint((ip >> 24) & 0xFFu);
+    boot_log_append_raw_char('.');
+    boot_log_append_raw_uint((ip >> 16) & 0xFFu);
+    boot_log_append_raw_char('.');
+    boot_log_append_raw_uint((ip >> 8) & 0xFFu);
+    boot_log_append_raw_char('.');
+    boot_log_append_raw_uint(ip & 0xFFu);
+}
+
+static void boot_log_only_dhcp_event(const char* text, u32 ip, int has_ip) {
+    boot_log_only_puts(text);
+    if (has_ip) {
+        boot_log_only_ip(ip);
+        boot_log_only_newline();
+    }
+    boot_log_save();
 }
 
 static void boot_log_save(void) {
@@ -658,17 +691,35 @@ static void terminal_print_welcome_summary(void) {
 static void boot_sync_clock(void) {
     unsigned int unix_time = 0;
 
-    boot_puts("ntp: syncing clock\n");
+    if (!s_boot_async_quiet) {
+        boot_puts("ntp: syncing clock\n");
+    } else {
+        boot_log_only_puts("ntp: syncing clock\n");
+        boot_log_save();
+    }
     __asm__ __volatile__("sti");
     if (ntp_sync(NTP_DEFAULT_SERVER_IP, &unix_time)) {
         timer_set_realtime_seconds(unix_time);
         s_boot_clock_synced = 1;
         __asm__ __volatile__("cli");
-        boot_splash_pass("ntp: clock synchronized");
-        boot_print_utc_time(unix_time);
+        if (!s_boot_async_quiet) {
+            boot_splash_pass("ntp: clock synchronized");
+            boot_print_utc_time(unix_time);
+        } else {
+            boot_log_only_puts("boot: PASS ntp: clock synchronized\n");
+            boot_log_only_puts("ntp: time unix=");
+            boot_log_append_raw_uint(unix_time);
+            boot_log_only_newline();
+            boot_log_save();
+        }
     } else {
         __asm__ __volatile__("cli");
-        boot_splash_warn("ntp: clock sync failed");
+        if (!s_boot_async_quiet) {
+            boot_splash_warn("ntp: clock sync failed");
+        } else {
+            boot_log_only_puts("boot: WARN ntp: clock sync failed\n");
+            boot_log_save();
+        }
     }
 }
 
@@ -757,16 +808,33 @@ static void boot_mount_ext2(int ata_ready) {
                      "ext2 volume failed superblock or partition validation");
 }
 
-static void boot_configure_network(void) {
-    boot_puts("dhcp: configuring IPv4\n");
+static int boot_configure_network(void) {
+    if (!s_boot_async_quiet) {
+        boot_puts("dhcp: configuring IPv4\n");
+    } else {
+        boot_log_only_puts("dhcp: configuring IPv4\n");
+        boot_log_save();
+    }
     __asm__ __volatile__("sti");
     if (dhcp_configure()) {
         __asm__ __volatile__("cli");
-        boot_splash_pass("dhcp: IPv4 lease acquired");
+        if (!s_boot_async_quiet) {
+            boot_splash_pass("dhcp: IPv4 lease acquired");
+        } else {
+            boot_log_only_puts("boot: PASS dhcp: IPv4 lease acquired\n");
+            boot_log_save();
+        }
+        return 1;
     } else {
         __asm__ __volatile__("cli");
-        boot_print_nic_stats();
-        boot_splash_warn("dhcp: IPv4 lease unavailable");
+        if (!s_boot_async_quiet) {
+            boot_print_nic_stats();
+            boot_splash_warn("dhcp: IPv4 lease unavailable");
+        } else {
+            boot_log_only_puts("boot: WARN dhcp: IPv4 lease unavailable\n");
+            boot_log_save();
+        }
+        return 0;
     }
 }
 
@@ -848,23 +916,76 @@ static void boot_start_user_services(void) {
     process_t* proc;
 
     proc = elf_run_named_new_group("usr/sbin/ftpd", 2, ftpd_argv);
-    if (proc) {
-        boot_puts("service: ftpd queued on port 2121\n");
+    if (!s_boot_async_quiet) {
+        if (proc) {
+            boot_puts("service: ftpd queued on port 2121\n");
+        } else {
+            boot_puts("service: WARN ftpd unavailable\n");
+        }
+    } else if (proc) {
+        boot_log_only_puts("service: ftpd queued on port 2121\n");
+        boot_log_save();
     } else {
-        boot_puts("service: WARN ftpd unavailable\n");
+        boot_log_only_puts("service: WARN ftpd unavailable\n");
+        boot_log_save();
     }
 
     proc = elf_run_named_new_group("usr/sbin/cserve", 9, cserve_argv);
-    if (proc) {
-        boot_puts("service: cserve queued on port 8080\n");
+    if (!s_boot_async_quiet) {
+        if (proc) {
+            boot_puts("service: cserve queued on port 8080\n");
+        } else {
+            boot_puts("service: WARN cserve unavailable\n");
+        }
+    } else if (proc) {
+        boot_log_only_puts("service: cserve queued on port 8080\n");
+        boot_log_save();
     } else {
-        boot_puts("service: WARN cserve unavailable\n");
+        boot_log_only_puts("service: WARN cserve unavailable\n");
+        boot_log_save();
+    }
+}
+
+static void boot_network_task_main(void) {
+    if (boot_configure_network()) {
+        boot_sync_clock();
+    }
+
+    process_t* current = sched_current();
+    if (current) {
+        current->state = PROCESS_STATE_WAITING;
+    }
+
+    for (;;) {
+        __asm__ __volatile__("sti; hlt");
+    }
+}
+
+static void boot_services_task_main(void) {
+    while (!s_boot_log_fs_ready || !s_boot_splash_ready) {
+        __asm__ __volatile__("sti; hlt");
+    }
+
+    boot_start_user_services();
+
+    process_t* current = sched_current();
+    if (current) {
+        current->state = PROCESS_STATE_WAITING;
+    }
+
+    for (;;) {
+        __asm__ __volatile__("sti; hlt");
     }
 }
 
 static void boot_sequence_task_main(void) {
-    boot_print_hardware_diag_summary();
+    boot_mount_ext2(s_boot_ata_ready);
+    s_boot_log_fs_ready = 1;
     boot_log_save();
+    __asm__ __volatile__("sti");
+
+    s_boot_async_quiet = 1;
+    dhcp_set_verbose(0);
 
     /*
      * Keep this ordering for real Wyse USB boot: the shell image is loaded
@@ -873,6 +994,12 @@ static void boot_sequence_task_main(void) {
      */
     char* user_shell_argv[] = { "shell", 0 };
     process_t* user_shell_proc = elf_run_named_suspended("bin/shell", 1, user_shell_argv);
+
+    boot_show_splash();
+    s_boot_splash_ready = 1;
+
+    boot_print_hardware_diag_summary();
+    boot_log_save();
 
     if (usb_probe_hid()) {
         boot_puts("usb: boot HID ready\n");
@@ -885,11 +1012,9 @@ static void boot_sequence_task_main(void) {
         boot_puts("usb: WARN HID service task unavailable\n");
     }
     boot_print_input_summary();
-    boot_start_user_services();
 
     boot_log_save();
     boot_log_capture_end();
-    boot_show_splash();
     terminal_set_display_enabled(1);
     terminal_clear();
     terminal_print_welcome_summary();
@@ -921,6 +1046,8 @@ static void boot_sequence_task_main(void) {
 
 void kernel_main(void) {
     terminal_init();
+    terminal_set_display_enabled(0);
+    dhcp_set_log_hook(boot_log_only_dhcp_event);
     boot_log_capture_begin();
     boot_splash_begin();
     boot_splash_terminal_ready();
@@ -987,8 +1114,8 @@ void kernel_main(void) {
                        "scheduler: run queue reset",
                        "scheduler selected a current task before start");
 
-    int ata_ready = ata_init();
-    if (ata_ready) {
+    s_boot_ata_ready = ata_init();
+    if (s_boot_ata_ready) {
         boot_splash_pass("ata: primary channel ready");
     } else if (boot_info_ramdisk_valid()) {
         boot_splash_warn("ata: unavailable, boot ramdisk available");
@@ -1007,9 +1134,9 @@ void kernel_main(void) {
      * NIC — bind to a supported Ethernet adapter and set up packet IO before
      * the network stack requests DHCP.
      */
-    if (nic_init()) {
+    int nic_ready = nic_init();
+    if (nic_ready) {
         boot_splash_pass("nic: Ethernet adapter ready");
-        boot_configure_network();
     } else {
         boot_splash_warn("nic: supported Ethernet adapter not present");
         net_ipv4_clear_config();
@@ -1023,11 +1150,27 @@ void kernel_main(void) {
                        "tcp: service task queued",
                        "TCP service task could not be created");
 
-    boot_sync_clock();
+    if (nic_ready) {
+        process_t* net_proc = process_create_kernel_task("bootnet", boot_network_task_main);
+        if (net_proc && sched_enqueue(net_proc)) {
+            boot_splash_pass("network: async task queued");
+        } else {
+            if (net_proc) {
+                process_destroy(net_proc);
+            }
+            boot_splash_warn("network: async task unavailable");
+        }
+    }
 
-    boot_mount_ext2(ata_ready);
-    s_boot_log_fs_ready = 1;
-    boot_log_save();
+    process_t* services_proc = process_create_kernel_task("bootsvc", boot_services_task_main);
+    if (services_proc && sched_enqueue(services_proc)) {
+        boot_splash_pass("services: async task queued");
+    } else {
+        if (services_proc) {
+            process_destroy(services_proc);
+        }
+        boot_splash_warn("services: async task unavailable");
+    }
 
     process_t* boot_proc = process_create_kernel_task("bootseq", boot_sequence_task_main);
 

@@ -13,8 +13,8 @@ BIOS
  → kernel.bin      (loaded to 0x1000)
  → protected mode
  → kernel_entry.asm  (zeros BSS, calls kernel_main)
- → kernel_main()     (timestamped diagnostics, storage selection, boot log save)
- → bootseq task      (shell preload, HID/log save, services, late splash, shell resume)
+ → kernel_main()     (display-muted diagnostics, async network/services, task queueing)
+ → bootseq task      (mount/log save, shell preload, splash cover, welcome, shell resume)
 ```
 
 ---
@@ -619,21 +619,19 @@ Kernel   →  zero BSS
          →  memory_init(page-aligned bss_end), pmm_init
          →  keyboard, mouse, timer, idt, sched_init
          →  ata_init, pci_init, nic_init
-         →  dhcp_configure (best-effort IPv4 lease; runtime config can later be inspected or replaced with ip/ipconfig)
          →  tcp_init
-         →  ntp_sync (best-effort realtime clock sync through DHCP gateway)
-         →  mount ext2 from ATA, USB storage, or boot RAM fallback
+         →  create bootnet, bootsvc, bootseq, and zombie reaper tasks
+         →  sched_start with IF masked
+Bootseq  →  mount ext2 from ATA, USB storage, or boot RAM fallback
          →  save /var/log/boot.txt when the filesystem is writable
-         →  create bootseq task and zombie reaper, sched_start with IF masked
-Bootseq  →  load /bin/shell.elf suspended
-         →  enable interrupts in kernel-task bootstrap
-         →  probe OHCI boot keyboard/mouse HID and queue retrying usb service
-         →  print input diagnostics before the bitmap splash
-         →  start boot FTP and cserve user services
-         →  refresh /var/log/boot.txt
+         →  switch async DHCP/NTP/service messages to log-only mode
+         →  load /bin/shell.elf suspended
          →  run /bin/bootsplash.elf boot/splash.bmp
-         →  print welcome/time/network/memory summary and SmallOS ready
-         →  launch /bin/shell.elf
+         →  probe OHCI boot keyboard/mouse HID and queue retrying usb service
+Bootnet  →  dhcp_configure, then best-effort ntp_sync through the DHCP gateway
+Bootsvc  →  after ext2 and splash are ready, start boot FTP and cserve services
+Bootseq  →  print welcome/time/network/memory summary and SmallOS ready
+         →  foreground and resume /bin/shell.elf
          →  idle if the user shell exits or fails
 ```
 

@@ -51,26 +51,24 @@ image path.
 
 `kernel_main()` runs startup diagnostics during boot. The early self-checks
 report the live TSS selector, boot stack, page-aligned heap start after high
-kernel BSS, and PMM free-frame baseline. Later network diagnostics include a
-best-effort NTP clock sync after NIC/TCP initialization; success prints the
-synchronized UTC time, while failure is a warning and boot continues. If a
-hard startup invariant drifts, the kernel halts before the post-diagnostics
-boot sequence starts. Once ext2 is mounted, the collected boot diagnostics are
-written to `/var/log/boot.txt`; the file is seeded into the guest image so boot
-can overwrite it without allocating a fresh inode. During capture, diagnostics
-remain visible on the active display while the serial transcript and saved log
-are prefixed with `[ms=... tick=... cyc=...]`; the prefix hook is disabled
-before the user shell prompt.
+kernel BSS, and PMM free-frame baseline. Protected-mode diagnostic output is
+muted on the active display, but the serial transcript and saved boot log keep
+the `[ms=... tick=... cyc=...]` prefixes. If a hard startup invariant drifts,
+the kernel briefly re-enables display output for the failure and halts before
+the post-diagnostics boot sequence starts.
 
-After diagnostics, `kernel_main()` queues the `bootseq` kernel task and the
-zombie reaper, then enters the scheduler on `bootseq`. The boot sequence task
-loads `/bin/shell.elf` suspended, probes OHCI boot keyboard/mouse HID, queues
-the retrying USB service, prints input diagnostics, refreshes `/var/log/boot.txt`,
-then runs `/bin/bootsplash.elf boot/splash.bmp`. After the splash exits, it
-prints a welcome/time/network/memory summary plus `SmallOS ready`, and releases
-`/bin/shell.elf` as the default user shell. If that user shell exits or fails to load, `bootseq`
-reports that no kernel shell fallback is linked and parks itself. This keeps
-framebuffer splash rendering and interactive shell work in userland.
+After core diagnostics, `kernel_main()` queues `bootnet`, `bootsvc`, `bootseq`,
+and the zombie reaper, then enters the scheduler on `bootseq`. The boot
+sequence mounts ext2, saves the current log to `/var/log/boot.txt`, switches
+DHCP/NTP/service chatter to log-only mode, preloads `/bin/shell.elf` suspended,
+and runs `/bin/bootsplash.elf boot/splash.bmp`. The splash remains on screen
+while input/HID diagnostics finish and the async network/service tasks append
+their status to `/var/log/boot.txt`. Only after capture ends does `bootseq`
+re-enable display output, clear the splash, print the welcome/time/network/memory
+summary plus `SmallOS ready`, and release the shell. If that user shell exits or
+fails to load, `bootseq` reports that no kernel shell fallback is linked and
+parks itself. This keeps framebuffer splash rendering and interactive shell work
+in userland.
 
 Descriptor slots are owned by `process.c`, not the syscall dispatcher. fd `0`,
 `1`, and `2` are real console handles created with each process and may be
@@ -305,7 +303,7 @@ meminfo              ← still identical after second run
 
 ## Scheduler Rules
 
-`sched_init()` must be called **after `idt_init()` and before `sti`**. It initialises the scheduler table. The shell is not registered here; `kernel_main()` queues the `bootseq` task, and `bootseq` launches the user shell after the late boot splash. If the user shell exits or fails to load, `bootseq` idles without a shell. If `sched_init()` is called after `sti`, the first timer tick may fire with an uninitialised scheduler state.
+`sched_init()` must be called **after `idt_init()` and before `sti`**. It initialises the scheduler table. The shell is not registered here; `kernel_main()` queues the `bootseq` task, and `bootseq` launches the user shell after the startup splash hands off to the welcome screen. If the user shell exits or fails to load, `bootseq` idles without a shell. If `sched_init()` is called after `sti`, the first timer tick may fire with an uninitialised scheduler state.
 
 `sched_enqueue(proc)` — call after `proc->state = RUNNING` when handing a task to the scheduler. The boot sequence task follows this path in `kernel_main()`, and ELF launches do as well.
 

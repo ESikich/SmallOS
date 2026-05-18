@@ -1,7 +1,6 @@
 #include "user_lib.h"
 #include "image_bmp.h"
 #include "gfx.h"
-#include "uapi_time.h"
 
 static int read_file(const char* path, unsigned char** out_data, unsigned int* out_size) {
     unsigned int size = 0;
@@ -137,7 +136,6 @@ static int show_splash(const char* path) {
     }
 
     gfx_present(&gfx);
-    sys_sleep(SMALLOS_TIMER_HZ);
     gfx_close(&gfx);
     free(data);
     return 1;
