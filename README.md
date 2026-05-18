@@ -282,7 +282,10 @@ under `.state/`.
 
 ## Documentation
 
-The README is meant to be the front door. The detailed notes live in `docs/`:
+The README is meant to be the front door. For a practical, non-technical
+walkthrough, start with the [SmallOS User Guide](USER_GUIDE.md).
+
+The detailed subsystem notes live in `docs/`:
 
 - [Build system](docs/build.md)
 - [Boot process](docs/boot.md)
