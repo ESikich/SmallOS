@@ -1,0 +1,46 @@
+CSERVE(8)
+
+NAME
+    cserve - SmallOS HTTP server
+
+SYNOPSIS
+    cserve [--host addr] [--port port] [--root path]
+    cserve [--log off|error|info|debug] [--log-file path]
+    cserve [--max-conn count] [--config path]
+
+DESCRIPTION
+    cserve starts the bundled HTTP server. It serves static files and uses the
+    sample configuration installed with SmallOS unless command-line options
+    override the defaults.
+
+OPTIONS
+    --host addr
+        Bind address. The default is 0.0.0.0.
+
+    --port port
+        TCP port. The default is 8080.
+
+    --root path
+        Document root. The SmallOS image installs sample content in /var/www.
+
+    --log off|error|info|debug
+        Set log verbosity.
+
+    --log-file path
+        Write logs to path.
+
+    --max-conn count
+        Set the maximum connection count.
+
+    --config path
+        Load server options from an INI-style config file.
+
+FILES
+    /etc/cserve.ini
+        Sample/default server configuration.
+
+    /var/www
+        Default web content in the SmallOS image.
+
+SEE ALSO
+    ftpd(8)

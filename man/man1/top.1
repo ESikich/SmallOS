@@ -1,0 +1,30 @@
+TOP(1)
+
+NAME
+    top - show process CPU and memory usage
+
+SYNOPSIS
+    top [-r refreshes] [-d delay_ticks]
+
+DESCRIPTION
+    top displays process CPU and memory usage. By default it refreshes
+    repeatedly.
+
+OPTIONS
+    -r refreshes
+        Stop after refreshes screen updates.
+
+    -d delay_ticks
+        Delay this many timer ticks between refreshes.
+
+    -h
+    --help
+        Show usage.
+
+EXAMPLES
+    top
+    top -r 1
+    top -r 5 -d 20
+
+SEE ALSO
+    meminfo(1), uptime(1)

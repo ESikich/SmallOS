@@ -642,8 +642,8 @@ into the full shipped image through `ext2_*_ENTRIES`; the command above is a
 representative shape rather than the complete invocation.
 
 `mkext2` produces a raw ext2 volume containing the shipped apps under
-`bin/`, `usr/bin/`, `usr/libexec/tests/`, `usr/sbin/`, plus config/data
-trees such as `/etc/`, `/var/`, and `/tmp/`. The image also seeds
+`bin/`, `usr/bin/`, `usr/libexec/tests/`, `usr/sbin/`, plus manual/config/data
+trees such as `/usr/share/man/`, `/etc/`, `/var/`, and `/tmp/`. The image also seeds
 `/var/log/boot.txt` from `samples/boot.txt`; the kernel overwrites that file
 with the current boot diagnostics after ext2 mounts. DHCP, NTP, and default
 service startup may continue while the splash is visible; those quiet-path
@@ -665,6 +665,7 @@ Shipped ext2 programs:
 - `bin/usbinfo`, `bin/usbports`, `bin/usbdiag`, `bin/usbpeek`, `bin/usbpower`, `bin/usbmouse`, `bin/mousetest` - inspect or exercise USB controller/HID and mouse diagnostics through narrow kernel diagnostic syscalls; `usbports` and passive `usbdiag` output is formatted from userspace snapshots
 - `bin/cat` - print an ext2 file
 - `bin/more` - page an ext2 file or piped stdin
+- `bin/man` - show the seeded plain-text manual pages from `/usr/share/man`
 - `bin/fsread` - dump ext2 file metadata and first bytes
 - `bin/ls` - list ext2 directories
 - `bin/tree` - print an ext2 directory tree
@@ -718,6 +719,7 @@ Shipped ext2 programs:
 * `usr/libexec/tests/` contains the remaining shipped test ELFs
 * `usr/sbin/` contains guest service ELFs
 * `usr/bin/` contains the guest TinyCC binary and user-facing demos/tools
+* `usr/share/man/` contains plain-text manual pages installed from repository `man/man*/`
 * `usr/share/examples/tinycc/` contains the shipped TinyCC sample inputs
 * runtime-generated compiler outputs and scratch artifacts belong under `/var/tmp/`
 * filenames are stored as native case-sensitive ext2 names

@@ -1,0 +1,44 @@
+SMALLOS(7)
+
+NAME
+    smallos - overview of the SmallOS user environment
+
+DESCRIPTION
+    SmallOS boots a protected-mode kernel, mounts an ext2 filesystem, and
+    launches the user shell. Most user programs are installed as ELF files
+    under /bin, /usr/bin, /usr/sbin, or /usr/libexec/tests.
+
+    Commands can usually be run by basename from the shell. The shell searches
+    common program directories and can add the .elf suffix automatically.
+
+FILESYSTEM
+    The root filesystem is ext2. Common paths include:
+
+    /bin
+        Core user commands.
+
+    /usr/bin
+        Demo and development commands.
+
+    /usr/sbin
+        Service-style commands.
+
+    /usr/libexec/tests
+        Diagnostic and self-test programs.
+
+    /usr/share/man
+        Plain text manual pages.
+
+    /var/log
+        Service and boot logs.
+
+NETWORKING
+    The image includes IPv4 configuration tools, simple ICMP and ARP probes,
+    an FTP server, and an HTTP server. In QEMU user networking, host forwards
+    are needed for inbound services.
+
+MANUALS
+    SmallOS manual pages are plain text files. Use man(1) to view them.
+
+SEE ALSO
+    shell(1), man(1), ip(1), ftpd(8), cserve(8)

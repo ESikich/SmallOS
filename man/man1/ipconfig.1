@@ -1,0 +1,29 @@
+IPCONFIG(1)
+
+NAME
+    ipconfig - show or renew IPv4 configuration
+
+SYNOPSIS
+    ipconfig
+    ipconfig /all
+    ipconfig /renew
+    ipconfig /release
+
+DESCRIPTION
+    ipconfig is a compatibility-style frontend for the SmallOS IPv4
+    configuration commands.
+
+COMMANDS
+    /all
+        Show full network configuration.
+
+    /renew
+    renew
+        Request IPv4 configuration via DHCP.
+
+    /release
+    release
+        Clear IPv4 configuration.
+
+SEE ALSO
+    ip(1), dhcp(1), netinfo(1)

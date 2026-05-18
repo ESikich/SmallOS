@@ -1,0 +1,17 @@
+RUNELF_BG(1)
+
+NAME
+    runelf_bg - run an ELF program in the background
+
+SYNOPSIS
+    runelf_bg path [arg ...]
+
+DESCRIPTION
+    runelf_bg is a shell built-in that starts an ext2 ELF program as a
+    reattachable background job. The job can later be listed with jobs,
+    reattached with fg, or terminated with kill.
+
+    bg is an alias for runelf_bg.
+
+SEE ALSO
+    bg(1), jobs(1), fg(1), kill(1)

@@ -591,7 +591,7 @@ PMM-frame access API.
 A 16 MB ext2 volume is appended to the disk image directly after the kernel.
 The seeded tree uses normal ext2 native directory entries under `/bin`,
 `/usr/bin`, `/usr/libexec/tests`, `/usr/sbin`, `/usr/share/examples/tinycc`,
-`/etc`, `/var`, and `/tmp`.
+`/usr/share/man`, `/etc`, `/var`, and `/tmp`.
 
 Built by `tools/mkext2.c` — a host C tool with no external filesystem tooling
 required. The tool writes the ext2 superblock, group descriptor, block and
@@ -604,8 +604,8 @@ byte offset 1024    ext2 superblock
 block 1             block group descriptor table
 block 2             block bitmap
 block 3             inode bitmap
-blocks 4-11         inode table
-block 12+           file and directory data blocks
+blocks 4-19         inode table
+block 20+           file and directory data blocks
 ```
 
 The ext2 start LBA is computed during final image assembly by `mkimage` as `kernel_lba + kernel_sectors` and written into partition entry 1 of the MBR partition table. `loader2.asm` reads partition entry 0 to load the kernel. With the default `BOOT_RAMDISK_FALLBACK=never` policy, normal VM/IDE boots skip the fallback preload. `BOOT_RAMDISK_FALLBACK=auto` preloads the used portion of partition entry 1 only when EDD does not identify the boot drive as USB or ATA. Explicit USB image/run targets force `BOOT_RAMDISK_FALLBACK=always` so USB-specific builds remain bootable even when protected-mode USB storage cannot validate ext2 on a given controller. At runtime, the storage policy selects a block backend, reads sector 0 through that backend, extracts the ext2 partition metadata, and uses it to locate the live volume. It tries writable ATA first, then USB mass storage (`usb0`, read-only), then the preloaded RAM fallback when one exists.

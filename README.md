@@ -41,7 +41,7 @@ guest.
   task, passive sockets, `poll`/`epoll` readiness, FTP, echo, and HTTP server
   smoke paths.
 - Guest userland includes familiar commands such as `ls`, `tree`, `cat`,
-  `more`, `pwd`, `touch`, `mkdir`, `rm`, `cp`, `mv`, `edit`, `date`, `ip`,
+  `more`, `man`, `pwd`, `touch`, `mkdir`, `rm`, `cp`, `mv`, `edit`, `date`, `ip`,
   `ipconfig`, `uptime`, `halt`, and `reboot`, plus diagnostics such as
   `cpuz`, `usbinfo`, `usbports`, `usbpower`, `mousetest`, and demos.
 - TinyCC is built as `usr/bin/tcc.elf` and can compile sample C programs inside
@@ -90,8 +90,8 @@ selection, for example `build/bin/auto-serial-e1000/`. The seeded ext2 image is
 built under `build/bin/<profile>/ext2.seed.img`, then
 copied to the mutable runtime partition at `.state/ext2.img`. Guest-created
 files survive normal rebuilds, while the `.state/ext2.img.stamp` dependency
-lets Make refresh the runtime partition when userland binaries in the seed
-change. Reset it from the current seed image with:
+lets Make refresh the runtime partition when userland binaries or seeded manual
+pages change. Reset it from the current seed image with:
 
 ```bash
 make reset-disk

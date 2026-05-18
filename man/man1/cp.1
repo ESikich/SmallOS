@@ -1,0 +1,20 @@
+CP(1)
+
+NAME
+    cp - copy a file
+
+SYNOPSIS
+    cp src dst
+
+DESCRIPTION
+    cp copies src to dst. If dst names an existing directory, cp copies src
+    into that directory using the source basename.
+
+    Existing regular files at dst are truncated and replaced.
+
+EXAMPLES
+    cp /var/log/boot.txt /tmp/boot.txt
+    cp /boot/splash.bmp /tmp
+
+SEE ALSO
+    mv(1), rm(1), touch(1)

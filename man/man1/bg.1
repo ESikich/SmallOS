@@ -1,0 +1,17 @@
+BG(1)
+
+NAME
+    bg - run a command as a reattachable background job
+
+SYNOPSIS
+    bg path [arg ...]
+
+DESCRIPTION
+    bg is a shell built-in alias for runelf_bg. It starts an ELF program as a
+    reattachable background job.
+
+    The path is resolved the same way as other shell commands, so command
+    names may omit directory prefixes and the .elf suffix.
+
+SEE ALSO
+    runelf_bg(1), jobs(1), fg(1), kill(1)

@@ -1,0 +1,83 @@
+IP(1)
+
+NAME
+    ip - show and configure IPv4 networking
+
+SYNOPSIS
+    ip [show|-a|--all]
+    ip addr show
+    ip addr add ip/prefix [gateway gw] [dns dns]
+    ip addr del|flush|clear
+    ip route show
+    ip route add default via gw
+    ip route del default
+    ip dns show|set dns|clear
+    ip dhcp|renew|release
+    ip set ip [netmask mask] [gateway gw] [dns dns]
+    ip ping ip
+    ip arp ip
+
+DESCRIPTION
+    ip shows or changes the kernel IPv4 configuration. It can configure an
+    address, default gateway, DNS server, and DHCP lease state, and can run
+    small ICMP and ARP probes.
+
+COMMANDS
+    show
+    -a, -all, --all
+        Show the current configuration. The all forms include more details.
+
+    addr show
+        Show the configured IPv4 address and netmask.
+
+    addr add ip/prefix [gateway gw] [dns dns]
+    addr set ip/prefix [gateway gw] [dns dns]
+        Configure an IPv4 address. gateway, gw, and via are accepted for the
+        gateway keyword.
+
+    addr del
+    addr flush
+    addr clear
+        Clear IPv4 configuration.
+
+    route show
+        Show the default route.
+
+    route add default via gw
+        Set the default gateway.
+
+    route del default
+        Clear the default gateway.
+
+    dns show
+    dns set dns
+    dns clear
+        Show, set, or clear the configured DNS server.
+
+    dhcp
+    renew
+        Request IPv4 configuration via DHCP.
+
+    release
+    clear
+        Clear IPv4 configuration.
+
+    set ip [netmask mask] [gateway gw] [dns dns]
+        Compatibility form for setting address, netmask, gateway, and DNS.
+
+    ping ip
+        Send an ICMP echo request.
+
+    arp ip
+        Resolve an IPv4 address to a MAC address with ARP.
+
+EXAMPLES
+    ip show
+    ip --all
+    ip addr add 10.0.2.15/24 gateway 10.0.2.2 dns 8.8.8.8
+    ip route add default via 10.0.2.2
+    ip dhcp
+    ip ping 10.0.2.2
+
+SEE ALSO
+    ipconfig(1), dhcp(1), netinfo(1), ping(1)

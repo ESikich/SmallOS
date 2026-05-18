@@ -3,7 +3,7 @@
 This document defines how the system stores, discovers, reads, and writes files
 on disk.
 
-The current implementation stores a **raw ext2 volume inside an MBR-partitioned disk image**. Sector 0 contains the partition table, and the ext2 partition starts immediately after the kernel region. The runtime resolves nested ext2 paths for reads and directory listings, and it can also create/remove directories in place. Regular file writes now work at nested paths too, and `rm` removes files in place. `cat` prints file contents, `touch` creates or truncates files, `edit` opens a full-screen text editor for ext2 files, and the shell keeps a working directory for `cd` / `pwd` and `ls`. `ls` also accepts simple `*` and `?` wildcards, while still sorting directories before files.
+The current implementation stores a **raw ext2 volume inside an MBR-partitioned disk image**. Sector 0 contains the partition table, and the ext2 partition starts immediately after the kernel region. The runtime resolves nested ext2 paths for reads and directory listings, and it can also create/remove directories in place. Regular file writes now work at nested paths too, and `rm` removes files in place. `cat` prints file contents, `more` pages files, `man` reads seeded manual pages, `touch` creates or truncates files, `edit` opens a full-screen text editor for ext2 files, and the shell keeps a working directory for `cd` / `pwd` and `ls`. `ls` also accepts simple `*` and `?` wildcards, while still sorting directories before files.
 The filesystem layer also exposes file metadata through `stat`, and the fd
 path now routes file, socket, and console descriptors through a dynamic generic
 per-process handle table. ext2-backed file handles and path operations are
@@ -54,9 +54,9 @@ block size           4096 bytes
 sectors per block       8
 volume size          4096 blocks / 32768 sectors (16 MB)
 inode size            128 bytes
-inode count           256
+inode count           512
 root inode              2
-first data block       12
+first data block       20
 partition type       0x83
 superblock magic   0xEF53
 ```
@@ -70,22 +70,31 @@ byte offset 1024    ext2 superblock
 block 1             block group descriptor table
 block 2             block bitmap
 block 3             inode bitmap
-blocks 4-11         inode table
-block 12+           file and directory data blocks
+blocks 4-19         inode table
+block 20+           file and directory data blocks
 ```
 
 Block numbering follows normal ext2 rules:
 
 ```text
 absolute LBA = ext2_lba + block * 8
-block 12     = first allocatable data block
+block 20     = first allocatable data block
 ```
 
 This layout must match both:
 - `tools/mkext2.c`
 - `src/drivers/ext2.c`
 
-Any change to one without the other breaks file lookup.
+Any change to one without the other breaks file lookup and can make the kernel
+reject an otherwise valid image as unsupported geometry.
+
+## Seeded manual pages
+
+Plain-text manual pages live in the repository under `man/man*/` and are
+installed into the seed image under `/usr/share/man/man*/`. SmallOS does not
+parse Unix troff or mandoc markup; the shipped `man` command searches those
+section directories and pages the text directly through the normal file
+descriptor path.
 
 ---
 

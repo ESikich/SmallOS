@@ -1,0 +1,53 @@
+MAN(1)
+
+NAME
+    man - show SmallOS manual pages
+
+SYNOPSIS
+    man [section] name
+
+DESCRIPTION
+    man opens a plain text manual page from /usr/share/man and displays it
+    with a small built-in pager.
+
+    When section is omitted, man searches the common SmallOS manual sections
+    in this order: 1, 8, 5, 7, 2, 3, 4, 6.
+
+    Pages are intentionally plain text. SmallOS does not currently implement
+    troff, mandoc, compressed man pages, apropos, or whatis.
+
+SECTIONS
+    1   User commands and shell built-ins.
+    2   System calls.
+    3   Library functions.
+    4   Devices and special files.
+    5   File formats.
+    6   Games and demos.
+    7   General topics.
+    8   System administration commands and daemons.
+
+PAGER KEYS
+    Enter
+        Advance one line.
+
+    q
+        Quit.
+
+    any other key
+        Advance one screen.
+
+EXAMPLES
+    man ftpd
+    man 8 ftpd
+    man 1 man
+    man 7 smallos
+
+FILES
+    /usr/share/man/man1/name.1
+        User command pages.
+
+    /usr/share/man/man8/name.8
+        System command and daemon pages.
+
+SEE ALSO
+    smallos(7)

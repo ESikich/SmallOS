@@ -1,0 +1,22 @@
+RUNELF(1)
+
+NAME
+    runelf - run an ELF program and wait
+
+SYNOPSIS
+    runelf path [arg ...]
+
+DESCRIPTION
+    runelf is a shell built-in that executes an ext2 ELF program and waits for
+    it to exit.
+
+    The shell resolves command-style names in /bin, /usr/bin, and /usr/sbin.
+    If path includes a slash, it is treated as a filesystem path. The .elf
+    suffix may be omitted.
+
+EXAMPLES
+    runelf /usr/bin/hello.elf
+    runelf hello
+
+SEE ALSO
+    runelf_nowait(1), runelf_bg(1), shell(1)

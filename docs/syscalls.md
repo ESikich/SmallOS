@@ -933,7 +933,7 @@ request starts at zero-based ext2 data-block index `start_cluster` and copies
 up to `max_clusters` bytes. The field names keep the original ABI spelling,
 but the units are ext2 allocation blocks. Each returned byte is `0` for free
 or `1` for used; `out_clusters` receives the count actually written. Block
-index 0 maps to ext2 block 12.
+index 0 maps to ext2 block 20.
 
 Returns `0` on success, `-EFAULT` for invalid request or output buffers, or
 `-EIO` if the ext2 bitmap scan fails.

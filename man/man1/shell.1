@@ -1,0 +1,72 @@
+SHELL(1)
+
+NAME
+    shell - start the SmallOS command shell
+
+SYNOPSIS
+    shell [--line-mode]
+
+DESCRIPTION
+    shell starts the interactive SmallOS command shell. It is normally launched
+    at boot after the kernel mounts ext2.
+
+    The shell resolves external commands from /bin, /usr/bin, and /usr/sbin.
+    Command names may omit the .elf suffix. A command containing a slash is
+    treated as a path.
+
+    The shell also implements a small set of built-ins for navigation,
+    command execution, background jobs, and tests.
+
+OPTIONS
+    --line-mode
+        Use simple line input instead of the interactive input path.
+
+BUILT-INS
+    help
+        Show the command summary.
+
+    cd path
+        Change the shell working directory.
+
+    pwd
+    wd
+        Print the shell working directory.
+
+    runelf path [arg ...]
+        Execute an ELF and wait for it to exit.
+
+    runelf_nowait path [arg ...]
+        Execute an ELF and return immediately.
+
+    runelf_bg path [arg ...]
+    bg path [arg ...]
+        Execute an ELF as a reattachable background job.
+
+    jobs
+        List reattachable background jobs.
+
+    fg jobid
+        Reattach and wait for a background job.
+
+    kill jobid
+        Terminate a background job.
+
+    selftest
+        Run installed ELF self-tests.
+
+    shelltest
+        Run built-in shell parser and dispatch tests.
+
+    clear
+        Clear the terminal.
+
+    exit
+        Exit the shell.
+
+PIPES
+    A simple pipeline operator is supported:
+
+        command1 | command2 | command3
+
+SEE ALSO
+    cd(1), runelf(1), jobs(1), fg(1), bg(1)

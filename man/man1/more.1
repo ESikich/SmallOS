@@ -1,0 +1,29 @@
+MORE(1)
+
+NAME
+    more - page a file or standard input
+
+SYNOPSIS
+    more [path]
+
+DESCRIPTION
+    more displays text one screen at a time. With path, it reads that file.
+    Without path, it reads standard input.
+
+PAGER KEYS
+    Enter
+        Advance one line.
+
+    q
+    Q
+        Quit.
+
+    any other key
+        Clear the screen and advance one page.
+
+EXAMPLES
+    more /var/log/boot.txt
+    cat /var/log/boot.txt | more
+
+SEE ALSO
+    cat(1), man(1)

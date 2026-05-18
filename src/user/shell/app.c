@@ -309,6 +309,7 @@ static void sh_help(void) {
     u_puts("  fsread          inspect an ext2 file\n");
     u_puts("  cat             print an ext2 file\n");
     u_puts("  more            page stdin or an ext2 file\n");
+    u_puts("  man             show manual pages\n");
     u_puts("  mkdir           create an ext2 directory\n");
     u_puts("  rmdir           remove an ext2 directory\n");
     u_puts("  rm              remove an ext2 file\n");
@@ -322,7 +323,7 @@ static const char* const s_builtin_names[] = {
     "help", "clear", "ip", "ipconfig", "mousetest", "cd", "pwd", "wd", "runelf",
     "runelf_nowait", "runelf_bg", "bg", "jobs", "fg", "kill",
     "selftest", "shelltest", "echo", "about", "halt", "reboot",
-    "uptime", "ls", "tree", "fsread", "cat", "more", "mkdir",
+    "uptime", "ls", "tree", "fsread", "cat", "more", "man", "mkdir",
     "rmdir", "rm", "touch", "cp", "mv", "edit", "exit",
 };
 

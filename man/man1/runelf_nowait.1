@@ -1,0 +1,16 @@
+RUNELF_NOWAIT(1)
+
+NAME
+    runelf_nowait - run an ELF program without waiting
+
+SYNOPSIS
+    runelf_nowait path [arg ...]
+
+DESCRIPTION
+    runelf_nowait is a shell built-in that executes an ext2 ELF program and
+    immediately returns to the shell.
+
+    Unlike runelf_bg, the process is not tracked as a reattachable shell job.
+
+SEE ALSO
+    runelf(1), runelf_bg(1), shell(1)

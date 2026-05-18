@@ -1,0 +1,41 @@
+FTPD(8)
+
+NAME
+    ftpd - SmallOS FTP server
+
+SYNOPSIS
+    ftpd [--quiet|--no-log] [--log-file path]
+
+DESCRIPTION
+    ftpd starts a single-session FTP server listening on 0.0.0.0:2121.
+
+    The server uses / as its FTP root. The built-in account is:
+
+        user: ftp
+        pass: ftp
+
+    Passive data connections use port 30000. When running under QEMU user
+    networking, forward both host port 2121 and host port 30000 if you want
+    to connect from the host.
+
+OPTIONS
+    --quiet
+        Disable service logging and close standard output and standard error.
+
+    --no-log
+        Alias for --quiet.
+
+    --log-file path
+        Append service output to path. The default log path is
+        /var/log/ftpd.log.
+
+FILES
+    /var/log/ftpd.log
+        Default service log.
+
+NOTES
+    ftpd currently allows read, write, delete, and mkdir operations for the
+    built-in FTP user.
+
+SEE ALSO
+    cserve(8)

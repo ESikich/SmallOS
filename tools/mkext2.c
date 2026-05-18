@@ -18,7 +18,7 @@
 #define TOTAL_BYTES          (TOTAL_SIZE_MB * 1024u * 1024u)
 #define BLOCK_SIZE           4096u
 #define TOTAL_BLOCKS         (TOTAL_BYTES / BLOCK_SIZE)
-#define TOTAL_INODES         256u
+#define TOTAL_INODES         512u
 #define INODE_SIZE           128u
 #define ROOT_INO             2u
 #define FIRST_NONRES_INO     11u
@@ -28,15 +28,15 @@
 #define BLOCK_BITMAP_BLOCK   2u
 #define INODE_BITMAP_BLOCK   3u
 #define INODE_TABLE_BLOCK    4u
-#define INODE_TABLE_BLOCKS   8u
-#define FIRST_DATA_BLOCK     12u
+#define INODE_TABLE_BLOCKS   16u
+#define FIRST_DATA_BLOCK     20u
 
 #define EXT2_S_IFREG         0x8000u
 #define EXT2_S_IFDIR         0x4000u
 #define EXT2_FT_REG_FILE     1u
 #define EXT2_FT_DIR          2u
 #define PTRS_PER_BLOCK       (BLOCK_SIZE / 4u)
-#define MAX_SPECS            128
+#define MAX_SPECS            384
 #define PATH_MAX_CHARS       256
 
 typedef uint8_t  u8;

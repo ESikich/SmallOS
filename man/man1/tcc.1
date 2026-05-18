@@ -1,0 +1,24 @@
+TCC(1)
+
+NAME
+    tcc - compile C programs with TinyCC
+
+SYNOPSIS
+    tcc [options] file ...
+
+DESCRIPTION
+    tcc is the SmallOS build of TinyCC. It can compile small C programs inside
+    the system image.
+
+    The shipped compiler is intended for experiments and demos, not for
+    rebuilding the whole operating system from inside SmallOS.
+
+FILES
+    /usr/share/examples/tinycc
+        Example C source files.
+
+EXAMPLES
+    tcc /usr/share/examples/tinycc/tccmini.c
+
+SEE ALSO
+    compiler_demo(1)

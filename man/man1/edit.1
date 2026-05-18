@@ -1,0 +1,57 @@
+EDIT(1)
+
+NAME
+    edit - edit a text file
+
+SYNOPSIS
+    edit path
+    edit path -c command ...
+
+DESCRIPTION
+    edit opens path in the SmallOS text editor. The file is loaded from ext2
+    if it exists, or created when saved.
+
+    In interactive mode, the status line shows the main keys. F2 saves the
+    file. F3 or Esc exits. If the buffer has unsaved changes, F2 saves and
+    exits, F3 discards changes, and Esc cancels the quit.
+
+    Arrow keys move the cursor. Home, End, Page Up, Page Down, Backspace,
+    Delete, Enter, and normal printable characters edit the buffer.
+
+BATCH COMMANDS
+    With -c, edit runs small line-editor commands instead of opening the
+    full-screen editor.
+
+    w
+        Write the file.
+
+    q
+    q!
+        Quit batch processing.
+
+    wq
+        Write the file and quit batch processing.
+
+    p [first [last]]
+        Print all lines, one line, or a range of lines.
+
+    d first [last]
+        Delete one line or a range of lines.
+
+    a [line]
+        Append input after line. Input continues through following -c
+        arguments until a single dot line is seen.
+
+    i [line]
+        Insert input before line.
+
+    r line
+        Replace one line with input.
+
+EXAMPLES
+    edit /tmp/notes.txt
+    edit /tmp/notes.txt -c "a" -c "hello" -c "." -c "wq"
+
+NOTES
+    edit is intentionally small and line-oriented internally. Very long lines
+    may be truncated.

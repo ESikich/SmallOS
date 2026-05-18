@@ -174,7 +174,7 @@ Examples:
 * `boot.asm` owns `BOOT_SECTOR_SIZE`, `MBR_PARTITION_TABLE_OFFSET`, and `MBR_PARTITION_ENTRY_SIZE`
 * `boot.asm` owns `LOADER2_SECTORS`
 * `loader2.asm` owns `LOADER2_SIZE_BYTES`
-* `mkext2.c` owns ext2 image size constants
+* `mkext2.c` owns ext2 image size and fixed geometry constants
 
 The Makefile should read those declarations and pass them into host tools such as `mkimage`. Do not reintroduce anonymous layout numbers into the Makefile.
 
@@ -348,6 +348,7 @@ Exited tasks must be marked `PROCESS_STATE_ZOMBIE` and destroyed later from a sa
 * `ext2_init()` must be called before `ext2_load()` or `ext2_ls()`
 * `ext2_load()` returns a pointer into the static `s_load_buf` buffer — the caller must not hold this pointer across another `ext2_load()` call
 * `elf_run_image()` copies all ELF segment data into PMM frames before returning, so the buffer is safe to reuse immediately after `elf_run_named()` returns
+* `tools/mkext2.c` and `src/drivers/ext2.c` must agree on inode count, inode-table blocks, and the first data block; changing only one side will fail runtime geometry validation
 
 ---
 
@@ -445,6 +446,7 @@ Useful signals:
 | 15 | "ext2: bad MBR signature" / "ext2: partition entry not populated" | final image assembly failed; check the `mkimage` step and its arguments |
 | 16 | Heap grows across runelf | ext2_load is using kmalloc instead of static buffer |
 | 17 | "ext2: not found" | Path does not match the native case-sensitive ext2 name; check mkext2 output |
+| 18 | "ext2: unsupported geometry" | `tools/mkext2.c` and `src/drivers/ext2.c` disagree on fixed ext2 geometry; update both sides together |
 
 ---
 
@@ -470,8 +472,9 @@ Useful signals:
 2. Use direct `void _start(int argc, char** argv)` plus `sys_exit(status)` only for low-level probes
 3. Add `myprog` to `USER_PROGS` in Makefile - automatically included in the ext2 image
 4. If the program needs extra user objects, add a custom link rule like `bmpview.elf` or `plasma.elf`
-5. `make clean && make`
-6. `runelf myprog`
+5. Add a matching plain-text manual page under `man/man1/myprog.1` for user commands or `man/man8/myprog.8` for services/admin tools; Make installs `man/man*/*` under `/usr/share/man/`
+6. `make clean && make`
+7. `runelf myprog`
 
 The launch ABI enters `_start(argc, argv, envp)` and guarantees both
 `argv[argc] == NULL` and a NULL-terminated environment vector. Two-argument
