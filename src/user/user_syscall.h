@@ -362,6 +362,19 @@ static inline int sys_display_blit(uint32_t x, uint32_t y, uint32_t w,
     return syscall1(SYS_DISPLAY_BLIT, (uint32_t)&req);
 }
 
+static inline int sys_display_blit_stride(uint32_t x, uint32_t y, uint32_t w,
+                                          uint32_t h, uint32_t pitch_pixels,
+                                          const uint32_t* pixels) {
+    sys_display_blit_stride_rect_t req;
+    req.x = x;
+    req.y = y;
+    req.w = w;
+    req.h = h;
+    req.pitch_pixels = pitch_pixels;
+    req.pixels = pixels;
+    return syscall1(SYS_DISPLAY_BLIT_STRIDE, (uint32_t)&req);
+}
+
 static inline int sys_mouse_read(sys_mouse_state_t* out_state) {
     return syscall1(SYS_MOUSE_READ, (uint32_t)out_state);
 }

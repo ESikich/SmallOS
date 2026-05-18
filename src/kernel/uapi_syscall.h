@@ -378,7 +378,8 @@ enum {
     SYS_USBINFO         = 88, /* write USB controller/HID diagnostic summary */
     SYS_MOUSE_DEBUG     = 89, /* write PS/2 mouse diagnostic counters */
     SYS_USB_DIAG_OP     = 90, /* perform narrow USB diagnostic action */
-    SYS_PROCINFO        = 91  /* write process CPU/RAM diagnostic summary */
+    SYS_PROCINFO        = 91, /* write process CPU/RAM diagnostic summary */
+    SYS_DISPLAY_BLIT_STRIDE = 92 /* blit XRGB8888 pixels with source pitch */
 };
 
 #endif

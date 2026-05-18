@@ -2355,6 +2355,31 @@ static int sys_display_blit_impl(const sys_display_blit_rect_t* user_req) {
     return 0;
 }
 
+static int sys_display_blit_stride_impl(const sys_display_blit_stride_rect_t* user_req) {
+    sys_display_blit_stride_rect_t req;
+    unsigned int span_pixels;
+    unsigned int bytes;
+
+    if (!user_req) return -EFAULT;
+    if (copy_from_user(&req, user_req, sizeof(req)) < 0) return -EFAULT;
+    if (req.w == 0 || req.h == 0) return 0;
+    if (!req.pixels) return -EFAULT;
+    if (req.pitch_pixels < req.w) return -EINVAL;
+    if (req.h - 1u > 0xFFFFFFFFu / req.pitch_pixels) return -EOVERFLOW;
+    span_pixels = (req.h - 1u) * req.pitch_pixels;
+    if (span_pixels > 0xFFFFFFFFu - req.w) return -EOVERFLOW;
+    span_pixels += req.w;
+    if (span_pixels > 0xFFFFFFFFu / sizeof(unsigned int)) return -EOVERFLOW;
+    bytes = span_pixels * sizeof(unsigned int);
+    if (!user_buf_ok((unsigned int)req.pixels, bytes)) return -EFAULT;
+    if (!display_blit_stride((process_t*)sched_current(),
+                             req.x, req.y, req.w, req.h,
+                             req.pitch_pixels, req.pixels)) {
+        return -EIO;
+    }
+    return 0;
+}
+
 static int sys_mouse_read_impl(sys_mouse_state_t* out_state) {
     sys_mouse_state_t state;
 
@@ -2519,9 +2544,7 @@ static int sys_input_read_impl(syscall_regs_t* regs,
         if (!input_pop_event(&ev)) {
             break;
         }
-        if (copy_to_user(&out_events[copied], &ev, sizeof(ev)) < 0) {
-            return -EFAULT;
-        }
+        k_memcpy(&out_events[copied], &ev, sizeof(ev));
         copied++;
     }
 
@@ -3289,6 +3312,11 @@ void syscall_handler_main(syscall_regs_t* regs) {
         case SYS_DISPLAY_BLIT:
             regs->eax = (unsigned int)sys_display_blit_impl(
                             (const sys_display_blit_rect_t*)regs->ebx);
+            break;
+
+        case SYS_DISPLAY_BLIT_STRIDE:
+            regs->eax = (unsigned int)sys_display_blit_stride_impl(
+                            (const sys_display_blit_stride_rect_t*)regs->ebx);
             break;
 
         case SYS_DISPLAY_ACQUIRE:

@@ -13,12 +13,15 @@ typedef struct gfx_surface {
 typedef struct gfx_context {
     sys_display_info_t info;
     gfx_surface_t backbuffer;
+    gfx_surface_t presentbuffer;
     int acquired;
 } gfx_context_t;
 
 int gfx_open(gfx_context_t* gfx);
 void gfx_close(gfx_context_t* gfx);
 int gfx_present(gfx_context_t* gfx);
+int gfx_present_rect(gfx_context_t* gfx, unsigned int x, unsigned int y,
+                     unsigned int w, unsigned int h);
 
 void gfx_clear(gfx_surface_t* s, unsigned int color);
 void gfx_put_pixel(gfx_surface_t* s, unsigned int x, unsigned int y, unsigned int color);

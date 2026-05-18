@@ -27,4 +27,13 @@ typedef struct sys_display_blit_rect {
     const unsigned int* pixels;
 } sys_display_blit_rect_t;
 
+typedef struct sys_display_blit_stride_rect {
+    unsigned int x;
+    unsigned int y;
+    unsigned int w;
+    unsigned int h;
+    unsigned int pitch_pixels;
+    const unsigned int* pixels;
+} sys_display_blit_stride_rect_t;
+
 #endif /* UAPI_DISPLAY_H */

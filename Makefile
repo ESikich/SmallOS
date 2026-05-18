@@ -138,8 +138,9 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/screen.c \
 	$(DRIVERS_DIR)/fb_console.c \
 	$(KERNEL_DIR)/system.c \
-	$(KERNEL_DIR)/timer.c \
-	$(KERNEL_DIR)/klib.c \
+		$(KERNEL_DIR)/timer.c \
+		$(KERNEL_DIR)/cpu.c \
+		$(KERNEL_DIR)/klib.c \
 	$(KERNEL_DIR)/memory.c \
 	$(KERNEL_DIR)/boot_info.c \
 	$(KERNEL_DIR)/pmm.c \

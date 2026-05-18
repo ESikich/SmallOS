@@ -69,3 +69,11 @@ int display_blit(process_t* owner, u32 x, u32 y, u32 w, u32 h, const u32* pixels
     }
     return fb_console_blit(x, y, w, h, pixels);
 }
+
+int display_blit_stride(process_t* owner, u32 x, u32 y, u32 w, u32 h,
+                        u32 pitch_pixels, const u32* pixels) {
+    if (!owner || s_display_owner != owner) {
+        return 0;
+    }
+    return fb_console_blit_stride(x, y, w, h, pitch_pixels, pixels);
+}

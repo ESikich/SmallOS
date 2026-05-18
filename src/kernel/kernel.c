@@ -9,6 +9,7 @@
 #include "pmm.h"
 #include "input.h"
 #include "paging.h"
+#include "cpu.h"
 #include "scheduler.h"
 #include "process.h"
 #include "klib.h"
@@ -1055,6 +1056,7 @@ void kernel_main(void) {
 
     gdt_init();
     paging_init();
+    cpu_init();
     boot_splash_expect(paging_get_kernel_pd() != 0,
                        "paging: kernel directory installed",
                        "kernel page directory was not initialized");

@@ -4,6 +4,7 @@
 #include "paging.h"
 #include "memory.h"
 #include "klib.h"
+#include "cpu.h"
 
 #define FB_FONT_WIDTH 8u
 #define FB_FONT_HEIGHT 16u
@@ -393,10 +394,18 @@ int fb_console_init(void) {
     paging_map_kernel_range(FB_CONSOLE_VIRT_BASE,
                             fb->phys,
                             bytes,
-                            PAGE_WRITE);
+                            PAGE_WRITE |
+                            (cpu_write_combining_enabled()
+                                ? PAGE_WRITE_COMBINE
+                                : 0u));
     fb->base = (volatile u8*)FB_CONSOLE_VIRT_BASE;
     fb->ready = 1;
     fb_dirty_reset();
+    if (cpu_write_combining_enabled()) {
+        terminal_puts("boot: PASS framebuffer: write-combining enabled\n");
+    } else {
+        terminal_puts("boot: WARN framebuffer: write-combining unavailable\n");
+    }
 
     terminal_set_backend(&framebuffer_backend);
     terminal_clear();
@@ -434,14 +443,22 @@ int fb_console_fill(unsigned int x, unsigned int y, unsigned int w,
         volatile u32* row = (volatile u32*)(fb->base + (y + py) * fb->pitch + x * 4u);
         fb_store_words(row, color, w);
     }
+    cpu_write_fence();
     return 1;
 }
 
 int fb_console_blit(unsigned int x, unsigned int y, unsigned int w,
                     unsigned int h, const unsigned int* pixels) {
-    unsigned int src_w = w;
+    return fb_console_blit_stride(x, y, w, h, w, pixels);
+}
 
+int fb_console_blit_stride(unsigned int x, unsigned int y, unsigned int w,
+                           unsigned int h, unsigned int pitch_pixels,
+                           const unsigned int* pixels) {
     if (!fb || !fb->ready || !pixels) {
+        return 0;
+    }
+    if (pitch_pixels < w) {
         return 0;
     }
     if (x >= fb->width || y >= fb->height) {
@@ -456,8 +473,9 @@ int fb_console_blit(unsigned int x, unsigned int y, unsigned int w,
 
     for (unsigned int py = 0; py < h; py++) {
         volatile u32* dst = (volatile u32*)(fb->base + (y + py) * fb->pitch + x * 4u);
-        const unsigned int* src = pixels + py * src_w;
+        const unsigned int* src = pixels + py * pitch_pixels;
         fb_copy_words(dst, src, w);
     }
+    cpu_write_fence();
     return 1;
 }

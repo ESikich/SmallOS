@@ -7,6 +7,16 @@
 #define PAGE_PRESENT    0x001
 #define PAGE_WRITE      0x002
 #define PAGE_USER       0x004
+#define PAGE_PWT        0x008
+#define PAGE_PCD        0x010
+#define PAGE_PAT        0x080
+
+/*
+ * With IA32_PAT entry 1 programmed to WC, PWT=1/PCD=0/PAT=0 selects
+ * write-combining for 4 KB pages. Callers must only use this when the CPU
+ * layer reports write-combining is enabled.
+ */
+#define PAGE_WRITE_COMBINE PAGE_PWT
 
 #define PAGE_SIZE       4096u
 #define PAGE_ALIGN(a)   (((a) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1))

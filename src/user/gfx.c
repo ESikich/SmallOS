@@ -40,9 +40,18 @@ int gfx_open(gfx_context_t* gfx) {
         return -4;
     }
 
+    gfx->presentbuffer.pixels = (unsigned int*)malloc(pixels * sizeof(unsigned int));
+    if (!gfx->presentbuffer.pixels) {
+        gfx_close(gfx);
+        return -4;
+    }
+
     gfx->backbuffer.width = gfx->info.width;
     gfx->backbuffer.height = gfx->info.height;
     gfx->backbuffer.pitch_pixels = gfx->info.width;
+    gfx->presentbuffer.width = gfx->info.width;
+    gfx->presentbuffer.height = gfx->info.height;
+    gfx->presentbuffer.pitch_pixels = gfx->info.width;
     gfx_clear(&gfx->backbuffer, 0);
     return 0;
 }
@@ -56,10 +65,16 @@ void gfx_close(gfx_context_t* gfx) {
         free(gfx->backbuffer.pixels);
         gfx->backbuffer.pixels = 0;
     }
-
+    if (gfx->presentbuffer.pixels) {
+        free(gfx->presentbuffer.pixels);
+        gfx->presentbuffer.pixels = 0;
+    }
     gfx->backbuffer.width = 0;
     gfx->backbuffer.height = 0;
     gfx->backbuffer.pitch_pixels = 0;
+    gfx->presentbuffer.width = 0;
+    gfx->presentbuffer.height = 0;
+    gfx->presentbuffer.pitch_pixels = 0;
 
     if (gfx->acquired) {
         sys_display_release();
@@ -68,14 +83,47 @@ void gfx_close(gfx_context_t* gfx) {
 }
 
 int gfx_present(gfx_context_t* gfx) {
-    if (!gfx || !gfx->acquired || !gfx->backbuffer.pixels) {
+    if (!gfx || !gfx->acquired || !gfx->backbuffer.pixels ||
+        !gfx->presentbuffer.pixels) {
         return -1;
     }
 
-    return sys_display_blit(0, 0,
+    return gfx_present_rect(gfx, 0, 0,
                             gfx->backbuffer.width,
-                            gfx->backbuffer.height,
-                            gfx->backbuffer.pixels);
+                            gfx->backbuffer.height);
+}
+
+int gfx_present_rect(gfx_context_t* gfx, unsigned int x, unsigned int y,
+                     unsigned int w, unsigned int h) {
+    if (!gfx || !gfx->acquired || !gfx->backbuffer.pixels ||
+        !gfx->presentbuffer.pixels) {
+        return -1;
+    }
+    if (x >= gfx->backbuffer.width || y >= gfx->backbuffer.height ||
+        w == 0 || h == 0) {
+        return 0;
+    }
+    if (w > gfx->backbuffer.width - x) {
+        w = gfx->backbuffer.width - x;
+    }
+    if (h > gfx->backbuffer.height - y) {
+        h = gfx->backbuffer.height - y;
+    }
+
+    if (w < gfx->backbuffer.pitch_pixels / 4u ||
+        w * h < 32768u) {
+        for (unsigned int row = 0; row < h; row++) {
+            memcpy(gfx->presentbuffer.pixels + row * w,
+                   gfx->backbuffer.pixels + (y + row) * gfx->backbuffer.pitch_pixels + x,
+                   w * sizeof(unsigned int));
+        }
+        return sys_display_blit(x, y, w, h, gfx->presentbuffer.pixels);
+    }
+
+    return sys_display_blit_stride(
+        x, y, w, h,
+        gfx->backbuffer.pitch_pixels,
+        gfx->backbuffer.pixels + y * gfx->backbuffer.pitch_pixels + x);
 }
 
 void gfx_clear(gfx_surface_t* s, unsigned int color) {
