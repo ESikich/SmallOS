@@ -351,10 +351,10 @@ static void utoa10(unsigned int v, char* buf) {
 
 #define MAX_WINDOWS 8
 #define MAX_ROWS    256
-#define INPUT_BATCH 16
+#define INPUT_BATCH 32
 #define DIRTY_MAX   32
-#define MOUSE_COALESCE_MAX 32
-#define MOUSE_MERGE_MAX_DELTA 14
+#define MOUSE_COALESCE_MAX INPUT_BATCH
+#define MOUSE_MERGE_MAX_DELTA 48
 
 typedef enum {
     WT_FILES = 1,
@@ -1555,6 +1555,18 @@ static int read_input_coalesced(sys_input_event_t* events,
     return total;
 }
 
+static int shell_windows_need_poll(void) {
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+        if (g_wins[i].active &&
+            g_wins[i].type == WT_SHELL &&
+            (g_wins[i].shell.backend == GUI_SHELL_BACKEND_PIPE_CHILD ||
+             g_wins[i].shell.backend == GUI_SHELL_BACKEND_PTY_CHILD)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int hover_key(int mx, int my) {
     window_t* w = hit_window_z(mx, my);
 
@@ -1772,8 +1784,17 @@ int gui_main(int argc, char** argv) {
     while (!g_should_quit) {
         sys_input_event_t events[INPUT_BATCH];
         int got = 0;
+        unsigned int input_flags = SYS_INPUT_FLAG_NONBLOCK;
+        int shell_polling = shell_windows_need_poll();
 
-        int n = read_input_coalesced(events, INPUT_BATCH, SYS_INPUT_FLAG_NONBLOCK);
+        if (!dirty &&
+            !cursor_dirty &&
+            g_launch_kind == LAUNCH_NONE &&
+            !shell_polling) {
+            input_flags = 0;
+        }
+
+        int n = read_input_coalesced(events, INPUT_BATCH, input_flags);
         if (n > 0) {
             got = 1;
 
@@ -1962,7 +1983,11 @@ int gui_main(int argc, char** argv) {
         }
 
         if (!got) {
-            sys_yield();
+            if (shell_polling) {
+                sys_sleep(1);
+            } else {
+                sys_yield();
+            }
         }
     }
 

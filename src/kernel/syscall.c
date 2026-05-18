@@ -2538,6 +2538,7 @@ static int sys_input_read_impl(syscall_regs_t* regs,
         __asm__ volatile ("sti");
         __asm__ volatile ("hlt");
     }
+    __asm__ volatile ("sti");
 
     while (copied < max_events) {
         sys_input_event_t ev;
