@@ -4,6 +4,7 @@
 #include "../kernel/klib.h"
 #include "../kernel/memory.h"
 #include "../kernel/paging.h"
+#include "../kernel/pmm.h"
 
 #define SECTOR_SIZE          512u
 #define EXT2_BLOCK_SIZE      4096u
@@ -109,12 +110,12 @@ static int s_use_boot_ramdisk = 0;
 static block_device_t* s_block_dev = 0;
 static u8* s_load_buf = 0;
 
-static u8 s_sector[SECTOR_SIZE];
-static u8 s_block[EXT2_BLOCK_SIZE] __attribute__((aligned(4)));
-static u8 s_block2[EXT2_BLOCK_SIZE] __attribute__((aligned(4)));
-static u8 s_data_buf[EXT2_WRITE_CHUNK_SIZE] __attribute__((aligned(4)));
-static u8 s_block_bitmap[EXT2_BLOCK_SIZE] __attribute__((aligned(4)));
-static u8 s_inode_bitmap[EXT2_BLOCK_SIZE] __attribute__((aligned(4)));
+static u8* s_sector = 0;
+static u8* s_block = 0;
+static u8* s_block2 = 0;
+static u8* s_data_buf = 0;
+static u8* s_block_bitmap = 0;
+static u8* s_inode_bitmap = 0;
 
 static u16 read_u16_le(const u8* buf, u32 off) {
     return (u16)(buf[off] | ((u16)buf[off + 1u] << 8));
@@ -137,6 +138,54 @@ static void write_u32_le(u8* buf, u32 off, u32 value) {
     buf[off + 1u] = (u8)((value >> 8) & 0xFFu);
     buf[off + 2u] = (u8)((value >> 16) & 0xFFu);
     buf[off + 3u] = (u8)((value >> 24) & 0xFFu);
+}
+
+static int ext2_alloc_scratch_buffers(void) {
+    u32 sector_phys;
+    u32 block_phys;
+    u32 block2_phys;
+    u32 data_phys;
+    u32 block_bitmap_phys;
+    u32 inode_bitmap_phys;
+
+    if (s_sector && s_block && s_block2 && s_data_buf &&
+        s_block_bitmap && s_inode_bitmap) {
+        return 1;
+    }
+
+    sector_phys = pmm_alloc_frame();
+    block_phys = pmm_alloc_frame();
+    block2_phys = pmm_alloc_frame();
+    data_phys = pmm_alloc_contiguous_frames(EXT2_WRITE_CHUNK_SIZE / PMM_FRAME_SIZE);
+    block_bitmap_phys = pmm_alloc_frame();
+    inode_bitmap_phys = pmm_alloc_frame();
+    if (!sector_phys || !block_phys || !block2_phys || !data_phys ||
+        !block_bitmap_phys || !inode_bitmap_phys) {
+        if (sector_phys) pmm_free_frame(sector_phys);
+        if (block_phys) pmm_free_frame(block_phys);
+        if (block2_phys) pmm_free_frame(block2_phys);
+        if (data_phys) {
+            pmm_free_contiguous_frames(data_phys,
+                                       EXT2_WRITE_CHUNK_SIZE / PMM_FRAME_SIZE);
+        }
+        if (block_bitmap_phys) pmm_free_frame(block_bitmap_phys);
+        if (inode_bitmap_phys) pmm_free_frame(inode_bitmap_phys);
+        return 0;
+    }
+
+    s_sector = (u8*)paging_phys_to_kernel_virt(sector_phys);
+    s_block = (u8*)paging_phys_to_kernel_virt(block_phys);
+    s_block2 = (u8*)paging_phys_to_kernel_virt(block2_phys);
+    s_data_buf = (u8*)paging_phys_to_kernel_virt(data_phys);
+    s_block_bitmap = (u8*)paging_phys_to_kernel_virt(block_bitmap_phys);
+    s_inode_bitmap = (u8*)paging_phys_to_kernel_virt(inode_bitmap_phys);
+    k_memset(s_sector, 0, PMM_FRAME_SIZE);
+    k_memset(s_block, 0, PMM_FRAME_SIZE);
+    k_memset(s_block2, 0, PMM_FRAME_SIZE);
+    k_memset(s_data_buf, 0, EXT2_WRITE_CHUNK_SIZE);
+    k_memset(s_block_bitmap, 0, PMM_FRAME_SIZE);
+    k_memset(s_inode_bitmap, 0, PMM_FRAME_SIZE);
+    return 1;
 }
 
 static int bit_test(const u8* bits, u32 index) {
@@ -1308,6 +1357,10 @@ int ext2_init(void) {
             terminal_puts("ext2: unsupported block sector size\n");
             return 0;
         }
+        if (!ext2_alloc_scratch_buffers()) {
+            terminal_puts("ext2: cannot allocate scratch buffers\n");
+            return 0;
+        }
         if (!block_read(s_block_dev, 0, 1, s_sector)) {
             terminal_puts("ext2: cannot read sector 0\n");
             return 0;
@@ -1329,6 +1382,11 @@ int ext2_init(void) {
             terminal_puts("ext2: partition entry not populated\n");
             return 0;
         }
+    }
+
+    if (!ext2_alloc_scratch_buffers()) {
+        terminal_puts("ext2: cannot allocate scratch buffers\n");
+        return 0;
     }
 
     if (!read_block(0, s_block)) {

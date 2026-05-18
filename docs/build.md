@@ -62,16 +62,18 @@ The TinyCC sources stay clean in `third_party/tinycc`. SmallOS applies
 
 ```text
 build/
-├── bin/<backend>/ → final binaries (kernel.elf, kernel.bin,
+├── bin/<profile>/ → final binaries (kernel.elf, kernel.bin,
 │                    usr/bin/*.elf, usr/libexec/tests/*.elf,
 │                    ext2.seed.img, boot.bin, loader2.bin, tcc-smalos.elf)
-├── obj/<backend>/ → object files and depfiles (.o, .d), mirrored by source subtree
-├── gen/<backend>/ → generated source (loader2.gen.asm)
+├── obj/<profile>/ → object files and depfiles (.o, .d), mirrored by source subtree
+├── gen/<profile>/ → generated source (loader2.gen.asm)
 ├── img/           → final disk image and wrappers (smallos.img, smallos.vmdk)
 └── tools/         → host tools (mkext2, mkimage)
 ```
 
-The generated seed image lives at `build/bin/<backend>/ext2.seed.img`; normal
+Build profiles include display backend, serial mode, and NIC selection, for
+example `auto-serial-e1000`, `auto-serial-rtl8139`, or `auto-serial-all`.
+The generated seed image lives at `build/bin/<profile>/ext2.seed.img`; normal
 runs use the mutable copy at `.state/ext2.img` so guest writes survive ordinary
 rebuilds. Make tracks that copy with `.state/ext2.img.stamp`, so rebuilding
 userland refreshes the runtime partition from the latest seed instead of
@@ -336,12 +338,15 @@ so the old QEMU `10.0.2.15/24` address is no longer hardcoded in the kernel.
 TAP device instead. That is the right path when you want the guest on a bridged
 LAN or otherwise reachable beyond QEMU's built-in NAT layer.
 
-The generic NIC layer currently binds QEMU/ESXi e1000 adapters and Realtek
-RTL8139 (`10EC:8139`) adapters such as the WYSE S10 onboard NIC. To exercise
-the RTL8139 path in QEMU, override the user-network device model:
+The generic NIC layer can bind QEMU/ESXi e1000 adapters and Realtek RTL8139
+(`10EC:8139`) adapters such as the WYSE S10 onboard NIC. VM builds default to
+`NIC_DRIVER=e1000`, which compiles only the e1000 path. Use
+`NIC_DRIVER=rtl8139` for RTL8139-specific images or `NIC_DRIVER=all` when one
+kernel should probe both drivers. To exercise the RTL8139 path in QEMU, build
+and boot with a matching device model:
 
 ```bash
-make test QEMU_NETFLAGS_USER='-nic user,model=rtl8139,mac=52:54:00:12:34:56$(QEMU_NET_HOSTFWD)$(QEMU_NET_GUESTFWD)'
+make test NIC_DRIVER=rtl8139 QEMU_NETFLAGS_USER='-nic user,model=rtl8139,mac=52:54:00:12:34:56$(QEMU_NET_HOSTFWD)$(QEMU_NET_GUESTFWD)'
 ```
 
 Inside the guest, `ip`, `ipconfig /all`, `ip dhcp`, `ip addr add <addr>/<prefix>`,
@@ -400,7 +405,8 @@ make run SERIAL_CONSOLE=0
 
 The headless test and smoke targets also pass `SERIAL_CONSOLE=1` explicitly
 because their host harnesses use the serial log as the transcript. COM1-enabled
-builds use `build/obj/auto-serial/` internally but still produce the canonical
+builds use profile-specific directories such as
+`build/obj/auto-serial-e1000/` internally but still produce the canonical
 `build/img/smallos.img`.
 
 While boot diagnostics are being captured, terminal output is prefixed with
@@ -438,23 +444,23 @@ Each C source file is compiled with the freestanding cross toolchain:
 i686-elf-gcc -I<dirs> \
     -ffreestanding -m32 -fno-pie -fno-stack-protector \
     -nostdlib -nostartfiles -MMD -MP -MF <depfile> \
-    -c file.c -o build/obj/<backend>/<subdir>/file.o
+    -c file.c -o build/obj/<profile>/<subdir>/file.o
 ```
 
 Each assembly file is assembled to ELF object form:
 
 ```bash
-nasm -f elf32 file.asm -o build/obj/<backend>/<subdir>/file.o
+nasm -f elf32 file.asm -o build/obj/<profile>/<subdir>/file.o
 ```
 
 C depfiles (`.d`) are emitted alongside object files so header changes rebuild the right targets automatically.
 
 ## Linking
 
-All kernel objects are linked into `build/bin/<backend>/kernel.elf`:
+All kernel objects are linked into `build/bin/<profile>/kernel.elf`:
 
 ```bash
-i686-elf-ld -T linker.ld -m elf_i386 <objects> -o build/bin/<backend>/kernel.elf
+i686-elf-ld -T linker.ld -m elf_i386 <objects> -o build/bin/<profile>/kernel.elf
 ```
 
 ## Linker Script
@@ -727,7 +733,7 @@ STAGE2_STACK_TOP    equ __STAGE2_STACK_TOP__
 STAGE2_STACK_TOP_32 equ __STAGE2_STACK_TOP_32__
 ```
 
-The Makefile injects those values from the generated stage-2 stack contract and writes `build/gen/<backend>/loader2.gen.asm` via `sed`:
+The Makefile injects those values from the generated stage-2 stack contract and writes `build/gen/<profile>/loader2.gen.asm` via `sed`:
 
 ```makefile
 sed -e "s/__STAGE2_STACK_TOP__/0xFF00/" \
@@ -836,7 +842,7 @@ The exact kernel span depends on `kernel.bin` size rounded up to a whole number 
 # Stage 1 Bootloader
 
 ```text
-boot.asm → build/bin/<backend>/boot.bin
+boot.asm → build/bin/<profile>/boot.bin
 ```
 
 Constraints:
@@ -1000,16 +1006,17 @@ make usb-storage-smoke
 
 The kernel uses the generic block layer to try writable ATA first, then
 read-only USB mass storage, then the loader2 RAM fallback when one was
-published. With the default `BOOT_RAMDISK_FALLBACK=auto`, loader2 skips the
-fallback preload for BIOS USB boot drives so USB boots mount the live `usb0`
-device instead of paying the real-mode copy cost when firmware reports USB
-through EDD. The explicit `usb-image`, `run-usb-storage`, and
-`run-headless-usb-storage` targets force `BOOT_RAMDISK_FALLBACK=always`, which is
-the reliable setting for USB-specific images while the protected-mode USB
-storage path is still hardware-dependent. Use `BOOT_RAMDISK_FALLBACK=never` only
-when intentionally testing a no-fallback USB boot. The USB storage driver
-implements enough BOT/SCSI to enumerate the device, read capacity, and issue
-READ(10) requests for ext2 blocks.
+published. The default `BOOT_RAMDISK_FALLBACK=never` disables the preload for
+normal VM/IDE boots, avoiding a real-mode copy of the ext2 partition on every
+boot. When enabled, the fallback copies the ext2 partition to `0x800000`,
+publishes it through boot info, and lets ext2 treat that memory as a block
+device. `BOOT_RAMDISK_FALLBACK=auto` keeps the fallback available only when EDD
+does not identify the boot drive as USB or ATA; `always` forces it. The explicit
+`usb-image`, `run-usb-storage`, and `run-headless-usb-storage` targets force
+`BOOT_RAMDISK_FALLBACK=always`, which is the reliable setting for USB-specific
+images while the protected-mode USB storage path is still hardware-dependent.
+The USB storage driver implements enough BOT/SCSI to enumerate the device, read
+capacity, and issue READ(10) requests for ext2 blocks.
 
 `make usb-image` also refreshes `build/usb/smallos-wyse-s10-direct-usb.img` and
 its `.sha256` file, so hardware flashing can use the stable `build/usb` path

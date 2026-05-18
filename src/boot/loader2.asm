@@ -122,6 +122,8 @@ start:
 %elif RAMDISK_FALLBACK_POLICY == 2
     cmp byte [DISK_IS_USB], 0
     jne .skip_ramdisk_preload
+    cmp byte [DISK_IS_ATA], 0
+    jne .skip_ramdisk_preload
     call load_ramdisk
 .skip_ramdisk_preload:
 %endif
@@ -277,8 +279,19 @@ read_edd_parameters:
     cmp word [edd_params], 0x0042
     jb .done
     cmp dword [edd_params + 40], 0x20425355 ; "USB "
-    jne .done
+    je .usb
+    cmp dword [edd_params + 40], 0x20415441 ; "ATA "
+    je .ata
+    cmp dword [edd_params + 44], 0x20425355 ; "USB "
+    je .usb
+    cmp dword [edd_params + 44], 0x20415441 ; "ATA "
+    je .ata
+    jmp .done
+.usb:
     mov byte [DISK_IS_USB], 1
+    jmp .done
+.ata:
+    mov byte [DISK_IS_ATA], 1
 .done:
     pop ds
     popa
@@ -1343,6 +1356,7 @@ BOOT_DRIVE           db 0
 DISK_USE_LBA         db 0
 DISK_EDD_VERSION     db 0
 DISK_IS_USB          db 0
+DISK_IS_ATA          db 0
 DISK_HIGH_READ_ENABLED db 0
 DISK_ERROR_CODE      db 0
 DISK_HIGH_READ_FLAGS dw 0

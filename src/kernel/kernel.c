@@ -11,6 +11,7 @@
 #include "paging.h"
 #include "scheduler.h"
 #include "process.h"
+#include "klib.h"
 #include "ata.h"
 #include "ext2.h"
 #include "pci.h"
@@ -30,13 +31,17 @@ extern unsigned char bss_end;
 
 #define BOOT_LOG_PATH "/var/log/boot.txt"
 #define BOOT_LOG_CAPACITY 32768u
-static char s_boot_log[BOOT_LOG_CAPACITY];
+#define BOOT_LOG_EARLY_CAPACITY 4096u
+static char s_boot_log_early[BOOT_LOG_EARLY_CAPACITY];
+static char* s_boot_log = s_boot_log_early;
+static unsigned int s_boot_log_capacity = BOOT_LOG_EARLY_CAPACITY;
 static unsigned int s_boot_log_len = 0;
 static int s_boot_log_enabled = 1;
 static int s_boot_log_fs_ready = 0;
 static int s_boot_log_terminal_hooked = 0;
 static int s_boot_log_read_only_notice = 0;
 static int s_boot_log_line_start = 1;
+static int s_boot_clock_synced = 0;
 static char s_boot_terminal_prefix[80];
 
 static unsigned long long boot_read_cycles(void) {
@@ -47,9 +52,29 @@ static unsigned long long boot_read_cycles(void) {
 }
 
 static void boot_log_append_raw_char(char ch) {
-    if (s_boot_log_len + 1u >= BOOT_LOG_CAPACITY) return;
+    if (s_boot_log_len + 1u >= s_boot_log_capacity) return;
     s_boot_log[s_boot_log_len++] = ch;
     s_boot_log[s_boot_log_len] = '\0';
+}
+
+static void boot_log_promote_buffer(void) {
+    char* full_log;
+
+    if (s_boot_log_capacity >= BOOT_LOG_CAPACITY) {
+        return;
+    }
+
+    full_log = (char*)kmalloc(BOOT_LOG_CAPACITY);
+    if (!full_log) {
+        return;
+    }
+
+    if (s_boot_log_len != 0u) {
+        k_memcpy(full_log, s_boot_log, s_boot_log_len);
+    }
+    full_log[s_boot_log_len] = '\0';
+    s_boot_log = full_log;
+    s_boot_log_capacity = BOOT_LOG_CAPACITY;
 }
 
 static void boot_log_append_raw(const char* s) {
@@ -291,6 +316,22 @@ static int boot_is_leap_year(int year) {
     return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
 }
 
+static void terminal_put_uint_width(unsigned int value, unsigned int width) {
+    char buf[10];
+    unsigned int i = 0;
+
+    do {
+        buf[i++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    } while (value > 0u && i < sizeof(buf));
+    while (i < width && i < sizeof(buf)) {
+        buf[i++] = '0';
+    }
+    while (i > 0u) {
+        terminal_putc(buf[--i]);
+    }
+}
+
 static void boot_put_uint_width(unsigned int value, unsigned int width) {
     char buf[10];
     unsigned int i = 0;
@@ -385,6 +426,67 @@ static void boot_print_utc_time(unsigned int unix_time) {
     boot_puts(" UTC\n");
 }
 
+static void terminal_print_utc_time(unsigned int unix_time) {
+    static const unsigned int month_days[] = {
+        31u, 28u, 31u, 30u, 31u, 30u, 31u, 31u, 30u, 31u, 30u, 31u
+    };
+    unsigned int days = unix_time / 86400u;
+    unsigned int rem = unix_time % 86400u;
+    int year = 1970;
+    unsigned int month = 0;
+
+    while (1) {
+        unsigned int yd = boot_is_leap_year(year) ? 366u : 365u;
+        if (days < yd) break;
+        days -= yd;
+        year++;
+    }
+
+    while (month < 12u) {
+        unsigned int md = month_days[month];
+        if (month == 1u && boot_is_leap_year(year)) md++;
+        if (days < md) break;
+        days -= md;
+        month++;
+    }
+
+    terminal_put_uint_width((unsigned int)year, 4u);
+    terminal_putc('-');
+    terminal_put_uint_width(month + 1u, 2u);
+    terminal_putc('-');
+    terminal_put_uint_width(days + 1u, 2u);
+    terminal_putc(' ');
+    terminal_put_uint_width(rem / 3600u, 2u);
+    terminal_putc(':');
+    terminal_put_uint_width((rem / 60u) % 60u, 2u);
+    terminal_putc(':');
+    terminal_put_uint_width(rem % 60u, 2u);
+}
+
+static void terminal_print_ip(u32 ip) {
+    terminal_put_uint((ip >> 24) & 0xFFu);
+    terminal_putc('.');
+    terminal_put_uint((ip >> 16) & 0xFFu);
+    terminal_putc('.');
+    terminal_put_uint((ip >> 8) & 0xFFu);
+    terminal_putc('.');
+    terminal_put_uint(ip & 0xFFu);
+}
+
+static void terminal_print_mac(const u8* mac) {
+    static const char hex[] = "0123456789ABCDEF";
+
+    if (!mac) {
+        terminal_puts("unavailable");
+        return;
+    }
+    for (unsigned int i = 0; i < 6u; i++) {
+        terminal_putc(hex[(mac[i] >> 4) & 0xFu]);
+        terminal_putc(hex[mac[i] & 0xFu]);
+        if (i != 5u) terminal_putc(':');
+    }
+}
+
 static void boot_print_hardware_diag_summary(void) {
     usb_debug_state_t usb_dbg;
     keyboard_debug_state_t keyboard_dbg;
@@ -446,6 +548,113 @@ static void boot_print_hardware_diag_summary(void) {
     boot_putc('\n');
 }
 
+static void boot_print_input_summary(void) {
+    usb_debug_state_t usb_dbg;
+    keyboard_debug_state_t keyboard_dbg;
+
+    usb_debug_snapshot(&usb_dbg);
+    keyboard_debug_snapshot(&keyboard_dbg);
+
+    boot_puts("Input: ");
+    if (usb_dbg.keyboard_active) {
+        boot_puts("USB boot keyboard ready on port ");
+        boot_put_uint(usb_dbg.keyboard_port);
+    } else {
+        boot_puts("no USB boot keyboard yet");
+    }
+    boot_puts("  controllers=");
+    boot_put_uint(usb_dbg.controller_count);
+    boot_puts(" uhci=");
+    boot_put_uint(usb_dbg.uhci_count);
+    boot_puts(" ohci=");
+    boot_put_uint(usb_dbg.ohci_count);
+    boot_puts(" ehci=");
+    boot_put_uint(usb_dbg.ehci_count);
+    boot_puts(" xhci=");
+    boot_put_uint(usb_dbg.xhci_count);
+    boot_putc('\n');
+
+    boot_puts("Input: usb_mouse=");
+    boot_put_uint(usb_dbg.mouse_active);
+    boot_puts(" port=");
+    boot_put_uint(usb_dbg.mouse_port);
+    boot_puts(" ep=");
+    boot_put_uint(usb_dbg.mouse_endpoint);
+    boot_puts(" pkt=");
+    boot_put_uint(usb_dbg.mouse_packet_size);
+    boot_puts(" int=");
+    boot_put_uint(usb_dbg.mouse_interval);
+    boot_puts(" polls=");
+    boot_put_uint(usb_dbg.mouse_poll_count);
+    boot_puts(" reports=");
+    boot_put_uint(usb_dbg.mouse_report_count);
+    boot_puts(" cc=");
+    boot_put_hex(usb_dbg.mouse_last_cc);
+    boot_putc('\n');
+
+    boot_puts("Input: ps2=");
+    boot_put_uint(keyboard_dbg.ps2_init_ok);
+    boot_puts(" irq=");
+    boot_put_uint(keyboard_dbg.irq_count);
+    boot_puts(" usb_ep=");
+    boot_put_uint(usb_dbg.keyboard_endpoint);
+    boot_puts(" pkt=");
+    boot_put_uint(usb_dbg.keyboard_packet_size);
+    boot_puts(" int=");
+    boot_put_uint(usb_dbg.keyboard_interval);
+    boot_puts(" polls=");
+    boot_put_uint(usb_dbg.keyboard_poll_count);
+    boot_puts(" reports=");
+    boot_put_uint(usb_dbg.keyboard_report_count);
+    boot_puts(" cc=");
+    boot_put_hex(usb_dbg.keyboard_last_cc);
+    boot_putc('\n');
+}
+
+static void terminal_print_welcome_summary(void) {
+    const net_ipv4_config_t* cfg = net_ipv4_config();
+    const u8* mac = nic_mac();
+    unsigned int free_kb = pmm_free_count() * (PMM_FRAME_SIZE / 1024u);
+    unsigned int total_kb = pmm_total_count() * (PMM_FRAME_SIZE / 1024u);
+
+    terminal_puts("Welcome to SmallOS\n");
+    terminal_puts("Time: ");
+    if (s_boot_clock_synced) {
+        terminal_print_utc_time(timer_get_realtime_seconds());
+        terminal_puts(" UTC\n");
+    } else {
+        terminal_puts("unsynchronized, uptime ");
+        terminal_put_uint(timer_get_seconds());
+        terminal_puts("s\n");
+    }
+
+    terminal_puts("Network: ");
+    terminal_puts(nic_driver_name());
+    terminal_puts(" link=");
+    terminal_puts(nic_link_up() ? "up" : "down");
+    terminal_puts(" mac=");
+    terminal_print_mac(mac);
+    terminal_puts(" ip=");
+    if (cfg && cfg->configured) {
+        terminal_print_ip(cfg->ip);
+        terminal_puts(" gw=");
+        terminal_print_ip(cfg->gateway);
+    } else {
+        terminal_puts("unconfigured");
+    }
+    terminal_putc('\n');
+
+    terminal_puts("Memory: ");
+    terminal_put_uint(free_kb);
+    terminal_puts(" KB free / ");
+    terminal_put_uint(total_kb);
+    terminal_puts(" KB PMM heap_top=");
+    terminal_put_hex(memory_get_heap_top());
+    terminal_putc('\n');
+
+    terminal_puts("SmallOS ready\n");
+}
+
 static void boot_sync_clock(void) {
     unsigned int unix_time = 0;
 
@@ -453,6 +662,7 @@ static void boot_sync_clock(void) {
     __asm__ __volatile__("sti");
     if (ntp_sync(NTP_DEFAULT_SERVER_IP, &unix_time)) {
         timer_set_realtime_seconds(unix_time);
+        s_boot_clock_synced = 1;
         __asm__ __volatile__("cli");
         boot_splash_pass("ntp: clock synchronized");
         boot_print_utc_time(unix_time);
@@ -653,9 +863,6 @@ static void boot_start_user_services(void) {
 }
 
 static void boot_sequence_task_main(void) {
-    usb_debug_state_t usb_dbg;
-    keyboard_debug_state_t keyboard_dbg;
-
     boot_print_hardware_diag_summary();
     boot_log_save();
 
@@ -677,6 +884,7 @@ static void boot_sequence_task_main(void) {
     } else {
         boot_puts("usb: WARN HID service task unavailable\n");
     }
+    boot_print_input_summary();
     boot_start_user_services();
 
     boot_log_save();
@@ -684,61 +892,7 @@ static void boot_sequence_task_main(void) {
     boot_show_splash();
     terminal_set_display_enabled(1);
     terminal_clear();
-    terminal_puts("SmallOS ready\n");
-    usb_debug_snapshot(&usb_dbg);
-    keyboard_debug_snapshot(&keyboard_dbg);
-    terminal_puts("Input: ");
-    if (usb_dbg.keyboard_active) {
-        terminal_puts("USB boot keyboard ready on port ");
-        terminal_put_uint(usb_dbg.keyboard_port);
-    } else {
-        terminal_puts("no USB boot keyboard yet");
-    }
-    terminal_puts("  controllers=");
-    terminal_put_uint(usb_dbg.controller_count);
-    terminal_puts(" uhci=");
-    terminal_put_uint(usb_dbg.uhci_count);
-    terminal_puts(" ohci=");
-    terminal_put_uint(usb_dbg.ohci_count);
-    terminal_puts(" ehci=");
-    terminal_put_uint(usb_dbg.ehci_count);
-    terminal_puts(" xhci=");
-    terminal_put_uint(usb_dbg.xhci_count);
-    terminal_putc('\n');
-    terminal_puts("Input: usb_mouse=");
-    terminal_put_uint(usb_dbg.mouse_active);
-    terminal_puts(" port=");
-    terminal_put_uint(usb_dbg.mouse_port);
-    terminal_puts(" ep=");
-    terminal_put_uint(usb_dbg.mouse_endpoint);
-    terminal_puts(" pkt=");
-    terminal_put_uint(usb_dbg.mouse_packet_size);
-    terminal_puts(" int=");
-    terminal_put_uint(usb_dbg.mouse_interval);
-    terminal_puts(" polls=");
-    terminal_put_uint(usb_dbg.mouse_poll_count);
-    terminal_puts(" reports=");
-    terminal_put_uint(usb_dbg.mouse_report_count);
-    terminal_puts(" cc=");
-    terminal_put_hex(usb_dbg.mouse_last_cc);
-    terminal_putc('\n');
-    terminal_puts("Input: ps2=");
-    terminal_put_uint(keyboard_dbg.ps2_init_ok);
-    terminal_puts(" irq=");
-    terminal_put_uint(keyboard_dbg.irq_count);
-    terminal_puts(" usb_ep=");
-    terminal_put_uint(usb_dbg.keyboard_endpoint);
-    terminal_puts(" pkt=");
-    terminal_put_uint(usb_dbg.keyboard_packet_size);
-    terminal_puts(" int=");
-    terminal_put_uint(usb_dbg.keyboard_interval);
-    terminal_puts(" polls=");
-    terminal_put_uint(usb_dbg.keyboard_poll_count);
-    terminal_puts(" reports=");
-    terminal_put_uint(usb_dbg.keyboard_report_count);
-    terminal_puts(" cc=");
-    terminal_put_hex(usb_dbg.keyboard_last_cc);
-    terminal_putc('\n');
+    terminal_print_welcome_summary();
 
     if (user_shell_proc) {
         terminal_puts("Launching user shell\n");
@@ -768,7 +922,6 @@ static void boot_sequence_task_main(void) {
 void kernel_main(void) {
     terminal_init();
     boot_log_capture_begin();
-    terminal_set_display_enabled(0);
     boot_splash_begin();
     boot_splash_terminal_ready();
     boot_splash_boot_info();
@@ -780,6 +933,7 @@ void kernel_main(void) {
                        "kernel page directory was not initialized");
 
     memory_init(PAGE_ALIGN((unsigned int)&bss_end));
+    boot_log_promote_buffer();
     pmm_init();
     kernel_selfcheck();
 

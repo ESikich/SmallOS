@@ -22,6 +22,7 @@
  */
 static unsigned char s_bitmap[PMM_NUM_FRAMES / 8];
 static u32           s_free_count = 0;
+static u32           s_total_count = 0;
 static u32           s_next_free  = 0;
 
 /* ------------------------------------------------------------------ */
@@ -179,6 +180,7 @@ void pmm_init(void) {
     }
 
     s_free_count = 0;
+    s_total_count = 0;
     s_next_free  = 0;
 
     if (boot_info_e820_valid()) {
@@ -188,6 +190,7 @@ void pmm_init(void) {
     }
 
     pmm_reserve_boot_ranges();
+    s_total_count = s_free_count;
 
     terminal_puts("pmm: ");
     terminal_put_uint(s_free_count);
@@ -282,4 +285,8 @@ void pmm_free_contiguous_frames(u32 addr, u32 count) {
 
 u32 pmm_free_count(void) {
     return s_free_count;
+}
+
+u32 pmm_total_count(void) {
+    return s_total_count;
 }

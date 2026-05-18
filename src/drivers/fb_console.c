@@ -2,6 +2,7 @@
 #include "terminal.h"
 #include "boot_info.h"
 #include "paging.h"
+#include "memory.h"
 #include "klib.h"
 
 #define FB_FONT_WIDTH 8u
@@ -31,38 +32,38 @@ typedef struct {
     char cells[FB_MAX_ROWS][FB_MAX_COLS];
 } fb_state_t;
 
-static fb_state_t fb;
+static fb_state_t* fb;
 
 static const u8* fb_font(void) {
     return (const u8*)BOOT_FONT_PHYS;
 }
 
 static void fb_dirty_reset(void) {
-    fb.dirty_min_row = fb.rows;
-    fb.dirty_max_row = -1;
-    for (int r = 0; r < fb.rows; r++) {
-        for (int c = 0; c < fb.cols; c++) {
-            fb.dirty[r][c] = 0;
+    fb->dirty_min_row = fb->rows;
+    fb->dirty_max_row = -1;
+    for (int r = 0; r < fb->rows; r++) {
+        for (int c = 0; c < fb->cols; c++) {
+            fb->dirty[r][c] = 0;
         }
     }
 }
 
 static void fb_dirty_cell(int r, int c) {
-    if (r < 0 || c < 0 || r >= fb.rows || c >= fb.cols) {
+    if (r < 0 || c < 0 || r >= fb->rows || c >= fb->cols) {
         return;
     }
 
-    fb.dirty[r][c] = 1;
-    if (r < fb.dirty_min_row) fb.dirty_min_row = r;
-    if (r > fb.dirty_max_row) fb.dirty_max_row = r;
+    fb->dirty[r][c] = 1;
+    if (r < fb->dirty_min_row) fb->dirty_min_row = r;
+    if (r > fb->dirty_max_row) fb->dirty_max_row = r;
 }
 
 static void fb_dirty_all(void) {
-    fb.dirty_min_row = 0;
-    fb.dirty_max_row = fb.rows - 1;
-    for (int r = 0; r < fb.rows; r++) {
-        for (int c = 0; c < fb.cols; c++) {
-            fb.dirty[r][c] = 1;
+    fb->dirty_min_row = 0;
+    fb->dirty_max_row = fb->rows - 1;
+    for (int r = 0; r < fb->rows; r++) {
+        for (int c = 0; c < fb->cols; c++) {
+            fb->dirty[r][c] = 1;
         }
     }
 }
@@ -91,27 +92,27 @@ static void fb_copy_words(volatile u32* dst, const u32* src, u32 count) {
 }
 
 static void fb_clear_rect(u32 x, u32 y, u32 w, u32 h) {
-    for (u32 py = 0; py < h && y + py < fb.height; py++) {
-        volatile u32* row = (volatile u32*)(fb.base + (y + py) * fb.pitch + x * 4u);
+    for (u32 py = 0; py < h && y + py < fb->height; py++) {
+        volatile u32* row = (volatile u32*)(fb->base + (y + py) * fb->pitch + x * 4u);
         u32 count = w;
-        if (count > fb.width - x) count = fb.width - x;
+        if (count > fb->width - x) count = fb->width - x;
         fb_store_words(row, FB_COLOR_BG, count);
     }
 }
 
 static void fb_draw_cell(int r, int c) {
-    if (!fb.ready || r < 0 || c < 0 || r >= fb.rows || c >= fb.cols) {
+    if (!fb->ready || r < 0 || c < 0 || r >= fb->rows || c >= fb->cols) {
         return;
     }
 
-    unsigned char ch = (unsigned char)fb.cells[r][c];
+    unsigned char ch = (unsigned char)fb->cells[r][c];
     const u8* glyph = fb_font() + (u32)ch * FB_FONT_HEIGHT;
     u32 px0 = (u32)c * FB_FONT_WIDTH;
     u32 py0 = (u32)r * FB_FONT_HEIGHT;
 
     for (u32 py = 0; py < FB_FONT_HEIGHT; py++) {
         u8 bits = glyph[py];
-        volatile u32* out = (volatile u32*)(fb.base + (py0 + py) * fb.pitch + px0 * 4u);
+        volatile u32* out = (volatile u32*)(fb->base + (py0 + py) * fb->pitch + px0 * 4u);
         for (u32 px = 0; px < FB_FONT_WIDTH; px++) {
             u32 mask = 0x80u >> px;
             out[px] = (bits & mask) ? FB_COLOR_FG : FB_COLOR_BG;
@@ -120,59 +121,59 @@ static void fb_draw_cell(int r, int c) {
 }
 
 static void fb_draw_cursor(void) {
-    if (!fb.ready || fb.row < 0 || fb.col < 0 ||
-        fb.row >= fb.rows || fb.col >= fb.cols) {
+    if (!fb->ready || fb->row < 0 || fb->col < 0 ||
+        fb->row >= fb->rows || fb->col >= fb->cols) {
         return;
     }
 
-    u32 px0 = (u32)fb.col * FB_FONT_WIDTH;
-    u32 py0 = (u32)fb.row * FB_FONT_HEIGHT + FB_FONT_HEIGHT - 2u;
+    u32 px0 = (u32)fb->col * FB_FONT_WIDTH;
+    u32 py0 = (u32)fb->row * FB_FONT_HEIGHT + FB_FONT_HEIGHT - 2u;
 
     for (u32 py = 0; py < 2u; py++) {
-        volatile u32* out = (volatile u32*)(fb.base + (py0 + py) * fb.pitch + px0 * 4u);
+        volatile u32* out = (volatile u32*)(fb->base + (py0 + py) * fb->pitch + px0 * 4u);
         fb_store_words(out, FB_COLOR_FG, FB_FONT_WIDTH);
     }
 }
 
 static void fb_erase_cursor(void) {
-    fb_draw_cell(fb.row, fb.col);
+    fb_draw_cell(fb->row, fb->col);
 }
 
 static void fb_erase_cursor_if_visible(void) {
-    if (fb.update_depth == 0) {
+    if (fb->update_depth == 0) {
         fb_erase_cursor();
     }
 }
 
 static void fb_draw_cursor_if_visible(void) {
-    if (fb.update_depth == 0) {
+    if (fb->update_depth == 0) {
         fb_draw_cursor();
     }
 }
 
 static void fb_scroll_cells(void) {
-    for (int r = 1; r < fb.rows; r++) {
-        k_memcpy(fb.cells[r - 1], fb.cells[r], (k_size_t)fb.cols);
+    for (int r = 1; r < fb->rows; r++) {
+        k_memcpy(fb->cells[r - 1], fb->cells[r], (k_size_t)fb->cols);
     }
 
-    for (int c = 0; c < fb.cols; c++) {
-        fb.cells[fb.rows - 1][c] = ' ';
+    for (int c = 0; c < fb->cols; c++) {
+        fb->cells[fb->rows - 1][c] = ' ';
     }
 }
 
 static void fb_scroll(void) {
-    if (fb.update_depth > 0) {
+    if (fb->update_depth > 0) {
         fb_scroll_cells();
         fb_dirty_all();
-        fb.row = fb.rows - 1;
-        fb.col = 0;
+        fb->row = fb->rows - 1;
+        fb->col = 0;
         return;
     }
 
-    u32 row_bytes = fb.pitch * FB_FONT_HEIGHT;
-    u32 copy_bytes = row_bytes * (u32)(fb.rows - 1);
-    volatile u8* dst = fb.base;
-    volatile u8* src = fb.base + row_bytes;
+    u32 row_bytes = fb->pitch * FB_FONT_HEIGHT;
+    u32 copy_bytes = row_bytes * (u32)(fb->rows - 1);
+    volatile u8* dst = fb->base;
+    volatile u8* src = fb->base + row_bytes;
     u32 words = copy_bytes / 4u;
     u32 bytes = copy_bytes & 3u;
 
@@ -183,38 +184,38 @@ static void fb_scroll(void) {
 
     fb_scroll_cells();
 
-    fb_clear_rect(0, (u32)(fb.rows - 1) * FB_FONT_HEIGHT,
-                  fb.width, FB_FONT_HEIGHT);
-    fb.row = fb.rows - 1;
-    fb.col = 0;
+    fb_clear_rect(0, (u32)(fb->rows - 1) * FB_FONT_HEIGHT,
+                  fb->width, FB_FONT_HEIGHT);
+    fb->row = fb->rows - 1;
+    fb->col = 0;
 }
 
 static void fb_clear(void) {
-    if (!fb.ready) {
+    if (!fb->ready) {
         return;
     }
 
-    fb_clear_rect(0, 0, fb.width, fb.height);
-    for (int r = 0; r < fb.rows; r++) {
-        for (int c = 0; c < fb.cols; c++) {
-            fb.cells[r][c] = ' ';
+    fb_clear_rect(0, 0, fb->width, fb->height);
+    for (int r = 0; r < fb->rows; r++) {
+        for (int c = 0; c < fb->cols; c++) {
+            fb->cells[r][c] = ' ';
         }
     }
 
-    fb.row = 0;
-    fb.col = 0;
+    fb->row = 0;
+    fb->col = 0;
     fb_dirty_reset();
     fb_draw_cursor();
 }
 
 static void fb_flush_dirty(void) {
-    if (fb.dirty_max_row < fb.dirty_min_row) {
+    if (fb->dirty_max_row < fb->dirty_min_row) {
         return;
     }
 
-    for (int r = fb.dirty_min_row; r <= fb.dirty_max_row; r++) {
-        for (int c = 0; c < fb.cols; c++) {
-            if (fb.dirty[r][c]) {
+    for (int r = fb->dirty_min_row; r <= fb->dirty_max_row; r++) {
+        for (int c = 0; c < fb->cols; c++) {
+            if (fb->dirty[r][c]) {
                 fb_draw_cell(r, c);
             }
         }
@@ -223,42 +224,42 @@ static void fb_flush_dirty(void) {
 }
 
 static void fb_putc(char c) {
-    if (!fb.ready) {
+    if (!fb->ready) {
         return;
     }
 
     fb_erase_cursor_if_visible();
 
     if (c == '\n') {
-        fb.col = 0;
-        fb.row++;
+        fb->col = 0;
+        fb->row++;
     } else if (c == '\r') {
-        fb.col = 0;
+        fb->col = 0;
     } else if (c == '\b') {
-        if (fb.col > 0) {
-            fb.col--;
-            fb.cells[fb.row][fb.col] = ' ';
-            if (fb.update_depth > 0) {
-                fb_dirty_cell(fb.row, fb.col);
+        if (fb->col > 0) {
+            fb->col--;
+            fb->cells[fb->row][fb->col] = ' ';
+            if (fb->update_depth > 0) {
+                fb_dirty_cell(fb->row, fb->col);
             } else {
-                fb_draw_cell(fb.row, fb.col);
+                fb_draw_cell(fb->row, fb->col);
             }
         }
     } else {
-        fb.cells[fb.row][fb.col] = c;
-        if (fb.update_depth > 0) {
-            fb_dirty_cell(fb.row, fb.col);
+        fb->cells[fb->row][fb->col] = c;
+        if (fb->update_depth > 0) {
+            fb_dirty_cell(fb->row, fb->col);
         } else {
-            fb_draw_cell(fb.row, fb.col);
+            fb_draw_cell(fb->row, fb->col);
         }
-        fb.col++;
-        if (fb.col >= fb.cols) {
-            fb.col = 0;
-            fb.row++;
+        fb->col++;
+        if (fb->col >= fb->cols) {
+            fb->col = 0;
+            fb->row++;
         }
     }
 
-    if (fb.row >= fb.rows) {
+    if (fb->row >= fb->rows) {
         fb_scroll();
     }
 
@@ -266,68 +267,68 @@ static void fb_putc(char c) {
 }
 
 static void fb_begin_update(void) {
-    if (!fb.ready) {
+    if (!fb->ready) {
         return;
     }
 
-    if (fb.update_depth == 0) {
+    if (fb->update_depth == 0) {
         fb_erase_cursor();
     }
-    fb.update_depth++;
+    fb->update_depth++;
 }
 
 static void fb_end_update(void) {
-    if (!fb.ready || fb.update_depth <= 0) {
+    if (!fb->ready || fb->update_depth <= 0) {
         return;
     }
 
-    fb.update_depth--;
-    if (fb.update_depth == 0) {
+    fb->update_depth--;
+    if (fb->update_depth == 0) {
         fb_flush_dirty();
         fb_draw_cursor();
     }
 }
 
 static int fb_rows(void) {
-    return fb.rows;
+    return fb->rows;
 }
 
 static int fb_cols(void) {
-    return fb.cols;
+    return fb->cols;
 }
 
 static int fb_row(void) {
-    return fb.row;
+    return fb->row;
 }
 
 static int fb_col(void) {
-    return fb.col;
+    return fb->col;
 }
 
 static void fb_set_cursor(int row, int col) {
-    if (!fb.ready) {
+    if (!fb->ready) {
         return;
     }
 
     fb_erase_cursor_if_visible();
 
     if (row < 0) row = 0;
-    if (row >= fb.rows) row = fb.rows - 1;
+    if (row >= fb->rows) row = fb->rows - 1;
     if (col < 0) col = 0;
-    if (col >= fb.cols) col = fb.cols - 1;
+    if (col >= fb->cols) col = fb->cols - 1;
 
-    fb.row = row;
-    fb.col = col;
+    fb->row = row;
+    fb->col = col;
     fb_draw_cursor_if_visible();
 }
 
 static void fb_write_at(int row, int col, char c) {
-    if (!fb.ready || row < 0 || col < 0 || row >= fb.rows || col >= fb.cols) {
+    if (!fb->ready || row < 0 || col < 0 || row >= fb->rows || col >= fb->cols) {
         return;
     }
 
     fb_erase_cursor_if_visible();
-    fb.cells[row][col] = c;
+    fb->cells[row][col] = c;
     fb_draw_cell(row, col);
     fb_draw_cursor_if_visible();
 }
@@ -368,26 +369,33 @@ int fb_console_init(void) {
         return 0;
     }
 
-    k_memset(&fb, 0, sizeof(fb));
-    fb.phys = info->framebuffer_phys;
-    fb.width = info->framebuffer_width;
-    fb.height = info->framebuffer_height;
-    fb.pitch = info->framebuffer_pitch;
-    fb.bpp = info->framebuffer_bpp;
-    fb.cols = (int)(fb.width / FB_FONT_WIDTH);
-    fb.rows = (int)(fb.height / FB_FONT_HEIGHT);
-    if (fb.cols > FB_MAX_COLS) fb.cols = FB_MAX_COLS;
-    if (fb.rows > FB_MAX_ROWS) fb.rows = FB_MAX_ROWS;
-    if (fb.cols <= 0 || fb.rows <= 0) {
+    if (!fb) {
+        fb = (fb_state_t*)kmalloc(sizeof(*fb));
+        if (!fb) {
+            return 0;
+        }
+    }
+
+    k_memset(fb, 0, sizeof(*fb));
+    fb->phys = info->framebuffer_phys;
+    fb->width = info->framebuffer_width;
+    fb->height = info->framebuffer_height;
+    fb->pitch = info->framebuffer_pitch;
+    fb->bpp = info->framebuffer_bpp;
+    fb->cols = (int)(fb->width / FB_FONT_WIDTH);
+    fb->rows = (int)(fb->height / FB_FONT_HEIGHT);
+    if (fb->cols > FB_MAX_COLS) fb->cols = FB_MAX_COLS;
+    if (fb->rows > FB_MAX_ROWS) fb->rows = FB_MAX_ROWS;
+    if (fb->cols <= 0 || fb->rows <= 0) {
         return 0;
     }
 
     paging_map_kernel_range(FB_CONSOLE_VIRT_BASE,
-                            fb.phys,
+                            fb->phys,
                             bytes,
                             PAGE_WRITE);
-    fb.base = (volatile u8*)FB_CONSOLE_VIRT_BASE;
-    fb.ready = 1;
+    fb->base = (volatile u8*)FB_CONSOLE_VIRT_BASE;
+    fb->ready = 1;
     fb_dirty_reset();
 
     terminal_set_backend(&framebuffer_backend);
@@ -397,33 +405,33 @@ int fb_console_init(void) {
 
 int fb_console_info(unsigned int* width, unsigned int* height,
                     unsigned int* pitch, unsigned int* bpp) {
-    if (!fb.ready) {
+    if (!fb || !fb->ready) {
         return 0;
     }
-    if (width) *width = fb.width;
-    if (height) *height = fb.height;
-    if (pitch) *pitch = fb.pitch;
-    if (bpp) *bpp = fb.bpp;
+    if (width) *width = fb->width;
+    if (height) *height = fb->height;
+    if (pitch) *pitch = fb->pitch;
+    if (bpp) *bpp = fb->bpp;
     return 1;
 }
 
 int fb_console_fill(unsigned int x, unsigned int y, unsigned int w,
                     unsigned int h, unsigned int color) {
-    if (!fb.ready) {
+    if (!fb || !fb->ready) {
         return 0;
     }
-    if (x >= fb.width || y >= fb.height) {
+    if (x >= fb->width || y >= fb->height) {
         return 1;
     }
-    if (w > fb.width - x) {
-        w = fb.width - x;
+    if (w > fb->width - x) {
+        w = fb->width - x;
     }
-    if (h > fb.height - y) {
-        h = fb.height - y;
+    if (h > fb->height - y) {
+        h = fb->height - y;
     }
 
     for (unsigned int py = 0; py < h; py++) {
-        volatile u32* row = (volatile u32*)(fb.base + (y + py) * fb.pitch + x * 4u);
+        volatile u32* row = (volatile u32*)(fb->base + (y + py) * fb->pitch + x * 4u);
         fb_store_words(row, color, w);
     }
     return 1;
@@ -433,21 +441,21 @@ int fb_console_blit(unsigned int x, unsigned int y, unsigned int w,
                     unsigned int h, const unsigned int* pixels) {
     unsigned int src_w = w;
 
-    if (!fb.ready || !pixels) {
+    if (!fb || !fb->ready || !pixels) {
         return 0;
     }
-    if (x >= fb.width || y >= fb.height) {
+    if (x >= fb->width || y >= fb->height) {
         return 1;
     }
-    if (w > fb.width - x) {
-        w = fb.width - x;
+    if (w > fb->width - x) {
+        w = fb->width - x;
     }
-    if (h > fb.height - y) {
-        h = fb.height - y;
+    if (h > fb->height - y) {
+        h = fb->height - y;
     }
 
     for (unsigned int py = 0; py < h; py++) {
-        volatile u32* dst = (volatile u32*)(fb.base + (y + py) * fb.pitch + x * 4u);
+        volatile u32* dst = (volatile u32*)(fb->base + (y + py) * fb->pitch + x * 4u);
         const unsigned int* src = pixels + py * src_w;
         fb_copy_words(dst, src, w);
     }

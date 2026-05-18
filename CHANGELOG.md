@@ -4,6 +4,15 @@
 
 ### Changed
 
+* **Kernel footprint and boot profiles** (`Makefile`, `src/drivers/{e1000,rtl8139,nic,ext2,fb_console}.c`, `src/kernel/{kernel,pmm,syscall}.c`, `docs/`)
+  * Added `NIC_DRIVER=e1000|rtl8139|all` build profiles; VM builds default to e1000 while RTL8139 remains available for WYSE/Realtek-targeted images.
+  * Moved E1000, RTL8139, and ext2 scratch buffers out of static `.bss` into PMM-backed allocations made only after the relevant device/filesystem path is active.
+  * Reduced static boot/display memory by promoting the boot log from a 4 KiB early buffer to a 32 KiB heap buffer after `memory_init()`, and by allocating framebuffer console state only when framebuffer init succeeds.
+  * Changed the normal loader2 RAM fallback default to `BOOT_RAMDISK_FALLBACK=never`; explicit USB image/run targets still force `always` for hardware resilience.
+  * Made `meminfo` and the welcome screen report the real PMM total captured after E820 filtering and boot reservations, instead of the allocator's fixed address-window ceiling.
+* **Boot diagnostics and welcome flow** (`src/kernel/kernel.c`, `docs/`)
+  * Kept early boot diagnostics visible on the display instead of muting them before the framebuffer splash replay.
+  * Printed input/HID diagnostics before the bitmap splash, then printed a post-splash welcome summary with UTC time, NIC/link/MAC/IP/gateway, and PMM memory before launching the shell.
 * **User shell editing fixes** (`src/user/shell/app.c`, `src/user/gui/shell_window.c`, `src/kernel/process.c`, `docs/`)
   * Made tab completion treat duplicate visible candidates as one match, so built-in commands that also exist as `/bin/*.elf` can still complete with the expected trailing space.
   * Recorded shell history before tokenization so recalled commands keep their full argument string, including commands that later fail.

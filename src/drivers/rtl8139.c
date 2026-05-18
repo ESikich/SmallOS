@@ -3,6 +3,8 @@
 #include "nic.h"
 #include "pci.h"
 #include "../kernel/klib.h"
+#include "../kernel/paging.h"
+#include "../kernel/pmm.h"
 #include "../kernel/ports.h"
 #include "terminal.h"
 
@@ -54,11 +56,15 @@ typedef unsigned short u16;
 #define RTL8139_MAX_FRAME_SIZE 1518u
 #define RTL8139_TEST_ETHER_TYPE 0x88B5u
 #define RTL8139_MIN_FRAME_SIZE 60u
+#define RTL8139_RX_STORAGE_BYTES PAGE_ALIGN(RTL8139_RX_STORAGE_SIZE)
+#define RTL8139_TX_STORAGE_BYTES PAGE_ALIGN(RTL8139_TX_DESC_COUNT * RTL8139_TX_BUF_SIZE)
 
 static unsigned short s_io_base = 0;
 static u8 s_mac[6];
-static u8 s_rx_buf[RTL8139_RX_STORAGE_SIZE] __attribute__((aligned(16)));
-static u8 s_tx_buf[RTL8139_TX_DESC_COUNT][RTL8139_TX_BUF_SIZE] __attribute__((aligned(16)));
+static u8* s_rx_buf = 0;
+static u8* s_tx_buf = 0;
+static u32 s_rx_buf_phys = 0;
+static u32 s_tx_buf_phys = 0;
 static unsigned int s_rx_offset = 0;
 static unsigned int s_tx_next = 0;
 static u32 s_tx_packets = 0;
@@ -140,6 +146,31 @@ static int rtl8139_wait_reset(void) {
     return 0;
 }
 
+static int rtl8139_alloc_buffers(void) {
+    u32 rx_frames = RTL8139_RX_STORAGE_BYTES / PAGE_SIZE;
+    u32 tx_frames = RTL8139_TX_STORAGE_BYTES / PAGE_SIZE;
+
+    if (s_rx_buf && s_tx_buf) {
+        return 1;
+    }
+
+    s_rx_buf_phys = pmm_alloc_contiguous_frames(rx_frames);
+    s_tx_buf_phys = pmm_alloc_contiguous_frames(tx_frames);
+    if (!s_rx_buf_phys || !s_tx_buf_phys) {
+        if (s_rx_buf_phys) pmm_free_contiguous_frames(s_rx_buf_phys, rx_frames);
+        if (s_tx_buf_phys) pmm_free_contiguous_frames(s_tx_buf_phys, tx_frames);
+        s_rx_buf_phys = 0;
+        s_tx_buf_phys = 0;
+        return 0;
+    }
+
+    s_rx_buf = (u8*)paging_phys_to_kernel_virt(s_rx_buf_phys);
+    s_tx_buf = (u8*)paging_phys_to_kernel_virt(s_tx_buf_phys);
+    k_memset(s_rx_buf, 0, RTL8139_RX_STORAGE_BYTES);
+    k_memset(s_tx_buf, 0, RTL8139_TX_STORAGE_BYTES);
+    return 1;
+}
+
 int rtl8139_init(void) {
     if (!rtl8139_find_device()) {
         terminal_puts("rtl8139: not found\n");
@@ -147,7 +178,6 @@ int rtl8139_init(void) {
         return 0;
     }
 
-    s_present = 1;
     rtl_write8(RTL8139_CR9346, 0xC0u);
     rtl_write8(RTL8139_CONFIG1, 0x00u);
     rtl_write8(RTL8139_CR9346, 0x00u);
@@ -158,14 +188,23 @@ int rtl8139_init(void) {
         return 0;
     }
 
-    k_memset(s_rx_buf, 0, sizeof(s_rx_buf));
+    s_present = 1;
+    if (!rtl8139_alloc_buffers()) {
+        terminal_puts("rtl8139: cannot allocate buffers\n");
+        s_present = 0;
+        return 0;
+    }
+
+    k_memset(s_rx_buf, 0, RTL8139_RX_STORAGE_SIZE);
     for (unsigned int i = 0; i < RTL8139_TX_DESC_COUNT; i++) {
-        k_memset(s_tx_buf[i], 0, RTL8139_TX_BUF_SIZE);
-        rtl_write32((u16)(RTL8139_TX_ADDR0 + i * 4u), (u32)(unsigned int)&s_tx_buf[i][0]);
+        u8* tx_buf = s_tx_buf + i * RTL8139_TX_BUF_SIZE;
+        k_memset(tx_buf, 0, RTL8139_TX_BUF_SIZE);
+        rtl_write32((u16)(RTL8139_TX_ADDR0 + i * 4u),
+                    s_tx_buf_phys + i * RTL8139_TX_BUF_SIZE);
     }
 
     rtl8139_read_mac();
-    rtl_write32(RTL8139_RX_BUF, (u32)(unsigned int)&s_rx_buf[0]);
+    rtl_write32(RTL8139_RX_BUF, s_rx_buf_phys);
     s_rx_offset = 0;
     s_tx_next = 0;
     s_tx_packets = 0;
@@ -264,14 +303,16 @@ int rtl8139_send(const void* data, u32 len) {
     }
 
     index = s_tx_next;
-    k_memcpy(s_tx_buf[index], data, len);
+    u8* tx_buf = s_tx_buf + index * RTL8139_TX_BUF_SIZE;
+    k_memcpy(tx_buf, data, len);
     if (len < RTL8139_MIN_FRAME_SIZE) {
-        k_memset(&s_tx_buf[index][len], 0, RTL8139_MIN_FRAME_SIZE - len);
+        k_memset(tx_buf + len, 0, RTL8139_MIN_FRAME_SIZE - len);
         tx_len = RTL8139_MIN_FRAME_SIZE;
     } else {
         tx_len = len;
     }
-    rtl_write32((u16)(RTL8139_TX_ADDR0 + index * 4u), (u32)(unsigned int)&s_tx_buf[index][0]);
+    rtl_write32((u16)(RTL8139_TX_ADDR0 + index * 4u),
+                s_tx_buf_phys + index * RTL8139_TX_BUF_SIZE);
     rtl_write32((u16)(RTL8139_TX_STATUS0 + index * 4u), tx_len);
     s_tx_next = (index + 1u) % RTL8139_TX_DESC_COUNT;
     s_tx_packets++;

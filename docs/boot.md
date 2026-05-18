@@ -107,8 +107,8 @@ Loaded to `0x4000:0x0000` (physical `0x40000`).
 
 * Check INT 0x13 LBA extension support and print drive diagnostics
 * Load kernel from disk immediately before the ext2 partition to physical `0x1000`
-* Preload the used prefix of the ext2 partition through BIOS reads into a 16 MB
-  zero-filled RAM fallback at `0x800000`
+* Optionally preload the used prefix of the ext2 partition through BIOS reads
+  into a 16 MB zero-filled RAM fallback at `0x800000`
 * Apply the build-time display policy: VBE framebuffer in auto mode, BIOS/VGA text in forced VGA mode
 * Copy the BIOS 8x16 font, publish framebuffer fields when VBE is selected, and collect BIOS E820 memory-map entries in boot info
 * Setup temporary GDT
@@ -190,12 +190,13 @@ number and CHS geometry, then attempts classic INT 0x13 sector reads.
 
 On BIOS USB boot, the firmware can read sectors while the bootloader is still in
 real mode, but the protected-mode kernel cannot assume that the USB stick exists
-as primary ATA hardware. By default, stage 2 now treats this as a live USB block
-boot: if EDD identifies the boot drive as USB, it skips the ext2 RAM fallback and
-lets the protected-mode USB mass-storage driver mount the stick through `usb0`.
-For non-USB BIOS disks, stage 2 still preloads the used ext2 prefix into RAM and
-publishes the 16 MB zero-filled fallback through boot info. It prefers INT 0x13
-LBA reads and falls back to CHS reads when the BIOS reports no LBA extensions.
+as primary ATA hardware. Normal VM/IDE builds default to
+`BOOT_RAMDISK_FALLBACK=never`, so stage 2 does not spend time copying the ext2
+partition into RAM before the kernel mounts writable ATA. When the fallback is
+enabled, stage 2 preloads the used ext2 prefix into RAM at `0x800000`, zeroes
+the rest of the 16 MB volume image, and publishes the RAM copy through boot
+info. It prefers INT 0x13 LBA reads and falls back to CHS reads when the BIOS
+reports no LBA extensions.
 
 The protected-mode kernel now has three storage choices:
 
@@ -209,11 +210,11 @@ mount the same on-stick ext2 volume through `usb0`; writes are disabled on that
 path until USB storage write support exists. The RAM fallback remains useful
 when protected-mode storage cannot validate the disk.
 
-`BOOT_RAMDISK_FALLBACK=auto` is the default. `always` / `1` forces the old
-preload path, and `never` / `0` disables publication of the loader2 RAM fallback
-for all boot devices. The explicit USB image/run targets set `always` so direct
-USB builds remain bootable on hardware whose protected-mode USB storage path
-cannot yet validate ext2.
+`BOOT_RAMDISK_FALLBACK=never` is the default. `always` / `1` forces the preload
+path, and `auto` preloads only when EDD does not identify the boot drive as USB
+or ATA. The explicit USB image/run targets set `always` so direct USB builds
+remain bootable on hardware whose protected-mode USB storage path cannot yet
+validate ext2.
 
 During early storage probing, the kernel temporarily unmasks only timer IRQ0.
 That keeps `[ms=... tick=... cyc=...]` boot timestamps advancing while avoiding
@@ -587,10 +588,10 @@ Cons: the image builder and consumers need to agree on partition-table offsets a
 Programs are loaded from the mounted ext2 partition at runtime. The kernel
 tries ATA first because it is writable, then USB mass storage as a read-only
 block device, then the loader2-published RAM fallback. With the default
-`BOOT_RAMDISK_FALLBACK=auto` policy, loader2 skips that preload for BIOS USB
-boot drives and keeps it for non-USB BIOS disks. USB image targets override this
-to `always` because real USB firmware and controllers are less predictable than
-QEMU.
+`BOOT_RAMDISK_FALLBACK=never` policy, normal VM/IDE boots skip that preload
+entirely. `BOOT_RAMDISK_FALLBACK=auto` preloads only when EDD does not identify
+the boot drive as USB or ATA. USB image targets override this to `always`
+because real USB firmware and controllers are less predictable than QEMU.
 
 USB HID is deliberately claimed after storage. That keeps shell ELF loading on
 the storage path that just mounted, then starts a retrying OHCI boot-HID service
@@ -627,10 +628,11 @@ Kernel   →  zero BSS
 Bootseq  →  load /bin/shell.elf suspended
          →  enable interrupts in kernel-task bootstrap
          →  probe OHCI boot keyboard/mouse HID and queue retrying usb service
+         →  print input diagnostics before the bitmap splash
          →  start boot FTP and cserve user services
          →  refresh /var/log/boot.txt
          →  run /bin/bootsplash.elf boot/splash.bmp
-         →  print SmallOS ready
+         →  print welcome/time/network/memory summary and SmallOS ready
          →  launch /bin/shell.elf
          →  idle if the user shell exits or fails
 ```

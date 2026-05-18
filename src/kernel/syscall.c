@@ -2574,7 +2574,7 @@ static int sys_meminfo_impl(sys_meminfo_t* out_info) {
     info.heap_base = memory_get_heap_base();
     info.heap_top = memory_get_heap_top();
     info.pmm_free_frames = pmm_free_count();
-    info.pmm_total_frames = PMM_NUM_FRAMES;
+    info.pmm_total_frames = pmm_total_count();
     info.e820_valid = boot_info_e820_valid() ? 1u : 0u;
     info.e820_count = info.e820_valid ? boot_info_e820_count() : 0u;
 

@@ -15,15 +15,19 @@ USER_DIR=$(SRC_DIR)/user
 BUILD_DIR=build
 DISPLAY_BACKEND ?= auto
 SERIAL_CONSOLE ?= 1
+NIC_DRIVER ?= e1000
 BOOT_FORCE_CHS ?= 0
 BOOT_VBE_DIAG ?= 1
 BOOT_VBE_RELAXED ?= 0
-BOOT_RAMDISK_FALLBACK ?= auto
+BOOT_RAMDISK_FALLBACK ?= never
 ifneq ($(filter $(DISPLAY_BACKEND),auto vga),$(DISPLAY_BACKEND))
 $(error DISPLAY_BACKEND must be one of: auto vga)
 endif
 ifneq ($(filter $(SERIAL_CONSOLE),0 1),$(SERIAL_CONSOLE))
 $(error SERIAL_CONSOLE must be one of: 0 1)
+endif
+ifneq ($(filter $(NIC_DRIVER),e1000 rtl8139 all none),$(NIC_DRIVER))
+$(error NIC_DRIVER must be one of: e1000 rtl8139 all none)
 endif
 ifneq ($(filter $(BOOT_FORCE_CHS),0 1),$(BOOT_FORCE_CHS))
 $(error BOOT_FORCE_CHS must be one of: 0 1)
@@ -39,10 +43,11 @@ $(error BOOT_RAMDISK_FALLBACK must be one of: auto always never 0 1)
 endif
 LOADER2_RAMDISK_FALLBACK_POLICY=$(if $(filter always 1,$(BOOT_RAMDISK_FALLBACK)),1,$(if $(filter never 0,$(BOOT_RAMDISK_FALLBACK)),0,2))
 SERIAL_SUFFIX=$(if $(filter 1,$(SERIAL_CONSOLE)),-serial,)
-OBJ_DIR=$(BUILD_DIR)/obj/$(DISPLAY_BACKEND)$(SERIAL_SUFFIX)
+BUILD_PROFILE=$(DISPLAY_BACKEND)$(SERIAL_SUFFIX)-$(NIC_DRIVER)
+OBJ_DIR=$(BUILD_DIR)/obj/$(BUILD_PROFILE)
 BIN_ROOT=$(BUILD_DIR)/bin
-BIN_DIR=$(BIN_ROOT)/$(DISPLAY_BACKEND)$(SERIAL_SUFFIX)
-GEN_DIR=$(BUILD_DIR)/gen/$(DISPLAY_BACKEND)$(SERIAL_SUFFIX)
+BIN_DIR=$(BIN_ROOT)/$(BUILD_PROFILE)
+GEN_DIR=$(BUILD_DIR)/gen/$(BUILD_PROFILE)
 IMG_DIR=$(BUILD_DIR)/img
 IMG_FILE=$(IMG_DIR)/smallos.img
 USB_DIR=$(BUILD_DIR)/usb
@@ -51,6 +56,7 @@ ESXI_VMDK_SIZE ?=
 ESXI_RAW_FILE=$(IMG_DIR)/smallos-vmdk.raw
 ESXI_VMDK_FILE=$(IMG_DIR)/smallos.vmdk
 TOOLS_DIR=$(BUILD_DIR)/tools
+KERNEL_CONFIG_STAMP=$(OBJ_DIR)/kernel.config
 TINYCC_DIR=$(BUILD_DIR)/tinycc-host
 TINYCC_CONFIG_STAMP=$(TINYCC_DIR)/.configured
 TINYCC_SMALOS_OBJ_DIR=$(OBJ_DIR)/tinycc-smalos
@@ -95,7 +101,15 @@ endif
 ifeq ($(SERIAL_CONSOLE),1)
 CPPFLAGS+=-DSMALLOS_SERIAL_CONSOLE=1
 endif
-CFLAGS=-ffreestanding -m32 -fno-pie -fno-stack-protector -nostdlib -nostartfiles -Wa,--noexecstack
+ifneq ($(filter e1000 all,$(NIC_DRIVER)),)
+CPPFLAGS+=-DSMALLOS_NIC_E1000=1
+KERNEL_NIC_SRCS+=$(DRIVERS_DIR)/e1000.c
+endif
+ifneq ($(filter rtl8139 all,$(NIC_DRIVER)),)
+CPPFLAGS+=-DSMALLOS_NIC_RTL8139=1
+KERNEL_NIC_SRCS+=$(DRIVERS_DIR)/rtl8139.c
+endif
+CFLAGS=-ffreestanding -m32 -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdlib -nostartfiles -Wa,--noexecstack
 KERNEL_CFLAGS ?=
 DRIVER_CFLAGS ?=
 DISPLAY_DRIVER_CFLAGS ?= -O2
@@ -144,8 +158,7 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/pci.c \
 	$(DRIVERS_DIR)/usb.c \
 	$(DRIVERS_DIR)/usb_storage.c \
-	$(DRIVERS_DIR)/e1000.c \
-	$(DRIVERS_DIR)/rtl8139.c \
+	$(KERNEL_NIC_SRCS) \
 	$(DRIVERS_DIR)/nic.c \
 	$(DRIVERS_DIR)/net.c \
 	$(DRIVERS_DIR)/dhcp.c \
@@ -235,8 +248,12 @@ $(OBJ_DIR)/kernel/%.o: $(KERNEL_DIR)/%.asm | dirs
 $(OBJ_DIR)/kernel/%.o: $(KERNEL_DIR)/%.c Makefile | dirs
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(KERNEL_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
+$(OBJ_DIR)/kernel/%.o: $(KERNEL_CONFIG_STAMP)
+
 $(OBJ_DIR)/drivers/%.o: $(DRIVERS_DIR)/%.c Makefile | dirs
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(KERNEL_CFLAGS) $(DRIVER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(OBJ_DIR)/drivers/%.o: $(KERNEL_CONFIG_STAMP)
 
 $(OBJ_DIR)/drivers/display.o \
 $(OBJ_DIR)/drivers/fb_console.o \
@@ -247,6 +264,8 @@ $(OBJ_DIR)/drivers/usb.o: DRIVER_CFLAGS += -Os
 
 $(OBJ_DIR)/exec/%.o: $(EXEC_DIR)/%.c Makefile | dirs
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(KERNEL_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(OBJ_DIR)/exec/%.o: $(KERNEL_CONFIG_STAMP)
 
 $(OBJ_DIR)/user/%.o: $(USER_DIR)/%.c | dirs
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
@@ -318,7 +337,13 @@ $(BIN_DIR)/plasma.elf: $(OBJ_DIR)/user/plasma.o $(OBJ_DIR)/user/gfx.o $(USER_RUN
 $(BIN_DIR)/mandel.elf: $(OBJ_DIR)/user/mandel.o $(OBJ_DIR)/user/gfx.o $(USER_RUNTIME_OBJS) | dirs
 	$(LD) $(USER_LDFLAGS) $^ -o $@
 
-$(BIN_DIR)/kernel.elf: $(KERNEL_OBJS) linker.ld | dirs
+$(KERNEL_CONFIG_STAMP): FORCE | dirs
+	@cfg='NIC_DRIVER=$(NIC_DRIVER) DISPLAY_BACKEND=$(DISPLAY_BACKEND) SERIAL_CONSOLE=$(SERIAL_CONSOLE) BOOT_RAMDISK_FALLBACK=$(BOOT_RAMDISK_FALLBACK)'; \
+	if [ ! -f $@ ] || [ "$$(cat $@)" != "$$cfg" ]; then \
+		printf '%s\n' "$$cfg" > $@; \
+	fi
+
+$(BIN_DIR)/kernel.elf: $(KERNEL_OBJS) linker.ld $(KERNEL_CONFIG_STAMP) Makefile | dirs
 	$(LD) $(LDFLAGS) $(KERNEL_OBJS) -o $@
 
 $(BIN_DIR)/kernel.bin: $(BIN_DIR)/kernel.elf | dirs

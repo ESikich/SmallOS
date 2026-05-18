@@ -1135,7 +1135,8 @@ int sys_meminfo(sys_meminfo_t* out_info);
 
 Copies a kernel memory diagnostic summary into `out_info`, including the kernel
 heap range, PMM free/total frame counts, and whether E820 boot memory metadata
-is available.
+is available. `pmm_total_frames` is the real managed frame count captured after
+E820 filtering and boot reservations, not the fixed PMM address-window ceiling.
 
 ### SYS_E820_ENTRY (78)
 

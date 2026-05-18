@@ -4,6 +4,7 @@
 #include "pci.h"
 #include "../kernel/klib.h"
 #include "../kernel/paging.h"
+#include "../kernel/pmm.h"
 #include "../kernel/ports.h"
 #include "terminal.h"
 
@@ -55,6 +56,10 @@
 #define E1000_MAX_FRAME_SIZE 1518u
 #define E1000_MMIO_MAP_SIZE  0x20000u
 #define E1000_TEST_ETHER_TYPE 0x88B5u
+#define E1000_RX_DESC_BYTES PAGE_ALIGN(E1000_RX_DESC_COUNT * sizeof(e1000_rx_desc_t))
+#define E1000_TX_DESC_BYTES PAGE_ALIGN(E1000_TX_DESC_COUNT * sizeof(e1000_tx_desc_t))
+#define E1000_RX_BUF_BYTES  PAGE_ALIGN(E1000_RX_DESC_COUNT * E1000_RX_BUF_SIZE)
+#define E1000_TX_BUF_BYTES  PAGE_ALIGN(E1000_TX_DESC_COUNT * E1000_RX_BUF_SIZE)
 
 /* 16-byte ring descriptors used by the e1000 DMA engine. */
 typedef struct {
@@ -80,10 +85,14 @@ typedef struct {
 
 static volatile u32* s_regs = 0;
 static u8 s_mac[6];
-static e1000_rx_desc_t s_rx_desc[E1000_RX_DESC_COUNT] __attribute__((aligned(16)));
-static e1000_tx_desc_t s_tx_desc[E1000_TX_DESC_COUNT] __attribute__((aligned(16)));
-static u8 s_rx_buf[E1000_RX_DESC_COUNT][E1000_RX_BUF_SIZE] __attribute__((aligned(16)));
-static u8 s_tx_buf[E1000_TX_DESC_COUNT][E1000_RX_BUF_SIZE] __attribute__((aligned(16)));
+static e1000_rx_desc_t* s_rx_desc = 0;
+static e1000_tx_desc_t* s_tx_desc = 0;
+static u8* s_rx_buf = 0;
+static u8* s_tx_buf = 0;
+static u32 s_rx_desc_phys = 0;
+static u32 s_tx_desc_phys = 0;
+static u32 s_rx_buf_phys = 0;
+static u32 s_tx_buf_phys = 0;
 static unsigned int s_rx_head = 0;
 static unsigned int s_tx_head = 0;
 static unsigned int s_tx_tail = 0;
@@ -133,20 +142,58 @@ static void e1000_print_mac(void) {
     }
 }
 
+static int e1000_alloc_rings(void) {
+    u32 rx_desc_frames = E1000_RX_DESC_BYTES / PAGE_SIZE;
+    u32 tx_desc_frames = E1000_TX_DESC_BYTES / PAGE_SIZE;
+    u32 rx_buf_frames = E1000_RX_BUF_BYTES / PAGE_SIZE;
+    u32 tx_buf_frames = E1000_TX_BUF_BYTES / PAGE_SIZE;
+
+    if (s_rx_desc && s_tx_desc && s_rx_buf && s_tx_buf) {
+        return 1;
+    }
+
+    s_rx_desc_phys = pmm_alloc_contiguous_frames(rx_desc_frames);
+    s_tx_desc_phys = pmm_alloc_contiguous_frames(tx_desc_frames);
+    s_rx_buf_phys = pmm_alloc_contiguous_frames(rx_buf_frames);
+    s_tx_buf_phys = pmm_alloc_contiguous_frames(tx_buf_frames);
+    if (!s_rx_desc_phys || !s_tx_desc_phys || !s_rx_buf_phys || !s_tx_buf_phys) {
+        if (s_rx_desc_phys) pmm_free_contiguous_frames(s_rx_desc_phys, rx_desc_frames);
+        if (s_tx_desc_phys) pmm_free_contiguous_frames(s_tx_desc_phys, tx_desc_frames);
+        if (s_rx_buf_phys) pmm_free_contiguous_frames(s_rx_buf_phys, rx_buf_frames);
+        if (s_tx_buf_phys) pmm_free_contiguous_frames(s_tx_buf_phys, tx_buf_frames);
+        s_rx_desc_phys = 0;
+        s_tx_desc_phys = 0;
+        s_rx_buf_phys = 0;
+        s_tx_buf_phys = 0;
+        return 0;
+    }
+
+    s_rx_desc = (e1000_rx_desc_t*)paging_phys_to_kernel_virt(s_rx_desc_phys);
+    s_tx_desc = (e1000_tx_desc_t*)paging_phys_to_kernel_virt(s_tx_desc_phys);
+    s_rx_buf = (u8*)paging_phys_to_kernel_virt(s_rx_buf_phys);
+    s_tx_buf = (u8*)paging_phys_to_kernel_virt(s_tx_buf_phys);
+    k_memset(s_rx_desc, 0, E1000_RX_DESC_BYTES);
+    k_memset(s_tx_desc, 0, E1000_TX_DESC_BYTES);
+    k_memset(s_rx_buf, 0, E1000_RX_BUF_BYTES);
+    k_memset(s_tx_buf, 0, E1000_TX_BUF_BYTES);
+    return 1;
+}
+
 static void e1000_setup_rings(void) {
     /*
      * RX buffers are owned by the driver and handed to the NIC as a
      * ring of ready-to-fill packet targets.
      */
     for (unsigned int i = 0; i < E1000_RX_DESC_COUNT; i++) {
-        s_rx_desc[i].addr_lo = (u32)(unsigned int)&s_rx_buf[i][0];
+        u8* buf = s_rx_buf + i * E1000_RX_BUF_SIZE;
+        s_rx_desc[i].addr_lo = s_rx_buf_phys + i * E1000_RX_BUF_SIZE;
         s_rx_desc[i].addr_hi = 0;
         s_rx_desc[i].length = 0;
         s_rx_desc[i].csum = 0;
         s_rx_desc[i].status = 0;
         s_rx_desc[i].errors = 0;
         s_rx_desc[i].special = 0;
-        k_memset(s_rx_buf[i], 0, E1000_RX_BUF_SIZE);
+        k_memset(buf, 0, E1000_RX_BUF_SIZE);
     }
 
     /*
@@ -154,7 +201,8 @@ static void e1000_setup_rings(void) {
      * descriptor-owned buffer, then tells the NIC to DMA it out.
      */
     for (unsigned int i = 0; i < E1000_TX_DESC_COUNT; i++) {
-        s_tx_desc[i].addr_lo = (u32)(unsigned int)&s_tx_buf[i][0];
+        u8* buf = s_tx_buf + i * E1000_RX_BUF_SIZE;
+        s_tx_desc[i].addr_lo = s_tx_buf_phys + i * E1000_RX_BUF_SIZE;
         s_tx_desc[i].addr_hi = 0;
         s_tx_desc[i].length = 0;
         s_tx_desc[i].cso = 0;
@@ -162,18 +210,18 @@ static void e1000_setup_rings(void) {
         s_tx_desc[i].status = E1000_TXD_STAT_DD;
         s_tx_desc[i].css = 0;
         s_tx_desc[i].special = 0;
-        k_memset(s_tx_buf[i], 0, E1000_RX_BUF_SIZE);
+        k_memset(buf, 0, E1000_RX_BUF_SIZE);
     }
 
-    e1000_reg_write(E1000_RDBAL, (u32)(unsigned int)&s_rx_desc[0]);
+    e1000_reg_write(E1000_RDBAL, s_rx_desc_phys);
     e1000_reg_write(E1000_RDBAH, 0);
-    e1000_reg_write(E1000_RDLEN, sizeof(s_rx_desc));
+    e1000_reg_write(E1000_RDLEN, E1000_RX_DESC_COUNT * sizeof(e1000_rx_desc_t));
     e1000_reg_write(E1000_RDH, 0);
     e1000_reg_write(E1000_RDT, E1000_RX_DESC_COUNT - 1u);
 
-    e1000_reg_write(E1000_TDBAL, (u32)(unsigned int)&s_tx_desc[0]);
+    e1000_reg_write(E1000_TDBAL, s_tx_desc_phys);
     e1000_reg_write(E1000_TDBAH, 0);
-    e1000_reg_write(E1000_TDLEN, sizeof(s_tx_desc));
+    e1000_reg_write(E1000_TDLEN, E1000_TX_DESC_COUNT * sizeof(e1000_tx_desc_t));
     e1000_reg_write(E1000_TDH, 0);
     e1000_reg_write(E1000_TDT, 0);
 
@@ -239,6 +287,11 @@ int e1000_init(void) {
     }
 
     s_present = 1;
+    if (!e1000_alloc_rings()) {
+        terminal_puts("e1000: cannot allocate rings\n");
+        s_present = 0;
+        return 0;
+    }
 
     /* Reset the controller before programming the rings. */
     e1000_reg_write(E1000_IMC, 0xFFFFFFFFu);
@@ -319,7 +372,7 @@ int e1000_send(const void* data, u32 len) {
     }
 
     /* Copy the packet into the descriptor-owned staging buffer. */
-    dst = s_tx_buf[next];
+    dst = s_tx_buf + next * E1000_RX_BUF_SIZE;
     k_memcpy(dst, data, len);
 
     s_tx_desc[next].length = (u16)len;
@@ -353,7 +406,7 @@ int e1000_recv(void* out, u32 out_size, u32* out_len) {
         len = out_size;
     }
 
-    k_memcpy(out, s_rx_buf[s_rx_head], len);
+    k_memcpy(out, s_rx_buf + s_rx_head * E1000_RX_BUF_SIZE, len);
     if (out_len) {
         *out_len = len;
     }

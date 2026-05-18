@@ -43,5 +43,6 @@ u32  pmm_alloc_contiguous_frames(u32 count);
 void pmm_free_frame(u32 addr);
 void pmm_free_contiguous_frames(u32 addr, u32 count);
 u32  pmm_free_count(void);
+u32  pmm_total_count(void);
 
 #endif /* PMM_H */

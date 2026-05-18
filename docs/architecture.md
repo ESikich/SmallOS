@@ -42,7 +42,7 @@ kernel_main()
   paging_init()     ← identity-maps first 8 MB, enables CR0.PG
   memory_init()     ← bump allocator after high kernel BSS
   pmm_init()        ← E820-filtered bitmap allocator at 0x200000–0x7FFFFFF
-  boot diagnostics  ← muted display, serial/log PASS/WARN/FAIL checks
+  boot diagnostics  ← visible display, serial/log PASS/WARN/FAIL checks
   fb_console_init() ← switch to framebuffer terminal when VBE boot info is valid
   keyboard/mouse/timer/idt
   #PF handler      ← logs CR2 / error code, kills user faults, panics on kernel faults
@@ -130,7 +130,7 @@ Inside `kernel_main()`:
 14. `tcp_init()` — create and enqueue the TCP/network service kernel task
 15. `ntp_sync()` — briefly enables interrupts so PIT-backed timeout logic works, queries the default NTP server through UDP over the active NIC and DHCP gateway, sets `CLOCK_REALTIME`, and prints the synchronized UTC time. Failure is a boot warning, not a halt.
 16. `boot_mount_ext2()` — prefer writable ATA, then read-only USB mass storage, then the loader2 RAM fallback when one was published. The storage probe briefly enables only timer IRQ0 so boot timestamps and USB waits advance without delivering keyboard/mouse/process IRQs before scheduling starts. After mount succeeds, the accumulated boot log is saved to `/var/log/boot.txt` when the filesystem is writable.
-17. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` keeps the active display muted while it loads `/bin/shell.elf` suspended, probes OHCI boot keyboard/mouse HID, starts the retrying USB HID service, queues the boot FTP and cserve user services, and refreshes `/var/log/boot.txt`. It then runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, re-enables display output, prints `SmallOS ready`, and releases `/bin/shell.elf` as the default user shell. If that fails or exits, it reports that no kernel shell fallback is linked and idles.
+17. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` loads `/bin/shell.elf` suspended, probes OHCI boot keyboard/mouse HID, starts the retrying USB HID service, prints input diagnostics before the bitmap splash, queues the boot FTP and cserve user services, and refreshes `/var/log/boot.txt`. It then runs `/bin/bootsplash.elf boot/splash.bmp`, waits for it to finish, prints the welcome/time/network/memory summary plus `SmallOS ready`, and releases `/bin/shell.elf` as the default user shell. If that fails or exits, it reports that no kernel shell fallback is linked and idles.
 18. `sched_enqueue(boot_proc)` — make the boot sequence task runnable
 19. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
 20. `sched_start(boot_proc)` - switch from the boot stack into the boot sequence task with interrupts still masked
@@ -536,9 +536,10 @@ Programs are linked at fixed virtual address `0x400000`, loaded into private use
 0x00001000   kernel image
 0x00090000   loader-written boot info
 0x00091000   copied BIOS font
-0x00100000   kernel .bss start (NOLOAD; page tables, PMM bitmap, static buffers)
-~0x00190000  kernel .bss end (depends on static buffers)
-~0x00190000  bump allocator base — permanent kernel structures
+0x00100000   kernel .bss start (NOLOAD; page tables, PMM bitmap, early buffers)
+bss_end      kernel .bss end (depends on static buffers and build profile)
+PAGE_ALIGN(bss_end)
+             bump allocator base — permanent kernel structures
 0x001FF000   KERNEL_BOOT_STACK_TOP (defined in `memory.h`) — boot stack top
              (grows downward; fallback ESP0 for kernel tasks such as the shell)
                kmalloc()      — long-lived kernel-owned data only
@@ -609,7 +610,7 @@ blocks 4-11         inode table
 block 12+           file and directory data blocks
 ```
 
-The ext2 start LBA is computed during final image assembly by `mkimage` as `kernel_lba + kernel_sectors` and written into partition entry 1 of the MBR partition table. `loader2.asm` reads partition entry 0 to load the kernel. With the default `BOOT_RAMDISK_FALLBACK=auto` policy, it preloads the used portion of partition entry 1 as a fallback ext2 image for non-USB BIOS disks and skips that copy when EDD identifies the boot drive as USB. Explicit USB image/run targets force `BOOT_RAMDISK_FALLBACK=always` so USB-specific builds remain bootable even when protected-mode USB storage cannot validate ext2 on a given controller. At runtime, the storage policy selects a block backend, reads sector 0 through that backend, extracts the ext2 partition metadata, and uses it to locate the live volume. It tries writable ATA first, then USB mass storage (`usb0`, read-only), then the preloaded RAM fallback when one exists.
+The ext2 start LBA is computed during final image assembly by `mkimage` as `kernel_lba + kernel_sectors` and written into partition entry 1 of the MBR partition table. `loader2.asm` reads partition entry 0 to load the kernel. With the default `BOOT_RAMDISK_FALLBACK=never` policy, normal VM/IDE boots skip the fallback preload. `BOOT_RAMDISK_FALLBACK=auto` preloads the used portion of partition entry 1 only when EDD does not identify the boot drive as USB or ATA. Explicit USB image/run targets force `BOOT_RAMDISK_FALLBACK=always` so USB-specific builds remain bootable even when protected-mode USB storage cannot validate ext2 on a given controller. At runtime, the storage policy selects a block backend, reads sector 0 through that backend, extracts the ext2 partition metadata, and uses it to locate the live volume. It tries writable ATA first, then USB mass storage (`usb0`, read-only), then the preloaded RAM fallback when one exists.
 
 Verified by `make image-layout-check`: partition entry 1 has type `0x83` and
 points at the appended ext2 image; the runtime then validates magic `0xEF53` in
@@ -747,16 +748,16 @@ LBA N+1 ...               ext2.img
 ## Key generated artifacts
 
 ```text
-build/gen/<backend>/loader2.gen.asm
+build/gen/<profile>/loader2.gen.asm
                                 stack-top values injected
-build/bin/<backend>/ext2.seed.img
+build/bin/<profile>/ext2.seed.img
                                 16 MB seeded ext2 image built by build/tools/mkext2
 .state/ext2.img             mutable ext2 working copy used by normal runs
 build/tools/mkext2          host tool for ext2 volume construction
 build/tools/mkimage          host tool for final disk image assembly
-build/obj/<backend>/kernel/setjmp.o
+build/obj/<profile>/kernel/setjmp.o
                                 assembled from src/kernel/setjmp.asm
-build/obj/<backend>/kernel/sched_switch.o
+build/obj/<profile>/kernel/sched_switch.o
                                 assembled from src/kernel/sched_switch.asm
 ```
 

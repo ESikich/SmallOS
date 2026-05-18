@@ -19,6 +19,12 @@ the linked `.bss` end, is permanent, and never shrinks. The PMM frame pool is
 reclaimed on process exit. The user heap is managed per process through
 `SYS_BRK`, with a user-space allocator layered on top of it.
 
+Some boot/display structures intentionally start small or allocate lazily to
+keep `.bss` down. The boot log uses a 4 KiB early static buffer and promotes to
+a 32 KiB kernel-heap buffer after `memory_init()`. The framebuffer console
+state is allocated from the kernel heap only when VBE framebuffer boot info
+validates and `fb_console_init()` succeeds.
+
 ---
 
 # Kernel Heap
@@ -117,18 +123,18 @@ The loader copies ELF segment data out of this buffer into PMM-backed frames bef
 
 Loader2 can preload the used prefix of the ext2 partition to physical
 `0x800000` as a boot-storage fallback, then zero-fill the rest of the current
-16 MB seed volume. The default `BOOT_RAMDISK_FALLBACK=auto` policy keeps that
-preload for non-USB BIOS disks and skips it when EDD identifies a USB boot
-drive; explicit USB image/run targets force it back on for hardware resilience.
-QEMU and VMware normally mount the writable ATA path instead. USB boots can now
-mount the device directly through read-only USB mass storage when OHCI/BOT/SCSI
-probing succeeds, and only fall back to this RAM-backed copy when
-protected-mode storage cannot validate the filesystem. For BIOSes that identify
-the boot device as USB, loader2 tests EDD direct high-memory reads by comparing
-a sample against the bounce-buffer path before using them for the fallback
-preload. USB storage is read-only today, so write attempts fail; writes made
-through the RAM fallback affect only the in-memory copy and are not persisted to
-the disk image.
+16 MB seed volume. The default `BOOT_RAMDISK_FALLBACK=never` policy disables
+that preload for normal VM/IDE boots; QEMU and VMware normally mount the
+writable ATA path instead. `BOOT_RAMDISK_FALLBACK=auto` preloads only when EDD
+does not identify the boot drive as USB or ATA, and explicit USB image/run
+targets force it back on for hardware resilience. USB boots can now mount the
+device directly through read-only USB mass storage when OHCI/BOT/SCSI probing
+succeeds, and only fall back to this RAM-backed copy when protected-mode
+storage cannot validate the filesystem. For BIOSes that identify the boot
+device as USB, loader2 tests EDD direct high-memory reads by comparing a sample
+against the bounce-buffer path before using them for the fallback preload. USB
+storage is read-only today, so write attempts fail; writes made through the RAM
+fallback affect only the in-memory copy and are not persisted to the disk image.
 
 Fd-backed file reads and writes do not need to fit inside this static buffer.
 Small fd reads still use reclaimable PMM cache pages owned by the shared

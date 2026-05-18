@@ -85,7 +85,9 @@ make clean && make
 This writes `build/img/smallos.img` and `build/img/smallos.vmdk`. QEMU boots
 the raw image directly. For hardware USB testing, `make usb-image` refreshes
 the stable burn target at `build/usb/smallos-wyse-s10-direct-usb.img`.
-The seeded ext2 image is built under `build/bin/<backend>/ext2.seed.img`, then
+Build-profile directories include the display backend, serial mode, and NIC
+selection, for example `build/bin/auto-serial-e1000/`. The seeded ext2 image is
+built under `build/bin/<profile>/ext2.seed.img`, then
 copied to the mutable runtime partition at `.state/ext2.img`. Guest-created
 files survive normal rebuilds, while the `.state/ext2.img.stamp` dependency
 lets Make refresh the runtime partition when userland binaries in the seed
@@ -300,8 +302,8 @@ The final image is assembled as:
 
 ```text
 LBA 0       boot sector / MBR
-LBA 1-8     stage-2 loader
-LBA 9+      sector-padded kernel
+LBA 1-16    stage-2 loader
+LBA 17+     sector-padded kernel
 after that  mutable ext2 partition
 ```
 
@@ -309,15 +311,16 @@ The boot sector stores MBR-style entries for the kernel region and the ext2
 partition. Stage 2 reads the kernel location from the image metadata; the
 kernel mounts ext2 through the first storage path that validates: writable ATA,
 read-only USB mass storage, then the loader2-published RAM fallback. The default
-`BOOT_RAMDISK_FALLBACK=auto` policy skips the fallback preload for BIOS USB
-drives, but the explicit USB image/run targets force it on so hardware boots
-remain recoverable when protected-mode USB storage is not happy yet. USB EDD
-boots probe and byte-check direct high-memory reads before using them; otherwise
-the loader falls back to its low-memory bounce buffer. Boot diagnostics are
-prefixed with `[ms=... tick=... cyc=...]`; during early storage probing the
-kernel allows timer IRQ0 only, so the timestamps advance without letting
-keyboard/process IRQ paths run before the scheduler is live. After the scheduler
-starts, the USB service keeps retrying OHCI boot-keyboard discovery once per
-second until a keyboard is claimed. `make boot-layout-check`,
-`make image-layout-check`, and `make usb-storage-smoke` keep those contracts
-honest before hardware runs.
+`BOOT_RAMDISK_FALLBACK=never` policy skips the fallback preload for normal
+VM/IDE boots. `BOOT_RAMDISK_FALLBACK=auto` preloads only when EDD does not
+identify the boot drive as USB or ATA, and the explicit USB image/run targets
+force it on so hardware boots remain recoverable when protected-mode USB
+storage is not happy yet. USB EDD boots probe and byte-check direct high-memory
+reads before using them; otherwise the loader falls back to its low-memory
+bounce buffer. Boot diagnostics are prefixed with `[ms=... tick=... cyc=...]`;
+during early storage probing the kernel allows timer IRQ0 only, so the
+timestamps advance without letting keyboard/process IRQ paths run before the
+scheduler is live. After the scheduler starts, input diagnostics print before
+the bitmap splash, then a welcome block shows time, MAC/IP, and memory before
+the shell launches. `make boot-layout-check`, `make image-layout-check`, and
+`make usb-storage-smoke` keep those contracts honest before hardware runs.

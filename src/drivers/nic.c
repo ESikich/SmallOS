@@ -1,7 +1,11 @@
 #include "nic.h"
 
+#ifdef SMALLOS_NIC_E1000
 #include "e1000.h"
+#endif
+#ifdef SMALLOS_NIC_RTL8139
 #include "rtl8139.h"
+#endif
 #include "terminal.h"
 
 typedef struct {
@@ -15,6 +19,7 @@ typedef struct {
     int (*send_test_frame)(void);
 } nic_driver_t;
 
+#ifdef SMALLOS_NIC_E1000
 static const nic_driver_t s_e1000_driver = {
     "e1000",
     e1000_print_info,
@@ -25,7 +30,9 @@ static const nic_driver_t s_e1000_driver = {
     e1000_recv,
     e1000_send_test_frame
 };
+#endif
 
+#ifdef SMALLOS_NIC_RTL8139
 static const nic_driver_t s_rtl8139_driver = {
     "rtl8139",
     rtl8139_print_info,
@@ -36,21 +43,26 @@ static const nic_driver_t s_rtl8139_driver = {
     rtl8139_recv,
     rtl8139_send_test_frame
 };
+#endif
 
 static const nic_driver_t* s_driver = 0;
 
 int nic_init(void) {
+#ifdef SMALLOS_NIC_E1000
     if (e1000_init()) {
         s_driver = &s_e1000_driver;
         terminal_puts("nic: using e1000\n");
         return 1;
     }
+#endif
 
+#ifdef SMALLOS_NIC_RTL8139
     if (rtl8139_init()) {
         s_driver = &s_rtl8139_driver;
         terminal_puts("nic: using rtl8139\n");
         return 1;
     }
+#endif
 
     terminal_puts("nic: no supported adapter found\n");
     return 0;

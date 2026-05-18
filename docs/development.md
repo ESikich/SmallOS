@@ -57,18 +57,18 @@ synchronized UTC time, while failure is a warning and boot continues. If a
 hard startup invariant drifts, the kernel halts before the post-diagnostics
 boot sequence starts. Once ext2 is mounted, the collected boot diagnostics are
 written to `/var/log/boot.txt`; the file is seeded into the guest image so boot
-can overwrite it without allocating a fresh inode. During capture, the active
-display is muted while the serial transcript and saved log are prefixed with
-`[ms=... tick=... cyc=...]`; the prefix hook is disabled before the user shell
-prompt.
+can overwrite it without allocating a fresh inode. During capture, diagnostics
+remain visible on the active display while the serial transcript and saved log
+are prefixed with `[ms=... tick=... cyc=...]`; the prefix hook is disabled
+before the user shell prompt.
 
 After diagnostics, `kernel_main()` queues the `bootseq` kernel task and the
 zombie reaper, then enters the scheduler on `bootseq`. The boot sequence task
 loads `/bin/shell.elf` suspended, probes OHCI boot keyboard/mouse HID, queues
-the retrying USB service, refreshes `/var/log/boot.txt`, then runs
-`/bin/bootsplash.elf boot/splash.bmp`. After the splash exits, it re-enables
-display output, prints `SmallOS ready`, and releases `/bin/shell.elf` as the
-default user shell. If that user shell exits or fails to load, `bootseq`
+the retrying USB service, prints input diagnostics, refreshes `/var/log/boot.txt`,
+then runs `/bin/bootsplash.elf boot/splash.bmp`. After the splash exits, it
+prints a welcome/time/network/memory summary plus `SmallOS ready`, and releases
+`/bin/shell.elf` as the default user shell. If that user shell exits or fails to load, `bootseq`
 reports that no kernel shell fallback is linked and parks itself. This keeps
 framebuffer splash rendering and interactive shell work in userland.
 
