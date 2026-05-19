@@ -194,6 +194,14 @@ void sched_tick(unsigned int esp) {
 
     sched_wake_sleepers(timer_get_ticks());
 
+    if (s_current_idx >= 0 && s_current_idx < s_count &&
+        s_table[s_current_idx] &&
+        s_table[s_current_idx]->state != PROCESS_STATE_RUNNING) {
+        s_tick_count = 0;
+        sched_do_switch(esp);
+        return;
+    }
+
     if (s_tick_count < SCHED_TICKS_PER_QUANTUM) return;
     s_tick_count = 0;
 
@@ -223,6 +231,7 @@ void sched_exit_current(unsigned int esp) {
 
     cur->sched_esp = esp;
     cur->state = PROCESS_STATE_ZOMBIE;
+    process_wake_parent_waiter(cur);
     sched_dequeue(cur);
 
     if (s_count <= 0 || s_current_idx < 0) {
@@ -267,6 +276,7 @@ void sched_kill(process_t* proc, unsigned int esp) {
     }
 
     proc->state = PROCESS_STATE_ZOMBIE;
+    process_wake_parent_waiter(proc);
     sched_dequeue(proc);
 }
 

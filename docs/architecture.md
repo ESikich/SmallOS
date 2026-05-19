@@ -441,11 +441,12 @@ The default backend is VGA text mode (`0xB8000`) for early/fallback/debug output
 User graphics programs sit above the framebuffer display syscalls. The shared
 helper in `src/user/gfx.c` queries display geometry, requires XRGB8888/32 bpp,
 acquires exclusive graphics mode, allocates a full-screen user backbuffer, and
-presents that buffer with one `SYS_DISPLAY_BLIT`. `bmpview` uses this path for
-scaled/centered BMP presentation, `bin/bootsplash` uses it for the startup
-`/boot/splash.bmp` image that stays visible until the welcome screen,
-`bin/diskview` uses it for an ext2 used/free allocation map, and `usr/bin/plasma` uses it as a simple
-animated graphics smoke demo. `usr/bin/mandel` uses the same helper for an interactive
+presents that buffer with `SYS_DISPLAY_BLIT` or sub-rectangles with
+`SYS_DISPLAY_BLIT_STRIDE`. `bmpview` uses this path for scaled/centered BMP
+presentation, `bin/bootsplash` uses it for the startup `/boot/splash.bmp` image
+that stays visible until the welcome screen, `bin/diskview` uses it for an ext2
+used/free allocation map, and `usr/bin/plasma` uses it as a simple animated
+graphics smoke demo. `usr/bin/mandel` uses the same helper for an interactive
 Mandelbrot view and polls `SYS_MOUSE_READ` for cursor deltas.
 
 ## Shell
@@ -484,7 +485,9 @@ absolute-pointer events when the VMware backdoor is present, and accepts
 relative packets injected by the OHCI USB boot mouse path. All paths store
 accumulated `dx`/`dy` plus button bits. User programs can call `SYS_MOUSE_READ`
 to copy and clear the accumulated movement, or use `SYS_INPUT_READ` when they
-want queued keyboard and mouse events together.
+want queued keyboard and mouse events together. GUI-style event loops that need
+both immediate input wakeups and paced redraws can use `SYS_INPUT_WAIT_UNTIL`
+to sleep until either input arrives or an absolute tick deadline is reached.
 
 OHCI USB boot HID is claimed after storage mount so real USB boots can load the
 shell from the same device path first. The first HID probe runs before the shell
@@ -815,6 +818,7 @@ SYS_BRK / user heap — per-process heap break managed in user space through `SY
 SYS_OPEN_WRITE / SYS_WRITEFD / SYS_LSEEK / SYS_FSYNC / SYS_UNLINK / SYS_RENAME / SYS_STAT — VFS-backed writable file handles plus path metadata and file management for compiler-style tools; dirty writable handles flush on close, append/read-write modes preserve existing bytes, and stdout/stderr writes also use fd-backed console handles
 SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_ACCEPT4 / SYS_CONNECT / SYS_SEND / SYS_RECV / SYS_SHUTDOWN / SYS_GETSOCKNAME / SYS_GETPEERNAME — socket ABI for passive TCP servers, FTP userland, and client-style active opens; fd handles point at kernel socket objects, TCP streams are backed by a global 4-tuple TCP table plus lazy 4 KiB RX rings and 16 KiB TX rings, basic `shutdown()` half-close state is implemented, and socket readiness plugs into the same handle poll path
 SYS_PIPE / SYS_PIPE2 / SYS_DUP* / SYS_FCNTL / SYS_POLL / SYS_EPOLL_* / SYS_TIMERFD_* / SYS_SIGNALFD — pipes, descriptor duplication, descriptor flags, and event-loop shims for shell pipelines and cserve-style guest services; socket waits register on socket wait queues, timerfd handles register read waiters that timer IRQs can wake when timerfds expire, and signalfd handles can be woken by kernel SIGINT/SIGTERM delivery
+SYS_INPUT_READ / SYS_INPUT_WAIT_UNTIL — shared keyboard/mouse event queue for GUI-style programs; callers can drain queued events or sleep until input arrives or a frame deadline is reached
 SYS_CLOCK_GETTIME / SYS_CLOCK_SETTIME / SYS_NTP_SYNC — realtime clock syscalls; `CLOCK_MONOTONIC` reports uptime, `CLOCK_REALTIME` is maintained as an offset from uptime and can be set directly or by the tiny NTP client
 SYS_PROCINFO — scheduler/process diagnostic snapshot used by `/bin/top.elf` for live CPU tick deltas, process state, and task-owned RAM estimates
 CPUID + diagnostic syscalls — `/bin/cpuz.elf` prints CPU vendor/brand/features/cache and combines existing memory, display, USB, network, and storage snapshots into one hardware summary

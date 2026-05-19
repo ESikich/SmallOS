@@ -36,14 +36,17 @@ Use the verification ladder to match the risk of the change:
 framebuffer work, `make verify-network` for socket/FTP/cserve work, and
 `make verify-full` before handing off broad changes.
 
-`make display-smoke` runs the framebuffer and forced-VGA visual smoke checks.
-The host harness still treats serial as truth: it waits for the shell prompt
-plus the expected boot marker before asking QEMU's monitor for `screendump`.
-For the framebuffer path it verifies that the PPM is present, 1024x768, and
-not blank; for `DISPLAY_BACKEND=vga` it verifies the forced-VGA marker, fails
-if the framebuffer backend is selected, and also requires a nonblank VGA text
-screenshot. Keep these checks out of the regular `make test` loop until they
-have proven stable across host QEMU setups.
+`make display-smoke` runs the framebuffer screenshot, forced-VGA screenshot,
+and GUI launch smoke checks. The host harness still treats serial as truth:
+the screenshot checks wait for the shell prompt plus the expected boot marker
+before asking QEMU's monitor for `screendump`. For the framebuffer path it
+verifies that the PPM is present, 1024x768, and not blank; for
+`DISPLAY_BACKEND=vga` it verifies the forced-VGA marker, fails if the
+framebuffer backend is selected, and also requires a nonblank VGA text
+screenshot. `make gui-smoke` launches `/bin/gui.elf`, fails on display-open or
+present errors, exits with `q`, and verifies that the shell prompt returns.
+Keep these checks out of the regular `make test` loop until they have proven
+stable across host QEMU setups.
 
 The public raw image is `build/img/smallos.img`. Forced-VGA visual checks use
 separate object and binary directories, but they still refresh that same public
@@ -490,7 +493,10 @@ Interactive graphics can poll keyboard availability with `SYS_POLL` on fd `0`
 and poll relative mouse movement with `SYS_MOUSE_READ`. New code that wants
 keyboard and mouse together should prefer `SYS_INPUT_READ`, which drains the
 kernel input event queue and can either block for the next event or return
-immediately with `SYS_INPUT_FLAG_NONBLOCK`.
+immediately with `SYS_INPUT_FLAG_NONBLOCK`. Event-loop programs that also have
+frame deadlines can use `SYS_INPUT_WAIT_UNTIL` to block until input arrives or
+an absolute tick deadline is reached, instead of repeatedly yielding between
+frames.
 
 ---
 

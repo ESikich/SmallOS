@@ -62,8 +62,18 @@ int net_poll_once(void) {
     return 1;
 }
 
+unsigned int net_poll_drain_budget(unsigned int max_frames) {
+    unsigned int frames = 0;
+
+    while (frames < max_frames && net_poll_once()) {
+        frames++;
+    }
+
+    return frames;
+}
+
 void net_poll_drain(void) {
-    while (net_poll_once()) {
+    while (net_poll_drain_budget(32u) == 32u) {
     }
 }
 

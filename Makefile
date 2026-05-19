@@ -50,8 +50,7 @@ BIN_DIR=$(BIN_ROOT)/$(BUILD_PROFILE)
 GEN_DIR=$(BUILD_DIR)/gen/$(BUILD_PROFILE)
 IMG_DIR=$(BUILD_DIR)/img
 IMG_FILE=$(IMG_DIR)/smallos.img
-USB_DIR=$(BUILD_DIR)/usb
-USB_IMG_FILE=$(USB_DIR)/smallos-wyse-s10-direct-usb.img
+USB_IMG_FILE=$(IMG_DIR)/smallos-wyse-s10-direct-usb.img
 ESXI_VMDK_SIZE ?=
 ESXI_RAW_FILE=$(IMG_DIR)/smallos-vmdk.raw
 ESXI_VMDK_FILE=$(IMG_DIR)/smallos.vmdk
@@ -216,7 +215,7 @@ OBJ_SUBDIRS=$(sort \
 	$(dir $(USER_SHELL_OBJS)) \
 )
 
-BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(dir $(IMG_FILE)) $(USB_DIR) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
+BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(dir $(IMG_FILE)) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
 BUILD_SUBDIRS+=$(TINYCC_SMALOS_OBJ_DIR) $(CSERVER_OBJ_DIR)
 
 all: artifacts
@@ -544,7 +543,7 @@ QEMU_USB_STORAGE_FLAGS=-drive if=none,id=stick,format=raw,file=$(IMG_FILE) \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all image img artifacts dirs deps check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage usb-storage-smoke test framebuffer-smoke vga-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean FORCE
+.PHONY: all image img artifacts dirs deps check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage usb-storage-smoke test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean FORCE
 
 FORCE:
 
@@ -681,6 +680,17 @@ framebuffer-smoke:
 vga-smoke:
 	$(MAKE) display-smoke-one DISPLAY_BACKEND=vga DISPLAY_SMOKE_MODE=vga DISPLAY_SMOKE_PPM=$(VGA_SMOKE_PPM)
 
+gui-smoke:
+	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1
+	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
+	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
+	$(MAKE) run-headless SERIAL_CONSOLE=1
+	$(PYTHON3) tools/gui_smoke.py \
+		--monitor $(MONITOR_SOCK) \
+		--serial $(SERIAL_LOG) \
+		--pidfile $(PIDFILE) \
+		--timeout $(SMOKE_TIMEOUT)
+
 display-smoke-one:
 	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1 DISPLAY_BACKEND=$(DISPLAY_BACKEND)
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
@@ -695,7 +705,7 @@ display-smoke-one:
 		--screenshot $(DISPLAY_SMOKE_PPM) \
 		--timeout $(SMOKE_TIMEOUT)
 
-display-smoke: framebuffer-smoke vga-smoke
+display-smoke: framebuffer-smoke vga-smoke gui-smoke
 
 smoke:
 	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1

@@ -37,8 +37,11 @@ static void irq_restore(unsigned int flags) {
 static void input_wake_waiter(void) {
     process_t* proc = (process_t*)s_waiting_proc;
 
-    if (proc && proc->state == PROCESS_STATE_WAITING) {
+    if (proc &&
+        (proc->state == PROCESS_STATE_WAITING ||
+         proc->state == PROCESS_STATE_SLEEPING)) {
         proc->state = PROCESS_STATE_RUNNING;
+        proc->sleep_until = 0u;
     }
     s_waiting_proc = 0;
 }

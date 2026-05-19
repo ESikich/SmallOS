@@ -139,23 +139,27 @@ def main():
         saw_marker = False
         saw_reboot_banner = False
         marker = "Rebooting..." if args.command == "reboot" else "System halted."
-        reboot_mark = -1
+        post_marker = ""
 
         while time.time() < deadline:
             chunk, log_offset = read_new(log, log_offset)
             if chunk:
                 tee_stdout(chunk)
                 buf += chunk
-                if marker in buf:
+                if not saw_marker and marker in buf:
                     saw_marker = True
                     if args.command == "halt":
                         tee_stdout("[smoke:halt] PASS\n")
                         return shutdown_qemu(sock, args.pidfile)
-                    reboot_mark = buf.rfind(marker)
+                    post_marker = buf[buf.rfind(marker) + len(marker):]
+                elif args.command == "reboot" and saw_marker:
+                    post_marker += chunk
                 if args.command == "reboot" and saw_marker:
-                    if buf.find("SmallOS", reboot_mark + 1) >= 0 and buf.find("> ", reboot_mark + 1) >= 0:
+                    if "SmallOS" in post_marker and "> " in post_marker:
                         saw_reboot_banner = True
                         break
+                    if len(post_marker) > 8192:
+                        post_marker = post_marker[-4096:]
                 if len(buf) > 8192:
                     buf = buf[-4096:]
             else:

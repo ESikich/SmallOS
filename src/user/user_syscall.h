@@ -407,6 +407,10 @@ static inline int sys_input_read(sys_input_event_t* out_events,
     return syscall3(SYS_INPUT_READ, (uint32_t)out_events, max_events, flags);
 }
 
+static inline int sys_input_wait_until(uint32_t deadline) {
+    return syscall1(SYS_INPUT_WAIT_UNTIL, deadline);
+}
+
 static inline int sys_socket(int domain, int type, int protocol) {
     return syscall3(SYS_SOCKET, (uint32_t)domain, (uint32_t)type, (uint32_t)protocol);
 }

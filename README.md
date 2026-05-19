@@ -84,7 +84,7 @@ make clean && make
 
 This writes `build/img/smallos.img` and `build/img/smallos.vmdk`. QEMU boots
 the raw image directly. For hardware USB testing, `make usb-image` refreshes
-the stable burn target at `build/usb/smallos-wyse-s10-direct-usb.img`.
+the stable burn target at `build/img/smallos-wyse-s10-direct-usb.img`.
 Build-profile directories include the display backend, serial mode, and NIC
 selection, for example `build/bin/auto-serial-e1000/`. The seeded ext2 image is
 built under `build/bin/<profile>/ext2.seed.img`, then
@@ -100,7 +100,7 @@ make reset-disk
 Write the USB image to a whole device, not a partition:
 
 ```bash
-sudo dd if=build/usb/smallos-wyse-s10-direct-usb.img of=/dev/sdX bs=4M conv=fsync status=progress
+sudo dd if=build/img/smallos-wyse-s10-direct-usb.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
 To rebuild only the raw image:
@@ -235,7 +235,7 @@ Useful verification targets:
 
 ```bash
 make verify          # layout checks, guest regression suite, reboot/halt smoke
-make verify-display  # framebuffer and forced-VGA screenshot checks
+make verify-display  # framebuffer/VGA screenshots plus GUI launch smoke
 make verify-network  # socket EOF/parallel, FTP, FTP loop, cserve
 make verify-full     # all verification targets
 ```
@@ -247,6 +247,7 @@ make smoke
 make smoke-reboot
 make smoke-halt
 make display-smoke
+make gui-smoke
 make usb-storage-smoke
 make socket-eof-smoke
 make socket-parallel-smoke

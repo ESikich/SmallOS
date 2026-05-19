@@ -228,7 +228,8 @@ until this first HID pass finishes, so the serial log captures either
 not final: the `usb` service task retries boot keyboard and mouse discovery
 once per second, skips the already-mounted USB-storage port and already-active
 HID ports, and preserves USB addresses for failed attempts so late devices can
-still be claimed after the shell is visible. The HID matcher accepts keyboard
+still be claimed after the shell is visible. Retry diagnostics stay quiet at the
+prompt; use `/bin/usbinfo.elf` for live HID counters. The HID matcher accepts keyboard
 and mouse protocol interfaces even when older firmware reports a non-boot HID
 subclass, then requests boot protocol before polling. The visible `Input:` lines show
 keyboard and mouse endpoint/poll/report counters so hardware bring-up can be
@@ -560,9 +561,8 @@ The smoke target expects the serial transcript to show `usbms: ready`,
 `dev=usb0`, and `boot: PASS ext2: volume mounted from USB`. The QEMU fixture
 does not attach a boot keyboard, so `usb: WARN boot HID unavailable` is
 acceptable as long as `usb: HID service task queued` follows it; on hardware the
-same service continues retrying until it logs `usb: boot keyboard port=N` and,
-when a boot mouse is attached on a supported OHCI root port, `usb: boot mouse
-port=N`.
+same service continues retrying quietly so late keyboard/mouse discovery does not
+write over the prompt. Use `usbinfo` to inspect the live HID state after boot.
 
 ---
 

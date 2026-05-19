@@ -2552,6 +2552,34 @@ static int sys_input_read_impl(syscall_regs_t* regs,
     return (int)copied;
 }
 
+static int sys_input_wait_until_impl(syscall_regs_t* regs,
+                                     unsigned int deadline) {
+    process_t* proc = (process_t*)sched_current();
+
+    (void)regs;
+
+    if (!proc) return -EINVAL;
+
+    __asm__ volatile ("cli");
+    if (input_available()) {
+        __asm__ volatile ("sti");
+        return 1;
+    }
+    if ((int)(timer_get_ticks() - deadline) >= 0) {
+        __asm__ volatile ("sti");
+        return 0;
+    }
+
+    proc->sleep_until = deadline;
+    proc->state = PROCESS_STATE_SLEEPING;
+    input_set_waiting_process(proc);
+    sys_wait_until_current_running(proc);
+    input_forget_waiting_process(proc);
+    __asm__ volatile ("sti");
+
+    return input_available() ? 1 : 0;
+}
+
 static int sys_fsinfo_impl(sys_fsinfo_t* out_info) {
     ext2_fsinfo_t info;
     sys_fsinfo_t user_info;
@@ -3361,6 +3389,12 @@ void syscall_handler_main(syscall_regs_t* regs) {
                             (sys_input_event_t*)regs->ebx,
                             regs->ecx,
                             regs->edx);
+            break;
+
+        case SYS_INPUT_WAIT_UNTIL:
+            regs->eax = (unsigned int)sys_input_wait_until_impl(
+                            regs,
+                            regs->ebx);
             break;
 
         case SYS_FSINFO:

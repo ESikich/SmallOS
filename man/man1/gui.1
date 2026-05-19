@@ -8,3 +8,14 @@ SYNOPSIS
 
 DESCRIPTION
     Starts the SmallOS graphical user interface.
+
+    The desktop includes Files, Shell, System, Config, About, and Quit icons.
+    Shell windows run child shells through PTYs. Window dragging is frame-paced
+    while cursor movement stays immediate.
+
+    The Config window stores GUI settings in /etc/gui.conf when the mounted
+    filesystem is writable. The current USB mass-storage boot path is read-only,
+    so those settings are not preserved across reboots there yet.
+
+    The Config window can toggle the GUI perf readout. The readout is off by
+    default.

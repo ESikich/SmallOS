@@ -39,6 +39,7 @@
 #define TCP_MAX_RETRIES        3u
 #define TCP_MAX_FRAME       1518u
 #define TCP_MAX_PAYLOAD    (TCP_MAX_FRAME - 14u - 20u - 20u)
+#define TCP_SERVICE_RX_BUDGET 16u
 #define TCP_RX_BUFFER_FRAMES 16u
 #define TCP_RX_BUFFER_SIZE  (TCP_RX_BUFFER_FRAMES * PAGE_SIZE)
 #define TCP_TX_BUFFER_FRAMES 4u
@@ -1999,8 +2000,15 @@ void tcp_get_stats(tcp_stats_t* out) {
 
 static void tcp_service_main(void) {
     for (;;) {
-        net_poll_drain();
+        process_t* current;
+
+        (void)net_poll_drain_budget(TCP_SERVICE_RX_BUDGET);
         tcp_maybe_retransmit();
+        current = sched_current();
+        if (current) {
+            current->sleep_until = timer_get_ticks() + 1u;
+            current->state = PROCESS_STATE_SLEEPING;
+        }
         __asm__ __volatile__("sti; hlt");
     }
 }

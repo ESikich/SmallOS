@@ -183,6 +183,7 @@ int        process_fd_set_signalfd_mask(fd_entry_t* ent, unsigned int mask);
 void       process_wake_timerfds(process_t* proc, unsigned int now);
 void       process_claim_for_wait(process_t* proc);
 process_t* process_find_by_pid(u32 pid);
+void       process_wake_parent_waiter(process_t* child);
 int        process_wait_pid(process_t* parent,
                             int pid,
                             int options,

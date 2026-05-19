@@ -28,7 +28,7 @@ void _start(int argc, char** argv) {
         sys_exit(opened < 0 ? 1 : 0);
     }
 
-    deadline = sys_get_ticks() + seconds * 100u;
+    deadline = sys_get_ticks() + seconds * SMALLOS_TIMER_HZ;
     u_puts("usbmouse: move/click mouse\n");
     while ((int)(sys_get_ticks() - deadline) < 0) {
         int poll = sys_usb_mouse_op(SYS_USB_MOUSE_OP_POLL, 0);

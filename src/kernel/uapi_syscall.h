@@ -379,7 +379,8 @@ enum {
     SYS_MOUSE_DEBUG     = 89, /* write PS/2 mouse diagnostic counters */
     SYS_USB_DIAG_OP     = 90, /* perform narrow USB diagnostic action */
     SYS_PROCINFO        = 91, /* write process CPU/RAM diagnostic summary */
-    SYS_DISPLAY_BLIT_STRIDE = 92 /* blit XRGB8888 pixels with source pitch */
+    SYS_DISPLAY_BLIT_STRIDE = 92, /* blit XRGB8888 pixels with source pitch */
+    SYS_INPUT_WAIT_UNTIL = 93 /* wait for input or an absolute tick deadline */
 };
 
 #endif

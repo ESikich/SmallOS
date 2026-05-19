@@ -1314,6 +1314,48 @@ live process table.
 
 ---
 
+### SYS_DISPLAY_BLIT_STRIDE (92)
+
+```c
+int sys_display_blit_stride(uint32_t x, uint32_t y,
+                            uint32_t w, uint32_t h,
+                            uint32_t pitch_pixels,
+                            const uint32_t* pixels);
+```
+
+Copies a rectangular XRGB8888 region from user memory into the framebuffer
+using a source pitch measured in pixels. This is the preferred path for
+presenting a sub-rectangle from a larger backbuffer without first packing it
+into a temporary contiguous buffer. The caller must hold the display via
+`SYS_DISPLAY_ACQUIRE`.
+
+Returns `0` on success, `-EFAULT` for an invalid request or pixel buffer,
+`-EINVAL` when `pitch_pixels < w`, `-EOVERFLOW` for impossible byte spans, or
+`-EIO` if the caller does not own an active display.
+
+---
+
+### SYS_INPUT_WAIT_UNTIL (93)
+
+```c
+int sys_input_wait_until(uint32_t deadline_tick);
+```
+
+Blocks the calling process until either the shared input event queue becomes
+nonempty or the absolute PIT tick deadline is reached. This lets event-loop
+programs sleep until input or a frame deadline without repeatedly yielding. If
+input is already pending, it returns immediately with `1`; if the deadline has
+already passed, it returns `0`.
+
+The wake path uses the same input queue as `SYS_INPUT_READ`, and timer wakeups
+use the normal sleeping-process deadline path. The syscall does not consume
+input events; callers should follow an input wake with `SYS_INPUT_READ`.
+
+Returns `1` when input is pending, `0` when the deadline is reached first, or
+`-EINVAL` if there is no current process.
+
+---
+
 ## Kernel Entry Point
 
 ```c

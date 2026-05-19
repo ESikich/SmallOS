@@ -25,6 +25,18 @@ The desktop owns the framebuffer while it is active, so launching a full-screen
 program temporarily releases the display, waits for that child to exit, then
 reacquires the display and redraws the desktop.
 
+## Config And Pacing
+
+The Config window currently owns desktop-local settings. It can toggle the GUI
+perf readout, which is off by default and persisted as `perf_visible` in
+`/etc/gui.conf` when the mounted filesystem is writable.
+
+The GUI keeps cursor presentation immediate, while active window-drag visuals
+are paced to 60 FPS. The system timer is 300 Hz, so that cadence lands on an
+exact five-tick frame interval. Shell PTY output is polled on the same 60 FPS
+cadence so quiet shell windows do not keep the desktop awake or compete with
+pointer motion.
+
 ## Shell Window
 
 The GUI treats each shell window as a window-owned terminal session:

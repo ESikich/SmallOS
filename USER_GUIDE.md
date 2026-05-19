@@ -60,7 +60,11 @@ build/img/smallos.vmdk
 ```
 
 For normal use you will boot `build/img/smallos.img` through the Makefile
-targets below.
+targets below. For hardware USB testing, `make usb-image` also writes:
+
+```text
+build/img/smallos-wyse-s10-direct-usb.img
+```
 
 ## Boot It
 
@@ -308,6 +312,11 @@ bmpview /boot/splash.bmp
 mousetest
 gui
 ```
+
+The GUI opens a desktop with Files, Shell, System, Config, About, and Quit
+icons. Shell windows run real child shells through PTYs. The Config window can
+toggle the GUI perf readout; on writable ATA-backed boots the setting is saved
+in `/etc/gui.conf`, while USB mass-storage boots are read-only for now.
 
 ## Testing A Build
 

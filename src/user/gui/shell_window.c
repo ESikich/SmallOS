@@ -9,6 +9,7 @@
 #define GUI_SHELL_PATH "/bin/shell.elf"
 #define GUI_TREE_MAX_ENTRIES 64
 #define GUI_TREE_MAX_DEPTH 6
+#define GUI_SHELL_POLL_BYTE_BUDGET 2048
 
 typedef struct {
     char name[NAME_MAX + 1];
@@ -1335,11 +1336,13 @@ int gui_shell_poll(gui_shell_window_t* shell) {
 
     if (shell->stdout_fd >= 0) {
         char buf[128];
-        for (;;) {
+        int bytes_read = 0;
+        while (bytes_read < GUI_SHELL_POLL_BYTE_BUDGET) {
             int n = sys_fread(shell->stdout_fd, buf, sizeof(buf) - 1);
             if (n <= 0) break;
             buf[n] = 0;
             print_child_text(shell, buf);
+            bytes_read += n;
             dirty = 1;
         }
     }

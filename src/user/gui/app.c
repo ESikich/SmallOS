@@ -9,6 +9,7 @@
  *   - "Files" window: live directory listing via opendir/readdir,
  *     click a row to descend, click ".." to ascend
  *   - "System" window: live sys_fsinfo, sys_display_info, sys_get_ticks, pid
+ *   - "Config" window: persistent desktop settings
  *   - "About" window: built-in static info (no fake screens)
  *   - "Quit" icon exits and releases the display
  *
@@ -41,6 +42,8 @@
 typedef struct {
     int x, y, w, h;
 } gui_rect_t;
+
+typedef int gui_fp_t;
 
 static gui_rect_t g_clip_rect;
 static int g_clip_enabled = 0;
@@ -355,10 +358,26 @@ static void utoa10(unsigned int v, char* buf) {
 #define DIRTY_MAX   32
 #define MOUSE_COALESCE_MAX INPUT_BATCH
 #define MOUSE_MERGE_MAX_DELTA 48
+#define GUI_PERF_WINDOW_TICKS SMALLOS_TIMER_HZ
+#define GUI_FP_SHIFT 8
+#define GUI_FP_ONE (1 << GUI_FP_SHIFT)
+/*
+ * The PIT runs at 300 Hz, so 60 FPS frame pacing is exactly 5 ticks.
+ * Keep this derived so a later timer-rate change keeps the intent visible.
+ */
+#define GUI_FRAME_FPS 60u
+#define GUI_FRAME_TICKS \
+    ((SMALLOS_TIMER_HZ + GUI_FRAME_FPS - 1u) / GUI_FRAME_FPS)
+#define GUI_SHELL_POLL_FPS 60u
+#define GUI_SHELL_POLL_TICKS \
+    ((SMALLOS_TIMER_HZ + GUI_SHELL_POLL_FPS - 1u) / GUI_SHELL_POLL_FPS)
+#define GUI_CONFIG_PATH "/etc/gui.conf"
+#define GUI_CONFIG_MAX 128u
 
 typedef enum {
     WT_FILES = 1,
     WT_SYSTEM,
+    WT_CONFIG,
     WT_ABOUT,
     WT_SHELL,
 } win_type_t;
@@ -400,11 +419,106 @@ typedef enum {
 
 static drag_mode_t g_drag = DRAG_NONE;
 static int g_drag_idx = -1;
-static int g_drag_dx = 0, g_drag_dy = 0;
+static gui_fp_t g_drag_dx_fp = 0, g_drag_dy_fp = 0;
 static int g_drag_preview_x = 0, g_drag_preview_y = 0;
 static int g_drag_overlay_visible = 0;
+static int g_drag_overlay_x = 0, g_drag_overlay_y = 0;
+static int g_frame_pending = 0;
+static uint32_t g_frame_next_tick = 0;
+static uint32_t g_shell_next_poll_tick = 0;
 
 static void icons_layout(int sw);
+
+typedef struct {
+    uint32_t window_start;
+    uint32_t last_loop;
+    unsigned int loops;
+    unsigned int presents;
+    unsigned int input_events;
+    unsigned int max_loop_gap;
+    unsigned int max_present_ticks;
+    unsigned int shown_loops;
+    unsigned int shown_presents;
+    unsigned int shown_input_events;
+    unsigned int shown_max_loop_gap;
+    unsigned int shown_max_present_ticks;
+} gui_perf_t;
+
+static gui_perf_t g_perf;
+static int g_perf_visible = 0;
+
+static int line_starts_with(const char* s, const char* prefix) {
+    while (*prefix) {
+        if (*s++ != *prefix++) return 0;
+    }
+    return 1;
+}
+
+static const char* skip_config_spaces(const char* s) {
+    while (*s == ' ' || *s == '\t') s++;
+    return s;
+}
+
+static void gui_config_parse_line(const char* line) {
+    const char* p = skip_config_spaces(line);
+
+    if (*p == 0 || *p == '#' || *p == ';') return;
+    if (line_starts_with(p, "perf_visible")) {
+        p += 12;
+        p = skip_config_spaces(p);
+        if (*p != '=') return;
+        p = skip_config_spaces(p + 1);
+        if (*p == '0') g_perf_visible = 0;
+        else if (*p == '1') g_perf_visible = 1;
+    }
+}
+
+static void gui_config_load(void) {
+    char buf[GUI_CONFIG_MAX + 1u];
+    char line[64];
+    unsigned int line_len = 0;
+    int fd = sys_open(GUI_CONFIG_PATH);
+    int n;
+
+    if (fd < 0) return;
+    n = sys_fread(fd, buf, GUI_CONFIG_MAX);
+    sys_close(fd);
+    if (n <= 0) return;
+
+    buf[n] = 0;
+    for (int i = 0; i < n; i++) {
+        char ch = buf[i];
+        if (ch == '\r') continue;
+        if (ch == '\n') {
+            line[line_len] = 0;
+            gui_config_parse_line(line);
+            line_len = 0;
+        } else if (line_len + 1u < sizeof(line)) {
+            line[line_len++] = ch;
+        }
+    }
+    if (line_len > 0) {
+        line[line_len] = 0;
+        gui_config_parse_line(line);
+    }
+}
+
+static void gui_config_save(void) {
+    char buf[48];
+    int fd;
+
+    u_strcpy_n(buf, "perf_visible=", sizeof(buf));
+    u_strcat_n(buf, g_perf_visible ? "1\n" : "0\n", sizeof(buf));
+
+    fd = sys_open_mode(GUI_CONFIG_PATH,
+                       SYS_OPEN_MODE_WRITE |
+                       SYS_OPEN_MODE_CREATE |
+                       SYS_OPEN_MODE_TRUNC);
+    if (fd < 0) return;
+    (void)sys_writefd(fd, buf, u_strlen(buf));
+    (void)sys_fsync(fd);
+    (void)sys_close(fd);
+}
 
 /* z-order: g_zorder[0..count) holds indexes into g_wins, back to front. */
 static int g_zorder[MAX_WINDOWS];
@@ -505,6 +619,78 @@ static void invalidate_topbar(int sw, int sh) {
     invalidate_rect(sw, sh, make_rect(0, 0, sw, 15));
 }
 
+static void perf_init(void) {
+    uint32_t now = sys_get_ticks();
+
+    g_perf.window_start = now;
+    g_perf.last_loop = now;
+    g_perf.loops = 0;
+    g_perf.presents = 0;
+    g_perf.input_events = 0;
+    g_perf.max_loop_gap = 0;
+    g_perf.max_present_ticks = 0;
+    g_perf.shown_loops = 0;
+    g_perf.shown_presents = 0;
+    g_perf.shown_input_events = 0;
+    g_perf.shown_max_loop_gap = 0;
+    g_perf.shown_max_present_ticks = 0;
+}
+
+static int perf_tick(int sw, int sh) {
+    uint32_t now = sys_get_ticks();
+    unsigned int gap = now - g_perf.last_loop;
+
+    g_perf.last_loop = now;
+    g_perf.loops++;
+    if (gap > g_perf.max_loop_gap) {
+        g_perf.max_loop_gap = gap;
+    }
+
+    if ((uint32_t)(now - g_perf.window_start) >= GUI_PERF_WINDOW_TICKS) {
+        g_perf.shown_loops = g_perf.loops;
+        g_perf.shown_presents = g_perf.presents;
+        g_perf.shown_input_events = g_perf.input_events;
+        g_perf.shown_max_loop_gap = g_perf.max_loop_gap;
+        g_perf.shown_max_present_ticks = g_perf.max_present_ticks;
+        g_perf.window_start = now;
+        g_perf.loops = 0;
+        g_perf.presents = 0;
+        g_perf.input_events = 0;
+        g_perf.max_loop_gap = 0;
+        g_perf.max_present_ticks = 0;
+        invalidate_topbar(sw, sh);
+        return 1;
+    }
+
+    return 0;
+}
+
+static void perf_note_input(unsigned int events) {
+    g_perf.input_events += events;
+}
+
+static void perf_note_present(uint32_t start_tick) {
+    uint32_t now = sys_get_ticks();
+    unsigned int ticks = now - start_tick;
+
+    g_perf.presents++;
+    if (ticks > g_perf.max_present_ticks) {
+        g_perf.max_present_ticks = ticks;
+    }
+}
+
+static void perf_resume_from_idle(void) {
+    uint32_t now = sys_get_ticks();
+
+    g_perf.window_start = now;
+    g_perf.last_loop = now;
+    g_perf.loops = 0;
+    g_perf.presents = 0;
+    g_perf.input_events = 0;
+    g_perf.max_loop_gap = 0;
+    g_perf.max_present_ticks = 0;
+}
+
 static gui_rect_t drag_preview_rect(void) {
     if (g_drag != DRAG_MOVE || g_drag_idx < 0 || g_drag_idx >= MAX_WINDOWS ||
         !g_wins[g_drag_idx].active) {
@@ -512,6 +698,70 @@ static gui_rect_t drag_preview_rect(void) {
     }
     return make_rect(g_drag_preview_x, g_drag_preview_y,
                      g_wins[g_drag_idx].w, g_wins[g_drag_idx].h);
+}
+
+static gui_rect_t drag_overlay_rect(void) {
+    if (!g_drag_overlay_visible ||
+        g_drag != DRAG_MOVE ||
+        g_drag_idx < 0 ||
+        g_drag_idx >= MAX_WINDOWS ||
+        !g_wins[g_drag_idx].active) {
+        return make_rect(0, 0, 0, 0);
+    }
+    return make_rect(g_drag_overlay_x, g_drag_overlay_y,
+                     g_wins[g_drag_idx].w, g_wins[g_drag_idx].h);
+}
+
+static int drag_target_pending(void) {
+    return g_drag == DRAG_MOVE &&
+           g_drag_idx >= 0 &&
+           g_drag_idx < MAX_WINDOWS &&
+           g_wins[g_drag_idx].active &&
+           (!g_drag_overlay_visible ||
+            g_drag_overlay_x != g_drag_preview_x ||
+            g_drag_overlay_y != g_drag_preview_y);
+}
+
+static void gui_request_frame(uint32_t now) {
+    g_frame_pending = 1;
+    if (g_frame_next_tick == 0u || (int)(now - g_frame_next_tick) >= 0) {
+        g_frame_next_tick = now;
+    }
+}
+
+static void gui_request_frame_now(uint32_t now) {
+    g_frame_pending = 1;
+    g_frame_next_tick = now;
+}
+
+static int gui_frame_pending(void) {
+    return g_frame_pending;
+}
+
+static int gui_frame_due(uint32_t now) {
+    return g_frame_pending && (int)(now - g_frame_next_tick) >= 0;
+}
+
+static uint32_t gui_frame_deadline(void) {
+    return g_frame_next_tick;
+}
+
+static void gui_finish_frame(uint32_t now) {
+    g_frame_pending = 0;
+    g_frame_next_tick = now + GUI_FRAME_TICKS;
+}
+
+static void gui_cancel_frame(void) {
+    g_frame_pending = 0;
+    g_frame_next_tick = 0;
+}
+
+static int tick_due(uint32_t now, uint32_t deadline) {
+    return (int)(now - deadline) >= 0;
+}
+
+static uint32_t min_deadline(uint32_t a, uint32_t b) {
+    return tick_due(a, b) ? b : a;
 }
 
 /* ---------------- path utilities ---------------- */
@@ -815,6 +1065,36 @@ static void draw_system_body(gfx_surface_t* s, window_t* w) {
     rect(s, w->x, w->y, w->w, w->h, COL_FRAME);
 }
 
+static void draw_checkbox(gfx_surface_t* s, int x, int y, int checked) {
+    rect(s, x, y, 10, 10, COL_FRAME);
+    if (checked) {
+        hline(s, x + 2, y + 5, 2, COL_FRAME);
+        hline(s, x + 3, y + 6, 2, COL_FRAME);
+        hline(s, x + 4, y + 7, 2, COL_FRAME);
+        hline(s, x + 5, y + 6, 2, COL_FRAME);
+        hline(s, x + 6, y + 5, 2, COL_FRAME);
+        hline(s, x + 7, y + 4, 2, COL_FRAME);
+    }
+}
+
+static void draw_config_body(gfx_surface_t* s, window_t* w) {
+    int bx = w->x;
+    int by = w->y + TITLE_H;
+    int bw = w->w;
+    int bh = w->h - TITLE_H;
+    int row_y = by + 30;
+
+    fillr(s, bx, by, bw, bh, COL_WIN_BG);
+    draw_text(s, bx + 12, by + 12, "GUI", COL_SUBTEXT);
+
+    fillr(s, bx + 8, row_y - 4, bw - 16, 20, COL_BTN_BG);
+    rect(s, bx + 8, row_y - 4, bw - 16, 20, COL_FRAME);
+    draw_checkbox(s, bx + 14, row_y + 1, g_perf_visible);
+    draw_text(s, bx + 32, row_y + 3, "Perf readout", COL_TEXT);
+
+    rect(s, w->x, w->y, w->w, w->h, COL_FRAME);
+}
+
 static void draw_about_body(gfx_surface_t* s, window_t* w) {
     int bx = w->x;
     int by = w->y + TITLE_H;
@@ -901,6 +1181,7 @@ static const char* window_title(window_t* w) {
     switch (w->type) {
         case WT_FILES:    return "Files";
         case WT_SYSTEM:   return "System";
+        case WT_CONFIG:   return "Config";
         case WT_ABOUT:    return "About";
         case WT_SHELL:    return "Shell";
     }
@@ -918,6 +1199,7 @@ static void draw_window(gfx_surface_t* s, window_t* w, int focused, int mx, int 
     switch (w->type) {
         case WT_FILES:    draw_files_body(s, w, mx, my); break;
         case WT_SYSTEM:   draw_system_body(s, w); break;
+        case WT_CONFIG:   draw_config_body(s, w); break;
         case WT_ABOUT:    draw_about_body(s, w); break;
         case WT_SHELL:    draw_shell_body(s, w); break;
     }
@@ -953,6 +1235,16 @@ static void icon_system(gfx_surface_t* s, int x, int y) {
     fillr(s, x + 4, y + 14, 8, 1, 0x0080C0FFu);
     fillr(s, x + 10, y + 22, 8, 3, COL_FRAME);
     fillr(s, x + 4, y + 25, 20, 2, COL_FRAME);
+}
+static void icon_config(gfx_surface_t* s, int x, int y) {
+    rect(s, x + 1, y + 1, 26, 24, COL_FRAME);
+    fillr(s, x + 3, y + 3, 22, 20, 0x00F0F0F0u);
+    hline(s, x + 6, y + 8, 16, COL_FRAME);
+    hline(s, x + 6, y + 14, 16, COL_FRAME);
+    hline(s, x + 6, y + 20, 16, COL_FRAME);
+    fillr(s, x + 10, y + 6, 4, 5, COL_FRAME);
+    fillr(s, x + 17, y + 12, 4, 5, COL_FRAME);
+    fillr(s, x + 8, y + 18, 4, 5, COL_FRAME);
 }
 static void icon_about(gfx_surface_t* s, int x, int y) {
     /* round-ish info bubble */
@@ -1029,6 +1321,13 @@ static void action_system(int sw, int sh) {
     if (!w) return;
     show_built_window(sw, sh, w);
 }
+static void action_config(int sw, int sh) {
+    window_t* w = build_window(WT_CONFIG, sw, sh, 260, 116,
+                               (sw - 260) / 2 + 20,
+                               (sh - 116) / 2 + 10);
+    if (!w) return;
+    show_built_window(sw, sh, w);
+}
 static void action_about(int sw, int sh) {
     window_t* w = build_window(WT_ABOUT, sw, sh, 280, 140,
                                (sw - 280) / 2 - 40,
@@ -1050,7 +1349,7 @@ static void action_quit(int sw, int sh) {
     g_should_quit = 1;
 }
 
-#define ICON_COUNT 5
+#define ICON_COUNT 6
 static icon_t g_icons[ICON_COUNT];
 
 static void icons_layout(int sw) {
@@ -1062,10 +1361,12 @@ static void icons_layout(int sw) {
     g_icons[1].draw = icon_terminal;          g_icons[1].action = action_shell;
     g_icons[2].x = x; g_icons[2].y = y + 120; g_icons[2].label = "System";
     g_icons[2].draw = icon_system;            g_icons[2].action = action_system;
-    g_icons[3].x = x; g_icons[3].y = y + 180; g_icons[3].label = "About";
-    g_icons[3].draw = icon_about;             g_icons[3].action = action_about;
-    g_icons[4].x = x; g_icons[4].y = y + 240; g_icons[4].label = "Quit";
-    g_icons[4].draw = icon_quit;              g_icons[4].action = action_quit;
+    g_icons[3].x = x; g_icons[3].y = y + 180; g_icons[3].label = "Config";
+    g_icons[3].draw = icon_config;            g_icons[3].action = action_config;
+    g_icons[4].x = x; g_icons[4].y = y + 240; g_icons[4].label = "About";
+    g_icons[4].draw = icon_about;             g_icons[4].action = action_about;
+    g_icons[5].x = x; g_icons[5].y = y + 300; g_icons[5].label = "Quit";
+    g_icons[5].draw = icon_quit;              g_icons[5].action = action_quit;
 }
 
 static int icon_hit(int mx, int my) {
@@ -1125,7 +1426,7 @@ static void draw_top_bar(gfx_surface_t* s) {
     fillr(s, 0, 0, w, 14, COL_TOPBAR);
     hline(s, 0, 14, w, COL_FRAME);
 
-    char buf[64], num[16];
+    char buf[96], num[16];
     sys_fsinfo_t fs;
     if (sys_fsinfo(&fs) == 0) {
         u_strcpy_n(buf, "Free: ", sizeof(buf));
@@ -1135,8 +1436,23 @@ static void draw_top_bar(gfx_surface_t* s) {
         draw_text(s, 8, 4, buf, COL_TEXT);
     }
 
-    const char* hint = "ESC or Q to exit";
-    draw_text(s, w - 8 - (int)text_width(hint), 4, hint, COL_TEXT);
+    u_strcpy_n(buf, "ESC/Q", sizeof(buf));
+    if (g_perf_visible) {
+        u_strcat_n(buf, "  GUI ", sizeof(buf));
+        utoa10(g_perf.shown_presents, num);
+        u_strcat_n(buf, num, sizeof(buf));
+        u_strcat_n(buf, "u ", sizeof(buf));
+        utoa10(g_perf.shown_input_events, num);
+        u_strcat_n(buf, num, sizeof(buf));
+        u_strcat_n(buf, "i max ", sizeof(buf));
+        utoa10(g_perf.shown_max_loop_gap, num);
+        u_strcat_n(buf, num, sizeof(buf));
+        u_strcat_n(buf, "/", sizeof(buf));
+        utoa10(g_perf.shown_max_present_ticks, num);
+        u_strcat_n(buf, num, sizeof(buf));
+        u_strcat_n(buf, "t", sizeof(buf));
+    }
+    draw_text(s, w - 8 - (int)text_width(buf), 4, buf, COL_TEXT);
 }
 
 /* ---------------- cursor ---------------- */
@@ -1227,9 +1543,13 @@ static int present_dirty_scene(gfx_context_t* gfx, int mx, int my) {
         gui_rect_t r = rect_clip_screen(g_dirty[i], sw, sh);
         if (rect_empty(r)) continue;
         compose_rect(&gfx->backbuffer, r, mx, my);
-        if (gfx_present_rect(gfx, (unsigned int)r.x, (unsigned int)r.y,
-                             (unsigned int)r.w, (unsigned int)r.h) < 0) {
-            return -1;
+        {
+            uint32_t present_start = sys_get_ticks();
+            if (gfx_present_rect(gfx, (unsigned int)r.x, (unsigned int)r.y,
+                                 (unsigned int)r.w, (unsigned int)r.h) < 0) {
+                return -1;
+            }
+            perf_note_present(present_start);
         }
         if (rect_intersects(r, cursor)) {
             if (present_cursor_rect(&gfx->backbuffer, mx, my, 1) < 0) {
@@ -1271,14 +1591,22 @@ static int present_cursor_rect(gfx_surface_t* scene, int mx, int my, int draw) {
         draw_cursor(&out, 0, 0);
     }
 
-    return sys_display_blit((uint32_t)mx, (uint32_t)my,
-                            (uint32_t)w, (uint32_t)h, tmp);
+    {
+        uint32_t present_start = sys_get_ticks();
+        int rc = sys_display_blit((uint32_t)mx, (uint32_t)my,
+                                  (uint32_t)w, (uint32_t)h, tmp);
+        if (rc >= 0) perf_note_present(present_start);
+        return rc;
+    }
 }
 
 static int present_frame_with_cursor(gfx_context_t* gfx, int mx, int my) {
+    uint32_t present_start = sys_get_ticks();
+
     if (gfx_present(gfx) < 0) {
         return -1;
     }
+    perf_note_present(present_start);
     if (present_cursor_rect(&gfx->backbuffer, mx, my, 1) < 0) {
         return -1;
     }
@@ -1330,8 +1658,13 @@ static int present_cursor_move(gfx_context_t* gfx,
         out.pixels = tmp;
         draw_cursor(&out, mx - x0, my - y0);
 
-        return sys_display_blit((uint32_t)x0, (uint32_t)y0,
-                                (uint32_t)w, (uint32_t)h, tmp);
+        {
+            uint32_t present_start = sys_get_ticks();
+            int rc = sys_display_blit((uint32_t)x0, (uint32_t)y0,
+                                      (uint32_t)w, (uint32_t)h, tmp);
+            if (rc >= 0) perf_note_present(present_start);
+            return rc;
+        }
     }
 
     if (present_cursor_rect(&gfx->backbuffer, old_mx, old_my, 0) < 0) {
@@ -1360,6 +1693,122 @@ static void draw_drag_outline(gfx_surface_t* s,
     if (outline_rect.w > 2 && outline_rect.h > 2) {
         rect(s, x + 1, y + 1, outline_rect.w - 2, outline_rect.h - 2,
              0x00000000u);
+    }
+}
+
+static int present_cursor_rect_with_drag_overlay(gfx_context_t* gfx,
+                                                 int mx,
+                                                 int my,
+                                                 int draw) {
+    unsigned int tmp[CURSOR_W * CURSOR_H];
+    gfx_surface_t out;
+    gfx_surface_t* scene;
+    gui_rect_t r;
+    int w = CURSOR_W;
+    int h = CURSOR_H;
+
+    if (!gfx) return -1;
+    scene = &gfx->backbuffer;
+    if (!scene->pixels || mx < 0 || my < 0 ||
+        mx >= (int)scene->width || my >= (int)scene->height) {
+        return 0;
+    }
+
+    if (mx + w > (int)scene->width) w = (int)scene->width - mx;
+    if (my + h > (int)scene->height) h = (int)scene->height - my;
+    if (w <= 0 || h <= 0) return 0;
+    r = make_rect(mx, my, w, h);
+
+    for (int y = 0; y < h; y++) {
+        unsigned int* src = scene->pixels + (my + y) * scene->pitch_pixels + mx;
+        for (int x = 0; x < w; x++) {
+            tmp[y * w + x] = src[x];
+        }
+    }
+
+    out.width = (unsigned int)w;
+    out.height = (unsigned int)h;
+    out.pitch_pixels = (unsigned int)w;
+    out.pixels = tmp;
+    if (g_drag_overlay_visible) {
+        draw_drag_outline(&out, r, drag_overlay_rect());
+    }
+    if (draw) {
+        draw_cursor(&out, 0, 0);
+    }
+
+    {
+        uint32_t present_start = sys_get_ticks();
+        int rc = sys_display_blit((uint32_t)mx, (uint32_t)my,
+                                  (uint32_t)w, (uint32_t)h, tmp);
+        if (rc >= 0) perf_note_present(present_start);
+        return rc;
+    }
+}
+
+static int present_cursor_move_with_drag_overlay(gfx_context_t* gfx,
+                                                 int old_mx,
+                                                 int old_my,
+                                                 int mx,
+                                                 int my) {
+    unsigned int tmp[CURSOR_MOVE_MAX_W * CURSOR_MOVE_MAX_H];
+    gfx_surface_t out;
+    gfx_surface_t* scene;
+    gui_rect_t r;
+    int x0;
+    int y0;
+    int x1;
+    int y1;
+    int w;
+    int h;
+
+    if (old_mx == mx && old_my == my) return 0;
+    if (!gfx) return -1;
+    scene = &gfx->backbuffer;
+    if (!scene->pixels) return -1;
+
+    x0 = old_mx < mx ? old_mx : mx;
+    y0 = old_my < my ? old_my : my;
+    x1 = old_mx > mx ? old_mx + CURSOR_W : mx + CURSOR_W;
+    y1 = old_my > my ? old_my + CURSOR_H : my + CURSOR_H;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > (int)scene->width) x1 = (int)scene->width;
+    if (y1 > (int)scene->height) y1 = (int)scene->height;
+    w = x1 - x0;
+    h = y1 - y0;
+
+    if (w <= 0 || h <= 0) return 0;
+    if (w > CURSOR_MOVE_MAX_W || h > CURSOR_MOVE_MAX_H) {
+        if (present_cursor_rect_with_drag_overlay(gfx, old_mx, old_my, 0) < 0) {
+            return -1;
+        }
+        return present_cursor_rect_with_drag_overlay(gfx, mx, my, 1);
+    }
+    r = make_rect(x0, y0, w, h);
+
+    for (int y = 0; y < h; y++) {
+        unsigned int* src = scene->pixels + (y0 + y) * scene->pitch_pixels + x0;
+        for (int x = 0; x < w; x++) {
+            tmp[y * w + x] = src[x];
+        }
+    }
+
+    out.width = (unsigned int)w;
+    out.height = (unsigned int)h;
+    out.pitch_pixels = (unsigned int)w;
+    out.pixels = tmp;
+    if (g_drag_overlay_visible) {
+        draw_drag_outline(&out, r, drag_overlay_rect());
+    }
+    draw_cursor(&out, mx - x0, my - y0);
+
+    {
+        uint32_t present_start = sys_get_ticks();
+        int rc = sys_display_blit((uint32_t)x0, (uint32_t)y0,
+                                  (uint32_t)w, (uint32_t)h, tmp);
+        if (rc >= 0) perf_note_present(present_start);
+        return rc;
     }
 }
 
@@ -1428,8 +1877,13 @@ static int present_drag_preview_rect(gfx_context_t* gfx,
         draw_drag_outline(&out, r, outline);
     }
 
-    return sys_display_blit((uint32_t)r.x, (uint32_t)r.y,
-                            (uint32_t)r.w, (uint32_t)r.h, tmp);
+    {
+        uint32_t present_start = sys_get_ticks();
+        int rc = sys_display_blit((uint32_t)r.x, (uint32_t)r.y,
+                                  (uint32_t)r.w, (uint32_t)r.h, tmp);
+        if (rc >= 0) perf_note_present(present_start);
+        return rc;
+    }
 }
 
 static int present_drag_preview(gfx_context_t* gfx, gui_rect_t r, int draw) {
@@ -1472,6 +1926,54 @@ static int present_drag_preview_move(gfx_context_t* gfx,
     return 0;
 }
 
+static int present_drag_frame(gfx_context_t* gfx,
+                              int mx,
+                              int my,
+                              uint32_t now) {
+    gui_rect_t old_overlay;
+    gui_rect_t new_overlay;
+
+    if (g_drag != DRAG_MOVE || g_drag_idx < 0) return 0;
+
+    old_overlay = drag_overlay_rect();
+    new_overlay = drag_preview_rect();
+    if (g_drag_overlay_visible) {
+        if ((old_overlay.x != new_overlay.x || old_overlay.y != new_overlay.y) &&
+            present_drag_preview_move(gfx, old_overlay, new_overlay) < 0) {
+            return -1;
+        }
+    } else if (present_drag_preview(gfx, new_overlay, 1) < 0) {
+        return -1;
+    }
+
+    g_drag_overlay_visible = 1;
+    g_drag_overlay_x = g_drag_preview_x;
+    g_drag_overlay_y = g_drag_preview_y;
+
+    return present_cursor_rect_with_drag_overlay(gfx, mx, my, 1);
+}
+
+static int present_gui_frame(gfx_context_t* gfx,
+                             int mx,
+                             int my,
+                             uint32_t now) {
+    int did_work = 0;
+
+    if (drag_target_pending()) {
+        if (present_drag_frame(gfx, mx, my, now) < 0) {
+            return -1;
+        }
+        did_work = 1;
+    }
+
+    if (did_work) {
+        gui_finish_frame(now);
+    } else {
+        gui_cancel_frame();
+    }
+    return 0;
+}
+
 /* ---------------- input handling ---------------- */
 
 static int clampi(int v, int lo, int hi) {
@@ -1484,10 +1986,38 @@ static int absi(int v) {
     return v < 0 ? -v : v;
 }
 
-static int abs_to_screen(unsigned int value, int max_value) {
+static gui_fp_t fp_from_int(int v) {
+    return (gui_fp_t)(v * GUI_FP_ONE);
+}
+
+static int fp_to_int_round(gui_fp_t v) {
+    if (v >= 0) return (v + GUI_FP_ONE / 2) >> GUI_FP_SHIFT;
+    return -(((-v) + GUI_FP_ONE / 2) >> GUI_FP_SHIFT);
+}
+
+static gui_fp_t fp_clamp_int(gui_fp_t v, int lo, int hi) {
+    gui_fp_t flo = fp_from_int(lo);
+    gui_fp_t fhi = fp_from_int(hi);
+
+    if (v < flo) return flo;
+    if (v > fhi) return fhi;
+    return v;
+}
+
+static gui_fp_t abs_to_screen_fp(unsigned int value, int max_value) {
+    unsigned long long scaled;
+
     if (max_value <= 0) return 0;
     if (value > 65535u) value = 65535u;
-    return (int)((value * (unsigned int)max_value + 32767u) / 65535u);
+    /*
+     * Keep absolute-device transforms in subpixel space. Drawing still lands on
+     * integer pixels, but cursor/window math should not discard transform
+     * precision before the final presentation step.
+     */
+    scaled = (unsigned long long)value *
+             (unsigned long long)(unsigned int)max_value *
+             (unsigned long long)GUI_FP_ONE;
+    return (gui_fp_t)((scaled + 32767ull) / 65535ull);
 }
 
 static int g_last_file_win = -1;
@@ -1521,11 +2051,20 @@ static int read_input_coalesced(sys_input_event_t* events,
     sys_input_event_t raw[MOUSE_COALESCE_MAX];
     int total = 0;
     int n;
+    int should_coalesce;
 
     if (!events || cap == 0u) return 0;
 
     n = sys_input_read(raw, MOUSE_COALESCE_MAX, flags);
     if (n <= 0) return n;
+    should_coalesce = n == MOUSE_COALESCE_MAX;
+
+    if (!should_coalesce) {
+        for (int i = 0; i < n && i < (int)cap; i++) {
+            events[i] = raw[i];
+        }
+        return n < (int)cap ? n : (int)cap;
+    }
 
     for (int i = 0; i < n && total < (int)cap; i++) {
         sys_input_event_t ev = raw[i];
@@ -1565,6 +2104,45 @@ static int shell_windows_need_poll(void) {
         }
     }
     return 0;
+}
+
+static int shell_poll_due(int shell_polling, uint32_t now) {
+    if (!shell_polling) {
+        g_shell_next_poll_tick = 0;
+        return 0;
+    }
+    if (g_shell_next_poll_tick == 0u ||
+        tick_due(now, g_shell_next_poll_tick)) {
+        return 1;
+    }
+    return 0;
+}
+
+static void shell_poll_schedule_next(uint32_t now) {
+    g_shell_next_poll_tick = now + GUI_SHELL_POLL_TICKS;
+}
+
+static uint32_t gui_wait_deadline(int shell_polling, uint32_t now) {
+    uint32_t deadline = 0;
+    int have_deadline = 0;
+
+    if (gui_frame_pending() && !gui_frame_due(now)) {
+        deadline = gui_frame_deadline();
+        have_deadline = 1;
+    }
+
+    if (shell_polling) {
+        if (g_shell_next_poll_tick == 0u ||
+            tick_due(now, g_shell_next_poll_tick)) {
+            return now;
+        }
+        deadline = have_deadline
+                 ? min_deadline(deadline, g_shell_next_poll_tick)
+                 : g_shell_next_poll_tick;
+        have_deadline = 1;
+    }
+
+    return have_deadline ? deadline : 0u;
 }
 
 static int hover_key(int mx, int my) {
@@ -1614,7 +2192,7 @@ static void invalidate_hover_key(int sw, int sh, int key) {
     }
 }
 
-static void handle_click(int mx, int my, int sw, int sh) {
+static void handle_click(int mx, int my, gui_fp_t mxf, gui_fp_t myf, int sw, int sh) {
     /* close button on any window? */
     window_t* w = hit_window_z(mx, my);
     if (w) {
@@ -1634,11 +2212,14 @@ static void handle_click(int mx, int my, int sw, int sh) {
             z_push_top(win_index(w));
             g_drag = DRAG_MOVE;
             g_drag_idx = win_index(w);
-            g_drag_dx = mx - w->x;
-            g_drag_dy = my - w->y;
+            g_drag_dx_fp = mxf - fp_from_int(w->x);
+            g_drag_dy_fp = myf - fp_from_int(w->y);
             g_drag_preview_x = w->x;
             g_drag_preview_y = w->y;
             g_drag_overlay_visible = 0;
+            g_drag_overlay_x = w->x;
+            g_drag_overlay_y = w->y;
+            gui_request_frame_now(sys_get_ticks());
             return;
         }
         /* body click: raise */
@@ -1711,6 +2292,16 @@ static void handle_click(int mx, int my, int sw, int sh) {
                 invalidate_window(sw, sh, w);
             }
         }
+        if (w->type == WT_CONFIG) {
+            int by = w->y + TITLE_H;
+            int row_y = by + 30;
+            if (point_in(mx, my, w->x + 8, row_y - 4, w->w - 16, 20)) {
+                g_perf_visible = !g_perf_visible;
+                gui_config_save();
+                invalidate_window(sw, sh, w);
+                invalidate_topbar(sw, sh);
+            }
+        }
         return;
     }
 
@@ -1761,12 +2352,17 @@ int gui_main(int argc, char** argv) {
     u_puts("gui: starting (ESC or q to exit)\n");
     rc = gfx_open(&gfx);
     if (rc == -1) { u_puts("gui: framebuffer not available\n"); return 0; }
-    if (rc < 0)   { u_puts("gui: could not open display\n");    return 1; }
+    if (rc == -2) { u_puts("gui: display is already in use\n");  return 1; }
+    if (rc == -3) { u_puts("gui: unsupported display size\n");   return 1; }
+    if (rc == -4) { u_puts("gui: out of memory opening display\n"); return 1; }
+    if (rc < 0)   { u_puts("gui: could not open display\n");     return 1; }
 
     int sw = (int)gfx.backbuffer.width;
     int sh = (int)gfx.backbuffer.height;
-    int mx = sw / 2;
-    int my = sh / 2;
+    gui_fp_t mxf = fp_from_int(sw / 2);
+    gui_fp_t myf = fp_from_int(sh / 2);
+    int mx = fp_to_int_round(mxf);
+    int my = fp_to_int_round(myf);
 
     icons_layout(sw);
 
@@ -1779,24 +2375,38 @@ int gui_main(int argc, char** argv) {
     int presented_mx = mx;
     int presented_my = my;
     int last_hover = hover_key(mx, my);
+    gui_config_load();
     invalidate_full(sw, sh);
+    perf_init();
 
     while (!g_should_quit) {
         sys_input_event_t events[INPUT_BATCH];
         int got = 0;
         unsigned int input_flags = SYS_INPUT_FLAG_NONBLOCK;
+        uint32_t loop_now = sys_get_ticks();
         int shell_polling = shell_windows_need_poll();
+        int shell_poll_due_now = shell_poll_due(shell_polling, loop_now);
+        int blocking_input_wait;
 
         if (!dirty &&
             !cursor_dirty &&
             g_launch_kind == LAUNCH_NONE &&
-            !shell_polling) {
+            !shell_polling &&
+            !gui_frame_pending()) {
             input_flags = 0;
         }
+        blocking_input_wait = input_flags == 0;
 
         int n = read_input_coalesced(events, INPUT_BATCH, input_flags);
+        if (blocking_input_wait) {
+            perf_resume_from_idle();
+        }
+        if (perf_tick(sw, sh)) {
+            dirty = 1;
+        }
         if (n > 0) {
             got = 1;
+            perf_note_input((unsigned int)n);
 
             for (int ei = 0; ei < n && !g_should_quit; ei++) {
                 sys_input_event_t* ev = &events[ei];
@@ -1828,12 +2438,14 @@ int gui_main(int argc, char** argv) {
                     int old_hover = last_hover;
 
                     if (ev->flags & SYS_INPUT_MOUSE_ABSOLUTE) {
-                        mx = abs_to_screen(ev->abs_x, sw - 1);
-                        my = abs_to_screen(ev->abs_y, sh - 1);
+                        mxf = abs_to_screen_fp(ev->abs_x, sw - 1);
+                        myf = abs_to_screen_fp(ev->abs_y, sh - 1);
                     } else {
-                        mx = clampi(mx + ev->dx, 0, sw - 1);
-                        my = clampi(my + ev->dy, 0, sh - 1);
+                        mxf = fp_clamp_int(mxf + fp_from_int(ev->dx), 0, sw - 1);
+                        myf = fp_clamp_int(myf + fp_from_int(ev->dy), 0, sh - 1);
                     }
+                    mx = fp_to_int_round(mxf);
+                    my = fp_to_int_round(myf);
                     if (mx != old_mx || my != old_my) {
                         cursor_dirty = 1;
                     }
@@ -1843,14 +2455,14 @@ int gui_main(int argc, char** argv) {
                     }
                     int left_now = (ev->buttons & SYS_MOUSE_BUTTON_LEFT) != 0;
                     if (left_now && !prev_left) {
-                        handle_click(mx, my, sw, sh);
+                        handle_click(mx, my, mxf, myf, sw, sh);
                         if (g_dirty_count > 0) dirty = 1;
                     } else if (!left_now && prev_left) {
                         if (g_drag == DRAG_MOVE && g_drag_idx >= 0) {
                             window_t* w = &g_wins[g_drag_idx];
                             if (w->active) {
                                 if (g_drag_overlay_visible) {
-                                    if (present_drag_preview(&gfx, drag_preview_rect(), 0) < 0) {
+                                    if (present_drag_preview(&gfx, drag_overlay_rect(), 0) < 0) {
                                         gfx_close(&gfx);
                                         u_puts("gui: present failed\n");
                                         return 1;
@@ -1867,24 +2479,24 @@ int gui_main(int argc, char** argv) {
                         }
                         g_drag = DRAG_NONE;
                         g_drag_idx = -1;
+                        gui_cancel_frame();
                     }
                     if (g_drag == DRAG_MOVE && g_drag_idx >= 0) {
                         window_t* w = &g_wins[g_drag_idx];
                         if (w->active) {
-                            int new_x = clampi(mx - g_drag_dx, -w->w + 32, sw - 32);
-                            int new_y = clampi(my - g_drag_dy, 16, sh - TITLE_H);
+                            gui_fp_t new_x_fp = fp_clamp_int(mxf - g_drag_dx_fp,
+                                                             -w->w + 32,
+                                                             sw - 32);
+                            gui_fp_t new_y_fp = fp_clamp_int(myf - g_drag_dy_fp,
+                                                             16,
+                                                             sh - TITLE_H);
+                            int new_x = fp_to_int_round(new_x_fp);
+                            int new_y = fp_to_int_round(new_y_fp);
                             if (new_x != g_drag_preview_x || new_y != g_drag_preview_y) {
-                                gui_rect_t old_preview = drag_preview_rect();
                                 g_drag_preview_x = new_x;
                                 g_drag_preview_y = new_y;
-                                if (g_drag_overlay_visible && !dirty) {
-                                    if (present_drag_preview_move(&gfx, old_preview, drag_preview_rect()) < 0) {
-                                        gfx_close(&gfx);
-                                        u_puts("gui: present failed\n");
-                                        return 1;
-                                    }
-                                    cursor_dirty = 1;
-                                }
+                                cursor_dirty = 1;
+                                gui_request_frame(sys_get_ticks());
                             }
                         }
                     }
@@ -1895,36 +2507,29 @@ int gui_main(int argc, char** argv) {
                         invalidate_hover_key(sw, sh, last_hover);
                         dirty = 1;
                     }
-                    if (cursor_dirty && !dirty &&
-                        g_drag == DRAG_NONE &&
-                        g_launch_kind == LAUNCH_NONE) {
-                        if (present_cursor_move(&gfx, presented_mx, presented_my, mx, my) < 0) {
-                            gfx_close(&gfx);
-                            u_puts("gui: present failed\n");
-                            return 1;
-                        }
-                        cursor_dirty = 0;
-                        presented_mx = mx;
-                        presented_my = my;
-                    }
                 }
             }
         }
 
-        for (int i = 0; i < MAX_WINDOWS; i++) {
-            if (g_wins[i].active && g_wins[i].type == WT_SHELL) {
-                if (gui_shell_poll(&g_wins[i].shell)) {
-                    invalidate_window(sw, sh, &g_wins[i]);
-                    dirty = 1;
+        if (shell_poll_due_now) {
+            for (int i = 0; i < MAX_WINDOWS; i++) {
+                if (g_wins[i].active && g_wins[i].type == WT_SHELL) {
+                    if (gui_shell_poll(&g_wins[i].shell)) {
+                        invalidate_window(sw, sh, &g_wins[i]);
+                        dirty = 1;
+                    }
                 }
             }
+            shell_poll_schedule_next(sys_get_ticks());
         }
 
         if (g_launch_kind != LAUNCH_NONE) {
             int launch_rc = run_queued_launch(&gfx, &sw, &sh);
             if (launch_rc < 0) return 1;
-            mx = clampi(mx, 0, sw - 1);
-            my = clampi(my, 0, sh - 1);
+            mxf = fp_clamp_int(mxf, 0, sw - 1);
+            myf = fp_clamp_int(myf, 0, sh - 1);
+            mx = fp_to_int_round(mxf);
+            my = fp_to_int_round(myf);
             presented_mx = mx;
             presented_my = my;
             last_hover = hover_key(mx, my);
@@ -1934,6 +2539,15 @@ int gui_main(int argc, char** argv) {
         }
 
         if (dirty) {
+            if (g_drag_overlay_visible) {
+                if (present_drag_preview(&gfx, drag_overlay_rect(), 0) < 0) {
+                    gfx_close(&gfx);
+                    u_puts("gui: present failed\n");
+                    return 1;
+                }
+                g_drag_overlay_visible = 0;
+                cursor_dirty = 1;
+            }
             if (g_dirty_count == 0) {
                 invalidate_full(sw, sh);
             }
@@ -1952,27 +2566,36 @@ int gui_main(int argc, char** argv) {
                 cursor_dirty = 0;
             }
             if (g_drag == DRAG_MOVE && g_drag_idx >= 0) {
-                if (present_drag_preview(&gfx, drag_preview_rect(), 1) < 0 ||
-                    present_cursor_rect(&gfx.backbuffer, mx, my, 1) < 0) {
+                uint32_t now = sys_get_ticks();
+                gui_request_frame_now(now);
+                if (present_gui_frame(&gfx, mx, my, now) < 0) {
                     gfx_close(&gfx);
                     u_puts("gui: present failed\n");
                     return 1;
                 }
-                g_drag_overlay_visible = 1;
             }
             last_hover = hover_key(mx, my);
             presented_mx = mx;
             presented_my = my;
         } else if (cursor_dirty) {
-            if (present_cursor_move(&gfx, presented_mx, presented_my, mx, my) < 0) {
+            if (g_drag == DRAG_MOVE && g_drag_idx >= 0) {
+                if (present_cursor_move_with_drag_overlay(&gfx,
+                                                          presented_mx,
+                                                          presented_my,
+                                                          mx,
+                                                          my) < 0) {
+                    gfx_close(&gfx);
+                    u_puts("gui: present failed\n");
+                    return 1;
+                }
+            } else if (present_cursor_move(&gfx, presented_mx, presented_my, mx, my) < 0) {
                 gfx_close(&gfx);
                 u_puts("gui: present failed\n");
                 return 1;
             }
             cursor_dirty = 0;
-            if (g_drag == DRAG_MOVE && g_drag_idx >= 0 && g_drag_overlay_visible) {
-                if (present_drag_preview(&gfx, drag_preview_rect(), 1) < 0 ||
-                    present_cursor_rect(&gfx.backbuffer, mx, my, 1) < 0) {
+            if (gui_frame_due(sys_get_ticks())) {
+                if (present_gui_frame(&gfx, mx, my, sys_get_ticks()) < 0) {
                     gfx_close(&gfx);
                     u_puts("gui: present failed\n");
                     return 1;
@@ -1980,11 +2603,19 @@ int gui_main(int argc, char** argv) {
             }
             presented_mx = mx;
             presented_my = my;
+        } else if (gui_frame_due(sys_get_ticks())) {
+            if (present_gui_frame(&gfx, mx, my, sys_get_ticks()) < 0) {
+                gfx_close(&gfx);
+                u_puts("gui: present failed\n");
+                return 1;
+            }
         }
 
         if (!got) {
-            if (shell_polling) {
-                sys_sleep(1);
+            uint32_t now = sys_get_ticks();
+            uint32_t deadline = gui_wait_deadline(shell_windows_need_poll(), now);
+            if (deadline != 0u && !tick_due(now, deadline)) {
+                (void)sys_input_wait_until(deadline);
             } else {
                 sys_yield();
             }

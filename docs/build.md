@@ -67,7 +67,8 @@ build/
 │                    ext2.seed.img, boot.bin, loader2.bin, tcc-smalos.elf)
 ├── obj/<profile>/ → object files and depfiles (.o, .d), mirrored by source subtree
 ├── gen/<profile>/ → generated source (loader2.gen.asm)
-├── img/           → final disk image and wrappers (smallos.img, smallos.vmdk)
+├── img/           → final disk images and wrappers
+│                    (smallos.img, smallos.vmdk, USB burn image)
 └── tools/         → host tools (mkext2, mkimage)
 ```
 
@@ -228,9 +229,10 @@ forced VGA image.
 
 `make verify` is the standard preflight target: it runs both layout checks,
 then `make test`, then `make smoke`. The heavier suites are grouped
-separately: `make verify-display` runs the framebuffer/VGA visual smoke checks,
-`make verify-network` runs the socket, FTP, and cserve smoke matrix, and
-`make verify-full` runs all verification targets in sequence.
+separately: `make verify-display` runs the framebuffer/VGA visual smoke checks
+and the GUI launch smoke, `make verify-network` runs the socket, FTP, and
+cserve smoke matrix, and `make verify-full` runs all verification targets in
+sequence.
 
 Most freestanding test ELFs define `_start(argc, argv)` directly and link with
 the common user runtime objects. Hosted-ish programs define
@@ -271,7 +273,7 @@ Use the aggregate targets as the normal verification ladder:
 
 ```bash
 make verify          # layout, guest selftest, reboot/halt smoke
-make verify-display  # framebuffer and forced-VGA screenshots
+make verify-display  # framebuffer/VGA screenshots plus GUI launch smoke
 make verify-network  # socket EOF/parallel, FTP, FTP loop, cserve
 make verify-full     # all of the above
 ```
@@ -282,10 +284,13 @@ PPM screenshot, and verifies that the image is a nonblank 1024x768 framebuffer.
 `make vga-smoke` rebuilds with `DISPLAY_BACKEND=vga`, waits for the forced-VGA
 serial marker, asks the QEMU monitor for a PPM screenshot, verifies that VGA
 text output is visible, and fails if the framebuffer backend is selected
-anyway. `make display-smoke` runs both. These visual checks use QEMU's VNC
-display backend by default so the VM can stay daemonized while still rendering
-screenshots. They are intentionally separate from plain `make test` because
-screenshots depend more on the host QEMU display environment.
+anyway. `make gui-smoke` boots the normal framebuffer image, launches `gui`
+from the shell, fails on display-open/present errors, exits with `q`, and
+verifies that the shell prompt returns. `make display-smoke` runs all three.
+The visual screenshot checks use QEMU's VNC display backend by default so the
+VM can stay daemonized while still rendering screenshots. They are
+intentionally separate from plain `make test` because screenshots depend more
+on the host QEMU display environment.
 
 The display stack and user programs have separate optimization knobs:
 `USER_CFLAGS` defaults to `-O2`, `DISPLAY_DRIVER_CFLAGS` defaults to `-O2` for
@@ -1021,9 +1026,9 @@ images while the protected-mode USB storage path is still hardware-dependent.
 The USB storage driver implements enough BOT/SCSI to enumerate the device, read
 capacity, and issue READ(10) requests for ext2 blocks.
 
-`make usb-image` also refreshes `build/usb/smallos-wyse-s10-direct-usb.img` and
-its `.sha256` file, so hardware flashing can use the stable `build/usb` path
-instead of the intermediate `build/img/smallos.img`.
+`make usb-image` also refreshes `build/img/smallos-wyse-s10-direct-usb.img` and
+its `.sha256` file, so hardware flashing can use the stable `build/img` path
+alongside the normal raw and VMDK images.
 
 USB boot keyboard and mouse discovery are handled by the same OHCI driver after
 storage is mounted and the shell ELF has been loaded. A failed first probe does
@@ -1031,10 +1036,11 @@ not freeze input discovery: the `usb` kernel task retries once per second until
 both supported boot HID devices are found, while skipping the active
 USB-storage port and already-claimed HID ports. The HID matcher accepts keyboard
 and mouse protocol interfaces even when older firmware reports a non-boot HID
-subclass, then requests boot protocol before polling. The visible `Input:` lines and
-`/bin/usbinfo.elf` report keyboard/mouse endpoint, packet, poll, report, and
-condition-code counters for hardware bring-up; `/bin/mousetest.elf` can poll
-the shared mouse state and USB boot mouse path from userland.
+subclass, then requests boot protocol before polling. Retry diagnostics stay
+quiet after the shell prompt; the visible `Input:` lines and `/bin/usbinfo.elf`
+report keyboard/mouse endpoint, packet, poll, report, and condition-code
+counters for hardware bring-up; `/bin/mousetest.elf` can poll the shared mouse
+state and USB boot mouse path from userland.
 
 ---
 

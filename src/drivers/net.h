@@ -14,6 +14,7 @@ typedef struct {
 } net_ipv4_config_t;
 
 int net_poll_once(void);
+unsigned int net_poll_drain_budget(unsigned int max_frames);
 void net_poll_drain(void);
 void net_ipv4_clear_config(void);
 void net_ipv4_configure(u32 ip, u32 netmask, u32 gateway, u32 dns, u32 dhcp_server, u32 lease_seconds);

@@ -58,7 +58,11 @@ Important current-state facts:
 - **keyboard IRQ1** decodes scancodes and calls a registered `keyboard_consumer_fn` — it makes no routing decisions itself; USB boot keyboards inject translated set-1 scancodes into the same path
 - the **process consumer** (`process_key_consumer` in `process.c`) pushes ASCII into `kb_buf`; Ctrl+C is delivered as raw byte `0x03` to a foreground `SYS_READ_RAW` prompt reader, and otherwise targets the foreground process group as a terminal signal
 - consumer ownership transfers via `process_set_foreground()` - the process consumer is active while the user shell or another user process owns the foreground reader/group; `process_set_foreground(0)` keeps the router installed but ignores events until a new foreground owner is set
-- **Mouse input** decodes PS/2 relative packets, VMware absolute-pointer events, or OHCI USB boot mouse reports into accumulated `dx`/`dy` and button state; user graphics code polls that state with `SYS_MOUSE_READ`
+- **Mouse input** decodes PS/2 relative packets, VMware absolute-pointer
+  events, or OHCI USB boot mouse reports into accumulated `dx`/`dy` and button
+  state. Older graphics demos can poll that state with `SYS_MOUSE_READ`; mixed
+  keyboard/mouse event loops use `SYS_INPUT_READ`, and can sleep until input or
+  an absolute frame deadline with `SYS_INPUT_WAIT_UNTIL`.
 - **ELF user programs** are loaded into their own page directory and do execute in ring 3
 - ELF launch and exit are now scheduler-owned: `elf_run_image()` seeds a bootstrap context, enqueues the task, and returns `process_t*`
 - the scheduler supports kernel tasks, ELF tasks, voluntary yielding, timer-driven sleeping, and timer-driven switching; `runelf` blocks with `process_wait()`, `runelf_nowait` returns immediately, and the user shell's `bg` / `runelf_bg` return while keeping a reattachable shell job
@@ -68,7 +72,8 @@ Important current-state facts:
   compiler-style tools and small network services
 - GUI shell windows allocate a PTY pair, fork a user shell with the slave on fd
   `0`/`1`/`2`, and keep the master in the GUI process so foreground commands
-  draw inside the window instead of the global console
+  draw inside the window instead of the global console. The GUI paces frame
+  work and shell PTY polling so quiet windows do not keep the desktop awake.
 - the shipped `usr/bin/tcc.elf` compiler binary links the generic SmallOS `user_crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from ext2, write the results back to disk, and then those generated ELFs can be executed immediately
 - QEMU user networking is still the default for `make run` / `make test`, but the guest now learns its IPv4 address, netmask, gateway, DNS server, and lease time through DHCP instead of assuming QEMU's NAT addresses. `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT.
 - Boot queues DHCP and best-effort NTP as an async kernel task once the scheduler is live. On success, `CLOCK_REALTIME` is set and the boot log prints the UTC time; on failure, boot continues with a warning.

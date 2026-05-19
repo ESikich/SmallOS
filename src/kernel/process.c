@@ -140,6 +140,18 @@ process_t* process_find_by_pid(u32 pid) {
     return 0;
 }
 
+void process_wake_parent_waiter(process_t* child) {
+    process_t* parent;
+
+    if (!child || child->parent_pid == 0) return;
+    parent = process_find_by_pid(child->parent_pid);
+    if (!parent) return;
+    if (parent->state == PROCESS_STATE_WAITING) {
+        parent->state = PROCESS_STATE_RUNNING;
+        parent->sleep_until = 0u;
+    }
+}
+
 static process_t* process_find_child(process_t* parent, int pid) {
     if (!parent) return 0;
 
@@ -251,6 +263,7 @@ static void process_key_consumer(key_event_t ev) {
         s_detach_requested = proc;
         s_foreground_reader = 0;
         s_foreground_pgid = 0;
+        process_wake_parent_waiter(proc);
         return;
     }
 
@@ -2155,6 +2168,7 @@ int process_wait_pid(process_t* parent,
             return 0;
         }
 
+        parent->state = PROCESS_STATE_WAITING;
         __asm__ __volatile__("sti; hlt; cli");
     }
 }
@@ -2709,15 +2723,20 @@ static int process_wait_impl(process_t* proc, int allow_detach, int* detached) {
     process_claim_for_wait(proc);
 
     while (proc->state != PROCESS_STATE_ZOMBIE) {
+        process_t* current = sched_current();
         if (allow_detach && s_detach_requested == proc) {
             s_detach_requested = 0;
             process_set_foreground(0);
             s_detach_allowed = 0;
+            if (current && current->state == PROCESS_STATE_WAITING) {
+                current->state = PROCESS_STATE_RUNNING;
+            }
             if (detached) {
                 *detached = 1;
             }
             return 0;
         }
+        if (current) current->state = PROCESS_STATE_WAITING;
         __asm__ __volatile__("sti; hlt");
     }
 
@@ -2754,6 +2773,8 @@ int process_wait_restore_foreground(process_t* proc, process_t* restore_proc) {
     process_claim_for_wait(proc);
 
     while (proc->state != PROCESS_STATE_ZOMBIE) {
+        process_t* current = sched_current();
+        if (current) current->state = PROCESS_STATE_WAITING;
         __asm__ __volatile__("sti; hlt");
     }
 
@@ -2777,7 +2798,14 @@ int process_wait_restore_foreground(process_t* proc, process_t* restore_proc) {
  */
 static void reaper_task_main(void) {
     for (;;) {
+        process_t* current;
+
         sched_reap_zombies();
+        current = sched_current();
+        if (current) {
+            current->sleep_until = timer_get_ticks() + SMALLOS_TIMER_HZ;
+            current->state = PROCESS_STATE_SLEEPING;
+        }
         __asm__ __volatile__("sti; hlt");
     }
 }

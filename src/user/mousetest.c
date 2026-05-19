@@ -1,5 +1,7 @@
 #include "diag_util.h"
 
+#define MOUSETEST_SECONDS 5u
+
 static void put_int(int value) {
     if (value < 0) {
         u_putc('-');
@@ -71,8 +73,10 @@ void _start(int argc, char** argv) {
         before = (sys_mousedebug_t){0};
     }
 
-    deadline = sys_get_ticks() + 500u;
-    u_puts("mousetest: move/click mouse for 5 seconds\n");
+    deadline = sys_get_ticks() + (MOUSETEST_SECONDS * SMALLOS_TIMER_HZ);
+    u_puts("mousetest: move/click mouse for ");
+    u_put_uint(MOUSETEST_SECONDS);
+    u_puts(" seconds\n");
     while ((int)(sys_get_ticks() - deadline) < 0) {
         if (usb_open > 0) {
             int usb_poll = sys_usb_mouse_op(SYS_USB_MOUSE_OP_POLL, 0);
