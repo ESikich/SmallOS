@@ -29,8 +29,18 @@ FILESYSTEM
     /usr/share/man
         Plain text manual pages.
 
+    /usr/share/xfractint
+        Fractint support directory.  The current image stages the generated
+        Fractint help database here.
+
     /var/log
         Service and boot logs.
+
+GRAPHICS
+    SmallOS exposes a 32-bit XRGB framebuffer through display syscalls and the
+    user-space gfx helper.  Programs such as bmpview(1), diskview(1),
+    mandel(1), plasma(1), gui(1), and fractint(1) use this path.  Graphical
+    programs work best under a graphical QEMU backend such as gtk or sdl.
 
 NETWORKING
     The image includes IPv4 configuration tools, simple ICMP and ARP probes,
@@ -41,4 +51,5 @@ MANUALS
     SmallOS manual pages are plain text files. Use man(1) to view them.
 
 SEE ALSO
-    shell(1), man(1), ip(1), ftpd(8), cserve(8)
+    shell(1), man(1), bmpview(1), fractint(1), gui(1), mandel(1), plasma(1),
+    ip(1), ftpd(8), cserve(8)

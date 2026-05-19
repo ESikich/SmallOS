@@ -1,0 +1,42 @@
+For_What_its_Worth {
+  reset=2004 type=phoenix passes=1
+  center-mag=-0.2397/0.182304/4.191818 params=1/-1/3 float=y
+  maxiter=10000 inside=epsiloncross proximity=0.0005 logmap=3
+  periodicity=5 colors=@volcano.map
+  }
+
+FWiW2              {
+  reset=2004 type=phoenix passes=1
+  center-mag=-0.284287/0.0875172/30.82219 params=1/-1/3 float=y
+  maxiter=10000 inside=epsiloncross proximity=0.0005 logmap=3
+  periodicity=5 colors=@volcano.map
+  }
+
+FWiW3              {
+  reset=2004 type=phoenix passes=1
+  center-mag=-0.25028621088431546/+0.11308257721637352/148.1836
+  params=1/-1/3 float=y maxiter=10000 inside=epsiloncross
+  proximity=0.0005 logmap=3 periodicity=5 colors=@volcano.map
+  }
+
+FWiW4              {
+  reset=2004 type=phoenix passes=1
+  center-mag=-0.37505317767250851/+0.14646026409298543/83.83636
+  params=1/-1/3 float=y maxiter=10000 inside=epsiloncross
+  proximity=0.0005 logmap=3 periodicity=5 colors=@volcano.map
+  }
+
+FWiW5              {
+  reset=2004 type=phoenix passes=1
+  center-mag=-0.2397/0.182304/4.191818 params=1/-1/3 float=y
+  maxiter=10000 inside=epsiloncross proximity=0.0005 logmap=3
+  distest=2/71/1024/768 periodicity=5 colors=@volcano.map
+  }
+
+FWiW6              {
+  reset=2004 type=phoenix passes=1
+  center-mag=-0.53605642532908937/+0.29442769117887280/69.34409
+  params=1/-1/3 float=y maxiter=10000 inside=0 logmap=3
+  distest=2/71/1024/768 periodicity=5 colors=@volcano.map
+  }
+

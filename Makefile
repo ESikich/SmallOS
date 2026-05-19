@@ -67,8 +67,11 @@ TINYCC_SMALOS_SRC=$(TINYCC_SMALOS_SRC_DIR)/tcc.c
 CSERVER_DIR=$(CURDIR)/third_party/cserver
 CSERVER_OBJ_DIR=$(OBJ_DIR)/cserver
 CSERVER_BIN=$(BIN_DIR)/cserve.elf
+FRACTINT_DIR=$(CURDIR)/third_party/fractint
+FRACTINT_OBJ_DIR=$(OBJ_DIR)/fractint
 THIRD_PARTY_TINYCC_SENTINEL=$(CURDIR)/third_party/tinycc/tcc.c
 THIRD_PARTY_CSERVER_SENTINEL=$(CSERVER_DIR)/src/main.c
+THIRD_PARTY_FRACTINT_SENTINEL=$(FRACTINT_DIR)/common/fractint.c
 THIRD_PARTY_FTP_CLIENT_SENTINEL=$(CURDIR)/third_party/ftp_client/include/ftp_client.h
 THIRD_PARTY_FTP_SERVER_SENTINEL=$(CURDIR)/third_party/ftp_server/include/ftp_server.h
 STATE_DIR=.state
@@ -169,7 +172,8 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/ext2.c \
 	$(DRIVERS_DIR)/serial.c
 
-USER_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell ip ipconfig meminfo memmap cpuz top netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest hello ticks args runelf_test readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe envprobe plasma mandel tcpecho sockeof ftpd
+USER_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell ip ipconfig meminfo memmap cpuz top netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest hello ticks args runelf_test readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe envprobe plasma mandel fractint tcpecho sockeof ftpd
+USER_PROGS := $(filter-out fractint,$(USER_PROGS))
 USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
 USER_RUNTIME_SRCS=$(USER_DIR)/user_alloc.c $(USER_DIR)/user_stdio.c $(USER_DIR)/user_posix.c $(USER_DIR)/user_time.c $(USER_DIR)/user_dirent.c $(USER_DIR)/user_crypt.c $(USER_DIR)/setjmp.asm
 CSERVER_SRCS=\
@@ -184,8 +188,16 @@ CSERVER_SRCS=\
 	$(CSERVER_DIR)/src/config.c \
 	$(CSERVER_DIR)/src/util.c
 CSERVER_OBJS=$(patsubst $(CSERVER_DIR)/src/%.c,$(CSERVER_OBJ_DIR)/%.o,$(CSERVER_SRCS))
+FRACTINT_COMMON_NAMES=3d ant bigflt biginit bignum bignumc calcfrac cmdfiles decoder editpal encoder evolve f16 fracsubr fractalb fractalp fractals fractint framain2 frasetup gifview hcmplx help history intro jb jiim line3d loadfdos loadfile loadmap lorenz lsys lsysf memory miscfrac miscovl miscres mpmath_c parser parserfp plot3d printer prompts1 prompts2 realdos rotate slideshw soi soi1 stereo targa testpt tgaview zoom
+FRACTINT_UNIX_NAMES=calcmand calmanfp diskvidu fpu087 fracsuba general unix
+FRACTINT_COMMON_OBJS=$(addprefix $(FRACTINT_OBJ_DIR)/common/,$(addsuffix .o,$(FRACTINT_COMMON_NAMES)))
+FRACTINT_UNIX_OBJS=$(addprefix $(FRACTINT_OBJ_DIR)/unix/,$(addsuffix .o,$(FRACTINT_UNIX_NAMES)))
+FRACTINT_SMALLOS_OBJS=$(FRACTINT_OBJ_DIR)/smallos/runtime.o
+FRACTINT_OBJS=$(FRACTINT_COMMON_OBJS) $(FRACTINT_UNIX_OBJS) $(FRACTINT_SMALLOS_OBJS)
+FRACTINT_CPPFLAGS=-I$(FRACTINT_DIR)/smallos/include $(CPPFLAGS) -I$(FRACTINT_DIR)/headers -I$(FRACTINT_DIR)/dos_help
+FRACTINT_DEFS=-DXFRACT -DNOBSTRING -DHAVESTRI -DBIG_ANSI_C -DLINUX -DDO_NOT_USE_LONG_DOUBLE -DSRCDIR=\"/usr/share/xfractint\"
 EXT2_BIN_ENTRIES=bin/echo.elf=$(BIN_DIR)/echo.elf bin/about.elf=$(BIN_DIR)/about.elf bin/uptime.elf=$(BIN_DIR)/uptime.elf bin/halt.elf=$(BIN_DIR)/halt.elf bin/reboot.elf=$(BIN_DIR)/reboot.elf bin/date.elf=$(BIN_DIR)/date.elf bin/pwd.elf=$(BIN_DIR)/pwd.elf bin/cat.elf=$(BIN_DIR)/cat.elf bin/more.elf=$(BIN_DIR)/more.elf bin/man.elf=$(BIN_DIR)/man.elf bin/fsread.elf=$(BIN_DIR)/fsread.elf bin/ls.elf=$(BIN_DIR)/ls.elf bin/tree.elf=$(BIN_DIR)/tree.elf bin/touch.elf=$(BIN_DIR)/touch.elf bin/rm.elf=$(BIN_DIR)/rm.elf bin/mkdir.elf=$(BIN_DIR)/mkdir.elf bin/rmdir.elf=$(BIN_DIR)/rmdir.elf bin/cp.elf=$(BIN_DIR)/cp.elf bin/mv.elf=$(BIN_DIR)/mv.elf bin/edit.elf=$(BIN_DIR)/edit.elf bin/bmpview.elf=$(BIN_DIR)/bmpview.elf bin/bootsplash.elf=$(BIN_DIR)/bootsplash.elf bin/diskview.elf=$(BIN_DIR)/diskview.elf bin/gui.elf=$(BIN_DIR)/gui.elf bin/shell.elf=$(BIN_DIR)/shell.elf bin/ip.elf=$(BIN_DIR)/ip.elf bin/ipconfig.elf=$(BIN_DIR)/ipconfig.elf bin/meminfo.elf=$(BIN_DIR)/meminfo.elf bin/memmap.elf=$(BIN_DIR)/memmap.elf bin/cpuz.elf=$(BIN_DIR)/cpuz.elf bin/netinfo.elf=$(BIN_DIR)/netinfo.elf bin/dhcp.elf=$(BIN_DIR)/dhcp.elf bin/netsend.elf=$(BIN_DIR)/netsend.elf bin/netrecv.elf=$(BIN_DIR)/netrecv.elf bin/arpgw.elf=$(BIN_DIR)/arpgw.elf bin/ping.elf=$(BIN_DIR)/ping.elf bin/pinggw.elf=$(BIN_DIR)/pinggw.elf bin/pingpublic.elf=$(BIN_DIR)/pingpublic.elf bin/netcheck.elf=$(BIN_DIR)/netcheck.elf bin/ataread.elf=$(BIN_DIR)/ataread.elf bin/usbinfo.elf=$(BIN_DIR)/usbinfo.elf bin/usbports.elf=$(BIN_DIR)/usbports.elf bin/usbdiag.elf=$(BIN_DIR)/usbdiag.elf bin/usbpeek.elf=$(BIN_DIR)/usbpeek.elf bin/usbpower.elf=$(BIN_DIR)/usbpower.elf bin/usbmouse.elf=$(BIN_DIR)/usbmouse.elf bin/mousetest.elf=$(BIN_DIR)/mousetest.elf
-EXT2_DEMO_ENTRIES=usr/bin/hello.elf=$(BIN_DIR)/hello.elf usr/bin/plasma.elf=$(BIN_DIR)/plasma.elf usr/bin/mandel.elf=$(BIN_DIR)/mandel.elf
+EXT2_DEMO_ENTRIES=usr/bin/hello.elf=$(BIN_DIR)/hello.elf usr/bin/plasma.elf=$(BIN_DIR)/plasma.elf usr/bin/mandel.elf=$(BIN_DIR)/mandel.elf usr/bin/fractint.elf=$(BIN_DIR)/fractint.elf
 EXT2_TEST_ENTRIES=usr/libexec/tests/ticks.elf=$(BIN_DIR)/ticks.elf usr/libexec/tests/args.elf=$(BIN_DIR)/args.elf usr/libexec/tests/runelf_test.elf=$(BIN_DIR)/runelf_test.elf usr/libexec/tests/readline.elf=$(BIN_DIR)/readline.elf usr/libexec/tests/exec_test.elf=$(BIN_DIR)/exec_test.elf usr/libexec/tests/waitprobe.elf=$(BIN_DIR)/waitprobe.elf usr/libexec/tests/fileread.elf=$(BIN_DIR)/fileread.elf usr/libexec/tests/compiler_demo.elf=$(BIN_DIR)/compiler_demo.elf usr/libexec/tests/heapprobe.elf=$(BIN_DIR)/heapprobe.elf usr/libexec/tests/statprobe.elf=$(BIN_DIR)/statprobe.elf usr/libexec/tests/fileprobe.elf=$(BIN_DIR)/fileprobe.elf usr/libexec/tests/cwdprobe.elf=$(BIN_DIR)/cwdprobe.elf usr/libexec/tests/stdioprobe.elf=$(BIN_DIR)/stdioprobe.elf usr/libexec/tests/dirprobe.elf=$(BIN_DIR)/dirprobe.elf usr/libexec/tests/errnoprobe.elf=$(BIN_DIR)/errnoprobe.elf usr/libexec/tests/badptrprobe.elf=$(BIN_DIR)/badptrprobe.elf usr/libexec/tests/fault.elf=$(BIN_DIR)/fault.elf usr/libexec/tests/sleep_test.elf=$(BIN_DIR)/sleep_test.elf usr/libexec/tests/timerfdprobe.elf=$(BIN_DIR)/timerfdprobe.elf usr/libexec/tests/signalfdprobe.elf=$(BIN_DIR)/signalfdprobe.elf usr/libexec/tests/connectprobe.elf=$(BIN_DIR)/connectprobe.elf usr/libexec/tests/ptrguard.elf=$(BIN_DIR)/ptrguard.elf usr/libexec/tests/spinwkr.elf=$(BIN_DIR)/spinwkr.elf usr/libexec/tests/pgrpprobe.elf=$(BIN_DIR)/pgrpprobe.elf usr/libexec/tests/preempt_test.elf=$(BIN_DIR)/preempt_test.elf usr/libexec/tests/crtprobe.elf=$(BIN_DIR)/crtprobe.elf usr/libexec/tests/displayprobe.elf=$(BIN_DIR)/displayprobe.elf usr/libexec/tests/inputprobe.elf=$(BIN_DIR)/inputprobe.elf usr/libexec/tests/pipeprobe.elf=$(BIN_DIR)/pipeprobe.elf usr/libexec/tests/dupprobe.elf=$(BIN_DIR)/dupprobe.elf usr/libexec/tests/forkprobe.elf=$(BIN_DIR)/forkprobe.elf usr/libexec/tests/execveprobe.elf=$(BIN_DIR)/execveprobe.elf usr/libexec/tests/envprobe.elf=$(BIN_DIR)/envprobe.elf
 EXT2_APP_ENTRIES=$(EXT2_BIN_ENTRIES) $(EXT2_DEMO_ENTRIES) $(EXT2_TEST_ENTRIES)
 EXT2_APP_ENTRIES+= bin/top.elf=$(BIN_DIR)/top.elf
@@ -195,6 +207,8 @@ MAN_PAGE_FILES=$(wildcard man/man*/*)
 MAN_PAGE_ENTRIES=$(foreach page,$(MAN_PAGE_FILES),usr/share/$(page)=$(CURDIR)/$(page))
 EXT2_EXTRA_DIRS=tmp/ var/log/ usr/share/man/man1/ usr/share/man/man2/ usr/share/man/man3/ usr/share/man/man4/ usr/share/man/man5/ usr/share/man/man6/ usr/share/man/man7/ usr/share/man/man8/
 EXT2_EXTRA_ENTRIES=usr/bin/tcc.elf=$(TINYCC_SMALOS_BIN) usr/share/examples/tinycc/tccmath.c=$(CURDIR)/samples/tccmath.c usr/share/examples/tinycc/tccagg.c=$(CURDIR)/samples/tccagg.c usr/share/examples/tinycc/tcctree.c=$(CURDIR)/samples/tcctree.c usr/share/examples/tinycc/tccmini.c=$(CURDIR)/samples/tccmini.c etc/cserve.ini=$(CURDIR)/samples/cserve.ini var/www/index.html=$(CURDIR)/samples/cserve_index.html var/log/boot.txt=$(CURDIR)/samples/boot.txt boot/splash.bmp=$(CURDIR)/assets/boot_splash.bmp $(MAN_PAGE_ENTRIES)
+EXT2_EXTRA_ENTRIES+= usr/share/xfractint/fractint.hlp=$(FRACTINT_DIR)/fractint.hlp
+EXT2_EXTRA_DIRS+= usr/share/xfractint/
 EXT2_EXTRA_FILES=$(foreach entry,$(EXT2_EXTRA_ENTRIES),$(word 2,$(subst =, ,$(entry))))
 
 KERNEL_OBJS=$(patsubst $(SRC_DIR)/%.asm,$(OBJ_DIR)/%.o,$(KERNEL_ASM_SRCS)) \
@@ -206,13 +220,14 @@ USER_SHELL_OBJS=$(OBJ_DIR)/user/shell/app.o
 USER_RUNTIME_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(filter $(USER_DIR)/%.c,$(USER_RUNTIME_SRCS))) \
                  $(patsubst $(USER_DIR)/%.asm,$(OBJ_DIR)/user/%.o,$(filter $(USER_DIR)/%.asm,$(USER_RUNTIME_SRCS)))
 USER_CRT0_OBJ=$(OBJ_DIR)/user/user_crt0.o
-USER_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_PROGS)))
+USER_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_PROGS))) $(BIN_DIR)/fractint.elf
 
 OBJ_SUBDIRS=$(sort \
 	$(dir $(KERNEL_OBJS)) \
 	$(dir $(USER_OBJS)) \
 	$(dir $(GUI_OBJS)) \
 	$(dir $(USER_SHELL_OBJS)) \
+	$(dir $(FRACTINT_OBJS)) \
 )
 
 BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(dir $(IMG_FILE)) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
@@ -233,6 +248,7 @@ deps:
 check-third-party:
 	@if [ ! -f "$(THIRD_PARTY_TINYCC_SENTINEL)" ] || \
 	    [ ! -f "$(THIRD_PARTY_CSERVER_SENTINEL)" ] || \
+	    [ ! -f "$(THIRD_PARTY_FRACTINT_SENTINEL)" ] || \
 	    [ ! -f "$(THIRD_PARTY_FTP_CLIENT_SENTINEL)" ] || \
 	    [ ! -f "$(THIRD_PARTY_FTP_SERVER_SENTINEL)" ]; then \
 		echo "Missing third-party dependencies."; \
@@ -300,6 +316,21 @@ $(CSERVER_OBJ_DIR)/%.o: $(CSERVER_DIR)/src/%.c check-third-party | dirs
 $(CSERVER_BIN): $(CSERVER_OBJS) $(USER_CRT0_OBJ) $(USER_RUNTIME_OBJS) | dirs
 	$(LD) $(USER_LDFLAGS) $^ $(LIBGCC_FILE) -o $@
 
+$(FRACTINT_DIR)/dos_help/helpdefs.h $(FRACTINT_DIR)/fractint.hlp: $(FRACTINT_DIR)/dos_help/help.src $(FRACTINT_DIR)/dos_help/hc.c
+	$(MAKE) -C $(FRACTINT_DIR) fractint.hlp CC=$(HOST_CC) WITHXFT= XFTHFD= OPT="-O2" HELP=help.src
+
+$(FRACTINT_OBJ_DIR)/common/fractint.o: $(FRACTINT_DIR)/common/fractint.c $(FRACTINT_DIR)/dos_help/helpdefs.h Makefile | dirs
+	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -Dmain=fractint_upstream_main -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(FRACTINT_OBJ_DIR)/common/%.o: $(FRACTINT_DIR)/common/%.c $(FRACTINT_DIR)/dos_help/helpdefs.h Makefile | dirs
+	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(FRACTINT_OBJ_DIR)/unix/%.o: $(FRACTINT_DIR)/unix/%.c $(FRACTINT_DIR)/dos_help/helpdefs.h Makefile | dirs
+	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(FRACTINT_OBJ_DIR)/smallos/%.o: $(FRACTINT_DIR)/smallos/%.c $(FRACTINT_DIR)/dos_help/helpdefs.h Makefile | dirs
+	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
 $(BIN_DIR)/crtprobe.elf: $(OBJ_DIR)/user/crtprobe.o $(USER_CRT0_OBJ) $(USER_RUNTIME_OBJS) | dirs
 	$(LD) $(USER_LDFLAGS) $^ -o $@
 
@@ -338,6 +369,9 @@ $(BIN_DIR)/plasma.elf: $(OBJ_DIR)/user/plasma.o $(OBJ_DIR)/user/gfx.o $(USER_RUN
 
 $(BIN_DIR)/mandel.elf: $(OBJ_DIR)/user/mandel.o $(OBJ_DIR)/user/gfx.o $(USER_RUNTIME_OBJS) | dirs
 	$(LD) $(USER_LDFLAGS) $^ -o $@
+
+$(BIN_DIR)/fractint.elf: $(FRACTINT_OBJS) $(USER_CRT0_OBJ) $(OBJ_DIR)/user/gfx.o $(USER_RUNTIME_OBJS) | dirs
+	$(LD) $(USER_LDFLAGS) --gc-sections $^ $(LIBGCC_FILE) -o $@
 
 $(KERNEL_CONFIG_STAMP): FORCE | dirs
 	@cfg='NIC_DRIVER=$(NIC_DRIVER) DISPLAY_BACKEND=$(DISPLAY_BACKEND) SERIAL_CONSOLE=$(SERIAL_CONSOLE) BOOT_RAMDISK_FALLBACK=$(BOOT_RAMDISK_FALLBACK)'; \

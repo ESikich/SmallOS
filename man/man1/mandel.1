@@ -7,4 +7,24 @@ SYNOPSIS
     mandel
 
 DESCRIPTION
-    Starts a graphical Mandelbrot set demo.
+    Starts a graphical Mandelbrot set demo using the SmallOS framebuffer.
+    The rendered fractal is cached in a user-space surface so cursor movement
+    can redraw only the affected rectangle.
+
+KEYS
+    Arrow keys pan the view.
+
+    + and -
+        Zoom in and out.
+
+    r
+        Reset the view.
+
+    q
+        Quit and return to the shell.
+
+MOUSE
+    If a mouse is available, movement controls the on-screen cursor overlay.
+
+SEE ALSO
+    fractint(1), plasma(1), bmpview(1), mousetest(1)

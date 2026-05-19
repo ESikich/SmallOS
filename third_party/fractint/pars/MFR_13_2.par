@@ -1,0 +1,16 @@
+60000-10           { ; New Phoenix
+                      ; Parent Image (one of many)
+                      ; Time 0.00.52.72  Reso 1280/1024
+                      ; Needs the latest update - P1 Input
+   reset=2004 type=formula formulafile=mfr_13.frm
+   formulaname=multifractal_13 function=ident/exp/exp/sin passes=t
+   center-mag=0.251571/0.00268067/0.7526882/1/-95/-3.77822773067748585e-014
+   params=1.918273645546373/4.192837465564739/60000.07005700001/11111.05060\
+   30602/151024.0204808192/14.32768524288/384.00482000595/256.1007683/512.1\
+   007683001/768.2007680082311 float=y maxiter=1024 inside=maxiter
+   periodicity=0 rseed=-2436
+   colors=000B90<3>550340230020010uON<3>YEDSCBM99<2>422BL6<2>151ey2<42>5A04\
+   90380<3>030020010JKXCDM56BQQO<37>244233133<3>011000nOa<3>KAGD6A535cFo<2>\
+   83DH57<3>412101nUn<48>547436335224123<2>000TO2<15>770660450340230020010x\
+   h3<32>CA0
+   }

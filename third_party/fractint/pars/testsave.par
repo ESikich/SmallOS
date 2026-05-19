@@ -1,0 +1,7 @@
+test01             {
+  reset=2004 type=mandel
+  center-mag=-0.99516838747355674/0.29482131119473631/8.627585e+12
+  params=0/0 float=y maxiter=500000 inside=0 logmap=15947
+  colors=@default.map
+  }
+

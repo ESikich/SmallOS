@@ -1,0 +1,38 @@
+Fierce_Fiery_Scene { ; time=0:07:37.14-SF5 on P4-2000
+  reset=2004 type=formula 
+;formulafile=allinone.frm
+  formulaname=MandelbrotBC3 function=ident passes=1
+  center-mag=-0.6634403428163981/-1.406626216391897/\
+  1.641796e+009/1/100/0 params=1.41421/0/4/0 float=y
+  maxiter=1500 inside=0 proximity=0.002
+  outside=fmod periodicity=10
+  colors=0003B`3B`3Ba3Ba4Ba4Ba4Bb4Bb4Bb4Bb4Ac4Ac4Ac5\
+  Ac5Ad5Ad5Ad5Ad5Ae5Ae5Ae5Ae36h48f5Ae5Bd6Dc6Eb7Ga7H`\
+  8JZ9LY9MXAOWAPVBRUBSTCURDWQDXPEZOE_NFaMFbLGdJHfIHg\
+  HIiGIjFJlEIoCJnDJmDJmDKlDKlDKkDLkDLjDLjDMiDMiDMhEN\
+  hENgENgEOfEOfEOeEPeEPdEPdEQcEQcFQbFRbFRaFRaFS`FS`F\
+  S_FT_FTZFTZFTZFU`GVaHWbHXcIYeJZfJ_gK`hKaiLbkMclMdm\
+  NenNfpOgqPhrPisQjtQkvRlwSmxSnyTmzUnzTnySnxSnwRnvQn\
+  uQntPnsOnrOnqNnpMnoMnnLnmKnlKnkJnjIniInhHngGnfGneF\
+  ndEncEnbDt_6r`9paBnaDlbGkcIicKgdNedPdeRbfU`fWZgY_j\
+  Z_l`Yg_WbYUYXSTVQOUOJSLFQMERMERMESNESNESNDTNDTODUO\
+  DUODUODVPCVPCWPCWPCWQCXQCXQBYQBYRBYRBZRBZRBZRA_RA_\
+  RBZSCYTDXVDWWEVXFUYFT_GS`HRaHQbIPdJOeJNfKMhLLiMKjM\
+  JkNImOHnPGpQFrREtSDvTCxUBzUBzUAxTAvSAtRAsQAqQApPAo\
+  OAnOAmNAkMAjMAiLAhKAgKAeJ9dI9cI9bH9aG9`G9ZF9XE9VE9\
+  TD9RC9PC9NB9LAAJ9BIACHADGAEIAFKAGMAHNAIOAJPBKQBLRB\
+  MSBNTBOUBPVBQWBRWCSXCTXCU }
+
+frm:MandelbrotBC3   { ; by several Fractint users
+  e=p1, a=imag(p2)+100
+  p=real(p2)+PI
+  q=2*PI*fn1(p/(2*PI))
+  r=real(p2)+PI-q
+  Z=C=Pixel:
+    Z=log(Z)
+    IF(imag(Z)>r)
+      Z=Z+flip(2*PI)
+    ENDIF
+    Z=exp(e*(Z+flip(q)))+C
+  |Z|<a }
+

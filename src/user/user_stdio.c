@@ -435,15 +435,218 @@ static void append_int64(char** out, size_t* left, long long value, size_t* coun
     append_uint64_dec_parts(out, left, u.parts.hi, u.parts.lo, count);
 }
 
-static const char* consume_decimal_width(const char* fmt, va_list* ap) {
-    if (*fmt == '*') {
-        (void)va_arg(*ap, int);
-        return fmt + 1;
+static void append_uint64_dec(char** out, size_t* left, unsigned long long value,
+                              size_t* count) {
+    union {
+        unsigned long long full;
+        struct {
+            unsigned long lo;
+            unsigned long hi;
+        } parts;
+    } u;
+
+    u.full = value;
+    append_uint64_dec_parts(out, left, u.parts.hi, u.parts.lo, count);
+}
+
+static void append_int_width(char** out, size_t* left, int value, int min_width,
+                             size_t* count) {
+    char tmp[16];
+    int i = 0;
+    unsigned int v = value < 0 ? (unsigned int)-value : (unsigned int)value;
+
+    do {
+        tmp[i++] = (char)('0' + (v % 10u));
+        v /= 10u;
+    } while (v && i < (int)sizeof(tmp));
+    if (value < 0) {
+        tmp[i++] = '-';
     }
-    while (*fmt >= '0' && *fmt <= '9') {
-        fmt++;
+    while (i < min_width && i < (int)sizeof(tmp)) {
+        tmp[i++] = '0';
     }
-    return fmt;
+    while (i > 0) {
+        append_char(out, left, tmp[--i], count);
+    }
+}
+
+static int parse_decimal_field(const char** fmt, va_list* ap, int* present) {
+    int value = 0;
+
+    *present = 1;
+    if (**fmt == '*') {
+        (*fmt)++;
+        return va_arg(*ap, int);
+    }
+    while (**fmt >= '0' && **fmt <= '9') {
+        value = value * 10 + (*((*fmt)++) - '0');
+    }
+    return value;
+}
+
+static double pow10_int(int exp) {
+    double value = 1.0;
+
+    while (exp > 0) {
+        value *= 10.0;
+        exp--;
+    }
+    while (exp < 0) {
+        value /= 10.0;
+        exp++;
+    }
+    return value;
+}
+
+static int double_is_nan(double value) {
+    return value != value;
+}
+
+static int double_is_inf(double value) {
+    return value != 0.0 && value == value / 2.0;
+}
+
+static int decimal_exponent(double value) {
+    int exp = 0;
+
+    if (value == 0.0) {
+        return 0;
+    }
+    while (value >= 10.0) {
+        value /= 10.0;
+        exp++;
+    }
+    while (value < 1.0) {
+        value *= 10.0;
+        exp--;
+    }
+    return exp;
+}
+
+static void append_double_fixed_abs(char** out, size_t* left, double value,
+                                    int frac_digits, int trim,
+                                    size_t* count) {
+    char frac[32];
+    int frac_count = frac_digits;
+    double rounding;
+    unsigned long long whole;
+    double part;
+
+    if (frac_digits < 0) frac_digits = 6;
+    if (frac_digits > (int)sizeof(frac)) frac_digits = (int)sizeof(frac);
+
+    rounding = 0.5 * pow10_int(-frac_digits);
+    value += rounding;
+    whole = (unsigned long long)value;
+    part = value - (double)whole;
+
+    append_uint64_dec(out, left, whole, count);
+
+    for (int i = 0; i < frac_digits; i++) {
+        int digit;
+        part *= 10.0;
+        digit = (int)part;
+        if (digit < 0) digit = 0;
+        if (digit > 9) digit = 9;
+        frac[i] = (char)('0' + digit);
+        part -= digit;
+    }
+
+    if (trim) {
+        while (frac_count > 0 && frac[frac_count - 1] == '0') {
+            frac_count--;
+        }
+    }
+    if (frac_count > 0) {
+        append_char(out, left, '.', count);
+        for (int i = 0; i < frac_count; i++) {
+            append_char(out, left, frac[i], count);
+        }
+    }
+}
+
+static void append_double_scientific_abs(char** out, size_t* left, double value,
+                                         int precision, int uppercase, int trim,
+                                         size_t* count) {
+    int exp;
+    double scaled;
+
+    if (precision < 0) precision = 6;
+    if (precision > 30) precision = 30;
+    if (value == 0.0) {
+        exp = 0;
+        scaled = 0.0;
+    } else {
+        exp = decimal_exponent(value);
+        scaled = value / pow10_int(exp);
+        if (scaled >= 10.0) {
+            scaled /= 10.0;
+            exp++;
+        }
+    }
+
+    append_double_fixed_abs(out, left, scaled, precision, trim, count);
+    append_char(out, left, uppercase ? 'E' : 'e', count);
+    append_char(out, left, exp < 0 ? '-' : '+', count);
+    if (exp < 0) exp = -exp;
+    append_int_width(out, left, exp, 2, count);
+}
+
+static void append_double(char** out, size_t* left, double value, char conv,
+                          int precision, size_t* count) {
+    int uppercase = (conv >= 'A' && conv <= 'Z');
+    double mag = value;
+
+    if (double_is_nan(value)) {
+        append_str(out, left, uppercase ? "NAN" : "nan", count);
+        return;
+    }
+    if (double_is_inf(value)) {
+        if (value < 0.0) append_char(out, left, '-', count);
+        append_str(out, left, uppercase ? "INF" : "inf", count);
+        return;
+    }
+    if (value < 0.0) {
+        append_char(out, left, '-', count);
+        mag = -value;
+    }
+
+    switch (conv) {
+        case 'e':
+        case 'E':
+            append_double_scientific_abs(out, left, mag,
+                                         precision < 0 ? 6 : precision,
+                                         uppercase, 0, count);
+            break;
+        case 'g':
+        case 'G': {
+            int sig = precision < 0 ? 6 : precision;
+            int exp;
+            if (sig == 0) sig = 1;
+            exp = decimal_exponent(mag);
+            if (exp < -4 || exp >= sig) {
+                append_double_scientific_abs(out, left, mag, sig - 1,
+                                             uppercase, 1, count);
+            } else {
+                append_double_fixed_abs(out, left, mag, sig - (exp + 1), 1, count);
+            }
+            break;
+        }
+        case 'a':
+        case 'A':
+            append_str(out, left, uppercase ? "0X" : "0x", count);
+            append_double_scientific_abs(out, left, mag,
+                                         precision < 0 ? 6 : precision,
+                                         uppercase, 0, count);
+            break;
+        case 'f':
+        case 'F':
+        default:
+            append_double_fixed_abs(out, left, mag,
+                                    precision < 0 ? 6 : precision,
+                                    0, count);
+            break;
+    }
 }
 
 static int format_into(char* str, size_t size, const char* fmt, va_list ap) {
@@ -466,10 +669,13 @@ static int format_into(char* str, size_t size, const char* fmt, va_list ap) {
             || *fmt == '0' || *fmt == '\'') {
             fmt++;
         }
-        fmt = consume_decimal_width(fmt, &ap);
+        int field_present = 0;
+        (void)parse_decimal_field(&fmt, &ap, &field_present);
+        int precision = -1;
         if (*fmt == '.') {
             fmt++;
-            fmt = consume_decimal_width(fmt, &ap);
+            precision = parse_decimal_field(&fmt, &ap, &field_present);
+            if (precision < 0) precision = -1;
         }
         int long_long = 0;
         int long_count = 0;
@@ -596,8 +802,8 @@ static int format_into(char* str, size_t size, const char* fmt, va_list ap) {
             case 'G':
             case 'a':
             case 'A':
-                (void)va_arg(ap, double);
-                append_str(&out, &left, "<float>", &count);
+                append_double(&out, &left, va_arg(ap, double), fmt[-1],
+                              precision, &count);
                 break;
             default:
                 append_char(&out, &left, '%', &count);

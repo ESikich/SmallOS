@@ -1,0 +1,77 @@
+Brink_of_Eternity  { ; time=0:00:45.00 SF5 at 2000MHZ
+  reset=2004 type=formula formulafile=basicer.frm
+  formulaname=SliceJulibrot4 center-mag=0/0/0.3569139
+  params=90/0/90/0/-1.8889971/0/0/0/-2/150 float=y
+  maxiter=5000 inside=0 symmetry=xyaxis periodicity=0
+  colors=000zAmluPapTRlXGg`2fb5cc8acA_cDYcGWcIUcLRdY\
+  K9LFANIAPKBRMCTPCVRDXUDZWE`YEb`FdbGfeGhgHjjHllInnJ\
+  pqJrsKtvKvxLl_L00UgZnDptEpsEpsFpsFprFprGprGpqGpqHp\
+  qHppHppIppIpoJpoJpoJpnKpnKpnKpmLpmLpmNqiLpmKopJosz\
+  zuzzwzzzzzrzzpzznzzkzzi000zzezzbzz`zzZzzXzzUzzSzzQ\
+  zzOHELHEJHFHHFFIGBIHDKIFMJH0LUQNdTLdWJdd5_YHdfz`00\
+  ZcHeOPKYTR_VTbXVdZXg`Zib`kdbnfdphfsjhuljwmkumismhq\
+  mfomemmdkmbimagm_emZcmYamW_mVYmTWmSSqRVmRXjRZfRacR\
+  c_RefU00PzdzrFSrESsCRsBRsAQt8Qt7Pt6Pu4Ou3Ov0Pu2Ot3\
+  Os5Or6Nq7Np9NoAMnBMmDMlELkGLjHLiIKhKKgLKfMJeOJdPJc\
+  RIbSIaTI`VH_WHaXDZXHXXLVXPSXTQXXOX`LXdJXhHXlFXpOLh\
+  V8cXA`YCY_EV`GSaIPcKMdMJdMGeNHeOHeOHfo000XUKc3TU5T\
+  W8TXATZDT_FTaITbKTdNTfPTgSTiUTjXTlZTmaTocTqfTrhTti\
+  TuiTwiTwjTxjVvkXulZtm`sRbrMdqHfpCho7in8ij9hfBzz00K\
+  DhWEgSFgOHgKIfGJfCKf8Lf5Fk7Ap99lF9iL9fR9cX8_b8Xh8U\
+  n8Rt8OyBSuEWqHZmKbiMefPib }
+
+frm:SliceJulibrot4   {; draws all slices of Julibrot
+  pix=pixel, u=real(pix), v=imag(pix),
+  a=pi*real(p1*0.0055555555555556),
+  b=pi*imag(p1*0.0055555555555556),
+  g=pi*real(p2*0.0055555555555556),
+  d=pi*imag(p2*0.0055555555555556),
+  ca=cos(a), cb=cos(b), sb=sin(b), cg=cos(g),
+  sg=sin(g), cd=cos(d), sd=sin(d),
+  p=u*cg*cd-v*(ca*sb*sg*cd+ca*cb*sd),
+  q=u*cg*sd+v*(ca*cb*cd-ca*sb*sg*sd),
+  r=u*sg+v*ca*sb*cg, s=v*sin(a), esc=imag(p5)+9
+  c=p+flip(q)+p3, z=r+flip(s)+p4:
+  z=z^(real(p5))+c
+  |z|< esc }
+
+
+New-Year_Surprise  { ; time=0:00:40.00 SF5 at 2000MHZ
+  reset=2004 type=formula formulafile=basicer.frm
+  formulaname=SliceJulibrot4 passes=1
+  center-mag=0/0/0.1128405 params=90/0/90/0/-1.64788\
+  477144322/0/0/0/-4.01/0 float=y maxiter=3200
+  inside=0 symmetry=xaxis periodicity=0
+  colors=000000zz0570450340220110QIWNGTLEQIDNGBKE9HB\
+  8E96B748435212_N8UJ6OF5IB4C72631ZG6TD5NA4H83B52521\
+  NHpIDeDAV96L43ASF2W7tT6oRczP5gM5cK4_I4WG3SD3OB2K92\
+  G61C418204CdrA`m9Xh8Tc7QZ6MU5IP4EK3BF27A135X8BS79O\
+  68K56G45C34822411KpkHieFb_CXUAQO7JI5DC266alRXeNS_K\
+  NUGJODEIA9C6463DaKAUG7MC5F8274aRFXODTLBPIALF8GC6C9\
+  5m00HeHzUzi4b`3VS2NI1F907Pj8Nf7Lb6J_6HW5FS4DP4BL39\
+  I37E25A1371130gSlcPg_McWKZSHVOFQKCMGAHC7D858424AUm\
+  8Qg7Na6KX5GR4DM3AG26B135K35I24H24G24E23D23C13A1291\
+  2812611501401200100sBInAGi9Fe8D`7CW6AS59N47I36E249\
+  13401kRc_KUODKC6AwGcqE_lDWfBTaAPW8LR7IL5EG4AA27513\
+  XeCT`APW9MS8SsCWsCasBisBosAvzAzzAzdRzQftCvsLczOVqI\
+  cqRXqMRqOLqQEqS8qT2oV8nXEmZJl`PjbVid_hfeghkfjpcdn`\
+  _mYUkVPjSJhPEgM8eK3dG2Y9D4D2RA1K61D306Iu7Ei5AY47N2\
+  3B1pDXlCUiBSfAQb9O_8MX8KT7IQ6GN5EJ4CG4AD3892661430\
+  2GL1EJ0DI0CG0BF0AE09C08B0 }
+
+frm:SliceJulibrot4   {; draws all slices of Julibrot
+  pix=pixel, u=real(pix), v=imag(pix),
+  a=pi*real(p1*0.0055555555555556),
+  b=pi*imag(p1*0.0055555555555556),
+  g=pi*real(p2*0.0055555555555556),
+  d=pi*imag(p2*0.0055555555555556),
+  ca=cos(a), cb=cos(b), sb=sin(b), cg=cos(g),
+  sg=sin(g), cd=cos(d), sd=sin(d),
+  p=u*cg*cd-v*(ca*sb*sg*cd+ca*cb*sd),
+  q=u*cg*sd+v*(ca*cb*cd-ca*sb*sg*sd),
+  r=u*sg+v*ca*sb*cg, s=v*sin(a), esc=imag(p5)+9
+  c=p+flip(q)+p3, z=r+flip(s)+p4:
+  z=z^(real(p5))+c
+  |z|< esc }
+
+

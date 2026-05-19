@@ -1,0 +1,43 @@
+SWT-023            { ; color cycle and press "2" for fun    Scott Taylor
+  reset type=mandelfn function=cos symmetry=xyaxis
+  corners=-3.679993/3.681534/-2.759262/2.759003 maxiter=512 inside=255
+  outside=summ potential=255/400/0 colors=@headache.map
+  }
+
+SWT-023a           { ; color cycle and press "2" for fun    Scott Taylor
+  reset type=mandelfn function=cos symmetry=xyaxis
+  corners=-3.679993/3.681534/-2.759262/2.759003 maxiter=512 inside=255
+  outside=summ potential=255/400/0 colors=@froth316.map
+  }
+
+SWT-027            { ; magnet2m                             Scott Taylor
+  reset type=magnet2m passes=t symmetry=xaxis
+  corners=-4.552174/6.752174/-4.239131/4.239131 maxiter=512 inside=255
+  outside=summ potential=255/400/0 colors=@headache.map
+  }
+
+SWT-027a           { ; magnet2m                             Scott Taylor
+  reset type=magnet2m passes=t symmetry=xaxis
+  corners=-4.552174/6.752174/-4.239131/4.239131 maxiter=512 inside=255
+  outside=summ potential=255/400/0 colors=@firestrm.map
+  }
+
+SWT-027b          { ; magnet2m                             Scott Taylor
+  reset type=magnet2m passes=t symmetry=xaxis
+  corners=-4.552174/6.752174/-4.239131/4.239131 maxiter=512 inside=255
+  outside=summ potential=255/400/0 colors=@headach2.map
+  }
+
+SWT-029            { ; lambdafn, EXP                        Scott Taylor
+  reset type=lambdafn function=exp symmetry=xaxis
+  corners=-4.340851/4.336975/-3.250305/3.254669 params=1.9/0.4 maxiter=512
+  inside=255 potential=255/455/0 colors=@royal.map
+  }
+
+SWT-029a            { ; lambdafn, EXP                        Scott Taylor
+  reset type=lambdafn function=exp symmetry=xaxis
+  corners=-4.340851/4.336975/-3.250305/3.254669 params=1.9/0.4 maxiter=512
+  inside=255 potential=255/455/0 colors=@headache.map
+  }
+
+

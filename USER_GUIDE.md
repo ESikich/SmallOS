@@ -308,10 +308,31 @@ Graphics and input demos work best with `make run-gtk` or `make run-sdl`:
 ```text
 plasma
 mandel
+fractint
 bmpview /boot/splash.bmp
 mousetest
 gui
 ```
+
+`fractint` is the upstream Xfractint 20.04p16 codebase running through a
+SmallOS framebuffer adapter. With no arguments it starts a Mandelbrot image in
+the built-in `video=F2` mode, using `inside=0` so the Mandelbrot interior is
+black:
+
+```text
+fractint
+fractint type=newton maxiter=80
+fractint type=complexnewton maxiter=80
+fractint type=julia params=-0.74543,0.11301
+```
+
+The port uses Fractint's normal upstream renderer and keyboard/menu flow. The
+SmallOS wrapper supplies a 1024x768 256-color indexed framebuffer mode,
+keyboard polling, minimal Unix/X compatibility shims, and the generated help
+database at `/usr/share/xfractint/fractint.hlp`. Fractint still owns the
+256-entry palette; the adapter converts Fractint's VGA DAC values to the
+XRGB8888 pixels used by the SmallOS display syscall. Press `Q` to leave the
+framebuffer view.
 
 The GUI opens a desktop with Files, Shell, System, Config, About, and Quit
 icons. Shell windows run real child shells through PTYs. The Config window can

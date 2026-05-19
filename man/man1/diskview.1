@@ -7,4 +7,12 @@ SYNOPSIS
     diskview
 
 DESCRIPTION
-    Displays a graphical view of ext2 disk usage and free space.
+    Displays a graphical view of ext2 disk usage and free space using the
+    SmallOS framebuffer.  Allocated and free block regions are drawn from the
+    mounted filesystem's allocation map.
+
+KEYS
+    Press any key to close the view and return to the shell.
+
+SEE ALSO
+    bmpview(1), fsread(1), meminfo(1)

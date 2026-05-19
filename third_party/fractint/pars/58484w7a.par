@@ -1,0 +1,78 @@
+58484-w7a { ; mmods-magnet-manowar-magnetwarp-manowarwarp
+; inside2 and inside3 warped
+; Time 0.0.21.81
+reset=2004 type=formula formulafile=mfr_12.frm
+formulaname=multifractal_12 function=sin/exp/tan/cosh passes=t
+center-mag=-470.403/0.00308737/28.60959/1/-90/-1.23373533611470521e-014
+params=1.42593798638874/0.444792016357921/58484.09595701157/51222.050603\
+0602/150248.0404808025/384.1604894022/384.00482000595/1280.1000763001/19\
+20.1002393001/2560.1003293001 float=y maxiter=3072 inside=maxiter
+outside=tdis logmap=yes periodicity=0 rseed=-2436
+colors=000cA4<10>n89o89p8A<3>t8Bu8Bw7Cw8Dv8Dv9E<5>xAVxAXxA_<3>zCjzCmzCmz\
+CmzzzYXc<3>JhnFkqBnt7qw<15>KGaLE`MBZ<2>P4VQ1TT4U<3>bGZdK_gN`<3>r_f<3>ggP\
+eiKbkF<2>Uq1Xq2_q4<3>MU7JO7FI8<2>40B<3>50E50F50G50H00E<2>A8TEHaIQj3Yqbe_\
+FYI0L0<3>yrB<3>yB3z00t60<3>UY0Nd0Gk0<2>ns1zz0<3>zI4z66w67<3>h3Fe2Ha1JY0L\
+<3>t8qzAzuAv<3>ZEdTE`OFX<2>6IJ<3>YcMdiMknNrtOzzP<3>`_QVTQOMRIFRB8S<3>8Yk\
+7dp6ku5rz<3>6go6dl7bj<3>8R_8OX9LU9IR<6>8YG8_F8bD<3>6k76n56p35s25u0<3>5c0\
+5Z05U0<3>5B0<3>UY0`b0fh0<2>zz0<6>oc1m`1lX1<2>hN3fK3dH3bE3`A3aA3bA4
+}
+
+test case          { ; mmods-magnet-manowar-magnetwarp-manowarwarp
+                     ; inside2 and inside3 warped
+                     ; Time 0.0.21.81
+  reset=2004 type=formula formulafile=MFR_12.frm
+  formulaname=multifractal_12 function=sin/exp/tan/cosh
+  center-mag=0/0/0.6666667
+  params=1.42593798638874/0.44479201635792098/58484.095957011566/51222.050\
+  603060197/150248.04048080251/384.16048940220003/384.00482000595002/1280.\
+  1000763001/1920.1002393000999/2560.1003293000999 float=y
+  maxiter=3072 inside=maxiter outside=tdis logmap=yes periodicity=0
+  rseed=-2436
+  colors=000cA4<13>q8Ar8Bs8Bt8Bu8Bw7Cw8Dv8Dv9E<5>xAVxAXxA_<3>zCjzCmzCmzCmz\
+  zzYXc<3>JhnFkqBnt7qw<15>KGaLE`MBZ<2>P4VQ1TT4U<3>bGZdK_gN`<3>r_f<3>ggPeiK\
+  bkF<2>Uq1Xq2_q4<3>MU7JO7FI8<2>40B<3>50E50F50G50H00E<2>A8TEHaIQj3Yqbe_FYI\
+  0L0<3>yrB<3>yB3z00t60<3>UY0Nd0Gk0<2>ns1zz0<3>zI4z66w67<3>h3Fe2Ha1JY0L<3>\
+  t8qzAzuAv<3>ZEdTE`OFX<2>6IJ<3>YcMdiMknNrtOzzP<3>`_QVTQOMRIFRB8S<3>8Yk7dp\
+  6ku5rz<3>6go6dl7bj<3>8R_8OX9LU9IR<6>8YG8_F8bD<3>6k76n56p35s25u0<3>5c05Z0\
+  5U0<3>5B0<3>UY0`b0fh0<2>zz0<6>oc1m`1lX1<2>hN3fK3dH3bE3`A3aA3bA4
+  }
+
+test2              { ; mmods-magnet-manowar-magnetwarp-manowarwarp
+                     ; inside2 and inside3 warped
+                     ; Time 0.0.21.81
+  reset=2004 type=formula formulafile=MFR_12.frm
+  formulaname=multifractal_12 function=ident/ident/ident/ident
+  center-mag=0/0/0.6666667
+  params=1.42593798638874/0.44479201635792098/58484.095957011566/51222.050\
+  603060197/150248.04048080251/384.16048940220003/384.00482000595002/1280.\
+  1000763001/1920.1002393000999/2560.1003293000999 float=y
+  maxiter=3072 inside=maxiter outside=tdis logmap=yes periodicity=0
+  rseed=-2436
+  colors=000cA4<10>n89o89p8A<3>t8Bu8Bw7Cw8Dv8Dv9E<5>xAVxAXxA_<3>zCjzCmzCmz\
+  CmzzzYXc<3>JhnFkqBnt7qw<15>KGaLE`MBZ<2>P4VQ1TT4U<3>bGZdK_gN`<3>r_f<3>ggP\
+  eiKbkF<2>Uq1Xq2_q4<3>MU7JO7FI8<2>40B<3>50E50F50G50H00E<2>A8TEHaIQj3Yqbe_\
+  FYI0L0<3>yrB<3>yB3z00t60<3>UY0Nd0Gk0<2>ns1zz0<3>zI4z66w67<3>h3Fe2Ha1JY0L\
+  <3>t8qzAzuAv<3>ZEdTE`OFX<2>6IJ<3>YcMdiMknNrtOzzP<3>`_QVTQOMRIFRB8S<3>8Yk\
+  7dp6ku5rz<3>6go6dl7bj<3>8R_8OX9LU9IR<6>8YG8_F8bD<3>6k76n56p35s25u0<3>5c0\
+  5Z05U0<3>5B0<3>UY0`b0fh0<2>zz0<6>oc1m`1lX1<2>hN3fK3dH3bE3`A3aA3bA4
+  }
+
+58484-w7a_test_mfr_13 { ; mmods-magnet-manowar-magnetwarp-manowarwarp
+; inside2 and inside3 warped
+; Time 0.0.21.81
+reset=2004 type=formula formulafile=mfr_13.frm
+formulaname=multifractal_13 function=sin/exp/tan/cosh passes=t
+center-mag=-470.403/0.00308737/28.60959/1/-90/-1.23373533611470521e-014
+params=1.42593798638874/0.444792016357921/58484.09595701157/51222.050603\
+0602/150248.0404808025/384.1604894022/384.00482000595/1280.1000763001/19\
+20.1002393001/2560.1003293001 float=y maxiter=3072 inside=maxiter
+outside=tdis logmap=yes periodicity=0 rseed=-2436
+colors=000cA4<10>n89o89p8A<3>t8Bu8Bw7Cw8Dv8Dv9E<5>xAVxAXxA_<3>zCjzCmzCmz\
+CmzzzYXc<3>JhnFkqBnt7qw<15>KGaLE`MBZ<2>P4VQ1TT4U<3>bGZdK_gN`<3>r_f<3>ggP\
+eiKbkF<2>Uq1Xq2_q4<3>MU7JO7FI8<2>40B<3>50E50F50G50H00E<2>A8TEHaIQj3Yqbe_\
+FYI0L0<3>yrB<3>yB3z00t60<3>UY0Nd0Gk0<2>ns1zz0<3>zI4z66w67<3>h3Fe2Ha1JY0L\
+<3>t8qzAzuAv<3>ZEdTE`OFX<2>6IJ<3>YcMdiMknNrtOzzP<3>`_QVTQOMRIFRB8S<3>8Yk\
+7dp6ku5rz<3>6go6dl7bj<3>8R_8OX9LU9IR<6>8YG8_F8bD<3>6k76n56p35s25u0<3>5c0\
+5Z05U0<3>5B0<3>UY0`b0fh0<2>zz0<6>oc1m`1lX1<2>hN3fK3dH3bE3`A3aA3bA4
+}
+

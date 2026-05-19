@@ -1,0 +1,47 @@
+FRACTINT(1)
+
+NAME
+    fractint - run upstream Fractint/Xfractint on the framebuffer
+
+SYNOPSIS
+    fractint [fractint-options]
+
+DESCRIPTION
+    Starts the SmallOS port of upstream Xfractint 20.04p16.  The port uses the
+    SmallOS framebuffer as a 1024x768 indexed 256-color video mode and ships
+    the generated Fractint help database in /usr/share/xfractint/fractint.hlp.
+
+    With no options, SmallOS supplies a default Mandelbrot command line:
+    video=F2 type=mandel passes=1 maxiter=150 inside=0.
+
+EXAMPLES
+    Fractint options are the upstream options, for example:
+
+        fractint type=newton maxiter=80
+        fractint type=complexnewton maxiter=80
+        fractint type=julia params=-0.74543,0.11301
+
+FILES
+    /usr/share/xfractint/fractint.hlp
+        Generated upstream help database.
+
+    /usr/share/xfractint
+        Fractint data directory.  The current image stages the help database
+        here; upstream parameter sets, maps, and L-system definitions live in
+        the source tree but are not installed into the guest image yet.
+
+KEYS
+    Fractint keeps its classic keyboard interface.  Press Q to leave the
+    framebuffer view in the SmallOS port.  Menus and type-specific prompts use
+    the normal Fractint keyboard flow.
+
+NOTES
+    SmallOS keeps Fractint's normal renderers.  The experimental adaptive
+    triangle renderer was removed; use the standard Fractint pass modes.
+
+    Fractint still owns its 256-entry palette.  The SmallOS adapter keeps an
+    indexed shadow pixel plane, converts Fractint/VGA DAC values to XRGB8888
+    when drawing, and recolors the framebuffer when the palette changes.
+
+SEE ALSO
+    mandel(1), plasma(1), bmpview(1), smallos(7)

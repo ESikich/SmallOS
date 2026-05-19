@@ -648,11 +648,12 @@ representative shape rather than the complete invocation.
 
 `mkext2` produces a raw ext2 volume containing the shipped apps under
 `bin/`, `usr/bin/`, `usr/libexec/tests/`, `usr/sbin/`, plus manual/config/data
-trees such as `/usr/share/man/`, `/etc/`, `/var/`, and `/tmp/`. The image also seeds
-`/var/log/boot.txt` from `samples/boot.txt`; the kernel overwrites that file
-with the current boot diagnostics after ext2 mounts. DHCP, NTP, and default
-service startup may continue while the splash is visible; those quiet-path
-messages are display-suppressed but still appended to the same boot log.
+trees such as `/usr/share/man/`, `/usr/share/xfractint/`, `/etc/`, `/var/`,
+and `/tmp/`. The image also seeds `/var/log/boot.txt` from
+`samples/boot.txt`; the kernel overwrites that file with the current boot
+diagnostics after ext2 mounts. DHCP, NTP, and default service startup may
+continue while the splash is visible; those quiet-path messages are
+display-suppressed but still appended to the same boot log.
 
 Shipped ext2 programs:
 - `bin/echo` - print command arguments
@@ -685,6 +686,7 @@ Shipped ext2 programs:
 - `usr/bin/hello` - print argc/argv and tick count
 - `usr/bin/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
 - `usr/bin/mandel` - interactive Mandelbrot demo with arrow-key pan, +/- zoom, reset/quit keys, and mouse cursor movement
+- `usr/bin/fractint` - upstream Xfractint 20.04p16 port using the SmallOS indexed-color framebuffer adapter, Fractint's normal renderers, and `/usr/share/xfractint/fractint.hlp`
 - `usr/libexec/tests/ticks` - print the current tick count
 - `usr/libexec/tests/args` - print argc and argv
 - `usr/libexec/tests/runelf_test` - verify ELF loading, syscalls, and stack setup
@@ -725,6 +727,7 @@ Shipped ext2 programs:
 * `usr/sbin/` contains guest service ELFs
 * `usr/bin/` contains the guest TinyCC binary and user-facing demos/tools
 * `usr/share/man/` contains plain-text manual pages installed from repository `man/man*/`
+* `usr/share/xfractint/` currently contains the generated Fractint help database. The upstream source tree also has Fractint parameter sets, maps, and L-system definitions under `third_party/fractint/`, but those data files are not staged into the guest image yet
 * `usr/share/examples/tinycc/` contains the shipped TinyCC sample inputs
 * runtime-generated compiler outputs and scratch artifacts belong under `/var/tmp/`
 * filenames are stored as native case-sensitive ext2 names

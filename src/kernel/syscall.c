@@ -2320,7 +2320,12 @@ static int sys_display_info_impl(sys_display_info_t* out_info) {
 
 static int sys_display_acquire_impl(void) {
     process_t* proc = (process_t*)sched_current();
-    return display_acquire(proc) ? 0 : -EIO;
+    if (!display_acquire(proc)) {
+        return -EIO;
+    }
+    keyboard_buf_clear();
+    input_clear_events();
+    return 0;
 }
 
 static int sys_display_release_impl(void) {

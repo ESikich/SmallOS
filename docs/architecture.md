@@ -449,6 +449,25 @@ used/free allocation map, and `usr/bin/plasma` uses it as a simple animated
 graphics smoke demo. `usr/bin/mandel` uses the same helper for an interactive
 Mandelbrot view and polls `SYS_MOUSE_READ` for cursor deltas.
 
+`usr/bin/fractint` is built from upstream Xfractint 20.04p16. The SmallOS port
+keeps Fractint's normal calculation engines and classic keyboard/menu behavior,
+while the adapter layer supplies a fixed 1024x768 indexed framebuffer video
+mode, minimal Unix/X shims, keyboard polling, math/libc compatibility glue, and
+the generated Fractint help file under `/usr/share/xfractint`.
+
+The framebuffer path deliberately stays indexed-color rather than translating
+Fractint into a native truecolor renderer. Plotting stores the Fractint color
+index in a shadow pixel plane, writes the corresponding XRGB8888 value into the
+SmallOS `gfx` backbuffer, and recolors the screen when Fractint rewrites the
+DAC palette. Palette channels are treated as Fractint/VGA 6-bit DAC values and
+expanded at the adapter boundary; preloaded palettes and `map=` state are not
+overwritten by the default palette initializer.
+
+Only the generated help database is currently staged into the guest image. The
+upstream source tree also contains parameter sets, maps, and L-system
+definitions under `third_party/fractint/`; adding those to `/usr/share/xfractint`
+is a filesystem-staging task, not a renderer change.
+
 ## Shell
 
 ```text

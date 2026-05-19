@@ -24,6 +24,7 @@ void _start(int argc, char** argv) {
 
     int ok = 1;
     char buf[16];
+    char fmtbuf[80];
 
     puts("stdioprobe start");
 
@@ -63,6 +64,14 @@ void _start(int argc, char** argv) {
         puts("stdio write+fflush: PASS");
     }
     unlink("stdioprobe.tmp");
+
+    snprintf(fmtbuf, sizeof(fmtbuf), "%.7g %g %.2f %.2e", 0.02, 15.0, 1.25, 1200.0);
+    if (strcmp(fmtbuf, "0.02 15 1.25 1.20e+03") != 0) {
+        puts("stdio float format: FAIL");
+        ok = 0;
+    } else {
+        puts("stdio float format: PASS");
+    }
 
     in = fopen("usr/bin/hello.elf", "r");
     if (!in || fwrite("x", 1, 1, in) != 0 || !ferror(in)) {

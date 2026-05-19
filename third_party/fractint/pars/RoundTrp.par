@@ -1,0 +1,30 @@
+50806-03           { ; Round Trip
+                      ; ManyMods-Magnet-Phoenix
+                      ; Time 0.47.52.77  Reso 1280/1024
+   reset=2004 type=formula formulafile=mfr_13.frm
+   formulaname=multifractal_13 function=sin/sin/cabs/sin passes=t
+   center-mag=0.0144611/0.0224829/0.3767869/0.7
+   params=1.123456789123456/0/50806.06595760012/50402.0506020602/152048.040\
+   4808001/384.16048940221/384.00482000595/256.21111100112/384.1003003001/5\
+   12.1007683001 float=y maxiter=3072 inside=maxiter periodicity=0
+   rseed=-2436
+   colors=000faS<3>VMCRI8OE4KA0000<43>000<4>000330<6>220220220<3>110000110<\
+   2>000KA4<7>gcOjgRmjT<3>zzc<9>UOFRKDOGA<3>A00<9>f0Ci0Dl0F<3>z0K<6>Z0EV0DR\
+   0C<3>A08004000<26>000<4>000<9>X0a_0dc0h<3>p0w<4>_0dX0aU0Y<2>K0NH0JG0NE1R\
+   <3>7UX6`Z4h_2oa0wc<11>2TG2RE3OC<2>4G54D36F5<16>kkammcpoe<3>zwm<4>jdV
+   }
+
+50806-03a           { ; Round Trip
+                      ; ManyMods-Magnet-Phoenix
+                      ; Time 0.47.52.77  Reso 1280/1024
+   reset=2004 type=formula formulafile=mfr_13.frm
+   formulaname=multifractal_13 function=sin/sin/cabs/sin passes=t
+   center-mag=0.0144611/0.0224829/0.3767869/0.7
+   params=1.123456789123456/0/50806.06595760012/50402.0506020602/152048.040\
+   4808001/384.16048940221/384.00482000595/256.21111100112/384.1003003001/5\
+   12.1007683001 float=y maxiter=3072 inside=maxiter periodicity=0
+   colors=000faS<3>VMCRI8OE4KA0000<43>000<4>000330<6>220220220<3>110000110<\
+   2>000KA4<7>gcOjgRmjT<3>zzc<9>UOFRKDOGA<3>A00<9>f0Ci0Dl0F<3>z0K<6>Z0EV0DR\
+   0C<3>A08004000<26>000<4>000<9>X0a_0dc0h<3>p0w<4>_0dX0aU0Y<2>K0NH0JG0NE1R\
+   <3>7UX6`Z4h_2oa0wc<11>2TG2RE3OC<2>4G54D36F5<16>kkammcpoe<3>zwm<4>jdV
+   }

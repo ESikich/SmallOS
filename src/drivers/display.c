@@ -25,6 +25,9 @@ int display_acquire(process_t* owner) {
         return 0;
     }
 
+    if (!s_display_owner) {
+        terminal_set_display_enabled(0);
+    }
     s_display_owner = owner;
     return 1;
 }
@@ -35,6 +38,7 @@ void display_release(process_t* owner) {
     }
 
     s_display_owner = 0;
+    terminal_set_display_enabled(1);
     terminal_clear();
 }
 

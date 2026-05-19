@@ -1,0 +1,60 @@
+80000-42           { ; Vortex
+                      ; Lambda
+                      ; P1-Sin-Exp
+                      ; Time 0.52.50.63  Reso 1280/1024
+   reset=2004 type=formula formulafile=mfr_13.frm
+   formulaname=multifractal_13 function=exp/sin/exp/sin passes=t
+   center-mag=-0.0606262/0.0140242/1.06411/1/-105.000000000000014/3.8857805\
+   8618804789e-016
+   params=0.002303231910153506/-0.2119855342265083/80000.32590150023/25234.\
+   0506030602/150015.0404808048/1000.1604894048/1000.00482000595/256.110008\
+   3/512.1100083001/512.1100083001 float=y maxiter=1424 inside=maxiter
+   periodicity=0 rseed=-2436
+   colors=000c0B<3>p0Gs0Iw0Jz0K<6>Z0EV0DR0C<3>A08004000<26>000<4>000<7>Q0UU\
+   0YX0a_0dc0hf0l<2>p0w<4>_0dX0aU0Y<2>K0NH0JG0NE1R<3>7UX6`Z4h_2oa0wc<10>2WI\
+   2TG2RE<3>4G54D36F5<16>kkammcpoe<3>zwm<3>mhZjdVfaS<3>VMCRI8OE4KA0000<43>0\
+   00<4>000330<6>220220220<3>110000110<2>000KA4<7>gcOjgRmjT<3>zzc<9>UOFRKDO\
+   GA<3>A00<7>_0A
+   }
+
+
+80000-44           { ; Vortex 2
+                      ; Lambda
+                      ; Time 0.14.15.08  Reso 1280/1024
+                      ; 8000-42 Vortex Image - Warp Effect applied
+   reset=2004 type=formula formulafile=mfr_13.frm
+   formulaname=multifractal_13 function=flip/sin/exp/sin passes=t
+   center-mag=-0.0606262/0.0140242/1.06411/1/-105.000000000000014/3.8857805\
+   8618804789e-016
+   params=0.002303231910153506/-0.2119855342265083/80000.32590100024/25234.\
+   0506030602/150015.0404808048/24.1604894048/1000.00482000595/256.1100083/\
+   512.1100083001/512.1100083001 float=y maxiter=1424 inside=maxiter
+   periodicity=0 rseed=-2436
+   colors=000<3>00000000800D00I00B000<16>000<4>000330<2>33022D220<6>1101100\
+   00110<2>000KA4<7>gcOjgRmjT<3>zzc<9>UOFRKDOGA<3>A00<9>f0Ci0Dl0F<3>z0K<6>Z\
+   0EV0DR0C<3>A08004000<26>000<4>000<2>A0B000H0J<4>X0a_0dc0h<3>p0w<4>_0dX0a\
+   U0Y<2>K0NH0JG0NE1R<3>7UX6`Z4h_2oa0wc<10>2WI2TG2RE<3>4G54D36F5<16>kkammcp\
+   oe<3>zwm<3>mhZjdVfaS<3>VMCRI8OE4KA0000<16>000
+   }
+
+50008-10           { ; Circles and Stripes
+                      ; ManyMods-Magnet
+                      ; Time 0.26.23.77  Reso 1280/1024
+                      ; Color compression by the Warp Effect
+   reset=2004 type=formula formulafile=mfr_13.frm
+   formulaname=multifractal_13 function=cabs/sin/exp/sin passes=t
+   center-mag=0.00173221/0.0224829/7.535738/0.7
+   params=1.123456789123456/0/50008.065957/50402.0506020602/152048.04048080\
+   01/24.160489402209/384.00482000595/256.11111100112/384.11111100001/2048.\
+   11111107592 float=y maxiter=3072 inside=maxiter periodicity=0
+   rseed=-2436
+   colors=000LOr<3>_5fc0ce7_jFRoNIzb0zj0000zr0zz1zzC<2>zzz<3>jqdfo_blU<3>Mb\
+   8<3>LQ8KM8KJ8<2>I88H44G00<3>TA5WD6ZF7aI8eLAhMBiODjQF<3>qeBriAtm9vq8xu7zz\
+   5zz4zz3<4>zj4zg4zc4<3>zS5zP5zL6zI6zE6wE6tD6<6>vAIv9Kv9M<3>x7Sy7Uy6Wz6Yz5\
+   _<3>f5Ma5IW4E<2>_4H<3>P3DN2CK2A<3>805G0BO0G<3>g0Ul0Xq0`v0d<2>y0fz0gy0h<3\
+   >u1mt1ns1or2q<2>v2u<3>c5eZ6`U6X<2>F9LAAG7FO4KW0Qc<3>5Xc6Zc7`c7aa7c_7eY<3\
+   >FcgHciJbl<3>S_v<3>civflvinvlqvotvsww<2>zzz<3>rwzovzhsw<3>Gch8_d8Xa<3>8J\
+   P8FL8CI<3>SCCXCAaB9<3>uA2zA0xA0<12>SA1QA1NA1<3>D92<6>UXAW`BYcC<3>hrI<3>U\
+   nXRm_NlcJkgFfpAazEXwITu
+   }
+

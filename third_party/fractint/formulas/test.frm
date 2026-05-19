@@ -1,0 +1,36 @@
+DiodeRLC float=y {
+ f = 1/real(p1)
+ z = pixel
+ x = real(z)
+ y = imag(z)
+ p = 0.39757
+ h = 0.71743
+ s = -1
+ R = 1
+ L =0.001
+ C1 = 10^(-6)
+ KT = ((1.3806485279) * 10^(-23)) * 270
+ twopi = 2 * pi
+ q1 = (1.602176620898) * 10^(-19)
+ Id = 10^(-12) 
+ a1 = q1/(KT)
+ b1 = (KT)/(q1*C1*L)
+ b2 = (KT)/(Id*q1*L)
+ b3 = R/L
+ t1 = 0
+:
+ v = 100*sin(twopi*t1)
+ q = exp( s*a1*x )
+ u = y
+ w = s*a1*y*y + s*b2*q*y + s*b3*y + b2*q*v + b1*q + s*b1
+ a = x+p*u
+ b = y+p*w
+ q = exp( s*a1*a )
+ c = x+h*(u+b)
+ d = y + h*(w + s*a1*b*b + s*b2*q*b + s*b3*b + b2*q*v + b1*q + s*b1)
+ x = c
+ y = d
+ t1 = t1 + f
+ z = x*x + y*y
+ t1 < maxit ; loops until t1 is >= maxit
+}
