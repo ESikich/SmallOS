@@ -334,6 +334,12 @@ database at `/usr/share/xfractint/fractint.hlp`. Fractint still owns the
 XRGB8888 pixels used by the SmallOS display syscall. Press `Q` to leave the
 framebuffer view.
 
+Fractint support files are staged under `/usr/share/xfractint`, including
+color maps, parameter sets, formulas, L-system definitions, and IFS
+definitions. They are installed flat at that search root because upstream
+Fractint PAR and menu entries usually refer to names such as `altern.map`
+directly.
+
 The GUI opens a desktop with Files, Shell, System, Config, About, and Quit
 icons. Shell windows run real child shells through PTYs. The Config window can
 toggle the GUI perf readout; on writable ATA-backed boots the setting is saved

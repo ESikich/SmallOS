@@ -463,10 +463,11 @@ DAC palette. Palette channels are treated as Fractint/VGA 6-bit DAC values and
 expanded at the adapter boundary; preloaded palettes and `map=` state are not
 overwritten by the default palette initializer.
 
-Only the generated help database is currently staged into the guest image. The
-upstream source tree also contains parameter sets, maps, and L-system
-definitions under `third_party/fractint/`; adding those to `/usr/share/xfractint`
-is a filesystem-staging task, not a renderer change.
+Fractint looks for support files by filename under `SRCDIR`, which the SmallOS
+build sets to `/usr/share/xfractint`. The guest image stages the generated help
+database plus upstream maps, parameter sets, formulas, L-systems, and IFS files
+flat in that directory so PAR entries such as `map=altern.map` resolve without
+requiring DOS-era subdirectory assumptions.
 
 ## Shell
 

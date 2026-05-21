@@ -26,9 +26,10 @@ FILES
         Generated upstream help database.
 
     /usr/share/xfractint
-        Fractint data directory.  The current image stages the help database
-        here; upstream parameter sets, maps, and L-system definitions live in
-        the source tree but are not installed into the guest image yet.
+        Fractint data directory.  The image stages the help database plus
+        upstream maps, parameter sets, formulas, L-system definitions, and IFS
+        definitions flat in this directory so names such as altern.map resolve
+        through Fractint's normal search path.
 
 KEYS
     Fractint keeps its classic keyboard interface.  Press Q to leave the

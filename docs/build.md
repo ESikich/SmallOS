@@ -727,7 +727,7 @@ Shipped ext2 programs:
 * `usr/sbin/` contains guest service ELFs
 * `usr/bin/` contains the guest TinyCC binary and user-facing demos/tools
 * `usr/share/man/` contains plain-text manual pages installed from repository `man/man*/`
-* `usr/share/xfractint/` currently contains the generated Fractint help database. The upstream source tree also has Fractint parameter sets, maps, and L-system definitions under `third_party/fractint/`, but those data files are not staged into the guest image yet
+* `usr/share/xfractint/` contains the generated Fractint help database plus upstream maps, parameter sets, formulas, L-system definitions, and IFS definitions staged flat at the Fractint search root
 * `usr/share/examples/tinycc/` contains the shipped TinyCC sample inputs
 * runtime-generated compiler outputs and scratch artifacts belong under `/var/tmp/`
 * filenames are stored as native case-sensitive ext2 names
