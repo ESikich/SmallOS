@@ -10,3 +10,6 @@
 [submodule "third_party/ftp_server"]
 	path = third_party/ftp_server
 	url = https://github.com/ESikich/ftp_server.git
+[submodule "third_party/fractint"]
+	path = third_party/fractint
+	url = https://github.com/LegalizeAdulthood/fractint.git

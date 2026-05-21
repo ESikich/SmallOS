@@ -468,9 +468,9 @@ pieces live in `src/user/libc/` and build `libc.a`,
 math lives in `src/user/libm/` and builds `libm.a`, and POSIX APIs that depend
 on descriptors or timers live in `src/user/posix/` and build `libposix.a`.
 Fractint's common sources compile against public headers from
-`src/user/include/`; the vendored `third_party/fractint` tree is not modified
-for SmallOS compatibility. The SmallOS adapter also compiles against the public
-header surface rather than raw `src/user/internal/` helpers.
+`src/user/include/`; the upstream `third_party/fractint` submodule is not
+modified for SmallOS compatibility. The SmallOS adapter also compiles against
+the public header surface rather than raw `src/user/internal/` helpers.
 The generated Fractint help file is installed under `/usr/share/xfractint`.
 
 The framebuffer path deliberately stays indexed-color rather than translating

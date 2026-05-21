@@ -92,7 +92,8 @@ wrappers in `src/user/posix`.
   * Added `term_keys.h` for decoded raw keyboard controls and terminal-size queries, and moved ordinary full-screen programs off private ANSI escape parsers or local raw-key polling helpers.
   * Routed GUI cursor and drag-overlay presentation through `gfx_present_surface()` instead of direct display syscall calls in the GUI app.
 * **Fractint as a runtime completeness port** (`Makefile`, `src/user/ports/fractint/runtime.c`, `man/man1/fractint.1`, `USER_GUIDE.md`, `docs/`)
-  * Moved all SmallOS-owned Fractint glue out of the vendored tree and into `src/user/ports/fractint`, deleting the old `third_party/fractint/smallos` glue directory.
+  * Moved all SmallOS-owned Fractint glue out of the upstream tree and into `src/user/ports/fractint`, deleting the old `third_party/fractint/smallos` glue directory.
+  * Converted the upstream Xfractint source from tracked files into a normal `third_party/fractint` submodule pinned at the 20.04p16 upstream tag.
   * Built upstream Xfractint sources against the public SmallOS header/runtime surface, with the port adapter also avoiding `src/user/internal` helpers.
   * Kept Fractint's upstream renderers, menus, keyboard flow, and 256-entry palette model; the adapter supplies only the indexed framebuffer/video table, key translation, palette bridge, and classic text screen-stack behavior.
   * Staged the generated help database, `sstools.ini`, maps, parameter sets, formulas, L-system definitions, and IFS data under `/usr/share/xfractint`, both at the search root and in canonical upstream subdirectories.

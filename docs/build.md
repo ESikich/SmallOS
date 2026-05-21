@@ -587,10 +587,10 @@ also carries the small BSD/Unix compatibility names needed by older ports,
 including `<strings.h>`, `<malloc.h>`, `<endian.h>`, `<sys/dir.h>`, and
 `<sys/file.h>`. There is still no dynamic linking.
 
-Vendored third-party source should stay unchanged. Port-specific glue belongs
+Third-party source should stay unchanged. Port-specific glue belongs
 under `src/user/ports/`; for example, the Fractint framebuffer and keyboard
 adapter lives in `src/user/ports/fractint/` while upstream Xfractint remains
-under `third_party/fractint`.
+in the `third_party/fractint` submodule.
 
 The guest compiler toolchain ships as `usr/bin/tcc.elf`, built from the TinyCC
 submodule sources with the generic SmallOS CRT adapter. The guest entry point

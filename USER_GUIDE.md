@@ -348,8 +348,8 @@ support is part of the SmallOS user runtime: `src/user/libc/` builds `libc.a`,
 `src/user/libm/` builds `libm.a`, and `src/user/posix/` builds syscall-backed
 POSIX wrappers in `libposix.a`; those headers and libraries are also installed
 in the guest under `/usr/include` and `/usr/lib`. Fractint's common sources use
-that public header/runtime surface, and the vendored `third_party/fractint`
-tree stays unmodified for SmallOS compatibility. The generated help database is
+that public header/runtime surface, and the upstream `third_party/fractint`
+submodule stays unmodified for SmallOS compatibility. The generated help database is
 installed at `/usr/share/xfractint/fractint.hlp`.
 Fractint still owns the 256-entry palette; the adapter converts Fractint's VGA
 DAC values to the XRGB8888 pixels used by the SmallOS display syscall. Press
