@@ -1,5 +1,12 @@
 # Changelog
 
+Note: older entries preserve the source paths and module names from when each
+change landed. The current user-runtime layout is documented in
+[`docs/user-runtime.md`](docs/user-runtime.md): public headers live in
+`src/user/include`, raw helpers in `src/user/internal`, CRT startup in
+`src/user/crt`, libc in `src/user/libc`, libm in `src/user/libm`, and POSIX
+wrappers in `src/user/posix`.
+
 ## [Current] — ext2 filesystem conversion and regression hardening
 
 ### Changed
@@ -74,6 +81,20 @@
   * Buffered STOR socket reads into 64 KiB file writes so uploads do not turn segment-sized TCP reads into repeated partial-block filesystem writes.
 * **Verification workflow** (`Makefile`, `README.md`, `docs/`)
   * Added `verify-display`, `verify-network`, and `verify-full` aggregate targets so visual and network smoke suites can be run deliberately without bloating the standard `make verify` path.
+* **Hosted user runtime and guest sysroot** (`Makefile`, `src/user/{crt,include,internal,libc,libm,posix}`, `patches/tinycc/smallos.patch`, `samples/`, `docs/`, `man/`)
+  * Reorganized the user runtime into public headers under `src/user/include`, raw SmallOS helper headers under `src/user/internal`, `src/user/crt/crt0.c`, libc objects in `src/user/libc`, math in `src/user/libm`, and syscall-backed POSIX wrappers in `src/user/posix`.
+  * Built the runtime as `libc.a`, `libm.a`, and `libposix.a`, installed those archives plus `crt0.o` under `/usr/lib`, and installed public headers plus kernel UAPI headers under `/usr/include`.
+  * Updated the SmallOS TinyCC build-local patch so guest `tcc` defaults to `/usr/include` and `/usr/lib`, then added hosted sysroot and POSIX sample coverage through `tccsysroot.c` and `tccposix.c`.
+  * Kept low-level probes free to include `src/user/internal/*`, while normal hosted programs and ports can build against the installed public header/library surface.
+* **Shared framebuffer and keyboard helpers** (`src/user/gfx.c`, `src/user/gfx_indexed.c`, `src/user/gfx_text.c`, `src/user/term_keys.c`, `src/user/include/*.h`, `src/user/{bmpview,diskview,edit,mandel,plasma,top}.c`, `src/user/gui/app.c`, `docs/`)
+  * Promoted reusable graphics pieces into public helpers: XRGB `gfx_surface_t` allocation/copy/presentation, temporary overlay presentation, 8-bit indexed shadow framebuffer/palette conversion, and VGA-style framebuffer text cells.
+  * Added `term_keys.h` for decoded raw keyboard controls and moved ordinary full-screen programs off private ANSI escape parsers or local raw-key polling helpers.
+  * Routed GUI cursor and drag-overlay presentation through `gfx_present_surface()` instead of direct display syscall calls in the GUI app.
+* **Fractint as a runtime completeness port** (`Makefile`, `src/user/ports/fractint/runtime.c`, `man/man1/fractint.1`, `USER_GUIDE.md`, `docs/`)
+  * Moved all SmallOS-owned Fractint glue out of the vendored tree and into `src/user/ports/fractint`, deleting the old `third_party/fractint/smallos` glue directory.
+  * Built upstream Xfractint sources against the public SmallOS header/runtime surface, with the port adapter also avoiding `src/user/internal` helpers.
+  * Kept Fractint's upstream renderers, menus, keyboard flow, and 256-entry palette model; the adapter supplies only the indexed framebuffer/video table, key translation, palette bridge, and classic text screen-stack behavior.
+  * Staged the generated help database, `sstools.ini`, maps, parameter sets, formulas, L-system definitions, and IFS data under `/usr/share/xfractint`, both at the search root and in canonical upstream subdirectories.
 
 ### Added
 
@@ -85,7 +106,7 @@
   * Added a tiny UDP/NTP client path for QEMU user networking, with boot-time clock synchronization from `129.6.15.28` and a boot diagnostic that prints the synchronized UTC time.
   * Added `/bin/date.elf`; `date` prints the current UTC clock, while `date -s [server-ip]` synchronizes the realtime clock from NTP.
   * Added realtime clock syscalls (`SYS_CLOCK_GETTIME`, `SYS_CLOCK_SETTIME`, `SYS_NTP_SYNC`) and updated `time()`, `gettimeofday()`, and `clock_gettime(CLOCK_REALTIME)` to use the settable clock instead of raw uptime.
-* **Userland child process lifecycle** (`src/kernel/process.*`, `src/kernel/syscall.c`, `src/user/user_posix.c`, `src/user/waitprobe.c`)
+* **Userland child process lifecycle** (`src/kernel/process.*`, `src/kernel/syscall.c`, `src/user/posix/core.c`, `src/user/waitprobe.c`)
   * Added a process registry above the scheduler table so exited children can be found by pid after they leave the run queue.
   * Changed `SYS_EXEC` to return the spawned child pid on success and claim the child for parent-side `SYS_WAITPID` collection.
   * Added `SYS_GETPID`, `SYS_WAITPID`, and `SYS_KILL`, plus POSIX-shaped `getpid()`, `waitpid()`, `kill()`, and `sys/wait.h` status macros in the user runtime.
@@ -124,7 +145,7 @@
 
 ### Added
 
-* **Userland graphics helper** (`src/user/gfx.c`, `src/user/gfx.h`)
+* **Userland graphics helper** (`src/user/gfx.c`, `src/user/include/gfx.h`)
   * Added a small XRGB8888 graphics layer over the display syscalls with display acquire/release, a full-screen backbuffer, clear/pixel/rect/blit helpers, and one-shot present.
 
 * **Framebuffer demo app** (`src/user/plasma.c`, `Makefile`)

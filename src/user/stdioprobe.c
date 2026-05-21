@@ -2,6 +2,7 @@
 #include "string.h"
 #include "fcntl.h"
 #include "unistd.h"
+#include "user_syscall.h"
 
 static int bytes_equal(const char* a, const char* b, unsigned int len) {
     for (unsigned int i = 0; i < len; i++) {

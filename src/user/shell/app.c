@@ -6,6 +6,7 @@
  */
 
 #include "user_lib.h"
+#include "term_keys.h"
 #include "sys/wait.h"
 #include "dirent.h"
 
@@ -566,44 +567,40 @@ typedef struct {
 } sh_key_t;
 
 static sh_key_t sh_read_key(void) {
-    char ch;
+    int ch;
     sh_key_t key;
     key.kind = SH_KEY_IGNORE;
     key.ch = 0;
 
-    if (sys_read_raw(&ch, 1u) != 1) {
-        key.kind = SH_KEY_EOF;
-        return key;
-    }
+    ch = term_key_read(1);
 
-    if (ch == '\n' || ch == '\r') key.kind = SH_KEY_ENTER;
-    else if (ch == '\b' || (unsigned char)ch == 127u) key.kind = SH_KEY_BACKSPACE;
-    else if (ch == '\t') key.kind = SH_KEY_TAB;
-    else if ((unsigned char)ch == 3u) key.kind = SH_KEY_CANCEL;
-    else if ((unsigned char)ch == 4u) key.kind = SH_KEY_EOF;
-    else if ((unsigned char)ch == 1u) key.kind = SH_KEY_HOME;
-    else if ((unsigned char)ch == 5u) key.kind = SH_KEY_END;
-    else if ((unsigned char)ch == 21u) key.kind = SH_KEY_IGNORE;
-    else if ((unsigned char)ch == 27u) {
-        char next;
-        if (sys_read_raw(&next, 1u) != 1) return key;
-        if (next == '[') {
-            char code;
-            if (sys_read_raw(&code, 1u) != 1) return key;
-            if (code == 'A') key.kind = SH_KEY_UP;
-            else if (code == 'B') key.kind = SH_KEY_DOWN;
-            else if (code == 'C') key.kind = SH_KEY_RIGHT;
-            else if (code == 'D') key.kind = SH_KEY_LEFT;
-            else if (code == 'H') key.kind = SH_KEY_HOME;
-            else if (code == 'F') key.kind = SH_KEY_END;
-            else if (code == '3') {
-                char tilde;
-                if (sys_read_raw(&tilde, 1u) == 1 && tilde == '~') key.kind = SH_KEY_DELETE;
-            }
-        }
-    } else if ((unsigned char)ch >= 32u && (unsigned char)ch < 127u) {
+    if (ch >= 32 && ch < 127) {
         key.kind = SH_KEY_CHAR;
-        key.ch = ch;
+        key.ch = (char)ch;
+    } else if (ch == TERM_KEY_ENTER) {
+        key.kind = SH_KEY_ENTER;
+    } else if (ch == TERM_KEY_BACKSPACE) {
+        key.kind = SH_KEY_BACKSPACE;
+    } else if (ch == TERM_KEY_DELETE) {
+        key.kind = SH_KEY_DELETE;
+    } else if (ch == TERM_KEY_LEFT) {
+        key.kind = SH_KEY_LEFT;
+    } else if (ch == TERM_KEY_RIGHT) {
+        key.kind = SH_KEY_RIGHT;
+    } else if (ch == TERM_KEY_HOME) {
+        key.kind = SH_KEY_HOME;
+    } else if (ch == TERM_KEY_END) {
+        key.kind = SH_KEY_END;
+    } else if (ch == TERM_KEY_UP) {
+        key.kind = SH_KEY_UP;
+    } else if (ch == TERM_KEY_DOWN) {
+        key.kind = SH_KEY_DOWN;
+    } else if (ch == TERM_KEY_TAB) {
+        key.kind = SH_KEY_TAB;
+    } else if (ch == TERM_KEY_CTRL_C) {
+        key.kind = SH_KEY_CANCEL;
+    } else if (ch == TERM_KEY_CTRL_D) {
+        key.kind = SH_KEY_EOF;
     }
 
     return key;
@@ -1353,6 +1350,8 @@ void sh_shelltest(void) {
     sh_shelltest_exec("mv_tccagg", "mv usr/share/examples/tinycc/tccagg.c var/tmp/samples");
     sh_shelltest_exec("mv_tcctree", "mv usr/share/examples/tinycc/tcctree.c var/tmp/samples");
     sh_shelltest_exec("mv_tccmini", "mv usr/share/examples/tinycc/tccmini.c var/tmp/samples");
+    sh_shelltest_exec("mv_tccsysroot", "mv usr/share/examples/tinycc/tccsysroot.c var/tmp/samples");
+    sh_shelltest_exec("mv_tccposix", "mv usr/share/examples/tinycc/tccposix.c var/tmp/samples");
     sh_shelltest_exec("ls_samples", "ls var/tmp/samples");
     sh_shelltest_exec("tccmath_build", "runelf usr/bin/tcc.elf -nostdlib -o var/tmp/tccmath.elf var/tmp/samples/tccmath.c");
     sh_shelltest_exec("tccmath_run", "runelf var/tmp/tccmath");
@@ -1362,6 +1361,10 @@ void sh_shelltest(void) {
     sh_shelltest_exec("tcctree_run", "runelf var/tmp/tcctree");
     sh_shelltest_exec("tccmini_build", "runelf usr/bin/tcc.elf -nostdlib -o var/tmp/tccmini.elf var/tmp/samples/tccmini.c");
     sh_shelltest_exec("tccmini_run", "runelf var/tmp/tccmini");
+    sh_shelltest_exec("tccsysroot_build", "runelf usr/bin/tcc.elf -o var/tmp/tccsysroot.elf var/tmp/samples/tccsysroot.c");
+    sh_shelltest_exec("tccsysroot_run", "runelf var/tmp/tccsysroot");
+    sh_shelltest_exec("tccposix_build", "runelf usr/bin/tcc.elf -o var/tmp/tccposix.elf var/tmp/samples/tccposix.c");
+    sh_shelltest_exec("tccposix_run", "runelf var/tmp/tccposix");
     sh_shelltest_exec("cat", "cat var/tmp/compiler.out");
     sh_shelltest_exec("touch", "touch var/tmp/EMPTY.TXT");
     sh_shelltest_exec("fsread_touch", "fsread var/tmp/EMPTY.TXT");
@@ -1460,6 +1463,12 @@ int shell_main(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
         if (argv[i] && sh_streq(argv[i], "--line-mode")) {
             line_mode = 1;
+        } else if (argv[i] && sh_streq(argv[i], "-c")) {
+            if (i + 1 >= argc || !argv[i + 1]) {
+                u_puts("shell: -c requires a command\n");
+                return 2;
+            }
+            return sh_execute_line(argv[i + 1]) ? 0 : 1;
         }
     }
 

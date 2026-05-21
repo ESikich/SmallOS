@@ -1,6 +1,7 @@
 #include "user_lib.h"
 #include "image_bmp.h"
 #include "gfx.h"
+#include "term_keys.h"
 
 static void usage(void) {
     u_puts("usage: bmpview <file.bmp>\n");
@@ -184,8 +185,7 @@ static int view_bmp(const char* path) {
         return 1;
     }
 
-    char ch;
-    sys_read_raw(&ch, 1u);
+    (void)term_key_read(1);
     gfx_close(&gfx);
 
     free(data);

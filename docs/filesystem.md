@@ -54,9 +54,9 @@ block size           4096 bytes
 sectors per block       8
 volume size          4096 blocks / 32768 sectors (16 MB)
 inode size            128 bytes
-inode count           512
+inode count          1024
 root inode              2
-first data block       20
+first data block       36
 partition type       0x83
 superblock magic   0xEF53
 ```
@@ -70,15 +70,15 @@ byte offset 1024    ext2 superblock
 block 1             block group descriptor table
 block 2             block bitmap
 block 3             inode bitmap
-blocks 4-19         inode table
-block 20+           file and directory data blocks
+blocks 4-35         inode table
+block 36+           file and directory data blocks
 ```
 
 Block numbering follows normal ext2 rules:
 
 ```text
 absolute LBA = ext2_lba + block * 8
-block 20     = first allocatable data block
+block 36     = first allocatable data block
 ```
 
 This layout must match both:

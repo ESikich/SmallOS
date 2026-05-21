@@ -1,4 +1,5 @@
 #include "diag_util.h"
+#include "term_keys.h"
 
 typedef struct top_row {
     sys_procinfo_entry_t entry;
@@ -73,23 +74,13 @@ static void sort_rows(top_row_t* rows, unsigned int count) {
     }
 }
 
-static int input_available(void) {
-    struct pollfd pfd;
-
-    pfd.fd = 0;
-    pfd.events = POLLIN;
-    pfd.revents = 0;
-    return sys_poll(&pfd, 1u, 0) == 1 && (pfd.revents & POLLIN);
-}
-
 static int should_quit(void) {
-    char c = 0;
+    int c;
 
-    while (input_available()) {
-        if (sys_read_raw(&c, 1u) != 1) {
-            return 0;
-        }
-        if (c == 'q' || c == 'Q' || c == 3 || c == 27) {
+    while (term_key_available()) {
+        c = term_key_read(0);
+        if (c == 'q' || c == 'Q' ||
+            c == TERM_KEY_CTRL_C || c == TERM_KEY_ESC) {
             return 1;
         }
     }

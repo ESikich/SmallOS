@@ -26,10 +26,10 @@ FILES
         Generated upstream help database.
 
     /usr/share/xfractint
-        Fractint data directory.  The image stages the help database plus
-        upstream maps, parameter sets, formulas, L-system definitions, and IFS
-        definitions flat in this directory so names such as altern.map resolve
-        through Fractint's normal search path.
+        Fractint data directory.  The image stages the help database,
+        sstools.ini, and upstream maps, parameter sets, formulas, L-system
+        definitions, and IFS definitions both at the search root and in
+        canonical upstream subdirectories.
 
 KEYS
     Fractint keeps its classic keyboard interface.  Press Q to leave the
@@ -39,10 +39,15 @@ KEYS
 NOTES
     SmallOS keeps Fractint's normal renderers.  The experimental adaptive
     triangle renderer was removed; use the standard Fractint pass modes.
+    Keyboard controls are decoded through the shared term_keys runtime helper,
+    not a Fractint-private escape-sequence parser.
 
-    Fractint still owns its 256-entry palette.  The SmallOS adapter keeps an
-    indexed shadow pixel plane, converts Fractint/VGA DAC values to XRGB8888
-    when drawing, and recolors the framebuffer when the palette changes.
+    Fractint still owns its 256-entry palette.  The SmallOS adapter, kept
+    outside the vendored tree under src/user/ports/fractint, feeds that
+    palette into the shared gfx_indexed layer, which maintains the indexed
+    shadow pixel plane, converts values to XRGB8888, batches dirty
+    presentation, and recolors the framebuffer when the palette changes.
+    Menu cells use the shared gfx_text renderer.
 
 SEE ALSO
     mandel(1), plasma(1), bmpview(1), smallos(7)

@@ -23,7 +23,7 @@ static void check(const char* name, int ok, int* failures) {
 
 /*
  * This program intentionally defines main(), not _start(), so the test covers
- * the user_crt0 adapter and verifies that main's return becomes exit status.
+ * the crt0 adapter and verifies that main's return becomes exit status.
  */
 int main(int argc, char** argv, char** envp) {
     int failures = 0;

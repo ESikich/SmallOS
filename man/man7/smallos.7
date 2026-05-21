@@ -20,6 +20,12 @@ FILESYSTEM
     /usr/bin
         Demo and development commands.
 
+    /usr/include
+        Public headers for guest C builds.
+
+    /usr/lib
+        crt0.o and SmallOS runtime archives for guest C builds.
+
     /usr/sbin
         Service-style commands.
 
@@ -31,8 +37,9 @@ FILESYSTEM
 
     /usr/share/xfractint
         Fractint support directory containing the generated help database,
-        maps, parameter sets, formulas, L-system definitions, and IFS
-        definitions.
+        sstools.ini, maps, parameter sets, formulas, L-system definitions,
+        and IFS definitions.  Support files are staged both at the search root
+        and in canonical upstream subdirectories.
 
     /var/log
         Service and boot logs.

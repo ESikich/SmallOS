@@ -440,20 +440,38 @@ The default backend is VGA text mode (`0xB8000`) for early/fallback/debug output
 
 User graphics programs sit above the framebuffer display syscalls. The shared
 helper in `src/user/gfx.c` queries display geometry, requires XRGB8888/32 bpp,
-acquires exclusive graphics mode, allocates a full-screen user backbuffer, and
-presents that buffer with `SYS_DISPLAY_BLIT` or sub-rectangles with
-`SYS_DISPLAY_BLIT_STRIDE`. `bmpview` uses this path for scaled/centered BMP
-presentation, `bin/bootsplash` uses it for the startup `/boot/splash.bmp` image
-that stays visible until the welcome screen, `bin/diskview` uses it for an ext2
-used/free allocation map, and `usr/bin/plasma` uses it as a simple animated
-graphics smoke demo. `usr/bin/mandel` uses the same helper for an interactive
-Mandelbrot view and polls `SYS_MOUSE_READ` for cursor deltas.
+acquires exclusive graphics mode, allocates a full-screen user backbuffer,
+provides reusable `gfx_surface_t` allocation/copy helpers, and presents that
+buffer with `SYS_DISPLAY_BLIT` or sub-rectangles with `SYS_DISPLAY_BLIT_STRIDE`.
+`src/user/gfx_indexed.c` builds on that base with
+an 8-bit shadow pixel plane, a 256-entry XRGB palette, and dirty-rectangle
+presentation for programs that still think in indexed color. `src/user/gfx_text.c`
+adds a small bitmap font and VGA-style text cell drawing for framebuffer tools
+that need their own text overlays. `bmpview` uses the framebuffer path for
+scaled/centered BMP presentation, `bin/bootsplash` uses it for the startup
+`/boot/splash.bmp` image that stays visible until the welcome screen,
+`bin/diskview` uses it for an ext2 used/free allocation map, and
+`usr/bin/plasma` uses it as a simple animated graphics smoke demo.
+`usr/bin/mandel` uses the same helper for an interactive Mandelbrot view and
+polls `SYS_MOUSE_READ` for cursor deltas.
 
 `usr/bin/fractint` is built from upstream Xfractint 20.04p16. The SmallOS port
-keeps Fractint's normal calculation engines and classic keyboard/menu behavior,
-while the adapter layer supplies a fixed 1024x768 indexed framebuffer video
-mode, minimal Unix/X shims, keyboard polling, math/libc compatibility glue, and
-the generated Fractint help file under `/usr/share/xfractint`.
+keeps Fractint's normal calculation engines and classic keyboard/menu behavior.
+The SmallOS-owned adapter lives outside the vendored tree in
+`src/user/ports/fractint/`. It supplies the program-facing pieces only: fixed
+1024x768 indexed framebuffer video mode, narrow Unix/X compatibility entry
+points, and keyboard polling. It uses the shared `gfx_indexed` helper for
+palette-backed pixels and dirty presentation, and the shared `gfx_text` cell
+drawer for menus while the adapter keeps Fractint's screen-stack semantics.
+Generic hosted-C capabilities belong to the SmallOS user runtime instead. C library
+pieces live in `src/user/libc/` and build `libc.a`,
+math lives in `src/user/libm/` and builds `libm.a`, and POSIX APIs that depend
+on descriptors or timers live in `src/user/posix/` and build `libposix.a`.
+Fractint's common sources compile against public headers from
+`src/user/include/`; the vendored `third_party/fractint` tree is not modified
+for SmallOS compatibility. The SmallOS adapter also compiles against the public
+header surface rather than raw `src/user/internal/` helpers.
+The generated Fractint help file is installed under `/usr/share/xfractint`.
 
 The framebuffer path deliberately stays indexed-color rather than translating
 Fractint into a native truecolor renderer. Plotting stores the Fractint color
@@ -465,9 +483,10 @@ overwritten by the default palette initializer.
 
 Fractint looks for support files by filename under `SRCDIR`, which the SmallOS
 build sets to `/usr/share/xfractint`. The guest image stages the generated help
-database plus upstream maps, parameter sets, formulas, L-systems, and IFS files
-flat in that directory so PAR entries such as `map=altern.map` resolve without
-requiring DOS-era subdirectory assumptions.
+database, `sstools.ini`, and upstream maps, parameter sets, formulas, L-systems,
+and IFS files both at the search root and under their canonical upstream
+subdirectories. This lets entries such as `map=altern.map` and
+`map=maps/altern.map` resolve through normal filesystem paths.
 
 ## Shell
 
@@ -495,6 +514,13 @@ The active consumer is managed by `keyboard_set_consumer()`:
 - `process_set_foreground(0)` leaves the process input router registered but clears the foreground reader/group, so key events are ignored until a new foreground process is installed
 
 The keyboard driver makes no routing decisions. It decodes scancodes and calls whoever is registered. USB boot keyboards feed this same path by translating HID boot reports into set-1 scancodes and injecting them through `keyboard_inject_scancode()`.
+
+Userland programs that need decoded special keys should use the public
+`term_keys.h` helper installed in `/usr/include` and backed by `libc.a`. It
+reads fd `0` through `SYS_READ_RAW`/`SYS_POLL` and returns stable `TERM_KEY_*`
+values for arrows, Home/End, Insert/Delete, PageUp/PageDown, F1-F4, and common
+control keys. Fractint and `mandel` use this shared path instead of carrying
+program-local ANSI escape parsers.
 
 The boot sequence launches `/bin/shell.elf` as the interactive shell. The old
 kernel shell is no longer linked into the kernel image.
@@ -537,7 +563,7 @@ void _start(int argc, char** argv, char** envp)
 ```
 
 That convention is the low-level kernel launch ABI. Hosted-style user programs
-can instead link `src/user/user_crt0.c`, define
+can instead link `src/user/crt/crt0.c`, define
 `main(int argc, char** argv, char** envp)`, and let the CRT adapter set
 `environ` before calling `sys_exit(main(argc, argv, envp))`.
 
@@ -613,8 +639,10 @@ PMM-frame access API.
 
 A 16 MB ext2 volume is appended to the disk image directly after the kernel.
 The seeded tree uses normal ext2 native directory entries under `/bin`,
-`/usr/bin`, `/usr/libexec/tests`, `/usr/sbin`, `/usr/share/examples/tinycc`,
-`/usr/share/man`, `/etc`, `/var`, and `/tmp`.
+`/usr/bin`, `/usr/include`, `/usr/lib`, `/usr/libexec/tests`, `/usr/sbin`,
+`/usr/share/examples/tinycc`, `/usr/share/man`, `/etc`, `/var`, and `/tmp`.
+The `/usr/include` and `/usr/lib` trees are the guest C build sysroot used by
+SmallOS-hosted TinyCC.
 
 Built by `tools/mkext2.c` — a host C tool with no external filesystem tooling
 required. The tool writes the ext2 superblock, group descriptor, block and
@@ -627,8 +655,8 @@ byte offset 1024    ext2 superblock
 block 1             block group descriptor table
 block 2             block bitmap
 block 3             inode bitmap
-blocks 4-19         inode table
-block 20+           file and directory data blocks
+blocks 4-35         inode table
+block 36+           file and directory data blocks
 ```
 
 The ext2 start LBA is computed during final image assembly by `mkimage` as `kernel_lba + kernel_sectors` and written into partition entry 1 of the MBR partition table. `loader2.asm` reads partition entry 0 to load the kernel. With the default `BOOT_RAMDISK_FALLBACK=never` policy, normal VM/IDE boots skip the fallback preload. `BOOT_RAMDISK_FALLBACK=auto` preloads the used portion of partition entry 1 only when EDD does not identify the boot drive as USB or ATA. Explicit USB image/run targets force `BOOT_RAMDISK_FALLBACK=always` so USB-specific builds remain bootable even when protected-mode USB storage cannot validate ext2 on a given controller. At runtime, the storage policy selects a block backend, reads sector 0 through that backend, extracts the ext2 partition metadata, and uses it to locate the live volume. It tries writable ATA first, then USB mass storage (`usb0`, read-only), then the preloaded RAM fallback when one exists.
@@ -850,7 +878,7 @@ USB storage/HID driver — OHCI Bulk-Only Transport/SCSI read-only block device 
 ext2 filesystem — ELF programs loaded from ATA, USB storage, or the boot RAM fallback
 run/runimg infrastructure removed — `runelf` is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
 interactive shell with builtin job control plus `/bin` command ELFs such as meminfo / memmap / cpuz / top / ataread / ls / tree / fsread / mkdir / rmdir
-guest TinyCC compiler path — `usr/bin/tcc.elf` runs inside SmallOS through `user_crt0` and TinyCC's normal `main`, then compiles guest C samples during `make test`
+guest TinyCC compiler path — `usr/bin/tcc.elf` runs inside SmallOS through `crt0` and TinyCC's normal `main`, then compiles guest C samples during `make test`
 ```
 
 Foundation for:

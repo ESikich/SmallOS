@@ -1,5 +1,6 @@
 #include "user_lib.h"
 #include "gfx.h"
+#include "term_keys.h"
 
 #define COLOR_BG       0x00101518u
 #define COLOR_PANEL    0x00192327u
@@ -236,7 +237,6 @@ void _start(int argc, char** argv) {
     unsigned char* map;
     gfx_context_t gfx;
     int rc;
-    char ch;
 
     (void)argc;
     (void)argv;
@@ -282,7 +282,7 @@ void _start(int argc, char** argv) {
         sys_exit(1);
     }
 
-    sys_read_raw(&ch, 1u);
+    (void)term_key_read(1);
     gfx_close(&gfx);
     free(map);
     sys_exit(0);

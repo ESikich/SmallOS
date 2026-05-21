@@ -471,13 +471,15 @@ Useful signals:
 
 ## Adding a New User Program
 
-1. Prefer `int main(int argc, char** argv, char** envp)` for hosted-ish programs, and link `src/user/user_crt0.c`
+1. Prefer `int main(int argc, char** argv, char** envp)` for hosted-ish programs, and link `src/user/crt/crt0.c`
 2. Use direct `void _start(int argc, char** argv)` plus `sys_exit(status)` only for low-level probes
-3. Add `myprog` to `USER_PROGS` in Makefile - automatically included in the ext2 image
-4. If the program needs extra user objects, add a custom link rule like `bmpview.elf` or `plasma.elf`
-5. Add a matching plain-text manual page under `man/man1/myprog.1` for user commands or `man/man8/myprog.8` for services/admin tools; Make installs `man/man*/*` under `/usr/share/man/`
-6. `make clean && make`
-7. `runelf myprog`
+3. Link through the SmallOS user libraries (`libc.a`, `libm.a`, `libposix.a`) instead of adding runtime objects by hand
+4. Keep public interfaces in `src/user/include/`; Make installs them into the guest `/usr/include` sysroot
+5. Add `myprog` to `USER_PROGS` in Makefile - automatically included in the ext2 image
+6. If the program needs extra user objects, add a custom link rule like `bmpview.elf` or `plasma.elf`
+7. Add a matching plain-text manual page under `man/man1/myprog.1` for user commands or `man/man8/myprog.8` for services/admin tools; Make installs `man/man*/*` under `/usr/share/man/`
+8. `make clean && make`
+9. `runelf myprog`
 
 The launch ABI enters `_start(argc, argv, envp)` and guarantees both
 `argv[argc] == NULL` and a NULL-terminated environment vector. Two-argument
@@ -485,12 +487,13 @@ The launch ABI enters `_start(argc, argv, envp)` and guarantees both
 
 Framebuffer apps should use `src/user/gfx.c` instead of calling the display
 syscalls directly. The helper owns acquire/release, full-screen backbuffer
-allocation, simple drawing primitives, and one-shot full-screen present.
+allocation, simple drawing primitives, rectangle copies, sub-rectangle
+presentation, and temporary overlay presentation.
 `src/user/bootsplash.c` and `src/user/bmpview.c` both use the shared BMP
 decoder plus this helper; replace `assets/boot_splash.bmp` to change the image
 seeded into the guest at `/boot/splash.bmp`.
-Interactive graphics can poll keyboard availability with `SYS_POLL` on fd `0`
-and poll relative mouse movement with `SYS_MOUSE_READ`. New code that wants
+Interactive graphics should use `term_keys.h` for decoded single-key controls
+and can poll relative mouse movement with `SYS_MOUSE_READ`. New code that wants
 keyboard and mouse together should prefer `SYS_INPUT_READ`, which drains the
 kernel input event queue and can either block for the next event or return
 immediately with `SYS_INPUT_FLAG_NONBLOCK`. Event-loop programs that also have

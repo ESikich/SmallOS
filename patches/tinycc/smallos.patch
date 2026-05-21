@@ -37,3 +37,53 @@ index 2884259..d92dbf4 100644
      && defined __APPLE__ == defined TCC_TARGET_MACHO
  # if defined __i386__ && defined TCC_TARGET_I386
  #  define TCC_IS_NATIVE
+diff --git a/tccelf.c b/tccelf.c
+index 0950365..b2efb0d 100644
+--- a/tccelf.c
++++ b/tccelf.c
+@@ -1765,6 +1765,10 @@ ST_FUNC void tccelf_add_crtbegin(TCCState *s1)
+         tcc_add_crt(s1, "crtbeginS.o");
+     else
+         tcc_add_crt(s1, "crtbegin.o");
++#elif defined(TCC_TARGET_SMALLOS)
++    if (s1->output_type != TCC_OUTPUT_DLL)
++        tcc_add_crt(s1, "crt0.o");
++    s1->nostdlib_paths = 0;
+ #elif TARGETOS_FreeBSD || TARGETOS_NetBSD
+     if (s1->output_type != TCC_OUTPUT_DLL)
+ #if TARGETOS_FreeBSD
+@@ -1797,6 +1801,8 @@ ST_FUNC void tccelf_add_crtend(TCCState *s1)
+     if (s1->output_type == TCC_OUTPUT_DLL)
+         tcc_add_crt(s1, "crtendS.o");
+     else
+         tcc_add_crt(s1, "crtend.o");
++#elif defined(TCC_TARGET_SMALLOS)
++    (void)s1;
+ #elif TARGETOS_FreeBSD || TARGETOS_NetBSD
+     if (s1->output_type == TCC_OUTPUT_DLL)
+@@ -1851,18 +1857,25 @@ ST_FUNC void tcc_add_runtime(TCCState *s1)
+ #endif
+         if (lpthread)
+             tcc_add_library(s1, "pthread");
++#ifdef TCC_TARGET_SMALLOS
++        tcc_add_library(s1, "c");
++        tcc_add_library(s1, "posix");
++        tcc_add_library(s1, "c");
++        tcc_add_library(s1, "m");
++#else
+         tcc_add_library(s1, "c");
+ #ifdef TCC_LIBGCC
+         if (!s1->static_link) {
+             if (TCC_LIBGCC[0] == '/')
+                 tcc_add_file(s1, TCC_LIBGCC);
+             else
+                 tcc_add_dll(s1, TCC_LIBGCC, AFF_PRINT_ERROR);
+         }
+ #endif
+ #if defined TCC_TARGET_ARM && TARGETOS_FreeBSD
+         tcc_add_library(s1, "gcc_s"); // unwind code
+ #endif
+         if (TCC_LIBTCC1[0])
+             tcc_add_support(s1, TCC_LIBTCC1);
++#endif
+ #ifndef TCC_TARGET_MACHO

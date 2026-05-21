@@ -1,6 +1,6 @@
 #include "user_lib.h"
 #include "gfx.h"
-#include "poll.h"
+#include "term_keys.h"
 
 #define PLASMA_FRAMES 240u
 
@@ -10,23 +10,6 @@ static unsigned int color_from_value(unsigned int v) {
     unsigned int b = (v * 7u + 160u) & 0xFFu;
 
     return (r << 16) | (g << 8) | b;
-}
-
-static int key_ready(void) {
-    struct pollfd pfd;
-
-    pfd.fd = 0;
-    pfd.events = POLLIN;
-    pfd.revents = 0;
-    return sys_poll(&pfd, 1u, 0) > 0 && (pfd.revents & POLLIN);
-}
-
-static void drain_key(void) {
-    char ch;
-
-    if (key_ready()) {
-        sys_read_raw(&ch, 1u);
-    }
 }
 
 static void draw_plasma(gfx_surface_t* s, unsigned int frame) {
@@ -65,8 +48,7 @@ void _start(int argc, char** argv) {
     }
 
     for (unsigned int frame = 0; frame < PLASMA_FRAMES; frame++) {
-        if (key_ready()) {
-            drain_key();
+        if (term_key_read(0) != TERM_KEY_NONE) {
             break;
         }
 

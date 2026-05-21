@@ -46,4 +46,28 @@ CASES = [
         ],
         timeout=120.0,
     ),
+    case(
+        name="tinycc_sysroot",
+        must_contain=[
+            "shelltest: tccsysroot_build begin",
+            "shelltest: tccsysroot_build end",
+            "shelltest: tccsysroot_run begin",
+            "tcc sysroot ok: argc=1 stdout=1 name_len=18 total=20",
+            "shelltest: tccsysroot_run end",
+        ],
+        timeout=120.0,
+    ),
+    case(
+        name="tinycc_posix",
+        must_contain=[
+            "shelltest: tccposix_build begin",
+            "shelltest: tccposix_build end",
+            "shelltest: tccposix_run begin",
+            "tcc system ok",
+            "tcc posix stderr: no such file or directory",
+            "tcc posix ok: io=1 stat=1 cwd=1 dir=1 time=1 headers=1 system=1 total=7",
+            "shelltest: tccposix_run end",
+        ],
+        timeout=120.0,
+    ),
 ]

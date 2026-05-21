@@ -1,6 +1,6 @@
 #include "gfx.h"
+#include "term_keys.h"
 #include "user_lib.h"
-#include "poll.h"
 
 #define MANDEL_SCALE 4096
 #define MANDEL_VIEW_W ((7 * MANDEL_SCALE) / 2)
@@ -45,22 +45,10 @@ typedef struct mandel_rect {
     unsigned int h;
 } mandel_rect_t;
 
-static int input_available(void) {
-    struct pollfd pfd;
-
-    pfd.fd = 0;
-    pfd.events = POLLIN;
-    pfd.revents = 0;
-    return sys_poll(&pfd, 1u, 0) == 1 && (pfd.revents & POLLIN);
-}
-
 static mandel_key_t read_key(void) {
-    char c = 0;
+    int c = term_key_read(0);
 
-    if (!input_available()) {
-        return MANDEL_KEY_NONE;
-    }
-    if (sys_read_raw(&c, 1u) != 1) {
+    if (c == TERM_KEY_NONE) {
         return MANDEL_KEY_NONE;
     }
 
@@ -68,26 +56,11 @@ static mandel_key_t read_key(void) {
     if (c == '-' || c == '_') return MANDEL_KEY_ZOOM_OUT;
     if (c == 'r' || c == 'R') return MANDEL_KEY_RESET;
     if (c == 'q' || c == 'Q') return MANDEL_KEY_QUIT;
-
-    if ((unsigned char)c != 27) {
-        return MANDEL_KEY_NONE;
-    }
-
-    if (!input_available()) {
-        return MANDEL_KEY_QUIT;
-    }
-
-    if (sys_read_raw(&c, 1u) != 1 || c != '[') {
-        return MANDEL_KEY_QUIT;
-    }
-    if (sys_read_raw(&c, 1u) != 1) {
-        return MANDEL_KEY_NONE;
-    }
-
-    if (c == 'A') return MANDEL_KEY_UP;
-    if (c == 'B') return MANDEL_KEY_DOWN;
-    if (c == 'C') return MANDEL_KEY_RIGHT;
-    if (c == 'D') return MANDEL_KEY_LEFT;
+    if (c == TERM_KEY_ESC) return MANDEL_KEY_QUIT;
+    if (c == TERM_KEY_UP) return MANDEL_KEY_UP;
+    if (c == TERM_KEY_DOWN) return MANDEL_KEY_DOWN;
+    if (c == TERM_KEY_RIGHT) return MANDEL_KEY_RIGHT;
+    if (c == TERM_KEY_LEFT) return MANDEL_KEY_LEFT;
     return MANDEL_KEY_NONE;
 }
 
@@ -261,77 +234,6 @@ static mandel_rect_t union_rect(mandel_rect_t a, mandel_rect_t b) {
     return out;
 }
 
-static int present_rect(gfx_context_t* gfx, const mandel_rect_t* rect) {
-    if (!rect || rect->w == 0 || rect->h == 0) {
-        return 0;
-    }
-
-    for (unsigned int y = 0; y < rect->h; y++) {
-        unsigned int* row = gfx->backbuffer.pixels +
-                            (rect->y + y) * gfx->backbuffer.pitch_pixels +
-                            rect->x;
-        if (sys_display_blit(rect->x, rect->y + y, rect->w, 1u, row) < 0) {
-            return -1;
-        }
-    }
-    return 0;
-}
-
-static void copy_rect(gfx_surface_t* dst, const gfx_surface_t* src,
-                      const mandel_rect_t* rect) {
-    if (!dst || !dst->pixels || !src || !src->pixels ||
-        !rect || rect->w == 0 || rect->h == 0) {
-        return;
-    }
-
-    for (unsigned int y = 0; y < rect->h; y++) {
-        unsigned int* dst_row = dst->pixels +
-                                (rect->y + y) * dst->pitch_pixels +
-                                rect->x;
-        const unsigned int* src_row = src->pixels +
-                                      (rect->y + y) * src->pitch_pixels +
-                                      rect->x;
-        memcpy(dst_row, src_row, rect->w * sizeof(unsigned int));
-    }
-}
-
-static int surface_alloc_like(gfx_surface_t* out, const gfx_surface_t* like) {
-    unsigned int pixels;
-
-    if (!out || !like || like->width == 0 || like->height == 0 ||
-        like->width > 0xFFFFFFFFu / like->height) {
-        return 0;
-    }
-
-    pixels = like->width * like->height;
-    if (pixels > 0xFFFFFFFFu / sizeof(unsigned int)) {
-        return 0;
-    }
-
-    out->pixels = (unsigned int*)malloc(pixels * sizeof(unsigned int));
-    if (!out->pixels) {
-        return 0;
-    }
-
-    out->width = like->width;
-    out->height = like->height;
-    out->pitch_pixels = like->width;
-    return 1;
-}
-
-static void surface_free(gfx_surface_t* surface) {
-    if (!surface) {
-        return;
-    }
-    if (surface->pixels) {
-        free(surface->pixels);
-    }
-    surface->width = 0;
-    surface->height = 0;
-    surface->pitch_pixels = 0;
-    surface->pixels = 0;
-}
-
 static int apply_mouse(mandel_cursor_t* cursor, const gfx_surface_t* s,
                        const sys_mouse_state_t* mouse) {
     int x;
@@ -416,7 +318,7 @@ void _start(int argc, char** argv) {
         sys_exit(1);
     }
     memset(&fractal, 0, sizeof(fractal));
-    if (!surface_alloc_like(&fractal, &gfx.backbuffer)) {
+    if (!gfx_surface_alloc_like(&fractal, &gfx.backbuffer)) {
         gfx_close(&gfx);
         u_puts("mandel: could not allocate fractal cache\n");
         sys_exit(1);
@@ -443,10 +345,12 @@ void _start(int argc, char** argv) {
             screen.y = 0;
             screen.w = gfx.backbuffer.width;
             screen.h = gfx.backbuffer.height;
-            copy_rect(&gfx.backbuffer, &fractal, &screen);
+            gfx_copy_rect(&gfx.backbuffer, screen.x, screen.y,
+                          &fractal, screen.x, screen.y,
+                          screen.w, screen.h);
             draw_cursor(&gfx.backbuffer, &cursor);
             if (gfx_present(&gfx) < 0) {
-                surface_free(&fractal);
+                gfx_surface_free(&fractal);
                 gfx_close(&gfx);
                 u_puts("mandel: present failed\n");
                 sys_exit(1);
@@ -469,10 +373,13 @@ void _start(int argc, char** argv) {
                     mandel_rect_t new_rect = cursor_rect(&cursor, &gfx.backbuffer);
                     mandel_rect_t update_rect = union_rect(old_rect, new_rect);
 
-                    copy_rect(&gfx.backbuffer, &fractal, &update_rect);
+                    gfx_copy_rect(&gfx.backbuffer, update_rect.x, update_rect.y,
+                                  &fractal, update_rect.x, update_rect.y,
+                                  update_rect.w, update_rect.h);
                     draw_cursor(&gfx.backbuffer, &cursor);
-                    if (present_rect(&gfx, &update_rect) < 0) {
-                        surface_free(&fractal);
+                    if (gfx_present_rect(&gfx, update_rect.x, update_rect.y,
+                                         update_rect.w, update_rect.h) < 0) {
+                        gfx_surface_free(&fractal);
                         gfx_close(&gfx);
                         u_puts("mandel: present failed\n");
                         sys_exit(1);
@@ -485,7 +392,7 @@ void _start(int argc, char** argv) {
         }
     }
 
-    surface_free(&fractal);
+    gfx_surface_free(&fractal);
     gfx_close(&gfx);
     sys_exit(0);
 }

@@ -308,7 +308,7 @@ int sys_writefile_path(const char* path, const char* buf, uint32_t len);
 
 Creates or overwrites an ext2 file at an arbitrary path. Returns `0` on success or a negative errno on failure, including when the active ext2 source is read-only USB storage.
 
-This is the preferred persistence primitive for build tools and compilers because it can emit directly into nested writable directories such as `/var/tmp/WORK/` or `/var/tmp/samples/`. The kernel validates both the path and the byte range before calling into the VFS path-write wrapper.
+This is the preferred persistence primitive for build tools and compilers because it can emit directly into nested writable directories such as `/var/tmp/WORK/` or `/var/tmp/generated/`. The kernel validates both the path and the byte range before calling into the VFS path-write wrapper.
 
 ---
 
@@ -320,7 +320,7 @@ uint32_t sys_brk(uint32_t new_brk);
 
 Queries or adjusts the calling process heap break. Passing `0` returns the current break. The kernel may grow or shrink the heap on page boundaries.
 
-The user-space allocator in `src/user/user_alloc.c` is layered on top of this syscall.
+The user-space allocator in `src/user/libc/malloc.c` is layered on top of this syscall.
 
 ---
 
@@ -1408,7 +1408,7 @@ If you change **anything** in `isr128_stub`, you MUST update `syscall_regs_t` to
 
 ## Userspace Helpers
 
-`user_syscall.h`:
+`src/user/internal/user_syscall.h`:
 
 ```c
 sys_write(buf, len)
@@ -1500,7 +1500,7 @@ sys_stat_full(path, out_info)
 sys_fstat_full(fd, out_info)
 ```
 
-`user_lib.h` higher-level wrappers:
+`src/user/internal/user_lib.h` higher-level wrappers:
 
 ```c
 u_puts(...)        sys_write wrapper

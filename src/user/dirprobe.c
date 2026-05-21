@@ -1,6 +1,7 @@
 #include "dirent.h"
 #include "stdio.h"
 #include "string.h"
+#include "user_syscall.h"
 
 static int dir_contains(const char* path, const char* name) {
     DIR* d = opendir(path);

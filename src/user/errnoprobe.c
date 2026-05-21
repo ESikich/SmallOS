@@ -1,6 +1,8 @@
 #include "user_lib.h"
 #include "errno.h"
 #include "fcntl.h"
+#include "stdio.h"
+#include "string.h"
 #include "unistd.h"
 #include "sys/stat.h"
 
@@ -87,6 +89,12 @@ void _start(int argc, char** argv) {
 
     errno = 0;
     check_errno("execvp missing", ENOENT, execvp("missing-nope", 0));
+
+    check_int("strerror enoent", 0, strcmp(strerror(ENOENT), "no such file or directory"));
+    check_int("strerror unknown", 0, strcmp(strerror(12345), "unknown error"));
+
+    errno = ENOENT;
+    perror("perror probe");
 
     errno = 0;
     {

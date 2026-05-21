@@ -74,7 +74,7 @@ Important current-state facts:
   `0`/`1`/`2`, and keep the master in the GUI process so foreground commands
   draw inside the window instead of the global console. The GUI paces frame
   work and shell PTY polling so quiet windows do not keep the desktop awake.
-- the shipped `usr/bin/tcc.elf` compiler binary links the generic SmallOS `user_crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from ext2, write the results back to disk, and then those generated ELFs can be executed immediately
+- the shipped `usr/bin/tcc.elf` compiler binary links the generic SmallOS `crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from ext2, write the results back to disk, and then those generated ELFs can be executed immediately
 - QEMU user networking is still the default for `make run` / `make test`, but the guest now learns its IPv4 address, netmask, gateway, DNS server, and lease time through DHCP instead of assuming QEMU's NAT addresses. `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT.
 - Boot queues DHCP and best-effort NTP as an async kernel task once the scheduler is live. On success, `CLOCK_REALTIME` is set and the boot log prints the UTC time; on failure, boot continues with a warning.
 - Protected-mode boot diagnostics are muted on the active display, mirrored to
@@ -185,15 +185,28 @@ That means `argv[0]` inside the ELF process is the launch token passed after
 paths and explicit `.elf` suffixes are preserved in argv as written.
 
 There is **no active `runimg` command path** in the current shell command table.
+The shell also supports `shell -c "command args"` for non-interactive command
+execution; libc `system()` uses that path.
 
 The same path is used by the guest TinyCC smoke tests:
 
 ```text
 runelf usr/bin/tcc.elf -nostdlib -o var/tmp/tccmath.elf usr/share/examples/tinycc/tccmath.c
 runelf var/tmp/tccmath
+runelf usr/bin/tcc.elf -o var/tmp/tccsysroot.elf usr/share/examples/tinycc/tccsysroot.c
+runelf var/tmp/tccsysroot
+runelf usr/bin/tcc.elf -o var/tmp/tccposix.elf usr/share/examples/tinycc/tccposix.c
+runelf var/tmp/tccposix
 ```
 
-The test suite uses this flow to compile several focused C samples inside the guest and then run the generated ELFs. The sample sources are staged under `/var/tmp/samples/` and the produced binaries are written under `/var/tmp/`.
+The test suite uses this flow to compile several focused C samples inside the
+guest and then run the generated ELFs. The `-nostdlib` samples exercise
+freestanding output, while `tccsysroot.c` exercises the installed
+`/usr/include` and `/usr/lib` hosted path. `tccposix.c` goes further and uses
+that sysroot for ordinary file, stat, cwd, directory, stderr, time, header
+compatibility, and `system()` APIs. The sample sources are staged under
+`/usr/share/examples/tinycc/` and the produced binaries are written under
+`/var/tmp/`.
 
 TinyCC's runtime expectations are part of the user runtime contract in
 [`docs/user-runtime.md`](user-runtime.md).
@@ -545,13 +558,14 @@ This is the launch contract for every user ELF:
 - `process_set_args()` and `process_set_env()` own the process-side copies before ring-3 entry
 - returning from `_start` is unsupported unless a CRT layer converts the return value into `sys_exit`
 
-`src/user/user_crt0.c` is that CRT layer for hosted-ish programs. It keeps the
+`src/user/crt/crt0.c` is that CRT layer for hosted-ish programs. It keeps the
 kernel ABI at `_start(argc, argv, envp)`, sets `environ`, calls
 `main(argc, argv, envp)`, and exits with the returned status. TinyCC is linked
-this way so its upstream `main` path can run normally. Direct
-`_start(argc, argv)` programs remain supported for low-level probes and
+this way so its upstream `main` path can run normally. The seed image installs
+`/usr/lib/crt0.o` so guest-built hosted programs can use the same entry path.
+Direct `_start(argc, argv)` programs remain supported for low-level probes and
 freestanding tests; new hosted-ish programs should prefer
-`int main(int argc, char** argv, char** envp)` plus `user_crt0`.
+`int main(int argc, char** argv, char** envp)` plus `crt0`.
 
 ---
 

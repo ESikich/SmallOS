@@ -193,9 +193,21 @@ If a foreground job is running, `Ctrl+Z` returns it to the shell job table.
 ## Compiling C Inside SmallOS
 
 SmallOS ships TinyCC as `tcc`. Sample source files are installed under
-`/usr/share/examples/tinycc`.
+`/usr/share/examples/tinycc`, and the guest build sysroot is installed under
+`/usr/include` and `/usr/lib`.
 
 Try this from the SmallOS shell:
+
+```text
+cd /var/tmp
+tcc -o tccsysroot.elf /usr/share/examples/tinycc/tccsysroot.c
+runelf /var/tmp/tccsysroot
+tcc -o tccposix.elf /usr/share/examples/tinycc/tccposix.c
+runelf /var/tmp/tccposix
+```
+
+The older freestanding samples are still useful when testing direct `_start`
+programs:
 
 ```text
 cd /var/tmp
@@ -327,18 +339,27 @@ fractint type=julia params=-0.74543,0.11301
 ```
 
 The port uses Fractint's normal upstream renderer and keyboard/menu flow. The
-SmallOS wrapper supplies a 1024x768 256-color indexed framebuffer mode,
-keyboard polling, minimal Unix/X compatibility shims, and the generated help
-database at `/usr/share/xfractint/fractint.hlp`. Fractint still owns the
-256-entry palette; the adapter converts Fractint's VGA DAC values to the
-XRGB8888 pixels used by the SmallOS display syscall. Press `Q` to leave the
-framebuffer view.
+SmallOS adapter in `src/user/ports/fractint/` supplies a 1024x768 256-color
+indexed framebuffer mode and consumes decoded keyboard controls from the public
+`term_keys.h` runtime helper. Indexed pixels, palette conversion, and dirty
+presentation go through the shared `gfx_indexed` helper; menu text is drawn
+through the shared `gfx_text` framebuffer text-cell helper. Generic hosted-C
+support is part of the SmallOS user runtime: `src/user/libc/` builds `libc.a`,
+`src/user/libm/` builds `libm.a`, and `src/user/posix/` builds syscall-backed
+POSIX wrappers in `libposix.a`; those headers and libraries are also installed
+in the guest under `/usr/include` and `/usr/lib`. Fractint's common sources use
+that public header/runtime surface, and the vendored `third_party/fractint`
+tree stays unmodified for SmallOS compatibility. The generated help database is
+installed at `/usr/share/xfractint/fractint.hlp`.
+Fractint still owns the 256-entry palette; the adapter converts Fractint's VGA
+DAC values to the XRGB8888 pixels used by the SmallOS display syscall. Press
+`Q` to leave the framebuffer view.
 
 Fractint support files are staged under `/usr/share/xfractint`, including
 color maps, parameter sets, formulas, L-system definitions, and IFS
-definitions. They are installed flat at that search root because upstream
-Fractint PAR and menu entries usually refer to names such as `altern.map`
-directly.
+definitions. They are installed both at that search root and in their canonical
+upstream subdirectories, so names such as `altern.map` and paths such as
+`maps/altern.map` both resolve normally.
 
 The GUI opens a desktop with Files, Shell, System, Config, About, and Quit
 icons. Shell windows run real child shells through PTYs. The Config window can

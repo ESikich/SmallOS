@@ -1506,7 +1506,7 @@ static void compose_v2(gfx_surface_t* s, int mx, int my) {
     }
 }
 
-static int present_cursor_rect(gfx_surface_t* scene, int mx, int my, int draw);
+static int present_cursor_rect(gfx_context_t* gfx, int mx, int my, int draw);
 
 static void compose_rect(gfx_surface_t* s, gui_rect_t r, int mx, int my) {
     clip_set(r);
@@ -1552,7 +1552,7 @@ static int present_dirty_scene(gfx_context_t* gfx, int mx, int my) {
             perf_note_present(present_start);
         }
         if (rect_intersects(r, cursor)) {
-            if (present_cursor_rect(&gfx->backbuffer, mx, my, 1) < 0) {
+            if (present_cursor_rect(gfx, mx, my, 1) < 0) {
                 return -1;
             }
         }
@@ -1561,12 +1561,15 @@ static int present_dirty_scene(gfx_context_t* gfx, int mx, int my) {
     return 0;
 }
 
-static int present_cursor_rect(gfx_surface_t* scene, int mx, int my, int draw) {
+static int present_cursor_rect(gfx_context_t* gfx, int mx, int my, int draw) {
     unsigned int tmp[CURSOR_W * CURSOR_H];
     gfx_surface_t out;
+    gfx_surface_t* scene;
     int w = CURSOR_W;
     int h = CURSOR_H;
 
+    if (!gfx) return -1;
+    scene = &gfx->backbuffer;
     if (!scene || !scene->pixels || mx < 0 || my < 0 ||
         mx >= (int)scene->width || my >= (int)scene->height) {
         return 0;
@@ -1593,8 +1596,8 @@ static int present_cursor_rect(gfx_surface_t* scene, int mx, int my, int draw) {
 
     {
         uint32_t present_start = sys_get_ticks();
-        int rc = sys_display_blit((uint32_t)mx, (uint32_t)my,
-                                  (uint32_t)w, (uint32_t)h, tmp);
+        int rc = gfx_present_surface(gfx, (unsigned int)mx,
+                                     (unsigned int)my, &out);
         if (rc >= 0) perf_note_present(present_start);
         return rc;
     }
@@ -1607,7 +1610,7 @@ static int present_frame_with_cursor(gfx_context_t* gfx, int mx, int my) {
         return -1;
     }
     perf_note_present(present_start);
-    if (present_cursor_rect(&gfx->backbuffer, mx, my, 1) < 0) {
+    if (present_cursor_rect(gfx, mx, my, 1) < 0) {
         return -1;
     }
     return 0;
@@ -1660,17 +1663,17 @@ static int present_cursor_move(gfx_context_t* gfx,
 
         {
             uint32_t present_start = sys_get_ticks();
-            int rc = sys_display_blit((uint32_t)x0, (uint32_t)y0,
-                                      (uint32_t)w, (uint32_t)h, tmp);
+            int rc = gfx_present_surface(gfx, (unsigned int)x0,
+                                         (unsigned int)y0, &out);
             if (rc >= 0) perf_note_present(present_start);
             return rc;
         }
     }
 
-    if (present_cursor_rect(&gfx->backbuffer, old_mx, old_my, 0) < 0) {
+    if (present_cursor_rect(gfx, old_mx, old_my, 0) < 0) {
         return -1;
     }
-    if (present_cursor_rect(&gfx->backbuffer, mx, my, 1) < 0) {
+    if (present_cursor_rect(gfx, mx, my, 1) < 0) {
         return -1;
     }
     return 0;
@@ -1739,8 +1742,8 @@ static int present_cursor_rect_with_drag_overlay(gfx_context_t* gfx,
 
     {
         uint32_t present_start = sys_get_ticks();
-        int rc = sys_display_blit((uint32_t)mx, (uint32_t)my,
-                                  (uint32_t)w, (uint32_t)h, tmp);
+        int rc = gfx_present_surface(gfx, (unsigned int)mx,
+                                     (unsigned int)my, &out);
         if (rc >= 0) perf_note_present(present_start);
         return rc;
     }
@@ -1805,8 +1808,8 @@ static int present_cursor_move_with_drag_overlay(gfx_context_t* gfx,
 
     {
         uint32_t present_start = sys_get_ticks();
-        int rc = sys_display_blit((uint32_t)x0, (uint32_t)y0,
-                                  (uint32_t)w, (uint32_t)h, tmp);
+        int rc = gfx_present_surface(gfx, (unsigned int)x0,
+                                     (unsigned int)y0, &out);
         if (rc >= 0) perf_note_present(present_start);
         return rc;
     }
@@ -1879,8 +1882,8 @@ static int present_drag_preview_rect(gfx_context_t* gfx,
 
     {
         uint32_t present_start = sys_get_ticks();
-        int rc = sys_display_blit((uint32_t)r.x, (uint32_t)r.y,
-                                  (uint32_t)r.w, (uint32_t)r.h, tmp);
+        int rc = gfx_present_surface(gfx, (unsigned int)r.x,
+                                     (unsigned int)r.y, &out);
         if (rc >= 0) perf_note_present(present_start);
         return rc;
     }

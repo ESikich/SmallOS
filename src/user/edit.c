@@ -1,3 +1,4 @@
+#include "term_keys.h"
 #include "user_lib.h"
 
 #define EDIT_LINE_MAX 256u
@@ -357,78 +358,47 @@ static void render(edit_buffer_t* buf, edit_view_t* view, int full, int line_dir
     term_write("\x1b[?25h");
 }
 
-static int raw_read_char(char* out) {
-    return sys_read_raw(out, 1u) == 1;
-}
-
-static int input_available(void) {
-    struct pollfd pfd;
-    pfd.fd = 0;
-    pfd.events = POLLIN;
-    pfd.revents = 0;
-    return sys_poll(&pfd, 1u, 0) == 1 && (pfd.revents & POLLIN);
-}
-
 static key_t read_key(void) {
     key_t key;
-    char c = 0;
+    int c;
+
     key.type = KEY_NONE;
     key.ch = 0;
 
-    if (!raw_read_char(&c)) return key;
-
-    if ((unsigned char)c != 27) {
+    c = term_key_read(1);
+    if (c > 0 && c < 256) {
         key.type = KEY_CHAR;
-        key.ch = c;
+        key.ch = (char)c;
         return key;
     }
 
-    if (!input_available()) {
-        key.type = KEY_ESC;
-        return key;
-    }
-
-    char a = 0;
-    if (!raw_read_char(&a)) {
-        key.type = KEY_ESC;
-        return key;
-    }
-
-    if (a == 'O') {
-        char b = 0;
-        if (!raw_read_char(&b)) return key;
-        if (b == 'P') key.type = KEY_F1;
-        else if (b == 'Q') key.type = KEY_F2;
-        else if (b == 'R') key.type = KEY_F3;
-        return key;
-    }
-
-    if (a != '[') {
-        key.type = KEY_ESC;
-        return key;
-    }
-
-    char b = 0;
-    if (!raw_read_char(&b)) return key;
-    if (b == 'A') key.type = KEY_UP;
-    else if (b == 'B') key.type = KEY_DOWN;
-    else if (b == 'C') key.type = KEY_RIGHT;
-    else if (b == 'D') key.type = KEY_LEFT;
-    else if (b == 'H') key.type = KEY_HOME;
-    else if (b == 'F') key.type = KEY_END;
-    else if (b >= '0' && b <= '9') {
-        char tilde = 0;
-        if (!raw_read_char(&tilde)) return key;
-        if (tilde == '~') {
-            if (b == '3') key.type = KEY_DELETE;
-            else if (b == '5') key.type = KEY_PAGEUP;
-            else if (b == '6') key.type = KEY_PAGEDOWN;
-        } else if (b == '2' && tilde == '1') {
-            char maybe_tilde = 0;
-            if (raw_read_char(&maybe_tilde) && maybe_tilde == '~') {
-                key.type = KEY_NONE;
-            }
-        }
+    switch (c) {
+        case TERM_KEY_ENTER:
+            key.type = KEY_CHAR;
+            key.ch = '\n';
+            break;
+        case TERM_KEY_BACKSPACE:
+            key.type = KEY_CHAR;
+            key.ch = '\b';
+            break;
+        case TERM_KEY_TAB:
+            key.type = KEY_CHAR;
+            key.ch = '\t';
+            break;
+        case TERM_KEY_ESC: key.type = KEY_ESC; break;
+        case TERM_KEY_UP: key.type = KEY_UP; break;
+        case TERM_KEY_DOWN: key.type = KEY_DOWN; break;
+        case TERM_KEY_LEFT: key.type = KEY_LEFT; break;
+        case TERM_KEY_RIGHT: key.type = KEY_RIGHT; break;
+        case TERM_KEY_HOME: key.type = KEY_HOME; break;
+        case TERM_KEY_END: key.type = KEY_END; break;
+        case TERM_KEY_DELETE: key.type = KEY_DELETE; break;
+        case TERM_KEY_PAGE_UP: key.type = KEY_PAGEUP; break;
+        case TERM_KEY_PAGE_DOWN: key.type = KEY_PAGEDOWN; break;
+        case TERM_KEY_F1: key.type = KEY_F1; break;
+        case TERM_KEY_F2: key.type = KEY_F2; break;
+        case TERM_KEY_F3: key.type = KEY_F3; break;
+        default: break;
     }
     return key;
 }

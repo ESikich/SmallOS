@@ -9,15 +9,27 @@ TinyCC.
 
 # Runtime Layers
 
-SmallOS user programs are freestanding ELF binaries linked with the SmallOS
-runtime objects from `src/user/`.
+SmallOS user programs are freestanding ELF binaries linked with SmallOS user
+libraries built from `src/user/`: `libc.a`, `libm.a`, and `libposix.a`.
+Hosted-ish programs also link `src/user/crt/crt0.c`.
+
+Public user headers live under `src/user/include/`. Raw syscall and native
+runtime helper headers live under `src/user/internal/`; normal ports should
+prefer the public libc/POSIX headers and only include internal headers when
+they intentionally target SmallOS-specific low-level behavior.
+
+The seed filesystem installs the same public surface for guest builds:
+`/usr/include` contains libc/POSIX/SmallOS headers plus kernel UAPI headers,
+and `/usr/lib` contains `crt0.o`, `libc.a`, `libm.a`, and `libposix.a`.
+That lets in-guest compilers target the normal hosted `main()` path without
+knowing about repository-internal runtime files.
 
 The layers are:
 
 ```text
 program code
   -> POSIX-ish wrappers: open/read/write/stat/access/realpath/opendir/fopen
-  -> raw syscall helpers in user_syscall.h
+  -> raw syscall helpers in src/user/internal/user_syscall.h
   -> int 0x80 syscall ABI
   -> kernel syscall dispatcher
   -> VFS / ext2 / console / socket backends
@@ -50,6 +62,10 @@ For example, `open("missing", O_RDONLY)` returns `-1` and sets
 This split is intentional. Low-level probes such as `ptrguard`, `badptrprobe`,
 and `fileread` exercise raw syscall results, while hosted-ish code such as
 TinyCC relies on the wrapper convention.
+
+`strerror()` is part of the public libc string surface, declared by
+`<string.h>`, and maps shared SmallOS errno values to stable diagnostic text.
+`perror()` writes that text through fd-backed `stderr`.
 
 ---
 
@@ -102,15 +118,16 @@ Descriptor layout:
 3+ user-opened files, pipes, sockets, and event handles
 ```
 
-Interactive full-screen programs can use `sys_read_raw()` when they need
-keyboard input without kernel echo. Foreground process input reports ordinary
-characters plus ANSI-style special-key sequences for arrows, Home/End,
-Delete, PageUp/PageDown, and function keys; `edit` uses this path together
-with normal fd-backed writes to edit ext2 text files.
-Programs that redraw a whole screen, such as `top`, combine raw reads with
-nonblocking `sys_poll()` on fd `0` and ANSI cursor/screen control written to fd
-`1`. That keeps live tools responsive to single-key commands such as `q`
-without waiting for a newline.
+Interactive full-screen programs can use the public `term_keys.h` helper when
+they need keyboard input without kernel echo. Foreground process input reports
+ordinary characters plus ANSI-style special-key sequences for arrows,
+Home/End, Delete, PageUp/PageDown, and function keys. `term_keys.h`, backed by
+`libc.a`, turns those byte sequences into stable `TERM_KEY_*` values and owns
+the nonblocking fd `0` poll/raw-read details for apps that want single-key
+controls without carrying their own escape-sequence decoder.
+Programs that redraw a whole screen, such as `top`, combine `term_keys.h` with
+ANSI cursor/screen control written to fd `1`. That keeps live tools responsive
+to single-key commands such as `q` without waiting for a newline.
 
 PTY-backed GUI shells use the same descriptor contract. The GUI owns the PTY
 master, the shell process inherits the slave on fd `0`/`1`/`2`, and child
@@ -118,10 +135,18 @@ programs launched by the shell inherit those descriptors unless marked
 close-on-exec.
 
 Graphics programs that need mouse motion can call `sys_mouse_read()` from
-`user_syscall.h`. It returns accumulated relative movement and button bits from
-PS/2, VMware absolute-pointer translation, or the OHCI USB boot mouse path, then
-clears the movement counters. This is a raw polling helper, not a
-descriptor-backed event stream.
+`src/user/internal/user_syscall.h`. It returns accumulated relative movement
+and button bits from PS/2, VMware absolute-pointer translation, or the OHCI USB
+boot mouse path, then clears the movement counters. This is a raw polling
+helper, not a descriptor-backed event stream.
+
+Framebuffer programs should use `gfx.h` rather than calling display syscalls
+directly. `gfx.c` owns display acquire/release, XRGB8888 surface allocation,
+rectangle copying, full-frame and rectangle presentation, and presentation of
+temporary overlay surfaces through `gfx_present_surface()`. `gfx_indexed.h`
+adds an 8-bit shadow framebuffer and palette conversion for Fractint-style
+programs, while `gfx_text.h` provides bitmap text cells on top of a
+`gfx_surface_t`.
 
 USB and mouse diagnostic commands use the same raw syscall layer instead of
 running as kernel built-ins. `sys_usbinfo()`, `sys_mouse_debug()`,
@@ -195,13 +220,37 @@ The runtime provides a small POSIX-shaped surface:
 - `mkdir`, `rmdir`
 - `getcwd`, `chdir`
 - `getpid`, `fork`, `execve`, `execv`, `execvp`, `waitpid`, `kill`
-- `environ`, `getenv`, and `main(argc, argv, envp)` through `user_crt0`
+- `system`, implemented through `shell -c command`
+- `environ`, `getenv`, and `main(argc, argv, envp)` through `crt/crt0.c`
 - `time`, `gettimeofday`, `clock_gettime`, `clock_settime`
 - socket, poll, epoll, timerfd, and signalfd wrappers used by guest services
 
 `access(path, mode)` validates mode bits and checks existence through
 `SYS_STAT`. SmallOS does not currently model Unix permission bits, so `R_OK`,
 `W_OK`, and `X_OK` are existence/type checks rather than permission checks.
+
+The runtime is also where SmallOS grows its hosted C surface. Older ports such
+as Fractint are useful completeness tests: when they need a normal libc, libm,
+or POSIX function, the preferred fix is to add that capability to the shared
+runtime instead of hiding it in a per-program adapter. The source tree reflects
+that boundary:
+
+- `src/user/libc/` owns C library functions such as BSD string aliases, scanf
+  parsing, stream helpers, `assert`, `rand`, `atof`, `atol`, and `system`
+- `src/user/libm/` owns the freestanding math surface
+- `src/user/posix/` owns POSIX APIs that are layered on kernel syscalls, such
+  as `select()` on top of `SYS_POLL`
+- `src/user/include/` owns the public libc/POSIX/SmallOS-extension headers,
+  including compatibility names such as `<strings.h>`, `<malloc.h>`,
+  `<endian.h>`, `<sys/dir.h>`, and `<sys/file.h>`
+- `src/user/internal/` owns raw syscall and native runtime helper headers
+- `src/user/posix/core.c` owns the broader syscall-backed descriptor and
+  process wrappers
+- `src/user/libc/time.c` owns C time formatting/parsing helpers
+
+The Makefile archives those objects as `libc.a`, `libm.a`, and `libposix.a`,
+then links user ELFs with `--gc-sections` so unused runtime functions do not
+have to stay in each binary.
 
 `stat`, `lstat`, and `fstat` use the full stat syscalls and fill inode number,
 mode bits, link count, uid/gid, size, block size, block count, and ext2
@@ -306,10 +355,13 @@ directory listing behavior should stay aligned with `dirprobe`.
 
 # TinyCC Expectations
 
-`usr/bin/tcc.elf` is built from TinyCC submodule sources plus the SmallOS runtime.
-It links `src/user/user_crt0.c`, so the kernel still enters `_start(argc, argv)`
-while TinyCC itself runs through its upstream `main(argc, argv)` path. It relies
-on normal runtime behavior:
+`usr/bin/tcc.elf` is built from TinyCC submodule sources plus the SmallOS user
+libraries. It links `src/user/crt/crt0.c`, so the kernel still enters
+`_start(argc, argv)` while TinyCC itself runs through its upstream
+`main(argc, argv)` path. Inside the guest it searches `/usr/include` and
+`/usr/lib`, adds `crt0.o` and the SmallOS runtime archives by default, and can
+compile normal hosted `main()` programs without `-nostdlib`. It relies on
+normal runtime behavior:
 
 - cwd-aware file opens
 - normalized path handling through `realpath`
@@ -325,6 +377,8 @@ tinycc_math
 tinycc_agg
 tinycc_tree
 tinycc_compile
+tinycc_sysroot
+tinycc_posix
 ```
 
 Any runtime or filesystem change should keep those tests passing unless the
@@ -338,7 +392,7 @@ int main(int argc, char** argv);
 ```
 
 The kernel launches `void _start(int argc, char** argv, char** envp)`.
-`user_crt0` provides that symbol, sets global `environ`, calls
+`crt0` provides that symbol, sets global `environ`, calls
 `main(argc, argv, envp)`, and passes the return value to `sys_exit`.
 Two-argument `main(argc, argv)` programs continue to work because the extra
 cdecl argument is ignored by callees that do not declare it. Direct
@@ -359,7 +413,7 @@ Runtime coverage currently lives in guest ELF probes:
 - `stdioprobe` - EOF/error state, `clearerr`, `fflush`, invalid stdio ops
 - `dirprobe` - root and nested directory iteration, EOF, invalid/missing dirs
 - `errnoprobe` - wrapper `errno` behavior
-- `crtprobe` - `main(argc, argv)` via `user_crt0`, argv terminator, and return status
+- `crtprobe` - `main(argc, argv)` via `crt0`, argv terminator, and return status
 - `waitprobe` - `SYS_EXEC` pid return, `waitpid`, `WNOHANG`, `kill`, and wait status macros
 - `pipeprobe` - pipe read/write, EOF, `EPIPE`, nonblocking behavior, `PIPE_BUF`, poll readiness, and blocking transfer wakeups
 - `dupprobe` - `dup`, `dup2`, shared file offsets/status flags, and independent `FD_CLOEXEC`

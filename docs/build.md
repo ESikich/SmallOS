@@ -54,7 +54,10 @@ missing.
 
 The TinyCC sources stay clean in `third_party/tinycc`. SmallOS applies
 `patches/tinycc/smallos.patch` to a build-local copy under
-`build/tinycc-smalos-src/` before compiling the guest `usr/bin/tcc.elf` variant.
+`build/tinycc-smalos-src/` before compiling the guest `usr/bin/tcc.elf`
+variant. That variant defaults to the SmallOS guest sysroot: `/usr/include`
+for headers and `/usr/lib` for `crt0.o`, `libc.a`, `libm.a`, and
+`libposix.a`.
 
 ---
 
@@ -234,12 +237,12 @@ and the GUI launch smoke, `make verify-network` runs the socket, FTP, and
 cserve smoke matrix, and `make verify-full` runs all verification targets in
 sequence.
 
-Most freestanding test ELFs define `_start(argc, argv)` directly and link with
-the common user runtime objects. Hosted-ish programs define
-`main(argc, argv, envp)` and link `src/user/user_crt0.c`, which supplies
-`_start`, sets `environ`, and exits with `main`'s return value. `usr/bin/tcc.elf`
-and `usr/libexec/tests/crtprobe.elf` use that CRT path; there is no
-TinyCC-specific startup wrapper.
+Most freestanding test ELFs define `_start(argc, argv)` directly and link
+against the SmallOS user libraries built under `build/obj/.../user/lib/`.
+Hosted-ish programs also link `src/user/crt/crt0.c`, which supplies `_start`,
+sets `environ`, and exits with `main`'s return value. `usr/bin/tcc.elf` and
+`usr/libexec/tests/crtprobe.elf` use that CRT path; there is no TinyCC-specific
+startup wrapper.
 
 ## Automated Guest Test
 
@@ -258,8 +261,10 @@ The guest suite also exercises the SmallOS-hosted TinyCC compiler
 (`usr/bin/tcc.elf`) by compiling several sample C files inside the guest
 and immediately running the generated ELFs. `usr/bin/tcc.elf` links the generic
 SmallOS CRT adapter and runs TinyCC's normal hosted CLI `main()` path inside
-the freestanding guest runtime. Those generated binaries are stored under
-`/var/tmp/`, while the shipped hello demo lives under `usr/bin/`.
+the freestanding guest runtime. The suite covers both freestanding
+`-nostdlib` samples and a hosted sysroot sample that uses installed headers,
+`crt0.o`, and runtime archives from `/usr`. Those generated binaries are
+stored under `/var/tmp/`, while the shipped hello demo lives under `usr/bin/`.
 
 The user runtime behavior that those tests depend on is documented in
 [`docs/user-runtime.md`](user-runtime.md), including `errno`, cwd-aware
@@ -422,8 +427,13 @@ startup work until the welcome text and shell prompt are ready.
 
 Userland framebuffer programs should use the small graphics helper in
 `src/user/gfx.c`. It validates the display mode, acquires exclusive graphics
-access, allocates a full-screen XRGB8888 backbuffer, and presents it with one
-`SYS_DISPLAY_BLIT`.
+access, manages XRGB8888 `gfx_surface_t` buffers, provides rectangle copy
+helpers, and presents full frames, sub-rectangles, or temporary overlay
+surfaces through the display syscalls. Programs that need framebuffer text cells can also use
+`src/user/gfx_text.c`, which provides VGA-style colors and bitmap glyph drawing
+on top of a `gfx_surface_t`. Indexed-color programs can use
+`src/user/gfx_indexed.c` for an 8-bit shadow framebuffer, palette conversion,
+and batched dirty-rectangle presentation.
 
 QEMU guest RAM defaults to 32 MB. To exercise the expanded E820-backed PMM
 window, override the memory size:
@@ -565,18 +575,31 @@ src/user/ptrguard.c
 src/user/badptrprobe.c
 src/user/preempt_test.c
 src/user/fault.c
-src/user/user_alloc.c
-src/user/user_posix.c
+src/user/libc/malloc.c
+src/user/posix/core.c
 ```
 
-All use `user_lib.h` and `user_syscall.h`. No libc, no hosted runtime, and no dynamic linking.
+Low-level probes may include `src/user/internal/user_lib.h` or
+`src/user/internal/user_syscall.h` directly when they are exercising raw
+SmallOS behavior. Normal programs should include public headers from
+`src/user/include/` and link the SmallOS user libraries. The public header set
+also carries the small BSD/Unix compatibility names needed by older ports,
+including `<strings.h>`, `<malloc.h>`, `<endian.h>`, `<sys/dir.h>`, and
+`<sys/file.h>`. There is still no dynamic linking.
+
+Vendored third-party source should stay unchanged. Port-specific glue belongs
+under `src/user/ports/`; for example, the Fractint framebuffer and keyboard
+adapter lives in `src/user/ports/fractint/` while upstream Xfractint remains
+under `third_party/fractint`.
 
 The guest compiler toolchain ships as `usr/bin/tcc.elf`, built from the TinyCC
 submodule sources with the generic SmallOS CRT adapter. The guest entry point
 bridges the kernel `_start(argc, argv)` launch ABI to TinyCC's normal
-`main(argc, argv)` path. The shell selftests compile `usr/share/examples/tinycc/tccmath.c`,
-`usr/share/examples/tinycc/tccagg.c`, `usr/share/examples/tinycc/tcctree.c`, and `usr/share/examples/tinycc/tccmini.c` inside the
-guest with that compiler.
+`main(argc, argv)` path. The shell selftests compile
+`usr/share/examples/tinycc/tccmath.c`, `usr/share/examples/tinycc/tccagg.c`,
+`usr/share/examples/tinycc/tcctree.c`, `usr/share/examples/tinycc/tccmini.c`,
+`usr/share/examples/tinycc/tccsysroot.c`, and
+`usr/share/examples/tinycc/tccposix.c` inside the guest with that compiler.
 
 ## Compile
 
@@ -608,10 +631,10 @@ Multiple programs sharing `-Ttext-segment 0x400000` is safe because each `runelf
 
 * fixed virtual address `0x400000` — must match where the ELF loader maps segments
 * default entry point `_start(int argc, char** argv)`
-* hosted-style tools may link `src/user/user_crt0.c` and provide `main(int argc, char** argv)`
-* SmallOS runtime only, no external libc
+* hosted-style tools may link `src/user/crt/crt0.c` and provide `main(int argc, char** argv)`
+* SmallOS `libc.a`, `libm.a`, and `libposix.a`, no external libc
 * output via syscalls only (`sys_write`, `sys_putc`)
-* direct `_start` programs must call `sys_exit(status)`; `user_crt0` does that for `main`
+* direct `_start` programs must call `sys_exit(status)`; `crt0` does that for `main`
 
 ---
 
@@ -638,6 +661,9 @@ build/tools/mkext2 build/bin/auto/ext2.seed.img \
     usr/libexec/tests/runelf_test.elf=build/bin/auto/runelf_test.elf \
     usr/sbin/ftpd.elf=build/bin/auto/ftpd.elf \
     usr/bin/tcc.elf=build/bin/auto/tcc-smalos.elf \
+    usr/include/stdio.h=src/user/include/stdio.h \
+    usr/lib/crt0.o=build/obj/auto/user/crt/crt0.o \
+    usr/lib/libc.a=build/obj/auto/user/lib/libc.a \
     usr/share/examples/tinycc/tccmath.c=samples/tccmath.c
 ```
 
@@ -649,7 +675,8 @@ representative shape rather than the complete invocation.
 `mkext2` produces a raw ext2 volume containing the shipped apps under
 `bin/`, `usr/bin/`, `usr/libexec/tests/`, `usr/sbin/`, plus manual/config/data
 trees such as `/usr/share/man/`, `/usr/share/xfractint/`, `/etc/`, `/var/`,
-and `/tmp/`. The image also seeds `/var/log/boot.txt` from
+and `/tmp/`. It also installs the guest build sysroot under `/usr/include` and
+`/usr/lib`. The image also seeds `/var/log/boot.txt` from
 `samples/boot.txt`; the kernel overwrites that file with the current boot
 diagnostics after ext2 mounts. DHCP, NTP, and default service startup may
 continue while the splash is visible; those quiet-path messages are
@@ -711,23 +738,25 @@ Shipped ext2 programs:
 - `usr/libexec/tests/ptrguard` - exercise syscall pointer validation
 - `usr/libexec/tests/spinwkr` - helper spawned by the preemption regression
 - `usr/libexec/tests/preempt_test` - prove timer-driven preemption
-- `usr/libexec/tests/crtprobe` - verify `main(argc, argv)` via `user_crt0`
+- `usr/libexec/tests/crtprobe` - verify `main(argc, argv)` via `crt0`
 - `usr/libexec/tests/fault` - fault probe (ud/gp/de/br/pf)
 - `usr/bin/tcc.elf` - SmallOS-hosted TinyCC compiler binary linked through
-  `src/user/user_crt0.c`
-- `usr/share/examples/tinycc/tccmath.c`, `usr/share/examples/tinycc/tccagg.c`, `usr/share/examples/tinycc/tcctree.c`, `usr/share/examples/tinycc/tccmini.c` - guest compiler test inputs used by the shell selftests
+  `src/user/crt/crt0.c`
+- `/usr/include` - public libc/POSIX/SmallOS headers and kernel UAPI headers
+- `/usr/lib` - `crt0.o`, `libc.a`, `libm.a`, and `libposix.a` for guest builds
+- `usr/share/examples/tinycc/tccmath.c`, `usr/share/examples/tinycc/tccagg.c`, `usr/share/examples/tinycc/tcctree.c`, `usr/share/examples/tinycc/tccmini.c`, `usr/share/examples/tinycc/tccsysroot.c`, `usr/share/examples/tinycc/tccposix.c` - guest compiler test inputs used by the shell selftests
 
 ## Properties
 
 * fixed-size volume defined by `tools/mkext2.c`
 * root directory is intended to stay directory-only during normal use
 * `bin/` contains command-style app ELFs found by bare shell command lookup
-* `usr/bin/` contains the hello and plasma demo ELFs
+* `usr/bin/` contains demos, development tools, and larger user-facing programs such as `hello`, `plasma`, `mandel`, `fractint`, and `tcc`
 * `usr/libexec/tests/` contains the remaining shipped test ELFs
 * `usr/sbin/` contains guest service ELFs
-* `usr/bin/` contains the guest TinyCC binary and user-facing demos/tools
+* `usr/include/` and `usr/lib/` contain the guest C build sysroot, including public SmallOS helpers such as `term_keys.h`
 * `usr/share/man/` contains plain-text manual pages installed from repository `man/man*/`
-* `usr/share/xfractint/` contains the generated Fractint help database plus upstream maps, parameter sets, formulas, L-system definitions, and IFS definitions staged flat at the Fractint search root
+* `usr/share/xfractint/` contains the generated Fractint help database, `sstools.ini`, and upstream maps, parameter sets, formulas, L-system definitions, and IFS definitions staged both at the Fractint search root and in canonical upstream subdirectories
 * `usr/share/examples/tinycc/` contains the shipped TinyCC sample inputs
 * runtime-generated compiler outputs and scratch artifacts belong under `/var/tmp/`
 * filenames are stored as native case-sensitive ext2 names
