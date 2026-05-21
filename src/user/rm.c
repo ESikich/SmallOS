@@ -1,18 +1,18 @@
-#include "user_lib.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "unistd.h"
 
 void _start(int argc, char** argv) {
     if (argc < 2) {
-        u_puts("usage: rm <path>\n");
-        sys_exit(1);
+        fputs("usage: rm <path>\n", stderr);
+        exit(1);
     }
 
-    if (u_unlink(argv[1]) < 0) {
-        u_puts("rm: failed\n");
-        sys_exit(1);
+    if (unlink(argv[1]) < 0) {
+        fputs("rm: failed\n", stderr);
+        exit(1);
     }
 
-    u_puts("rm: ");
-    u_puts(argv[1]);
-    u_putc('\n');
-    sys_exit(0);
+    printf("rm: %s\n", argv[1]);
+    exit(0);
 }

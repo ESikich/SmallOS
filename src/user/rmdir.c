@@ -1,18 +1,18 @@
-#include "user_lib.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "unistd.h"
 
 void _start(int argc, char** argv) {
     if (argc < 2) {
-        u_puts("usage: rmdir <path>\n");
-        sys_exit(1);
+        fputs("usage: rmdir <path>\n", stderr);
+        exit(1);
     }
 
-    if (sys_rmdir(argv[1]) < 0) {
-        u_puts("rmdir: failed\n");
-        sys_exit(1);
+    if (rmdir(argv[1]) < 0) {
+        fputs("rmdir: failed\n", stderr);
+        exit(1);
     }
 
-    u_puts("rmdir: ");
-    u_puts(argv[1]);
-    u_putc('\n');
-    sys_exit(0);
+    printf("rmdir: %s\n", argv[1]);
+    exit(0);
 }

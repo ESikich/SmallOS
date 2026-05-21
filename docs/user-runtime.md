@@ -124,7 +124,10 @@ ordinary characters plus ANSI-style special-key sequences for arrows,
 Home/End, Delete, PageUp/PageDown, and function keys. `term_keys.h`, backed by
 `libc.a`, turns those byte sequences into stable `TERM_KEY_*` values and owns
 the nonblocking fd `0` poll/raw-read details for apps that want single-key
-controls without carrying their own escape-sequence decoder.
+controls without carrying their own escape-sequence decoder. The same public
+helper exposes `term_key_read_console()` for pager-style controls when fd `0`
+is a pipe, plus `term_get_size()` for programs that need the current terminal
+row/column geometry without including raw syscall headers.
 Programs that redraw a whole screen, such as `top`, combine `term_keys.h` with
 ANSI cursor/screen control written to fd `1`. That keeps live tools responsive
 to single-key commands such as `q` without waiting for a newline.

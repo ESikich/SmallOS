@@ -1,5 +1,7 @@
 #include "image_bmp.h"
 
+#include "string.h"
+
 static unsigned int rd16(const unsigned char* p) {
     return (unsigned int)p[0] | ((unsigned int)p[1] << 8);
 }

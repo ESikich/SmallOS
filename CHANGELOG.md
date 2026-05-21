@@ -86,9 +86,10 @@ wrappers in `src/user/posix`.
   * Built the runtime as `libc.a`, `libm.a`, and `libposix.a`, installed those archives plus `crt0.o` under `/usr/lib`, and installed public headers plus kernel UAPI headers under `/usr/include`.
   * Updated the SmallOS TinyCC build-local patch so guest `tcc` defaults to `/usr/include` and `/usr/lib`, then added hosted sysroot and POSIX sample coverage through `tccsysroot.c` and `tccposix.c`.
   * Kept low-level probes free to include `src/user/internal/*`, while normal hosted programs and ports can build against the installed public header/library surface.
+  * Moved ordinary command ELFs such as `cat`, `cp`, `ls`, `man`, `more`, `tree`, `touch`, and `bmpview` off private `user_lib.h` / `user_syscall.h` includes and onto public libc/POSIX headers.
 * **Shared framebuffer and keyboard helpers** (`src/user/gfx.c`, `src/user/gfx_indexed.c`, `src/user/gfx_text.c`, `src/user/term_keys.c`, `src/user/include/*.h`, `src/user/{bmpview,diskview,edit,mandel,plasma,top}.c`, `src/user/gui/app.c`, `docs/`)
   * Promoted reusable graphics pieces into public helpers: XRGB `gfx_surface_t` allocation/copy/presentation, temporary overlay presentation, 8-bit indexed shadow framebuffer/palette conversion, and VGA-style framebuffer text cells.
-  * Added `term_keys.h` for decoded raw keyboard controls and moved ordinary full-screen programs off private ANSI escape parsers or local raw-key polling helpers.
+  * Added `term_keys.h` for decoded raw keyboard controls and terminal-size queries, and moved ordinary full-screen programs off private ANSI escape parsers or local raw-key polling helpers.
   * Routed GUI cursor and drag-overlay presentation through `gfx_present_surface()` instead of direct display syscall calls in the GUI app.
 * **Fractint as a runtime completeness port** (`Makefile`, `src/user/ports/fractint/runtime.c`, `man/man1/fractint.1`, `USER_GUIDE.md`, `docs/`)
   * Moved all SmallOS-owned Fractint glue out of the vendored tree and into `src/user/ports/fractint`, deleting the old `third_party/fractint/smallos` glue directory.

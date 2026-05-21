@@ -1,8 +1,6 @@
 #ifndef IMAGE_BMP_H
 #define IMAGE_BMP_H
 
-#include "user_lib.h"
-
 enum {
     BMP_OK = 0,
     BMP_ERR_FORMAT = -1,

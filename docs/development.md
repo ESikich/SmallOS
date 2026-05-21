@@ -493,9 +493,12 @@ presentation, and temporary overlay presentation.
 decoder plus this helper; replace `assets/boot_splash.bmp` to change the image
 seeded into the guest at `/boot/splash.bmp`.
 Interactive graphics should use `term_keys.h` for decoded single-key controls
-and can poll relative mouse movement with `SYS_MOUSE_READ`. New code that wants
-keyboard and mouse together should prefer `SYS_INPUT_READ`, which drains the
-kernel input event queue and can either block for the next event or return
+and `term_get_size()` for terminal geometry. Use `term_key_read()` when fd `0`
+is the keyboard/PTY input stream; pager-style programs whose fd `0` may be a
+pipe should use `term_key_read_console()` for control keys such as `q`.
+Programs can poll relative mouse movement with `SYS_MOUSE_READ`. New code that
+wants keyboard and mouse together should prefer `SYS_INPUT_READ`, which drains
+the kernel input event queue and can either block for the next event or return
 immediately with `SYS_INPUT_FLAG_NONBLOCK`. Event-loop programs that also have
 frame deadlines can use `SYS_INPUT_WAIT_UNTIL` to block until input arrives or
 an absolute tick deadline is reached, instead of repeatedly yielding between

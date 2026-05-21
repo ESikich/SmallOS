@@ -1,5 +1,9 @@
 #include "dirent.h"
-#include "user_lib.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
+#include "sys/stat.h"
+#include "unistd.h"
 
 #define TREE_MAX_ENTRIES 128
 #define TREE_PATH_MAX 256
@@ -27,7 +31,7 @@ static int flush_output(void) {
     if (s_out_pos == 0u) {
         return 1;
     }
-    if (sys_write(s_out_buf, s_out_pos) != (int)s_out_pos) {
+    if (write(STDOUT_FILENO, s_out_buf, s_out_pos) != (int)s_out_pos) {
         s_out_pos = 0;
         s_out_error = 1;
         return 0;
@@ -68,7 +72,7 @@ static int buffered_write(const char* s, unsigned int len) {
 }
 
 static int buffered_puts(const char* s) {
-    return buffered_write(s, str_len(s));
+    return buffered_write(s, strlen(s));
 }
 
 static int buffered_putc(char ch) {
@@ -97,7 +101,7 @@ static int buffered_put_uint(unsigned int value) {
 
 static void print_error_prefix(const char* msg) {
     flush_output();
-    u_puts(msg);
+    fputs(msg, stderr);
 }
 
 static int is_root_path(const char* path) {
@@ -261,7 +265,7 @@ static int append_char(char* out, unsigned int out_size, unsigned int* pos, char
 static int write_entry_line(const char* prefix, const tree_entry_t* entry, int is_last) {
     char line[TREE_LINE_MAX];
     unsigned int pos = 0;
-    uint32_t name_len;
+    unsigned int name_len;
 
     line[0] = '\0';
     if (prefix && !append_string(line, sizeof(line), &pos, prefix)) {
@@ -272,7 +276,7 @@ static int write_entry_line(const char* prefix, const tree_entry_t* entry, int i
         return 0;
     }
 
-    name_len = str_len(entry->name);
+    name_len = strlen(entry->name);
     if (entry->is_dir && (name_len == 0u || entry->name[name_len - 1u] != '/')) {
         if (!append_char(line, sizeof(line), &pos, '/')) {
             return 0;
@@ -331,8 +335,8 @@ static int print_tree(const char* path, const char* prefix) {
     if (!collect_entries(path, entries, &count)) {
         free(entries);
         print_error_prefix("tree: failed to read: ");
-        u_puts(path);
-        u_putc('\n');
+        fputs(path, stderr);
+        fputc('\n', stderr);
         return 0;
     }
 
@@ -378,7 +382,7 @@ static void print_start_label(const char* path) {
     }
 
     if (path && path[0] == '.' && path[1] == '\0') {
-        if (u_getcwd(cwd, sizeof(cwd)) >= 0) {
+        if (getcwd(cwd, sizeof(cwd)) != 0) {
             buffered_puts(cwd);
             buffered_putc('\n');
             return;
@@ -391,21 +395,22 @@ static void print_start_label(const char* path) {
 
 void _start(int argc, char** argv) {
     const char* path = argc >= 2 ? argv[1] : ".";
-    uint32_t size = 0;
+    struct stat st;
     int is_dir = 0;
 
-    if (u_stat(path, &size, &is_dir) < 0) {
-        u_puts("tree: not found: ");
-        u_puts(path);
-        u_putc('\n');
-        sys_exit(1);
+    if (stat(path, &st) < 0) {
+        fputs("tree: not found: ", stderr);
+        fputs(path, stderr);
+        fputc('\n', stderr);
+        exit(1);
     }
+    is_dir = S_ISDIR(st.st_mode);
 
     print_start_label(path);
     if (!is_dir) {
         s_file_count = 1;
     } else if (!print_tree(path, "")) {
-        sys_exit(1);
+        exit(1);
     }
 
     if (!buffered_putc('\n') ||
@@ -414,7 +419,7 @@ void _start(int argc, char** argv) {
         !buffered_put_uint(s_file_count) ||
         !buffered_puts(" files\n") ||
         !flush_output()) {
-        sys_exit(1);
+        exit(1);
     }
-    sys_exit(0);
+    exit(0);
 }

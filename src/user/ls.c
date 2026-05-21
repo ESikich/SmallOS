@@ -1,5 +1,8 @@
 #include "dirent.h"
-#include "user_lib.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
+#include "unistd.h"
 
 #define LS_MAX_ENTRIES 128
 #define LS_LINE_MAX (NAME_MAX + 32)
@@ -19,7 +22,7 @@ static int s_out_error = 0;
 static int flush_output(void) {
     if (s_out_error) return 0;
     if (s_out_pos == 0u) return 1;
-    if (sys_write(s_out_buf, s_out_pos) != (int)s_out_pos) {
+    if (write(STDOUT_FILENO, s_out_buf, s_out_pos) != (int)s_out_pos) {
         s_out_pos = 0;
         s_out_error = 1;
         return 0;
@@ -49,7 +52,7 @@ static int buffered_write(const char* s, unsigned int len) {
 }
 
 static int buffered_puts(const char* s) {
-    return buffered_write(s, str_len(s));
+    return buffered_write(s, strlen(s));
 }
 
 static int buffered_putc(char ch) {
@@ -58,7 +61,7 @@ static int buffered_putc(char ch) {
 
 static void print_error_prefix(const char* msg) {
     flush_output();
-    u_puts(msg);
+    fputs(msg, stderr);
 }
 
 static int is_root_path(const char* path) {
@@ -210,7 +213,7 @@ static int print_entry(const ls_entry_t* ent) {
         !append_string(line, sizeof(line), &pos, ent->name)) {
         return 0;
     }
-    if (ent->is_dir && ent->name[str_len(ent->name) - 1] != '/') {
+    if (ent->is_dir && ent->name[strlen(ent->name) - 1] != '/') {
         if (!append_char(line, sizeof(line), &pos, '/')) return 0;
     }
     if (!append_string(line, sizeof(line), &pos, "  ")) return 0;
@@ -232,14 +235,14 @@ static int list_path(const char* path, const char* pattern) {
     unsigned int count = 0;
     if (!dir) {
         print_error_prefix("ext2: not found: ");
-        u_puts(use_path);
-        u_putc('\n');
+        fputs(use_path, stderr);
+        fputc('\n', stderr);
         return 1;
     }
 
     if (use_path[0] == '.' && use_path[1] == '\0') {
         char cwd[128];
-        if (u_getcwd(cwd, sizeof(cwd)) < 0) {
+        if (getcwd(cwd, sizeof(cwd)) == 0) {
             cwd[0] = '/';
             cwd[1] = '\0';
         }
@@ -296,11 +299,11 @@ void _start(int argc, char** argv) {
 
     if (has_wildcard(path)) {
         if (!split_wildcard(path, dir, sizeof(dir), &pattern)) {
-            u_puts("ls: failed\n");
-            sys_exit(1);
+            fputs("ls: failed\n", stderr);
+            exit(1);
         }
-        sys_exit(list_path(dir, pattern));
+        exit(list_path(dir, pattern));
     }
 
-    sys_exit(list_path(path, 0));
+    exit(list_path(path, 0));
 }

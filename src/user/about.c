@@ -1,9 +1,10 @@
-#include "user_lib.h"
+#include "stdio.h"
+#include "stdlib.h"
 
 void _start(int argc, char** argv) {
     (void)argc;
     (void)argv;
 
-    u_puts("SmallOS v0.1\n");
-    sys_exit(0);
+    puts("SmallOS v0.1");
+    exit(0);
 }

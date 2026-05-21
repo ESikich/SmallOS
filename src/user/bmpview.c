@@ -1,41 +1,45 @@
-#include "user_lib.h"
+#include "fcntl.h"
 #include "image_bmp.h"
 #include "gfx.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "sys/stat.h"
 #include "term_keys.h"
+#include "unistd.h"
 
 static void usage(void) {
-    u_puts("usage: bmpview <file.bmp>\n");
+    fputs("usage: bmpview <file.bmp>\n", stderr);
 }
 
 static int read_file(const char* path, unsigned char** out_data, unsigned int* out_size) {
-    unsigned int size = 0;
-    int is_dir = 0;
+    struct stat st;
 
-    if (sys_stat(path, &size, &is_dir) < 0 || is_dir || size == 0) {
-        u_puts("bmpview: cannot stat file\n");
+    if (stat(path, &st) < 0 || S_ISDIR(st.st_mode) || st.st_size <= 0) {
+        fputs("bmpview: cannot stat file\n", stderr);
         return 0;
     }
 
+    unsigned int size = (unsigned int)st.st_size;
     unsigned char* data = (unsigned char*)malloc(size);
     if (!data) {
-        u_puts("bmpview: out of memory\n");
+        fputs("bmpview: out of memory\n", stderr);
         return 0;
     }
 
-    int fd = sys_open(path);
+    int fd = open(path, O_RDONLY);
     if (fd < 0) {
         free(data);
-        u_puts("bmpview: cannot open file\n");
+        fputs("bmpview: cannot open file\n", stderr);
         return 0;
     }
 
     unsigned int pos = 0;
     while (pos < size) {
-        int n = sys_fread(fd, (char*)data + pos, size - pos);
+        int n = read(fd, data + pos, size - pos);
         if (n < 0) {
-            sys_close(fd);
+            close(fd);
             free(data);
-            u_puts("bmpview: read failed\n");
+            fputs("bmpview: read failed\n", stderr);
             return 0;
         }
         if (n == 0) {
@@ -43,11 +47,11 @@ static int read_file(const char* path, unsigned char** out_data, unsigned int* o
         }
         pos += (unsigned int)n;
     }
-    sys_close(fd);
+    close(fd);
 
     if (pos != size) {
         free(data);
-        u_puts("bmpview: short read\n");
+        fputs("bmpview: short read\n", stderr);
         return 0;
     }
 
@@ -108,7 +112,7 @@ static int render_bmp(const bmp_image_t* bmp, gfx_surface_t* dst) {
     src_row = (unsigned int*)malloc(bmp->width * sizeof(unsigned int));
     if (!src_row) {
         free(src_row);
-        u_puts("bmpview: out of memory\n");
+        fputs("bmpview: out of memory\n", stderr);
         return 0;
     }
 
@@ -119,9 +123,7 @@ static int render_bmp(const bmp_image_t* bmp, gfx_surface_t* dst) {
             int rc = bmp_decode_row_xrgb8888(bmp, src_y, src_row, bmp->width);
             if (rc != BMP_OK) {
                 free(src_row);
-                u_puts("bmpview: ");
-                u_puts(bmp_error_string(rc));
-                u_puts("\n");
+                fprintf(stderr, "bmpview: %s\n", bmp_error_string(rc));
                 return 0;
             }
             last_src_y = src_y;
@@ -150,26 +152,24 @@ static int view_bmp(const char* path) {
     rc = bmp_parse(data, size, &bmp);
     if (rc != BMP_OK) {
         free(data);
-        u_puts("bmpview: ");
-        u_puts(bmp_error_string(rc));
-        u_puts("\n");
+        fprintf(stderr, "bmpview: %s\n", bmp_error_string(rc));
         return 1;
     }
 
     rc = gfx_open(&gfx);
     if (rc == -1) {
         free(data);
-        u_puts("bmpview: framebuffer display is not available\n");
+        fputs("bmpview: framebuffer display is not available\n", stderr);
         return 1;
     }
     if (rc == -4) {
         free(data);
-        u_puts("bmpview: out of memory\n");
+        fputs("bmpview: out of memory\n", stderr);
         return 1;
     }
     if (rc < 0) {
         free(data);
-        u_puts("bmpview: could not acquire display\n");
+        fputs("bmpview: could not acquire display\n", stderr);
         return 1;
     }
 
@@ -181,7 +181,7 @@ static int view_bmp(const char* path) {
     if (gfx_present(&gfx) < 0) {
         gfx_close(&gfx);
         free(data);
-        u_puts("bmpview: present failed\n");
+        fputs("bmpview: present failed\n", stderr);
         return 1;
     }
 
@@ -195,7 +195,7 @@ static int view_bmp(const char* path) {
 void _start(int argc, char** argv) {
     if (argc < 2) {
         usage();
-        sys_exit(1);
+        exit(1);
     }
-    sys_exit(view_bmp(argv[1]));
+    exit(view_bmp(argv[1]));
 }

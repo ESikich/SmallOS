@@ -1,12 +1,13 @@
-#include "user_lib.h"
+#include "stdio.h"
+#include "stdlib.h"
 
 void _start(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
-        u_puts(argv[i]);
+        fputs(argv[i], stdout);
         if (i != argc - 1) {
-            u_putc(' ');
+            putchar(' ');
         }
     }
-    u_putc('\n');
-    sys_exit(0);
+    putchar('\n');
+    exit(0);
 }

@@ -29,6 +29,8 @@ typedef enum term_key {
 int term_key_available(void);
 int term_key_read(int block);
 int term_key_read_raw(int block);
+int term_key_read_console(int block);
 void term_key_drain(void);
+int term_get_size(unsigned int* rows, unsigned int* cols);
 
 #endif /* TERM_KEYS_H */

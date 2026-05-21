@@ -1,18 +1,18 @@
-#include "user_lib.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "sys/stat.h"
 
 void _start(int argc, char** argv) {
     if (argc < 2) {
-        u_puts("usage: mkdir <path>\n");
-        sys_exit(1);
+        fputs("usage: mkdir <path>\n", stderr);
+        exit(1);
     }
 
-    if (sys_mkdir(argv[1], 0) < 0) {
-        u_puts("mkdir: failed\n");
-        sys_exit(1);
+    if (mkdir(argv[1], 0) < 0) {
+        fputs("mkdir: failed\n", stderr);
+        exit(1);
     }
 
-    u_puts("mkdir: ");
-    u_puts(argv[1]);
-    u_putc('\n');
-    sys_exit(0);
+    printf("mkdir: %s\n", argv[1]);
+    exit(0);
 }

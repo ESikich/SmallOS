@@ -1,6 +1,8 @@
-#include "user_lib.h"
 #include "gfx.h"
+#include "stdio.h"
+#include "stdlib.h"
 #include "term_keys.h"
+#include "unistd.h"
 
 #define PLASMA_FRAMES 240u
 
@@ -36,15 +38,15 @@ void _start(int argc, char** argv) {
     (void)argc;
     (void)argv;
 
-    u_puts("plasma: starting\n");
+    puts("plasma: starting");
     rc = gfx_open(&gfx);
     if (rc == -1) {
-        u_puts("plasma: framebuffer display is not available\n");
-        sys_exit(0);
+        fputs("plasma: framebuffer display is not available\n", stderr);
+        exit(0);
     }
     if (rc < 0) {
-        u_puts("plasma: could not open display\n");
-        sys_exit(1);
+        fputs("plasma: could not open display\n", stderr);
+        exit(1);
     }
 
     for (unsigned int frame = 0; frame < PLASMA_FRAMES; frame++) {
@@ -55,13 +57,13 @@ void _start(int argc, char** argv) {
         draw_plasma(&gfx.backbuffer, frame);
         if (gfx_present(&gfx) < 0) {
             gfx_close(&gfx);
-            u_puts("plasma: present failed\n");
-            sys_exit(1);
+            fputs("plasma: present failed\n", stderr);
+            exit(1);
         }
-        sys_sleep(1);
+        usleep(10000);
     }
 
     gfx_close(&gfx);
-    u_puts("plasma: done\n");
-    sys_exit(0);
+    puts("plasma: done");
+    exit(0);
 }

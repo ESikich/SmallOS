@@ -1,17 +1,12 @@
-#include "user_lib.h"
+#include "stdio.h"
+#include "stdlib.h"
 
 void _start(int argc, char** argv) {
-    u_puts("argc = ");
-    u_put_uint((uint32_t)argc);
-    u_puts("\n");
+    printf("argc = %d\n", argc);
 
     for (int i = 0; i < argc; i++) {
-        u_puts("argv[");
-        u_put_uint((uint32_t)i);
-        u_puts("] = ");
-        u_puts(argv[i]);
-        u_puts("\n");
+        printf("argv[%d] = %s\n", i, argv[i]);
     }
 
-    sys_exit(0);
+    exit(0);
 }

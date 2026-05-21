@@ -69,11 +69,8 @@ static int read_ss3_key(void) {
     }
 }
 
-int term_key_read(int block) {
-    int c = term_key_read_raw(block);
-
+static int normalize_ascii_key(int c) {
     switch (c) {
-        case TERM_KEY_NONE: return TERM_KEY_NONE;
         case '\n':
         case '\r':
             return TERM_KEY_ENTER;
@@ -92,6 +89,16 @@ int term_key_read(int block) {
             return TERM_KEY_END;
         case 21:
             return TERM_KEY_CTRL_U;
+        default:
+            return c;
+    }
+}
+
+int term_key_read(int block) {
+    int c = term_key_read_raw(block);
+
+    switch (c) {
+        case TERM_KEY_NONE: return TERM_KEY_NONE;
         case 0x1b: {
             int next = term_key_read_raw(0);
 
@@ -104,7 +111,30 @@ int term_key_read(int block) {
             return TERM_KEY_ESC;
         }
         default:
-            return c;
+            return normalize_ascii_key(c);
+    }
+}
+
+int term_key_read_console(int block) {
+    sys_input_event_t ev;
+    unsigned int flags = block ? 0u : SYS_INPUT_FLAG_NONBLOCK;
+
+    for (;;) {
+        int n = sys_input_read(&ev, 1u, flags);
+        if (n < 0 || n == 0) {
+            return TERM_KEY_NONE;
+        }
+        if (ev.type != SYS_INPUT_TYPE_KEY ||
+            (ev.flags & SYS_INPUT_KEY_PRESSED) == 0u) {
+            if (!block) {
+                return TERM_KEY_NONE;
+            }
+            continue;
+        }
+        if (ev.ascii) {
+            return normalize_ascii_key((int)(ev.ascii & 0xFFu));
+        }
+        return TERM_KEY_NONE;
     }
 }
 
@@ -122,4 +152,8 @@ void term_key_drain(void) {
         }
         idle_ticks = 0;
     }
+}
+
+int term_get_size(unsigned int* rows, unsigned int* cols) {
+    return sys_terminal_size(rows, cols);
 }

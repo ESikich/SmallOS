@@ -1,14 +1,13 @@
-#include "user_lib.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "time.h"
 
 void _start(int argc, char** argv) {
     (void)argc;
     (void)argv;
 
-    u_puts("Ticks: ");
-    u_put_uint(sys_get_ticks());
-    u_putc('\n');
-    u_puts("Seconds: ");
-    u_put_uint((uint32_t)(sys_get_ticks() / SMALLOS_TIMER_HZ));
-    u_putc('\n');
-    sys_exit(0);
+    unsigned int ticks = (unsigned int)clock();
+    printf("Ticks: %u\n", ticks);
+    printf("Seconds: %u\n", ticks / SMALLOS_TIMER_HZ);
+    exit(0);
 }

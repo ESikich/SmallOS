@@ -1,4 +1,9 @@
-#include "user_lib.h"
+#include "fcntl.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
+#include "term_keys.h"
+#include "unistd.h"
 
 #define MAN_PATH_MAX 160u
 #define MAN_BUF_SIZE 1024u
@@ -20,8 +25,8 @@ static int is_section(const char* s) {
     return s[0] >= '1' && s[0] <= '8';
 }
 
-static void path_copy(char* dst, const char* src, uint32_t cap) {
-    uint32_t i = 0;
+static void path_copy(char* dst, const char* src, unsigned int cap) {
+    unsigned int i = 0;
     while (i + 1u < cap && src[i]) {
         dst[i] = src[i];
         i++;
@@ -31,8 +36,8 @@ static void path_copy(char* dst, const char* src, uint32_t cap) {
     }
 }
 
-static int path_append(char* dst, const char* src, uint32_t cap) {
-    uint32_t n = str_len(dst);
+static int path_append(char* dst, const char* src, unsigned int cap) {
+    unsigned int n = strlen(dst);
     while (*src) {
         if (n + 1u >= cap) {
             return 0;
@@ -44,7 +49,7 @@ static int path_append(char* dst, const char* src, uint32_t cap) {
 }
 
 static int build_man_path(char* out,
-                          uint32_t cap,
+                          unsigned int cap,
                           const char* section,
                           const char* name) {
     path_copy(out, "/usr/share/man/man", cap);
@@ -62,7 +67,7 @@ static int open_page(const char* section, const char* name, char* path) {
         return -1;
     }
 
-    fd = sys_open(path);
+    fd = open(path, O_RDONLY);
     if (fd >= 0) {
         return fd;
     }
@@ -78,7 +83,7 @@ static int find_page(const char* section, const char* name, char* path) {
         return open_page(section, name, path);
     }
 
-    for (uint32_t i = 0; i < sizeof(sections) / sizeof(sections[0]); i++) {
+    for (unsigned int i = 0; i < sizeof(sections) / sizeof(sections[0]); i++) {
         int fd = open_page(sections[i], name, path);
         if (fd >= 0) {
             return fd;
@@ -88,58 +93,39 @@ static int find_page(const char* section, const char* name, char* path) {
     return -1;
 }
 
-static int write_all(const char* buf, uint32_t len) {
-    uint32_t off = 0;
+static int write_all(const char* buf, unsigned int len) {
+    unsigned int off = 0;
 
     while (off < len) {
-        int n = sys_write(buf + off, len - off);
+        int n = write(STDOUT_FILENO, buf + off, len - off);
         if (n <= 0) {
             return -1;
         }
-        off += (uint32_t)n;
+        off += (unsigned int)n;
     }
 
     return 0;
 }
 
 static void man_puts(const char* s) {
-    (void)write_all(s, str_len(s));
+    (void)write_all(s, strlen(s));
 }
 
 static void clear_screen(void) {
     man_puts("\x1b[2J\x1b[H");
 }
 
-static int read_pager_key(void) {
-    sys_input_event_t ev;
-
-    for (;;) {
-        int n = sys_input_read(&ev, 1u, 0u);
-        if (n < 0) {
-            return 'q';
-        }
-        if (n == 1 &&
-            ev.type == SYS_INPUT_TYPE_KEY &&
-            (ev.flags & SYS_INPUT_KEY_PRESSED) != 0u) {
-            if (ev.ascii) {
-                return (int)(ev.ascii & 0xFFu);
-            }
-            return 0;
-        }
-    }
-}
-
-static uint32_t pause_for_more(uint32_t page_lines) {
+static unsigned int pause_for_more(unsigned int page_lines) {
     int key;
 
     man_puts("\r--Man--");
-    key = read_pager_key();
+    key = term_key_read_console(1);
     man_puts("\r       \r");
 
     if (key == 'q' || key == 'Q') {
         return 0;
     }
-    if (key == '\n' || key == '\r') {
+    if (key == TERM_KEY_ENTER) {
         return 1u;
     }
     clear_screen();
@@ -148,13 +134,13 @@ static uint32_t pause_for_more(uint32_t page_lines) {
 
 static int page_fd(int fd) {
     char buf[MAN_BUF_SIZE];
-    uint32_t rows = MAN_DEFAULT_ROWS;
-    uint32_t cols = MAN_DEFAULT_COLS;
-    uint32_t page_lines;
-    uint32_t lines_left;
-    uint32_t col = 0;
+    unsigned int rows = MAN_DEFAULT_ROWS;
+    unsigned int cols = MAN_DEFAULT_COLS;
+    unsigned int page_lines;
+    unsigned int lines_left;
+    unsigned int col = 0;
 
-    if (sys_terminal_size(&rows, &cols) < 0 || rows == 0u) {
+    if (term_get_size(&rows, &cols) < 0 || rows == 0u) {
         rows = MAN_DEFAULT_ROWS;
     }
     if (cols == 0u) {
@@ -166,7 +152,7 @@ static int page_fd(int fd) {
     clear_screen();
 
     for (;;) {
-        int n = sys_fread(fd, buf, sizeof(buf));
+        int n = read(fd, buf, sizeof(buf));
         if (n < 0) {
             man_puts("man: read failed\n");
             return 1;
@@ -227,12 +213,12 @@ void _start(int argc, char** argv) {
         name = argv[2];
     } else {
         usage();
-        sys_exit(1);
+        exit(1);
     }
 
     if (str_eq(name, "")) {
         usage();
-        sys_exit(1);
+        exit(1);
     }
 
     fd = find_page(section, name, path);
@@ -240,10 +226,10 @@ void _start(int argc, char** argv) {
         man_puts("man: no manual entry for ");
         man_puts(name);
         man_puts("\n");
-        sys_exit(1);
+        exit(1);
     }
 
     rc = page_fd(fd);
-    sys_close(fd);
-    sys_exit(rc);
+    close(fd);
+    exit(rc);
 }
