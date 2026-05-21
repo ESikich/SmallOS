@@ -455,9 +455,9 @@ scaled/centered BMP presentation, `bin/bootsplash` uses it for the startup
 `usr/bin/mandel` uses the same helper for an interactive Mandelbrot view and
 polls `SYS_MOUSE_READ` for cursor deltas.
 
-`usr/bin/fractint` is built from upstream Xfractint 20.04p16. The SmallOS port
+`usr/bin/fractint` is built from upstream Xfractint 20.04p17. The SmallOS port
 keeps Fractint's normal calculation engines and classic keyboard/menu behavior.
-The SmallOS-owned adapter lives outside the vendored tree in
+The SmallOS-owned adapter lives outside the upstream source tree in
 `src/user/ports/fractint/`. It supplies the program-facing pieces only: fixed
 1024x768 indexed framebuffer video mode, narrow Unix/X compatibility entry
 points, and keyboard polling. It uses the shared `gfx_indexed` helper for
@@ -468,7 +468,7 @@ pieces live in `src/user/libc/` and build `libc.a`,
 math lives in `src/user/libm/` and builds `libm.a`, and POSIX APIs that depend
 on descriptors or timers live in `src/user/posix/` and build `libposix.a`.
 Fractint's common sources compile against public headers from
-`src/user/include/`; the upstream `third_party/fractint` submodule is not
+`src/user/include/`; the official SVN export in `third_party/fractint` is not
 modified for SmallOS compatibility. The SmallOS adapter also compiles against
 the public header surface rather than raw `src/user/internal/` helpers.
 The generated Fractint help file is installed under `/usr/share/xfractint`.

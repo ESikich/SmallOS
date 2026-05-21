@@ -32,6 +32,7 @@ i686-elf-gcc     → C compilation (freestanding, 32-bit, no stdlib)
 i686-elf-ld      → linking
 i686-elf-objcopy → strip ELF metadata → flat binary
 gcc              → host tool compilation (mkext2, mkimage)
+svn              → official Fractint source export
 ```
 
 The `third_party/cserver`, `third_party/ftp_client`, `third_party/ftp_server`,
@@ -48,9 +49,10 @@ For an existing clone, run:
 make deps
 ```
 
-That target runs `git submodule update --init --recursive`. The normal build
-checks for the key third-party source files and prints that command if they are
-missing.
+That target runs `git submodule update --init --recursive` and exports the
+official Fractint source from `https://svn.fractint.net/tags/fractint-20-04p17`
+into `third_party/fractint`. The normal build checks for the key third-party
+source files and prints the dependency command if they are missing.
 
 The TinyCC sources stay clean in `third_party/tinycc`. SmallOS applies
 `patches/tinycc/smallos.patch` to a build-local copy under
@@ -590,7 +592,7 @@ including `<strings.h>`, `<malloc.h>`, `<endian.h>`, `<sys/dir.h>`, and
 Third-party source should stay unchanged. Port-specific glue belongs
 under `src/user/ports/`; for example, the Fractint framebuffer and keyboard
 adapter lives in `src/user/ports/fractint/` while upstream Xfractint remains
-in the `third_party/fractint` submodule.
+an official SVN export under `third_party/fractint`.
 
 The guest compiler toolchain ships as `usr/bin/tcc.elf`, built from the TinyCC
 submodule sources with the generic SmallOS CRT adapter. The guest entry point
@@ -713,7 +715,7 @@ Shipped ext2 programs:
 - `usr/bin/hello` - print argc/argv and tick count
 - `usr/bin/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
 - `usr/bin/mandel` - interactive Mandelbrot demo with arrow-key pan, +/- zoom, reset/quit keys, and mouse cursor movement
-- `usr/bin/fractint` - upstream Xfractint 20.04p16 port using the SmallOS indexed-color framebuffer adapter, Fractint's normal renderers, and `/usr/share/xfractint/fractint.hlp`
+- `usr/bin/fractint` - upstream Xfractint 20.04p17 port using the SmallOS indexed-color framebuffer adapter, Fractint's normal renderers, and `/usr/share/xfractint/fractint.hlp`
 - `usr/libexec/tests/ticks` - print the current tick count
 - `usr/libexec/tests/args` - print argc and argv
 - `usr/libexec/tests/runelf_test` - verify ELF loading, syscalls, and stack setup

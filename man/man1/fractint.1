@@ -7,7 +7,7 @@ SYNOPSIS
     fractint [fractint-options]
 
 DESCRIPTION
-    Starts the SmallOS port of upstream Xfractint 20.04p16.  The port uses the
+    Starts the SmallOS port of upstream Xfractint 20.04p17.  The port uses the
     SmallOS framebuffer as a 1024x768 indexed 256-color video mode and ships
     the generated Fractint help database in /usr/share/xfractint/fractint.hlp.
 
@@ -43,7 +43,7 @@ NOTES
     not a Fractint-private escape-sequence parser.
 
     Fractint still owns its 256-entry palette.  The SmallOS adapter, kept
-    outside the vendored tree under src/user/ports/fractint, feeds that
+    outside the upstream source tree under src/user/ports/fractint, feeds that
     palette into the shared gfx_indexed layer, which maintains the indexed
     shadow pixel plane, converts values to XRGB8888, batches dirty
     presentation, and recolors the framebuffer when the palette changes.

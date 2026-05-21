@@ -70,13 +70,15 @@ TINYCC_SMALOS_SRC=$(TINYCC_SMALOS_SRC_DIR)/tcc.c
 CSERVER_DIR=$(CURDIR)/third_party/cserver
 CSERVER_OBJ_DIR=$(OBJ_DIR)/cserver
 CSERVER_BIN=$(BIN_DIR)/cserve.elf
-FRACTINT_REPO_DIR=$(CURDIR)/third_party/fractint
-FRACTINT_DIR=$(FRACTINT_REPO_DIR)/fractint
+FRACTINT_SVN_URL=https://svn.fractint.net/tags/fractint-20-04p17
+FRACTINT_SVN_REV=1804
+FRACTINT_DIR=$(CURDIR)/third_party/fractint
+FRACTINT_SVN_STAMP=$(FRACTINT_DIR)/.smallos-svn-r$(FRACTINT_SVN_REV)
 FRACTINT_PORT_DIR=$(USER_DIR)/ports/fractint
 FRACTINT_OBJ_DIR=$(OBJ_DIR)/fractint
 THIRD_PARTY_TINYCC_SENTINEL=$(CURDIR)/third_party/tinycc/tcc.c
 THIRD_PARTY_CSERVER_SENTINEL=$(CSERVER_DIR)/src/main.c
-THIRD_PARTY_FRACTINT_SENTINEL=$(FRACTINT_DIR)/common/fractint.c
+THIRD_PARTY_FRACTINT_SENTINEL=$(FRACTINT_SVN_STAMP)
 THIRD_PARTY_FTP_CLIENT_SENTINEL=$(CURDIR)/third_party/ftp_client/include/ftp_client.h
 THIRD_PARTY_FTP_SERVER_SENTINEL=$(CURDIR)/third_party/ftp_server/include/ftp_server.h
 STATE_DIR=.state
@@ -246,9 +248,8 @@ MAN_PAGE_ENTRIES=$(foreach page,$(MAN_PAGE_FILES),usr/share/$(page)=$(CURDIR)/$(
 USER_LIB_ENTRIES=usr/lib/crt0.o=$(USER_CRT0_OBJ) usr/lib/libc.a=$(USER_LIBC) usr/lib/libm.a=$(USER_LIBM) usr/lib/libposix.a=$(USER_LIBPOSIX)
 EXT2_EXTRA_DIRS=tmp/ var/log/ usr/include/ usr/include/arpa/ usr/include/netinet/ usr/include/sys/ usr/lib/ usr/share/examples/tinycc/ usr/share/man/man1/ usr/share/man/man2/ usr/share/man/man3/ usr/share/man/man4/ usr/share/man/man5/ usr/share/man/man6/ usr/share/man/man7/ usr/share/man/man8/
 EXT2_EXTRA_ENTRIES=usr/bin/tcc.elf=$(TINYCC_SMALOS_BIN) $(USER_INCLUDE_ENTRIES) $(USER_UAPI_ENTRIES) $(USER_LIB_ENTRIES) usr/share/examples/tinycc/tccmath.c=$(CURDIR)/samples/tccmath.c usr/share/examples/tinycc/tccagg.c=$(CURDIR)/samples/tccagg.c usr/share/examples/tinycc/tcctree.c=$(CURDIR)/samples/tcctree.c usr/share/examples/tinycc/tccmini.c=$(CURDIR)/samples/tccmini.c usr/share/examples/tinycc/tccsysroot.c=$(CURDIR)/samples/tccsysroot.c usr/share/examples/tinycc/tccposix.c=$(CURDIR)/samples/tccposix.c etc/cserve.ini=$(CURDIR)/samples/cserve.ini var/www/index.html=$(CURDIR)/samples/cserve_index.html var/log/boot.txt=$(CURDIR)/samples/boot.txt boot/splash.bmp=$(CURDIR)/assets/boot_splash.bmp $(MAN_PAGE_ENTRIES)
-EXT2_EXTRA_ENTRIES+= usr/share/xfractint/fractint.hlp=$(FRACTINT_DIR)/fractint.hlp
-EXT2_EXTRA_ENTRIES+= usr/share/xfractint/sstools.ini=$(FRACTINT_DIR)/sstools.ini
-EXT2_EXTRA_ENTRIES+= $(FRACTINT_DATA_ENTRIES)
+FRACTINT_EXTRA_ENTRIES=usr/share/xfractint/fractint.hlp=$(FRACTINT_DIR)/fractint.hlp usr/share/xfractint/sstools.ini=$(FRACTINT_DIR)/sstools.ini $(FRACTINT_DATA_ENTRIES)
+EXT2_ALL_EXTRA_ENTRIES=$(EXT2_EXTRA_ENTRIES) $(FRACTINT_EXTRA_ENTRIES)
 EXT2_EXTRA_DIRS+= usr/share/xfractint/ usr/share/xfractint/maps/ usr/share/xfractint/pars/ usr/share/xfractint/formulas/ usr/share/xfractint/lsystem/ usr/share/xfractint/ifs/
 EXT2_EXTRA_FILES=$(foreach entry,$(EXT2_EXTRA_ENTRIES),$(word 2,$(subst =, ,$(entry))))
 
@@ -297,15 +298,24 @@ dirs:
 
 deps:
 	git submodule update --init --recursive
+	$(MAKE) fractint-source
 
-check-third-party:
+fractint-source: $(FRACTINT_SVN_STAMP)
+
+$(FRACTINT_SVN_STAMP):
+	rm -rf $(FRACTINT_DIR)
+	mkdir -p $(dir $(FRACTINT_DIR))
+	svn export -q -r $(FRACTINT_SVN_REV) $(FRACTINT_SVN_URL) $(FRACTINT_DIR)
+	touch $@
+
+check-third-party: $(FRACTINT_SVN_STAMP)
 	@if [ ! -f "$(THIRD_PARTY_TINYCC_SENTINEL)" ] || \
 	    [ ! -f "$(THIRD_PARTY_CSERVER_SENTINEL)" ] || \
-	    [ ! -f "$(THIRD_PARTY_FRACTINT_SENTINEL)" ] || \
 	    [ ! -f "$(THIRD_PARTY_FTP_CLIENT_SENTINEL)" ] || \
 	    [ ! -f "$(THIRD_PARTY_FTP_SERVER_SENTINEL)" ]; then \
 		echo "Missing third-party dependencies."; \
 		echo "Run: git submodule update --init --recursive"; \
+		echo "Then run: make deps"; \
 		echo "Or clone with: git clone --recurse-submodules <repo-url>"; \
 		exit 1; \
 	fi
@@ -386,20 +396,20 @@ $(CSERVER_OBJ_DIR)/%.o: $(CSERVER_DIR)/src/%.c check-third-party | dirs
 $(CSERVER_BIN): $(CSERVER_OBJS) $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
 	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) $(LIBGCC_FILE) -o $@
 
-$(FRACTINT_DIR)/dos_help/helpdefs.h $(FRACTINT_DIR)/fractint.hlp: $(FRACTINT_DIR)/dos_help/help.src $(FRACTINT_DIR)/dos_help/hc.c
+$(FRACTINT_DIR)/dos_help/helpdefs.h $(FRACTINT_DIR)/fractint.hlp: $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/dos_help/help.src $(FRACTINT_DIR)/dos_help/hc.c
 	$(MAKE) -C $(FRACTINT_DIR) fractint.hlp CC=$(HOST_CC) WITHXFT= XFTHFD= OPT="-O2" HELP=help.src
 
-$(FRACTINT_OBJ_DIR)/common/fractint.o: $(FRACTINT_DIR)/common/fractint.c $(FRACTINT_DIR)/dos_help/helpdefs.h Makefile | dirs
-	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -Dmain=fractint_upstream_main -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+$(FRACTINT_OBJ_DIR)/common/fractint.o: $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/common/fractint.c $(FRACTINT_DIR)/dos_help/helpdefs.h Makefile | dirs
+	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -Dmain=fractint_upstream_main -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $(FRACTINT_DIR)/common/fractint.c -o $@
 
-$(FRACTINT_OBJ_DIR)/common/%.o: $(FRACTINT_DIR)/common/%.c $(FRACTINT_DIR)/dos_help/helpdefs.h Makefile | dirs
-	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+$(FRACTINT_OBJ_DIR)/common/%.o: $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/common/%.c $(FRACTINT_DIR)/dos_help/helpdefs.h Makefile | dirs
+	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $(FRACTINT_DIR)/common/$*.c -o $@
 
-$(FRACTINT_OBJ_DIR)/unix/%.o: $(FRACTINT_DIR)/unix/%.c $(FRACTINT_DIR)/dos_help/helpdefs.h Makefile | dirs
-	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+$(FRACTINT_OBJ_DIR)/unix/%.o: $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/unix/%.c $(FRACTINT_DIR)/dos_help/helpdefs.h Makefile | dirs
+	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $(FRACTINT_DIR)/unix/$*.c -o $@
 
-$(FRACTINT_OBJ_DIR)/port/%.o: $(FRACTINT_PORT_DIR)/%.c $(FRACTINT_DIR)/dos_help/helpdefs.h Makefile | dirs
-	$(CC) $(FRACTINT_PORT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+$(FRACTINT_OBJ_DIR)/port/%.o: $(FRACTINT_SVN_STAMP) $(FRACTINT_PORT_DIR)/%.c $(FRACTINT_DIR)/dos_help/helpdefs.h Makefile | dirs
+	$(CC) $(FRACTINT_PORT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $(FRACTINT_PORT_DIR)/$*.c -o $@
 
 $(BIN_DIR)/crtprobe.elf: $(OBJ_DIR)/user/crtprobe.o $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
 	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
@@ -466,8 +476,8 @@ $(TOOLS_DIR)/mkimage: tools/mkimage.c | dirs
 
 # ext2 seed image (generated from the current tree)
 #
-$(BIN_DIR)/ext2.seed.img: $(USER_ELFS) $(CSERVER_BIN) $(TOOLS_DIR)/mkext2 $(EXT2_EXTRA_FILES) Makefile | dirs
-	$(TOOLS_DIR)/mkext2 $@ $(EXT2_APP_ENTRIES) $(EXT2_EXTRA_ENTRIES) $(EXT2_EXTRA_DIRS)
+$(BIN_DIR)/ext2.seed.img: $(USER_ELFS) $(CSERVER_BIN) $(TOOLS_DIR)/mkext2 $(EXT2_EXTRA_FILES) $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/fractint.hlp Makefile | dirs
+	$(TOOLS_DIR)/mkext2 $@ $(EXT2_APP_ENTRIES) $(EXT2_ALL_EXTRA_ENTRIES) $(EXT2_EXTRA_DIRS)
 
 $(STATE_EXT2_STAMP): $(BIN_DIR)/ext2.seed.img | dirs
 	cp $< $(STATE_EXT2_IMG)
@@ -647,7 +657,7 @@ QEMU_USB_STORAGE_FLAGS=-drive if=none,id=stick,format=raw,file=$(IMG_FILE) \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all image img artifacts dirs deps check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage usb-storage-smoke test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean FORCE
+.PHONY: all image img artifacts dirs deps fractint-source check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage usb-storage-smoke test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean FORCE
 
 FORCE:
 

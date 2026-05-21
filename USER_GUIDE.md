@@ -29,6 +29,7 @@ i686-elf-objcopy
 gcc
 python3
 qemu-system-i386
+svn
 ```
 
 Clone the repo with submodules:
@@ -43,6 +44,9 @@ If you already cloned it without submodules, run:
 ```bash
 make deps
 ```
+
+That also exports the official Fractint source from
+`https://svn.fractint.net/tags/fractint-20-04p17`.
 
 ## Build SmallOS
 
@@ -326,7 +330,7 @@ mousetest
 gui
 ```
 
-`fractint` is the upstream Xfractint 20.04p16 codebase running through a
+`fractint` is the upstream Xfractint 20.04p17 codebase running through a
 SmallOS framebuffer adapter. With no arguments it starts a Mandelbrot image in
 the built-in `video=F2` mode, using `inside=0` so the Mandelbrot interior is
 black:
@@ -348,9 +352,9 @@ support is part of the SmallOS user runtime: `src/user/libc/` builds `libc.a`,
 `src/user/libm/` builds `libm.a`, and `src/user/posix/` builds syscall-backed
 POSIX wrappers in `libposix.a`; those headers and libraries are also installed
 in the guest under `/usr/include` and `/usr/lib`. Fractint's common sources use
-that public header/runtime surface, and the upstream `third_party/fractint`
-submodule stays unmodified for SmallOS compatibility. The generated help database is
-installed at `/usr/share/xfractint/fractint.hlp`.
+that public header/runtime surface, and the official SVN export in
+`third_party/fractint` stays unmodified for SmallOS compatibility. The generated
+help database is installed at `/usr/share/xfractint/fractint.hlp`.
 Fractint still owns the 256-entry palette; the adapter converts Fractint's VGA
 DAC values to the XRGB8888 pixels used by the SmallOS display syscall. Press
 `Q` to leave the framebuffer view.
