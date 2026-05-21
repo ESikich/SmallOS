@@ -32,6 +32,7 @@ i686-elf-gcc     → C compilation (freestanding, 32-bit, no stdlib)
 i686-elf-ld      → linking
 i686-elf-objcopy → strip ELF metadata → flat binary
 gcc              → host tool compilation (mkext2, mkimage)
+gcc -m32         → Fractint help compiler, whose file format uses 32-bit long
 svn              → official Fractint source export
 ```
 

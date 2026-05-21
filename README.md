@@ -57,11 +57,14 @@ i686-elf-gcc
 i686-elf-ld
 i686-elf-objcopy
 gcc
+gcc-multilib
 python3
 qemu-system-i386
+svn
 ```
 
-Third-party package sources are git submodules:
+Most third-party package sources are git submodules; Fractint is exported by
+`make deps` from the official SVN tag:
 
 ```bash
 git clone --recurse-submodules <repo-url>
@@ -73,6 +76,9 @@ If the repository was cloned without submodules, run:
 ```bash
 make deps
 ```
+
+That initializes git submodules and exports Fractint from
+`https://svn.fractint.net/tags/fractint-20-04p17`.
 
 ## Build And Run
 

@@ -95,6 +95,7 @@ wrappers in `src/user/posix`.
   * Moved all SmallOS-owned Fractint glue out of the upstream tree and into `src/user/ports/fractint`, deleting the old `third_party/fractint/smallos` glue directory.
   * Converted the upstream Xfractint source from tracked files to a build-managed official SVN export from `https://svn.fractint.net/tags/fractint-20-04p17` at r1804.
   * Built upstream Xfractint sources against the public SmallOS header/runtime surface, with the port adapter also avoiding `src/user/internal` helpers.
+  * Built the upstream Fractint help compiler with a 32-bit host ABI so the generated `fractint.hlp` signature/version layout matches the 32-bit SmallOS binary.
   * Kept Fractint's upstream renderers, menus, keyboard flow, and 256-entry palette model; the adapter supplies only the indexed framebuffer/video table, key translation, palette bridge, and classic text screen-stack behavior.
   * Staged the generated help database, `sstools.ini`, maps, parameter sets, formulas, L-system definitions, and IFS data under `/usr/share/xfractint`, both at the search root and in canonical upstream subdirectories.
 

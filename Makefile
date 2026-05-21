@@ -74,6 +74,7 @@ FRACTINT_SVN_URL=https://svn.fractint.net/tags/fractint-20-04p17
 FRACTINT_SVN_REV=1804
 FRACTINT_DIR=$(CURDIR)/third_party/fractint
 FRACTINT_SVN_STAMP=$(FRACTINT_DIR)/.smallos-svn-r$(FRACTINT_SVN_REV)
+FRACTINT_HELP_CC ?= $(HOST_CC) -m32
 FRACTINT_PORT_DIR=$(USER_DIR)/ports/fractint
 FRACTINT_OBJ_DIR=$(OBJ_DIR)/fractint
 THIRD_PARTY_TINYCC_SENTINEL=$(CURDIR)/third_party/tinycc/tcc.c
@@ -127,8 +128,7 @@ DISPLAY_DRIVER_CFLAGS ?= -O2
 USER_CFLAGS ?= -O2
 DEPFLAGS=-MMD -MP
 HOST_CC=gcc
-HOST_32_LIBGCC := $(firstword $(wildcard /usr/lib/gcc/*/*/32/libgcc.a))
-LIBGCC_FILE ?= $(if $(HOST_32_LIBGCC),$(HOST_32_LIBGCC),$(shell $(CC) -print-libgcc-file-name))
+LIBGCC_FILE ?= $(shell $(CC) -print-libgcc-file-name)
 LDFLAGS=-T linker.ld -m elf_i386
 USER_LDFLAGS=-m elf_i386 -Ttext-segment 0x400000 -e _start --gc-sections
 
@@ -221,7 +221,7 @@ FRACTINT_COMMON_OBJS=$(addprefix $(FRACTINT_OBJ_DIR)/common/,$(addsuffix .o,$(FR
 FRACTINT_UNIX_OBJS=$(addprefix $(FRACTINT_OBJ_DIR)/unix/,$(addsuffix .o,$(FRACTINT_UNIX_NAMES)))
 FRACTINT_PORT_OBJS=$(FRACTINT_OBJ_DIR)/port/runtime.o
 FRACTINT_OBJS=$(FRACTINT_COMMON_OBJS) $(FRACTINT_UNIX_OBJS) $(FRACTINT_PORT_OBJS)
-FRACTINT_CPPFLAGS=$(USER_PUBLIC_CPPFLAGS) -I$(FRACTINT_DIR)/headers -I$(FRACTINT_DIR)/dos_help
+FRACTINT_CPPFLAGS=$(USER_PUBLIC_CPPFLAGS) -I$(FRACTINT_DIR)/headers
 FRACTINT_PORT_CPPFLAGS=$(FRACTINT_CPPFLAGS)
 FRACTINT_DEFS=-DXFRACT -DNOBSTRING -DHAVESTRI -DBIG_ANSI_C -DLINUX -DDO_NOT_USE_LONG_DOUBLE -DSRCDIR=\"/usr/share/xfractint\"
 FRACTINT_DATA_FILES=$(wildcard $(FRACTINT_DIR)/maps/*.map) \
@@ -396,19 +396,20 @@ $(CSERVER_OBJ_DIR)/%.o: $(CSERVER_DIR)/src/%.c check-third-party | dirs
 $(CSERVER_BIN): $(CSERVER_OBJS) $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
 	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) $(LIBGCC_FILE) -o $@
 
-$(FRACTINT_DIR)/dos_help/helpdefs.h $(FRACTINT_DIR)/fractint.hlp: $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/dos_help/help.src $(FRACTINT_DIR)/dos_help/hc.c
-	$(MAKE) -C $(FRACTINT_DIR) fractint.hlp CC=$(HOST_CC) WITHXFT= XFTHFD= OPT="-O2" HELP=help.src
+$(FRACTINT_DIR)/headers/helpdefs.h $(FRACTINT_DIR)/fractint.hlp: $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/dos_help/help.src $(FRACTINT_DIR)/dos_help/hc.c
+	$(MAKE) -C $(FRACTINT_DIR) fractint.hlp CC="$(FRACTINT_HELP_CC)" WITHXFT= XFTHFD= OPT="-O2" HELP=help.src
+	mv -f $(FRACTINT_DIR)/dos_help/helpdefs.h $(FRACTINT_DIR)/headers/helpdefs.h
 
-$(FRACTINT_OBJ_DIR)/common/fractint.o: $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/common/fractint.c $(FRACTINT_DIR)/dos_help/helpdefs.h Makefile | dirs
+$(FRACTINT_OBJ_DIR)/common/fractint.o: $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/common/fractint.c $(FRACTINT_DIR)/headers/helpdefs.h Makefile | dirs
 	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -Dmain=fractint_upstream_main -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $(FRACTINT_DIR)/common/fractint.c -o $@
 
-$(FRACTINT_OBJ_DIR)/common/%.o: $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/common/%.c $(FRACTINT_DIR)/dos_help/helpdefs.h Makefile | dirs
+$(FRACTINT_OBJ_DIR)/common/%.o: $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/common/%.c $(FRACTINT_DIR)/headers/helpdefs.h Makefile | dirs
 	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $(FRACTINT_DIR)/common/$*.c -o $@
 
-$(FRACTINT_OBJ_DIR)/unix/%.o: $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/unix/%.c $(FRACTINT_DIR)/dos_help/helpdefs.h Makefile | dirs
+$(FRACTINT_OBJ_DIR)/unix/%.o: $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/unix/%.c $(FRACTINT_DIR)/headers/helpdefs.h Makefile | dirs
 	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $(FRACTINT_DIR)/unix/$*.c -o $@
 
-$(FRACTINT_OBJ_DIR)/port/%.o: $(FRACTINT_SVN_STAMP) $(FRACTINT_PORT_DIR)/%.c $(FRACTINT_DIR)/dos_help/helpdefs.h Makefile | dirs
+$(FRACTINT_OBJ_DIR)/port/%.o: $(FRACTINT_SVN_STAMP) $(FRACTINT_PORT_DIR)/%.c $(FRACTINT_DIR)/headers/helpdefs.h Makefile | dirs
 	$(CC) $(FRACTINT_PORT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $(FRACTINT_PORT_DIR)/$*.c -o $@
 
 $(BIN_DIR)/crtprobe.elf: $(OBJ_DIR)/user/crtprobe.o $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs

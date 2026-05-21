@@ -27,6 +27,7 @@ i686-elf-gcc
 i686-elf-ld
 i686-elf-objcopy
 gcc
+gcc-multilib
 python3
 qemu-system-i386
 svn
