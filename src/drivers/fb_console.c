@@ -12,6 +12,7 @@
 #define FB_MAX_COLS 160
 #define FB_MAX_ROWS 64
 #define FB_MAX_BYTES (16u * 1024u * 1024u)
+#define FB_MAX_PAGES 5u
 #define FB_COLOR_BG 0x00000000u
 #define FB_COLOR_FG 0x00FFFFFFu
 #define VGA_INPUT_STATUS_1 0x3dau
@@ -150,13 +151,13 @@ static void fb_wait_vblank(void) {
         if (!(inb(VGA_INPUT_STATUS_1) & VGA_STATUS_VRETRACE)) {
             break;
         }
-        io_wait();
+        __asm__ __volatile__("pause" ::: "memory");
     }
     for (i = 0; i < FB_VBLANK_WAIT_LIMIT; i++) {
         if (inb(VGA_INPUT_STATUS_1) & VGA_STATUS_VRETRACE) {
             break;
         }
-        io_wait();
+        __asm__ __volatile__("pause" ::: "memory");
     }
 
     __asm__ __volatile__("cli" ::: "memory");
@@ -198,7 +199,7 @@ static int fb_bga_try_page_flip(u32 page_bytes, unsigned int page_count) {
     if (!fb_bga_detect()) {
         return 0;
     }
-    if (page_count < 2u || page_count > 3u) {
+    if (page_count < 2u || page_count > FB_MAX_PAGES) {
         return 0;
     }
     if (page_bytes == 0u || page_bytes > FB_MAX_BYTES / page_count) {
@@ -251,6 +252,45 @@ static int fb_bga_try_page_flip(u32 page_bytes, unsigned int page_count) {
 
 static volatile u8* fb_page_base(unsigned int page) {
     return fb->base + (u32)page * fb->page_bytes;
+}
+
+static void fb_copy_rect_to_page(unsigned int page, unsigned int x,
+                                 unsigned int y, unsigned int w,
+                                 unsigned int h,
+                                 unsigned int pitch_pixels,
+                                 const unsigned int* pixels) {
+    volatile u8* base = fb_page_base(page);
+
+    for (unsigned int py = 0; py < h; py++) {
+        volatile u32* dst =
+            (volatile u32*)(base + (y + py) * fb->pitch + x * 4u);
+        const unsigned int* src = pixels + py * pitch_pixels;
+        fb_copy_words(dst, src, w);
+    }
+}
+
+static void fb_copy_visible_to_page(unsigned int page) {
+    volatile u8* src_base;
+    volatile u8* dst_base;
+
+    if (page == fb->visible_page) {
+        return;
+    }
+    src_base = fb_page_base(fb->visible_page);
+    dst_base = fb_page_base(page);
+    for (unsigned int y = 0; y < fb->height; y++) {
+        volatile u32* dst = (volatile u32*)(dst_base + y * fb->pitch);
+        const u32* src = (const u32*)(src_base + y * fb->pitch);
+        fb_copy_words(dst, src, fb->width);
+    }
+}
+
+static int fb_blit_should_present(unsigned int w, unsigned int h) {
+    unsigned long long area = (unsigned long long)w * (unsigned long long)h;
+    unsigned long long screen =
+        (unsigned long long)fb->width * (unsigned long long)fb->height;
+
+    return area * 2ull >= screen;
 }
 
 static void fb_clear_rect(u32 x, u32 y, u32 w, u32 h) {
@@ -555,10 +595,13 @@ int fb_console_init(void) {
     fb->page_bytes = bytes;
     fb->mapped_bytes = bytes;
     fb->page_count = 1u;
-    if (fb_bga_try_page_flip(bytes, 3u)) {
-        terminal_puts("boot: PASS framebuffer: VRAM triple buffering enabled\n");
-    } else if (fb_bga_try_page_flip(bytes, 2u)) {
-        terminal_puts("boot: PASS framebuffer: VRAM page flipping enabled\n");
+    for (unsigned int pages = FB_MAX_PAGES; pages >= 2u; pages--) {
+        if (fb_bga_try_page_flip(bytes, pages)) {
+            terminal_puts("boot: PASS framebuffer: VRAM ");
+            terminal_put_uint(pages);
+            terminal_puts("-page flipping enabled\n");
+            break;
+        }
     }
 
     paging_map_kernel_range(FB_CONSOLE_VIRT_BASE,
@@ -691,15 +734,26 @@ int fb_console_blit_stride(unsigned int x, unsigned int y, unsigned int w,
     }
 
     if (fb->page_flip_ready) {
-        for (unsigned int page = 0; page < fb->page_count; page++) {
-            volatile u8* base = fb_page_base(page);
+        if (fb_blit_should_present(w, h)) {
+            unsigned int presented_page = fb->draw_page;
 
-            for (unsigned int py = 0; py < h; py++) {
-                volatile u32* dst =
-                    (volatile u32*)(base + (y + py) * fb->pitch + x * 4u);
-                const unsigned int* src = pixels + py * pitch_pixels;
-                fb_copy_words(dst, src, w);
+            fb_copy_visible_to_page(presented_page);
+            fb_copy_rect_to_page(presented_page, x, y, w, h, pitch_pixels,
+                                 pixels);
+            cpu_write_fence();
+            fb_bga_set_scanout_page(presented_page);
+            for (unsigned int page = 0; page < fb->page_count; page++) {
+                if (page != fb->visible_page) {
+                    fb_copy_rect_to_page(page, x, y, w, h, pitch_pixels,
+                                         pixels);
+                }
             }
+            cpu_write_fence();
+            return 1;
+        }
+
+        for (unsigned int page = 0; page < fb->page_count; page++) {
+            fb_copy_rect_to_page(page, x, y, w, h, pitch_pixels, pixels);
         }
         cpu_write_fence();
         return 1;

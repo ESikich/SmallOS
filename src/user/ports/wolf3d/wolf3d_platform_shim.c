@@ -184,6 +184,7 @@ static int wolf3d_video_dirty;
 static int wolf3d_video_deferred_present;
 static int wolf3d_display_mapped;
 static wolf3d_display_map_info_t wolf3d_display_map;
+static volatile unsigned int wolf3d_display_fence_word;
 static int wolf3d_mouse_dx;
 static int wolf3d_mouse_dy;
 static int wolf3d_mouse_x = WOLF3D_MOUSE_CENTER;
@@ -279,6 +280,13 @@ static int wolf3d_syscall3(int num, unsigned int arg1, unsigned int arg2,
 static int wolf3d_sound_op(unsigned int op, unsigned int arg1,
                            unsigned int arg2) {
     return wolf3d_syscall3(SYS_SOUND_OP, op, arg1, arg2);
+}
+
+static void wolf3d_display_write_fence(void) {
+    __asm__ volatile("lock; addl $0, %0"
+                     : "+m"(wolf3d_display_fence_word)
+                     :
+                     : "memory", "cc");
 }
 
 static void wolf3d_planar_store(unsigned int offset, unsigned int plane,
@@ -917,7 +925,7 @@ void wolf3d_scale_line(void) {
     while (cmd[0]) {
         unsigned int end = cmd[0] >> 1;
         unsigned int start = cmd[2] >> 1;
-        const byte* source = wolf3d_line_shape + cmd[1];
+        int source_base = (int)(int16_t)cmd[1];
 
         if (start > 64u) {
             start = 64u;
@@ -928,7 +936,13 @@ void wolf3d_scale_line(void) {
         for (unsigned int src = start; src < end; src++) {
             int y0 = yofs[src];
             int y1 = yofs[src + 1];
-            byte color = source[src];
+            int source_offset = source_base + (int)src;
+            byte color;
+
+            if (source_offset < 0) {
+                continue;
+            }
+            color = wolf3d_line_shape[source_offset];
 
             if (y0 < 0) {
                 y0 = 0;
@@ -1074,6 +1088,7 @@ static int wolf3d_display_present_mapped(unsigned int page, unsigned int scale,
         }
     }
 
+    wolf3d_display_write_fence();
     req.page = draw_page;
     req.next_page = draw_page;
     if (wolf3d_syscall1(WOLF3D_DISPLAY_PRESENT_PAGE,

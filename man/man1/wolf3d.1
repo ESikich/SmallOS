@@ -18,10 +18,11 @@ DESCRIPTION
     DOS-width layout and releases display/input ownership before returning to
     the shell.
 
-    Digitized effects use the SmallOS sound syscall and prefer a QEMU SB16
-    device when one is present.  AdLib sound effects and music use OPL2
-    register writes through the same syscall surface when an AdLib-compatible
-    device is present.  The video shim uses mapped framebuffer pages and
+    Digitized effects use the SmallOS sound syscall and prefer QEMU's AC97
+    PCI device when present, falling back to SB16 where needed.  AdLib sound
+    effects and music use OPL2 register writes through the same syscall
+    surface when an AdLib-compatible device is present.  The video shim uses
+    mapped framebuffer pages and
     synchronized page flips when the framebuffer backend exposes them, falling
     back to normal display blits otherwise.
 
@@ -40,10 +41,10 @@ NOTES
     This is a work-in-progress native port of the original Borland C89/DOS
     source, not a rewritten clone.  Use a graphical QEMU backend and grab the
     guest window before testing mouse-driven gameplay.  For full sound in QEMU,
-    attach SB16 and AdLib devices to an audio backend, for example:
+    attach AC97 and AdLib devices to an audio backend, for example:
 
-        -audiodev sdl,id=audio0,out.frequency=48000,out.buffer-length=50000
-        -device sb16,audiodev=audio0,iobase=0x220,irq=5,dma=1,dma16=5
+        -audiodev sdl,id=audio0,in.voices=0,out.frequency=48000,out.buffer-length=50000
+        -device AC97,audiodev=audio0
         -device adlib,audiodev=audio0
 
 SEE ALSO

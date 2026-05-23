@@ -162,7 +162,8 @@ mapped path to avoid long kernel framebuffer copies during sound playback.
 `sound.h` wraps the simple sound syscall surface. It provides PC speaker tone
 helpers, bounded PIT pitch sequences, unsigned 8-bit PCM playback, AdLib/OPL2
 register writes, capability queries, status counters, and stop control. The
-kernel prefers Sound Blaster 16-bit DMA for PCM when present and falls back
+kernel prefers AC97 PCI bus-master playback for PCM when present, falls back to
+Sound Blaster 16-bit DMA when AC97 is absent, and exposes the 8-bit SB paths
 only where the caller selects a diagnostic legacy path.
 
 USB and mouse diagnostic commands use the same raw syscall layer instead of

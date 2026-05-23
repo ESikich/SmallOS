@@ -453,16 +453,17 @@ Ports with their own frame pacing can bypass the copy-based helpers after
 exclusive display acquire. `SYS_DISPLAY_MAP` maps the page-flip framebuffer
 aperture into the caller, and `SYS_DISPLAY_PRESENT_PAGE` flips a rendered
 hidden page at a fresh vertical-retrace edge. Wolf3D uses this path so long
-sound effects do not force full-frame kernel copies while the Sound Blaster DMA
-interrupt path is active.
+sound effects do not force full-frame kernel copies while PCM playback is
+active.
 
 SmallOS also exposes a small sound syscall surface. `soundprobe` exercises PC
-speaker tones, Sound Blaster PCM, and AdLib/OPL2 writes, while Wolf3D uses
+speaker tones, PCM playback, and AdLib/OPL2 writes, while Wolf3D uses
 unsigned 8-bit PCM data for digitized effects and OPL2 register streams for
-AdLib SFX/music. Under QEMU, expose SB16 and AdLib devices for Wolf3D sound,
-for example with `-audiodev sdl,id=audio0,out.frequency=48000,out.buffer-length=50000`,
-`-device sb16,audiodev=audio0,iobase=0x220,irq=5,dma=1,dma16=5`, and
-`-device adlib,audiodev=audio0`.
+AdLib SFX/music. Under QEMU, expose AC97 and AdLib devices for Wolf3D sound,
+for example with `-audiodev sdl,id=audio0,in.voices=0,out.frequency=48000,out.buffer-length=50000`,
+`-device AC97,audiodev=audio0`, and `-device adlib,audiodev=audio0`. SB16
+remains a fallback/debug path, but QEMU's GTK display can freeze while its
+ISA DMA stream is active.
 
 QEMU guest RAM defaults to 64 MB. To exercise the expanded E820-backed PMM
 window, override the memory size:
@@ -749,7 +750,7 @@ Shipped ext2 programs:
 - `usr/bin/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
 - `usr/bin/mandel` - interactive Mandelbrot demo with arrow-key pan, +/- zoom, reset/quit keys, and mouse cursor movement
 - `usr/bin/fractint` - upstream Xfractint 20.04p17 port using the SmallOS indexed-color framebuffer adapter, Fractint's normal renderers, and `/usr/share/xfractint/fractint.hlp`
-- `bin/soundprobe` - PC speaker, Sound Blaster PCM, and AdLib OPL2 diagnostic command
+- `bin/soundprobe` - PC speaker, PCM, and AdLib OPL2 diagnostic command
 - `usr/libexec/tests/ticks` - print the current tick count
 - `usr/libexec/tests/args` - print argc and argv
 - `usr/libexec/tests/runelf_test` - verify ELF loading, syscalls, and stack setup

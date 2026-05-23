@@ -84,7 +84,7 @@ static int run_silence(unsigned int sample_hz) {
     unsigned int count = (sample_hz * PROBE_MS) / 1000u;
     int rc;
 
-    puts("soundprobe: sb16 digital silence");
+    puts("soundprobe: pcm digital silence");
     print_status("before");
 
     fill_silence(count);
@@ -135,18 +135,13 @@ void _start(int argc, char** argv) {
     int rc1;
     int rc2;
     int rc3;
-    int rc4;
-    int rc5;
 
     (void)argc;
     (void)argv;
 
     rc0 = run_silence(PROBE_HIGH_HZ);
-    rc1 = run_probe("sb16-16dma", PROBE_LOW_HZ, 0);
-    rc2 = run_probe("sb16-16dma", PROBE_HIGH_HZ, 0);
-    rc3 = run_probe("sb16-8dma", PROBE_LOW_HZ, 2);
-    rc4 = run_probe("legacy-8dma", PROBE_LOW_HZ, 1);
-    rc5 = run_opl_probe();
-    exit((rc0 < 0 || rc1 < 0 || rc2 < 0 || rc3 < 0 || rc4 < 0 ||
-          rc5 < 0) ? 1 : 0);
+    rc1 = run_probe("pcm", PROBE_LOW_HZ, 0);
+    rc2 = run_probe("pcm", PROBE_HIGH_HZ, 0);
+    rc3 = run_opl_probe();
+    exit((rc0 < 0 || rc1 < 0 || rc2 < 0 || rc3 < 0) ? 1 : 0);
 }

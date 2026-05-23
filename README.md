@@ -142,11 +142,12 @@ sluggish through curses, use `make run-gtk` or `make run QEMU_DISPLAY=gtk`.
 Mouse-driven graphics demos and ports need a graphical QEMU backend and a
 grabbed QEMU window. With GTK, click the guest and press `Ctrl+Alt+G` to toggle
 mouse/keyboard grab; this is the most reliable Windows QEMU path for Wolf3D.
-For Wolf3D sound, expose QEMU's SB16 and AdLib devices and attach both to an
-audio backend, for example
-`-audiodev sdl,id=audio0,out.frequency=48000,out.buffer-length=50000` plus
-`-device sb16,audiodev=audio0,iobase=0x220,irq=5,dma=1,dma16=5` and
-`-device adlib,audiodev=audio0`.
+For Wolf3D sound, expose QEMU's AC97 device for digitized PCM and AdLib for
+FM SFX/music, for example
+`-audiodev sdl,id=audio0,in.voices=0,out.frequency=48000,out.buffer-length=50000` plus
+`-device AC97,audiodev=audio0` and `-device adlib,audiodev=audio0`. SB16 is
+still supported as a fallback, but QEMU's GTK frontend can freeze display
+updates while SB16 ISA DMA playback is active.
 
 Headless run with serial logging:
 

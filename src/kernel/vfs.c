@@ -523,6 +523,77 @@ const u8* vfs_load_file(const char* path, u32* out_size) {
     return ext2_load(path, out_size);
 }
 
+static unsigned int vfs_irq_save(void) {
+    unsigned int flags;
+
+    __asm__ __volatile__("pushf; pop %0; cli" : "=r"(flags) :: "memory");
+    return flags;
+}
+
+static void vfs_irq_restore(unsigned int flags) {
+    __asm__ __volatile__("push %0; popf" :: "r"(flags) : "memory", "cc");
+}
+
+u8* vfs_load_file_owned(const char* path,
+                        u32* out_size,
+                        u32* out_frame,
+                        u32* out_frames) {
+    u32 size = 0;
+    u32 frames;
+    u32 frame;
+    u32 read = 0;
+    u8* data;
+    unsigned int flags;
+
+    if (out_size) *out_size = 0;
+    if (out_frame) *out_frame = 0;
+    if (out_frames) *out_frames = 0;
+    if (!path || !out_size || !out_frame || !out_frames) {
+        return 0;
+    }
+    /*
+     * The ext2 driver still owns shared scratch buffers internally. Keep the
+     * executable size lookup and read non-preemptible so another task cannot
+     * reuse those buffers halfway through loading an image.
+     */
+    flags = vfs_irq_save();
+    if (!ext2_stat(path, &size)) {
+        vfs_irq_restore(flags);
+        return 0;
+    }
+    vfs_irq_restore(flags);
+    if (size == 0 || size > EXT2_MAX_LOAD_FILE_BYTES) {
+        return 0;
+    }
+
+    frames = (size + PAGE_SIZE - 1u) / PAGE_SIZE;
+    frame = pmm_alloc_contiguous_frames(frames);
+    if (!frame) {
+        return 0;
+    }
+    data = (u8*)paging_phys_to_kernel_virt(frame);
+    k_memset(data, 0, frames * PAGE_SIZE);
+
+    flags = vfs_irq_save();
+    if (!ext2_read_at_path(path, 0, data, size, &read) || read != size) {
+        vfs_irq_restore(flags);
+        pmm_free_contiguous_frames(frame, frames);
+        return 0;
+    }
+    vfs_irq_restore(flags);
+
+    *out_size = size;
+    *out_frame = frame;
+    *out_frames = frames;
+    return data;
+}
+
+void vfs_free_file_owned(u32 frame, u32 frames) {
+    if (frame && frames) {
+        pmm_free_contiguous_frames(frame, frames);
+    }
+}
+
 int vfs_stat(const char* path, u32* out_size, int* out_is_dir) {
     u32 size = 0;
 

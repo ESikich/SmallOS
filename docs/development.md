@@ -280,8 +280,10 @@ store those physical addresses. Convert only at the point of kernel access with
 ### ext2 load buffer rule
 
 `ext2_load()` uses one permanent kernel-heap buffer allocated during
-`ext2_init()` (`s_load_buf[1 MB]`). Do not allocate a fresh load buffer per
-call; each `runelf` call would permanently consume heap.
+`ext2_init()` (`s_load_buf[1 MB]`). Do not hold that pointer across another
+filesystem load. Executable launches must use `vfs_load_file_owned()`, which
+copies the image into a private PMM-backed temporary buffer before the ELF
+mapper consumes it.
 
 Fd-backed file IO uses PMM cache pages instead. Those pages can sit in the same
 physical range that a user process maps privately for its ELF image, so VFS
@@ -357,7 +359,7 @@ Exited tasks must be marked `PROCESS_STATE_ZOMBIE` and destroyed later from a sa
 * Claim USB boot HID only after storage mount and shell ELF load; if the first keyboard or mouse probe fails, keep retrying from the USB service task instead of treating absence as permanent
 * `ext2_init()` must be called before `ext2_load()` or `ext2_ls()`
 * `ext2_load()` returns a pointer into the static `s_load_buf` buffer — the caller must not hold this pointer across another `ext2_load()` call
-* `elf_run_image()` copies all ELF segment data into PMM frames before returning, so the buffer is safe to reuse immediately after `elf_run_named()` returns
+* Named ELF launches use `vfs_load_file_owned()` rather than the shared ext2 load buffer, so preemption cannot let another filesystem load overwrite a large image while it is being mapped
 * `tools/mkext2.c` and `src/drivers/ext2.c` must agree on inode count, inode-table blocks, and the first data block; changing only one side will fail runtime geometry validation
 
 ---
@@ -454,7 +456,7 @@ Useful signals:
 | 13 | System freezes after context switch | EOI not sent before sched_switch; IRQ0 permanently masked |
 | 14 | Hangs at "Loading." | Kernel too large — overwrites loader2 during INT 0x13 read; move loader2 higher |
 | 15 | "ext2: bad MBR signature" / "ext2: partition entry not populated" | final image assembly failed; check the `mkimage` step and its arguments |
-| 16 | Heap grows across runelf | ext2_load is using kmalloc instead of static buffer |
+| 16 | Heap or PMM frame count grows across runelf | executable image buffers or mapped ELF frames are not being freed |
 | 17 | "ext2: not found" | Path does not match the native case-sensitive ext2 name; check mkext2 output |
 | 18 | "ext2: unsupported geometry" | `tools/mkext2.c` and `src/drivers/ext2.c` disagree on fixed ext2 geometry; update both sides together |
 
@@ -471,7 +473,7 @@ Useful signals:
 7. `fsread usr/bin/hello.elf` — confirm `7F 45 4C 46` (ELF magic)
 8. `runelf usr/bin/hello` — confirm ELF loads from ext2 and exits cleanly
 9. `meminfo` before and after — heap top and frame count must be identical
-10. Run a second `runelf usr/bin/hello` — confirm static buffer reuse is safe
+10. Run a second `runelf usr/bin/hello` — confirm private image buffers are freed and reusable
 11. Then expand
 
 ---

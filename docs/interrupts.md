@@ -43,7 +43,11 @@ idt_set_gate(vector, handler, 0x08, flags);
 128  → syscall (int 0x80)
 ```
 
-Exception handlers log the faulting `EIP`, the interrupted `CS`, and mode (`user` vs `kernel`). Page faults also log `CR2`. User-mode faults terminate the current process so the shell keeps running; kernel-mode faults still halt the machine so the last error context is preserved.
+Exception handlers log the faulting `EIP`, the interrupted `CS`, and mode
+(`user` vs `kernel`). User-mode faults also report the interrupted user
+`ESP`, `SS`, and `EFLAGS`; page faults additionally log `CR2`. User-mode
+faults terminate the current process so the shell keeps running; kernel-mode
+faults still halt the machine so the last error context is preserved.
 
 ---
 

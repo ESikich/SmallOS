@@ -24,7 +24,7 @@ machinery for child programs:
 ```text
 user shell command
   → runelf <name> [args]
-  → vfs_load_file()
+  → vfs_load_file_owned()
   → elf_run_image()
   → sched_enqueue(proc)
   → process_wait(proc)
@@ -36,14 +36,14 @@ user shell command
 
 user shell command or kernel fallback command
   → runelf_nowait <name> [args]
-  → vfs_load_file()
+  → vfs_load_file_owned()
   → elf_run_image()
   → sched_enqueue(proc)
   → return immediately
 
 user shell command
   → bg <name> [args] / runelf_bg <name> [args]
-  → vfs_load_file()
+  → vfs_load_file_owned()
   → elf_run_image()
   → sched_enqueue(proc)
   → process_claim_for_wait(proc)
@@ -267,17 +267,18 @@ instance, checks the large `/var/www/index.html` static fixture, holds
 `elf_run_named(name, argc, argv)` does:
 
 ```text
-vfs_load_file(name, &size)
+vfs_load_file_owned(name, &size, &frame, &frames)
   → backend file lookup
   → follow block chain through the selected ext2 storage source
-  → copy file into static ext2 load buffer
-  → return pointer to buffer
+  → copy file into a private PMM-backed temporary image buffer
+  → return pointer plus the backing frame range
 ```
 
 Important invariant:
 
-- `ext2_load()` returns a pointer into a **static internal buffer**
-- callers must copy what they need before another ext2 load reuses that buffer
+- `ext2_load()` still returns a pointer into a shared internal buffer
+- named ELF loading uses `vfs_load_file_owned()` so a preempted large image load
+  cannot be overwritten by another filesystem load before segment mapping
 
 `elf_run_named()` then passes that image pointer to `elf_run_image()`.
 
@@ -579,7 +580,8 @@ freestanding tests; new hosted-ish programs should prefer
 The following must remain true:
 
 - `ext2_init()` must run after the storage policy chooses ATA, USB storage, or boot RAM fallback, and before any VFS-backed ext2 file load
-- `vfs_load_file()` / `ext2_load()` results must be copied before another ext2 load reuses the static buffer
+- legacy `vfs_load_file()` / `ext2_load()` results must be copied before another ext2 load reuses the shared buffer
+- named ELF loading must keep using `vfs_load_file_owned()` so process creation never maps from the shared ext2 load buffer
 - every user process must have a valid kernel stack frame before ring-3 entry
 - `tss_set_kernel_stack()` must match the process that will next return from ring 3 into the kernel
   - this is enforced by `elf_user_task_bootstrap()` on first entry, not by the earlier `elf_run_image()` setup path

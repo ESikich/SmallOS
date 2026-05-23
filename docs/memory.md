@@ -115,11 +115,13 @@ The ext2 driver keeps one permanent load buffer allocated during
 s_load_buf[1 MB]
 ```
 
-It is reused for file loads and ELF loading. It is allocated once from the
-kernel bump heap, not per `runelf`, so repeated program launches do not keep
-consuming heap.
+It is reused for legacy whole-file loads. It is allocated once from the kernel
+bump heap, not per caller, so repeated file probes do not keep consuming heap.
 
-The loader copies ELF segment data out of this buffer into PMM-backed frames before returning, so the buffer can be reused immediately after `elf_run_named()`.
+Executable loads do not borrow this shared pointer anymore. `elf_run_named()`
+and `execve` use `vfs_load_file_owned()`, which reads the image into a private
+PMM-backed buffer, maps the ELF segments into the process, then frees the
+temporary image buffer before returning.
 
 Loader2 can preload the used prefix of the ext2 partition to physical
 `0x800000` as a boot-storage fallback, then zero-fill the rest of the current

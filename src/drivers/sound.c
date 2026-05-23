@@ -1,4 +1,5 @@
 #include "sound.h"
+#include "pci.h"
 #include "../kernel/klib.h"
 #include "../kernel/ports.h"
 #include "../kernel/timer.h"
@@ -61,6 +62,36 @@
 #define SB_PCM_MODE_LEGACY_8BIT 1
 #define SB_PCM_MODE_SB16_8BIT 2
 #define SB_PCM_STREAM_CHUNK_SAMPLES 384u
+#define SOUND_PCM_BACKEND_NONE 0u
+#define SOUND_PCM_BACKEND_SB16 1u
+#define SOUND_PCM_BACKEND_AC97 2u
+#define AC97_VENDOR_INTEL 0x8086u
+#define AC97_DEVICE_ICH 0x2415u
+#define AC97_PCI_COMMAND_IO 0x0001u
+#define AC97_PCI_COMMAND_BUS_MASTER 0x0004u
+#define AC97_BAR_IO_MASK 0xfffffffcu
+#define AC97_MIX_MASTER_VOLUME 0x02u
+#define AC97_MIX_PCM_OUT_VOLUME 0x18u
+#define AC97_MIX_POWERDOWN 0x26u
+#define AC97_MIX_EXT_AUDIO_CTRL 0x2au
+#define AC97_MIX_PCM_FRONT_DAC_RATE 0x2cu
+#define AC97_EACS_VRA 0x0001u
+#define AC97_PO_BDBAR 0x10u
+#define AC97_PO_LVI 0x15u
+#define AC97_PO_SR 0x16u
+#define AC97_PO_CR 0x1bu
+#define AC97_SR_FIFOE 0x10u
+#define AC97_SR_BCIS 0x08u
+#define AC97_SR_LVBCI 0x04u
+#define AC97_CR_RR 0x02u
+#define AC97_CR_RPBM 0x01u
+#define AC97_BD_COUNT 32u
+#define AC97_BD_MAX_WORDS 0x8000u
+
+typedef struct {
+    unsigned int addr;
+    unsigned int ctl_len;
+} ac97_buffer_descriptor_t;
 
 static volatile unsigned int s_sound_active;
 static volatile unsigned int s_sound_deadline_tick;
@@ -77,6 +108,10 @@ static unsigned char s_sound_pcm_buf[SYS_SOUND_PCM_MAX_SAMPLES]
     __attribute__((aligned(65536)));
 static unsigned char s_sound_pcm16_buf[SYS_SOUND_PCM_MAX_SAMPLES * 2u]
     __attribute__((aligned(131072)));
+static unsigned char s_sound_ac97_pcm_buf[SYS_SOUND_PCM_MAX_SAMPLES * 4u]
+    __attribute__((aligned(4096)));
+static ac97_buffer_descriptor_t s_sound_ac97_bd[AC97_BD_COUNT]
+    __attribute__((aligned(256)));
 static volatile unsigned int s_sound_pcm_active;
 static unsigned int s_sound_pcm_deadline_tick;
 static unsigned int s_sound_pcm_rate_hz;
@@ -84,9 +119,14 @@ static unsigned int s_sound_pcm_stream_pos;
 static unsigned int s_sound_pcm_stream_len;
 static unsigned int s_sound_pcm_stream_hz;
 static int s_sound_pcm_streaming;
+static unsigned int s_sound_pcm_backend;
 static int s_sound_sb_probe_done;
 static int s_sound_sb_present;
 static int s_sound_sb_speaker_on;
+static int s_sound_ac97_probe_done;
+static int s_sound_ac97_present;
+static unsigned int s_sound_ac97_nam;
+static unsigned int s_sound_ac97_nabm;
 static unsigned int s_sound_pcm_irq_count;
 static unsigned int s_sound_pcm_timeout_count;
 static unsigned int s_sound_pcm_error_count;
@@ -104,6 +144,10 @@ static unsigned int irq_save(void) {
 
 static void irq_restore(unsigned int flags) {
     __asm__ __volatile__("push %0; popf" :: "r"(flags) : "memory", "cc");
+}
+
+static void sound_dma_fence(void) {
+    __asm__ __volatile__("" ::: "memory");
 }
 
 static void sound_speaker_off(void) {
@@ -275,6 +319,66 @@ static void sound_sb_stop(void) {
     s_sound_pcm_rate_hz = 0u;
 }
 
+static unsigned int sound_ac97_io_bar(const pci_device_t* dev,
+                                      unsigned char offset) {
+    unsigned int bar = pci_read_config_dword(dev->bus, dev->slot, dev->func,
+                                             offset);
+
+    if ((bar & 1u) == 0u) {
+        return 0u;
+    }
+    return bar & AC97_BAR_IO_MASK;
+}
+
+static void sound_ac97_stop(void) {
+    if (!s_sound_ac97_present) {
+        return;
+    }
+
+    outb((unsigned short)(s_sound_ac97_nabm + AC97_PO_CR), 0u);
+    outb((unsigned short)(s_sound_ac97_nabm + AC97_PO_CR), AC97_CR_RR);
+    outb((unsigned short)(s_sound_ac97_nabm + AC97_PO_CR), 0u);
+    outw((unsigned short)(s_sound_ac97_nabm + AC97_PO_SR),
+         AC97_SR_FIFOE | AC97_SR_BCIS | AC97_SR_LVBCI);
+}
+
+static int sound_ac97_probe(void) {
+    pci_device_t dev;
+    unsigned short command;
+
+    if (s_sound_ac97_probe_done) {
+        return s_sound_ac97_present;
+    }
+    s_sound_ac97_probe_done = 1;
+    s_sound_ac97_present = 0;
+
+    if (!pci_find_device(AC97_VENDOR_INTEL, AC97_DEVICE_ICH, &dev)) {
+        return 0;
+    }
+
+    s_sound_ac97_nam = sound_ac97_io_bar(&dev, 0x10u);
+    s_sound_ac97_nabm = sound_ac97_io_bar(&dev, 0x14u);
+    if (!s_sound_ac97_nam || !s_sound_ac97_nabm) {
+        return 0;
+    }
+
+    command = pci_read_config_word(dev.bus, dev.slot, dev.func, 0x04u);
+    command |= (unsigned short)(AC97_PCI_COMMAND_IO |
+                                AC97_PCI_COMMAND_BUS_MASTER);
+    pci_write_config_word(dev.bus, dev.slot, dev.func, 0x04u, command);
+
+    outw((unsigned short)(s_sound_ac97_nam + AC97_MIX_MASTER_VOLUME), 0x0000u);
+    outw((unsigned short)(s_sound_ac97_nam + AC97_MIX_PCM_OUT_VOLUME), 0x0000u);
+    outw((unsigned short)(s_sound_ac97_nam + AC97_MIX_POWERDOWN), 0x0000u);
+    outw((unsigned short)(s_sound_ac97_nam + AC97_MIX_EXT_AUDIO_CTRL),
+         (unsigned short)(inw((unsigned short)(s_sound_ac97_nam +
+                                               AC97_MIX_EXT_AUDIO_CTRL)) |
+                          AC97_EACS_VRA));
+    s_sound_ac97_present = 1;
+    sound_ac97_stop();
+    return 1;
+}
+
 static unsigned int sound_pcm_deadline_ticks(unsigned int count,
                                              unsigned int sample_hz) {
     unsigned int ticks;
@@ -289,6 +393,113 @@ static unsigned int sound_pcm_deadline_ticks(unsigned int count,
         slack = 4u;
     }
     return ticks + slack;
+}
+
+static void sound_ac97_prepare_pcm(const unsigned char* samples,
+                                   unsigned int count) {
+    for (unsigned int i = 0; i < count; i++) {
+        int value = ((int)samples[i] - 128) << 8;
+        unsigned char lo = (unsigned char)(value & 0xff);
+        unsigned char hi = (unsigned char)(((unsigned int)value >> 8) & 0xffu);
+        unsigned int offset = i * 4u;
+
+        s_sound_ac97_pcm_buf[offset] = lo;
+        s_sound_ac97_pcm_buf[offset + 1u] = hi;
+        s_sound_ac97_pcm_buf[offset + 2u] = lo;
+        s_sound_ac97_pcm_buf[offset + 3u] = hi;
+    }
+}
+
+static int sound_ac97_pcm_u8(const unsigned char* samples, unsigned int count,
+                             unsigned int sample_hz, int* attempted) {
+    unsigned int remaining_words;
+    unsigned int byte_offset = 0u;
+    unsigned int bd_count = 0u;
+    unsigned int flags;
+
+    if (attempted) {
+        *attempted = 0;
+    }
+    if (!sound_ac97_probe()) {
+        return 0;
+    }
+    if (attempted) {
+        *attempted = 1;
+    }
+
+    if (!samples || count == 0u || count > SYS_SOUND_PCM_MAX_SAMPLES) {
+        s_sound_pcm_error_count++;
+        return -EINVAL;
+    }
+    if (sample_hz < SYS_SOUND_PCM_MIN_HZ || sample_hz > SYS_SOUND_PCM_MAX_HZ) {
+        s_sound_pcm_error_count++;
+        return -EINVAL;
+    }
+
+    flags = irq_save();
+    s_sound_active = 0u;
+    s_sound_seq_active = 0u;
+    if (s_sound_pcm_backend == SOUND_PCM_BACKEND_SB16 && s_sound_pcm_active) {
+        sound_sb_stop();
+    }
+    if (s_sound_pcm_backend == SOUND_PCM_BACKEND_AC97 && s_sound_pcm_active) {
+        sound_ac97_stop();
+    }
+    s_sound_pcm_active = 0u;
+    s_sound_pcm_streaming = 0;
+    s_sound_pcm_stream_pos = 0u;
+    s_sound_pcm_stream_len = 0u;
+    s_sound_pcm_stream_hz = 0u;
+    s_sound_pcm_backend = SOUND_PCM_BACKEND_NONE;
+    irq_restore(flags);
+
+    sound_ac97_prepare_pcm(samples, count);
+    remaining_words = count * 2u;
+    while (remaining_words && bd_count < AC97_BD_COUNT) {
+        unsigned int words = remaining_words;
+
+        if (words > AC97_BD_MAX_WORDS) {
+            words = AC97_BD_MAX_WORDS;
+        }
+        s_sound_ac97_bd[bd_count].addr =
+            (unsigned int)(s_sound_ac97_pcm_buf + byte_offset);
+        s_sound_ac97_bd[bd_count].ctl_len = words;
+        remaining_words -= words;
+        byte_offset += words * 2u;
+        bd_count++;
+    }
+    if (remaining_words || bd_count == 0u) {
+        s_sound_pcm_error_count++;
+        return -EIO;
+    }
+    sound_dma_fence();
+
+    flags = irq_save();
+    sound_speaker_off();
+    sound_ac97_stop();
+    outw((unsigned short)(s_sound_ac97_nam + AC97_MIX_MASTER_VOLUME), 0x0000u);
+    outw((unsigned short)(s_sound_ac97_nam + AC97_MIX_PCM_OUT_VOLUME), 0x0000u);
+    outw((unsigned short)(s_sound_ac97_nam + AC97_MIX_EXT_AUDIO_CTRL),
+         (unsigned short)(inw((unsigned short)(s_sound_ac97_nam +
+                                               AC97_MIX_EXT_AUDIO_CTRL)) |
+                          AC97_EACS_VRA));
+    outw((unsigned short)(s_sound_ac97_nam + AC97_MIX_PCM_FRONT_DAC_RATE),
+         (unsigned short)sample_hz);
+    outl((unsigned short)(s_sound_ac97_nabm + AC97_PO_BDBAR),
+         (unsigned int)s_sound_ac97_bd);
+    outb((unsigned short)(s_sound_ac97_nabm + AC97_PO_LVI),
+         (unsigned char)(bd_count - 1u));
+    outw((unsigned short)(s_sound_ac97_nabm + AC97_PO_SR),
+         AC97_SR_FIFOE | AC97_SR_BCIS | AC97_SR_LVBCI);
+    outb((unsigned short)(s_sound_ac97_nabm + AC97_PO_CR), AC97_CR_RPBM);
+    s_sound_pcm_deadline_tick =
+        timer_get_ticks() + sound_pcm_deadline_ticks(count, sample_hz);
+    s_sound_pcm_backend = SOUND_PCM_BACKEND_AC97;
+    s_sound_pcm_active = 1u;
+    s_sound_pcm_last_count = count;
+    s_sound_pcm_last_hz = sample_hz;
+    irq_restore(flags);
+    return 0;
 }
 
 static int sound_pcm16_start_chunk(unsigned int offset,
@@ -323,6 +534,7 @@ static int sound_pcm16_start_chunk(unsigned int offset,
     s_sound_pcm_deadline_tick =
         timer_get_ticks() + sound_pcm_deadline_ticks(count,
                                                      s_sound_pcm_stream_hz);
+    s_sound_pcm_backend = SOUND_PCM_BACKEND_SB16;
     s_sound_pcm_active = 1u;
     return 1;
 }
@@ -530,6 +742,10 @@ static int sound_pcm_u8_mode(const unsigned char* samples, unsigned int count,
     s_sound_pcm_stream_pos = 0u;
     s_sound_pcm_stream_len = 0u;
     s_sound_pcm_stream_hz = 0u;
+    if (s_sound_pcm_backend == SOUND_PCM_BACKEND_AC97) {
+        sound_ac97_stop();
+    }
+    s_sound_pcm_backend = SOUND_PCM_BACKEND_SB16;
     sound_speaker_off();
     sound_sb_ack_irq();
     if (!sound_sb_speaker_on() ||
@@ -587,6 +803,7 @@ static int sound_pcm_u8_mode(const unsigned char* samples, unsigned int count,
     if (!use_16bit) {
         s_sound_pcm_deadline_tick =
             timer_get_ticks() + sound_pcm_deadline_ticks(count, sample_hz);
+        s_sound_pcm_backend = SOUND_PCM_BACKEND_SB16;
         s_sound_pcm_active = 1u;
     }
     s_sound_pcm_last_count = count;
@@ -597,6 +814,12 @@ static int sound_pcm_u8_mode(const unsigned char* samples, unsigned int count,
 
 int sound_pcm_u8(const unsigned char* samples, unsigned int count,
                  unsigned int sample_hz) {
+    int attempted = 0;
+    int rc = sound_ac97_pcm_u8(samples, count, sample_hz, &attempted);
+
+    if (attempted) {
+        return rc;
+    }
     return sound_pcm_u8_mode(samples, count, sample_hz, SB_PCM_MODE_16BIT);
 }
 
@@ -634,7 +857,7 @@ int sound_opl_reset(void) {
 unsigned int sound_caps(void) {
     unsigned int caps = SYS_SOUND_CAP_PC_SPEAKER;
 
-    if (sound_sb_probe()) {
+    if (sound_ac97_probe() || sound_sb_probe()) {
         caps |= SYS_SOUND_CAP_PCM_U8;
     }
     if (sound_opl_probe()) {
@@ -645,6 +868,9 @@ unsigned int sound_caps(void) {
 
 void sound_stop(void) {
     sound_speaker_off();
+    if (s_sound_ac97_present) {
+        sound_ac97_stop();
+    }
     if (s_sound_pcm_active || s_sound_sb_present) {
         sound_sb_stop();
     }
@@ -656,6 +882,7 @@ void sound_stop(void) {
     s_sound_pcm_stream_pos = 0u;
     s_sound_pcm_stream_len = 0u;
     s_sound_pcm_stream_hz = 0u;
+    s_sound_pcm_backend = SOUND_PCM_BACKEND_NONE;
 }
 
 void sound_irq_handler(void) {
@@ -670,6 +897,7 @@ void sound_irq_handler(void) {
     }
     s_sound_pcm_active = 0u;
     s_sound_pcm_streaming = 0;
+    s_sound_pcm_backend = SOUND_PCM_BACKEND_NONE;
 }
 
 void sound_status(sys_sound_status_t* out) {
@@ -688,10 +916,15 @@ void sound_status(sys_sound_status_t* out) {
 void sound_timer_tick(void) {
     if (s_sound_pcm_active &&
         (int)(timer_get_ticks() - s_sound_pcm_deadline_tick) >= 0) {
+        if (s_sound_pcm_backend == SOUND_PCM_BACKEND_AC97) {
+            sound_ac97_stop();
+        } else {
+            sound_sb_ack_irq();
+            s_sound_pcm_timeout_count++;
+        }
         s_sound_pcm_active = 0u;
         s_sound_pcm_streaming = 0;
-        s_sound_pcm_timeout_count++;
-        sound_sb_ack_irq();
+        s_sound_pcm_backend = SOUND_PCM_BACKEND_NONE;
     }
 
     if (s_sound_seq_active) {

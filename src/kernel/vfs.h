@@ -13,6 +13,11 @@ int vfs_file_stat_fd(fd_entry_t* ent, u32* out_size, int* out_is_dir);
 int vfs_file_stat_info_fd(fd_entry_t* ent, sys_stat_info_t* out);
 
 const u8* vfs_load_file(const char* path, u32* out_size);
+u8* vfs_load_file_owned(const char* path,
+                        u32* out_size,
+                        u32* out_frame,
+                        u32* out_frames);
+void vfs_free_file_owned(u32 frame, u32 frames);
 int vfs_stat(const char* path, u32* out_size, int* out_is_dir);
 int vfs_stat_info(const char* path, sys_stat_info_t* out);
 int vfs_is_dir(const char* path);

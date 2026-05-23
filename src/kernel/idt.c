@@ -120,6 +120,9 @@ static void fault_handler_common(const char* tag,
     unsigned int err = has_err ? fault_frame_word(esp, 12) : 0;
     unsigned int eip = fault_frame_word(esp, has_err ? 13 : 12);
     unsigned int cs = fault_frame_word(esp, has_err ? 14 : 13);
+    unsigned int eflags = fault_frame_word(esp, has_err ? 15 : 14);
+    unsigned int user_esp = fault_frame_word(esp, has_err ? 16 : 15);
+    unsigned int user_ss = fault_frame_word(esp, has_err ? 17 : 16);
     unsigned int cr2 = has_cr2 ? pf_get_cr2() : 0;
     process_t* proc = sched_current();
 
@@ -132,6 +135,14 @@ static void fault_handler_common(const char* tag,
     if (has_err) {
         terminal_puts(" err=");
         terminal_put_hex(err);
+    }
+    if ((cs & 3u) == 3u) {
+        terminal_puts(" esp=");
+        terminal_put_hex(user_esp);
+        terminal_puts(" ss=");
+        terminal_put_hex(user_ss);
+        terminal_puts(" eflags=");
+        terminal_put_hex(eflags);
     }
     if (has_cr2) {
         terminal_puts(" cr2=");

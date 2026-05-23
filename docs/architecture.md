@@ -510,8 +510,9 @@ file, sound, and config surface that the Borland-era code expects. Wolf renders
 indexed 320x200 pages in userland, scales them into mapped framebuffer pages
 when the display fast path is available, and falls back to normal display
 blits otherwise. Digitized effects use the generic sound syscall, which prefers
-the Sound Blaster 16-bit DMA path when QEMU exposes an SB16 device. AdLib SFX
-and music use the same syscall surface to stream OPL2 register writes to the
+AC97 PCI bus-master playback when QEMU exposes it and falls back to SB16 only
+when needed. AdLib SFX and music use the same syscall surface to stream OPL2
+register writes to the
 Yamaha-compatible device at port 0x388. The generated upstream objects
 now reach the sign-on/title/menu path and early gameplay frames with staged
 data, while `usr/libexec/tests/wolf3d-srcprobe.elf` keeps bounded startup,
@@ -748,8 +749,8 @@ ata_read_sectors(lba, count, buf)
 ```text
 runelf usr/bin/hello arg1
   ↓
-vfs_load_file("hello", &size)
-  → backend lookup, follow block chain, load into s_load_buf
+vfs_load_file_owned("hello", &size, &frame, &frames)
+  → backend lookup, follow block chain, load into a private PMM image buffer
   ↓
 elf_run_image(data, argc, argv)
   ↓

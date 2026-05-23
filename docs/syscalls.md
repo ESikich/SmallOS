@@ -200,7 +200,7 @@ negative errno if validation, lookup, or load fails. The child is claimed for
 the caller until `SYS_WAITPID` collects it or the parent exits. New
 POSIX-shaped code should prefer `SYS_FORK` plus `SYS_EXECVE`.
 
-`sys_exec_impl` copies `name` to a local kernel stack buffer before any VFS or ELF work so the loader does not depend on the caller's user pointer remaining valid. It then calls `elf_run_named()`, which creates the process, seeds its scheduler bootstrap context, enqueues it, and returns immediately.
+`sys_exec_impl` copies `name` to a local kernel stack buffer before any VFS or ELF work so the loader does not depend on the caller's user pointer remaining valid. It then calls `elf_run_named()`, which loads the program through a private PMM-backed image buffer, creates the process, seeds its scheduler bootstrap context, enqueues it, frees the temporary image buffer, and returns immediately.
 
 ---
 
@@ -1112,9 +1112,10 @@ int sys_execve(const char* path, char* const argv[], char* const envp[]);
 Replaces the current user image with a named ELF while preserving the process
 pid, cwd, process group, and descriptors that do not have `FD_CLOEXEC` set.
 The kernel validates and copies `path`, `argv`, and `envp` from user memory,
-closes close-on-exec descriptors, installs the new ELF address space, and
-returns to the new program entry point. Passing `NULL` for `envp` inherits the
-caller's current environment.
+loads the program through a private PMM-backed image buffer, closes
+close-on-exec descriptors, installs the new ELF address space, frees the
+temporary image buffer, and returns to the new program entry point. Passing
+`NULL` for `envp` inherits the caller's current environment.
 
 The new program is entered as `_start(argc, argv, envp)`. `argv[argc]` and the
 environment vector are both NULL-terminated.
@@ -1370,8 +1371,9 @@ milliseconds, `SYS_SOUND_OP_PIT_DIVISOR` programs PIT channel 2 directly with
 `arg1` for `arg2` milliseconds, `SYS_SOUND_OP_PIT_SEQUENCE` copies a bounded
 pitch-byte sequence and advances it from IRQ0 at the requested sample rate,
 `SYS_SOUND_OP_PCM_U8` plays an unsigned 8-bit mono PCM buffer through a
-Sound Blaster-compatible DSP when present, internally using the SB16 16-bit
-DMA path when available. `SYS_SOUND_OP_PCM_U8_LEGACY` and
+PCI AC97 bus-master stream when present, falling back to the Sound
+Blaster-compatible 16-bit DMA path when AC97 is absent.
+`SYS_SOUND_OP_PCM_U8_LEGACY` and
 `SYS_SOUND_OP_PCM_U8_SB16_8` are diagnostic 8-bit DMA paths. `SYS_SOUND_OP_OPL_WRITE`
 writes the 8-bit OPL2 register in `arg1` with the 8-bit value in `arg2`, and
 `SYS_SOUND_OP_OPL_RESET` silences and reinitializes the AdLib-compatible OPL2

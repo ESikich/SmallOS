@@ -506,7 +506,9 @@ static process_t* elf_run_named_with_group(const char* name,
                                            int new_process_group,
                                            int suspended) {
     u32 size = 0;
-    const u8* data = 0;
+    u32 image_frame = 0;
+    u32 image_frames = 0;
+    u8* data = 0;
     char alt_name[40];
     const char* loaded_name = name;
 
@@ -524,7 +526,8 @@ static process_t* elf_run_named_with_group(const char* name,
             if (len + 4u < sizeof(alt_name)) {
                 k_memcpy(alt_name, name, len);
                 k_memcpy(alt_name + len, ".elf", 5);
-                data = vfs_load_file(alt_name, &size);
+                data = vfs_load_file_owned(alt_name, &size,
+                                           &image_frame, &image_frames);
                 if (data) {
                     name = alt_name;
                     loaded_name = alt_name;
@@ -533,7 +536,8 @@ static process_t* elf_run_named_with_group(const char* name,
         }
 
         if (!data) {
-            data = vfs_load_file(name, &size);
+            data = vfs_load_file_owned(name, &size,
+                                       &image_frame, &image_frames);
             loaded_name = name;
         }
     }
@@ -549,6 +553,7 @@ static process_t* elf_run_named_with_group(const char* name,
         process_t* proc = elf_run_image_with_group(data, argc, argv,
                                                    new_process_group,
                                                    suspended);
+        vfs_free_file_owned(image_frame, image_frames);
         elf_set_process_name_from_path(proc, loaded_name);
         return proc;
     }
@@ -575,7 +580,9 @@ int elf_exec_named_into(process_t* proc,
                         unsigned int* out_entry,
                         unsigned int* out_user_esp) {
     u32 size = 0;
-    const u8* data = 0;
+    u32 image_frame = 0;
+    u32 image_frames = 0;
+    u8* data = 0;
     char alt_name[40];
     const char* loaded_name = name;
 
@@ -592,12 +599,14 @@ int elf_exec_named_into(process_t* proc,
             if (len + 4u < sizeof(alt_name)) {
                 k_memcpy(alt_name, name, len);
                 k_memcpy(alt_name + len, ".elf", 5);
-                data = vfs_load_file(alt_name, &size);
+                data = vfs_load_file_owned(alt_name, &size,
+                                           &image_frame, &image_frames);
                 if (data) loaded_name = alt_name;
             }
         }
         if (!data) {
-            data = vfs_load_file(name, &size);
+            data = vfs_load_file_owned(name, &size,
+                                       &image_frame, &image_frames);
             loaded_name = name;
         }
     }
@@ -605,8 +614,10 @@ int elf_exec_named_into(process_t* proc,
     (void)size;
     if (!data) return 0;
     if (!elf_exec_image_into(proc, data, argc, argv, envc, envp, out_entry, out_user_esp)) {
+        vfs_free_file_owned(image_frame, image_frames);
         return 0;
     }
+    vfs_free_file_owned(image_frame, image_frames);
     elf_set_process_name_from_path(proc, loaded_name);
     return 1;
 }

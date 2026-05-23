@@ -251,12 +251,14 @@ The current ext2 driver is intentionally narrow.
 - socket-backed handles for the current passive TCP stream path via `SYS_SOCKET`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_ACCEPT4`, `SYS_SEND`, `SYS_RECV`, `SYS_POLL`, `SYS_SETSOCKOPT`, `SYS_SHUTDOWN`, `SYS_GETSOCKNAME`, and `SYS_GETPEERNAME`
 - long, case-sensitive native ext2 names
 - direct, single-indirect, and double-indirect block mapping
-- loading one file at a time into a shared static buffer
+- loading one file at a time into a shared whole-file buffer, plus private
+  PMM-backed image loads for executable launch
 
 ## Not supported
 
 - permission enforcement, ownership semantics, or timestamps
-- multiple concurrent file buffers
+- multiple concurrent `ext2_load()` whole-file buffers outside the VFS-owned
+  executable image path
 - arbitrary transport stacks beyond the current passive TCP stream path
 - mounting arbitrary ext2 layouts
 
@@ -320,17 +322,22 @@ return pointer to s_load_buf and set *out_size
 
 ## Buffer ownership
 
-`ext2_load()` returns a pointer into a **single static internal buffer**:
+`ext2_load()` returns a pointer into a **single shared internal buffer**:
 
 ```text
 s_load_buf[1 MB]
 ```
 
 This buffer:
-- lives in BSS
+- is allocated once during `ext2_init()`
 - is reused on every `ext2_load()` call
 - must not be freed by the caller
 - must not be assumed stable across another filesystem load
+
+Named executable launch avoids this shared pointer. The ELF loader calls
+`vfs_load_file_owned()`, which allocates a temporary PMM-backed image buffer,
+protects the ext2 scratch-buffer read from timer preemption, maps the ELF
+segments into process-owned pages, and frees the temporary buffer.
 
 Code that needs to read a file without flattening it into this 1 MB buffer can
 use the sink-oriented or read-at paths. VFS keeps the PMM page cache for small
@@ -430,14 +437,14 @@ runelf <name>
   ↓
 elf_run_named(name, argc, argv)
   ↓
-vfs_load_file(name, &size)
+vfs_load_file_owned(name, &size, &frame, &frames)
   ↓
 elf_run_image(image, argc, argv)
 ```
 
-This is safe with the static ext2 buffer because `elf_run_image()` copies ELF segment data out of `s_load_buf` into PMM-backed frames before entering ring 3.
-
-That means the filesystem buffer can be reused after the load path completes.
+This is safe under preemption because the named loader reads the executable
+into a private PMM-backed image buffer before mapping its segments. The
+temporary image buffer is freed once the process owns its mapped ELF pages.
 
 Important invariant:
 
@@ -544,7 +551,7 @@ The filesystem behavior is jointly defined by these files:
 - `src/drivers/ext2.[ch]` — ext2 runtime driver
 - `src/kernel/vfs.[ch]` — kernel VFS shim for ext2-backed file handles and path operations
 - `Makefile` — image layout, kernel padding, ext2 LBA patch
-- `src/exec/elf_loader.c` — runtime ELF loader that reads program images through `vfs_load_file()`
+- `src/exec/elf_loader.c` — runtime ELF loader that reads program images through `vfs_load_file_owned()`
 
 When changing the filesystem, check all of them together.
 
@@ -559,8 +566,9 @@ The following must stay true unless the implementation is changed everywhere:
 - ext2 partition metadata is written into MBR partition entry 1
 - `ext2_init()` reads sector 0 to discover the start LBA at runtime
 - ext2 geometry in `ext2.c` matches `mkext2.c`
-- `vfs_load_file()` currently returns the ext2 driver's reused static buffer
-- callers copy data out before another file load occurs
+- `vfs_load_file()` returns the ext2 driver's reused whole-file buffer
+- callers of `vfs_load_file()` / `ext2_load()` copy data out before another file load occurs
+- named ELF launch uses `vfs_load_file_owned()` so executable images are private while they are mapped
 - nested reads/listings use path-aware native lookup; regular file writes can target the root or a nested path
 - fd-backed writes require a writable ext2 source, use ext2 write-at paths, and do not cache the whole output file before committing sectors
 
