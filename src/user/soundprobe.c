@@ -98,12 +98,45 @@ static int run_silence(unsigned int sample_hz) {
     return rc;
 }
 
+static int run_opl_probe(void) {
+    int rc;
+
+    puts("soundprobe: adlib opl2 440Hz tone");
+    print_status("before");
+
+    rc = sound_opl_reset();
+    if (rc < 0) {
+        printf("opl reset rc=%d\n", rc);
+        return rc;
+    }
+
+    (void)sound_opl_write(0x20u, 0x21u);
+    (void)sound_opl_write(0x23u, 0x01u);
+    (void)sound_opl_write(0x40u, 0x10u);
+    (void)sound_opl_write(0x43u, 0x00u);
+    (void)sound_opl_write(0x60u, 0xf0u);
+    (void)sound_opl_write(0x63u, 0xf0u);
+    (void)sound_opl_write(0x80u, 0x77u);
+    (void)sound_opl_write(0x83u, 0x77u);
+    (void)sound_opl_write(0xc0u, 0x00u);
+    (void)sound_opl_write(0xa0u, 0x57u);
+    rc = sound_opl_write(0xb0u, 0x31u);
+    printf("opl play rc=%d\n", rc);
+    usleep(PROBE_MS * 1000u);
+    (void)sound_opl_write(0xb0u, 0x00u);
+    (void)sound_opl_reset();
+    print_status("after");
+    usleep(250000u);
+    return rc;
+}
+
 void _start(int argc, char** argv) {
     int rc0;
     int rc1;
     int rc2;
     int rc3;
     int rc4;
+    int rc5;
 
     (void)argc;
     (void)argv;
@@ -113,5 +146,7 @@ void _start(int argc, char** argv) {
     rc2 = run_probe("sb16-16dma", PROBE_HIGH_HZ, 0);
     rc3 = run_probe("sb16-8dma", PROBE_LOW_HZ, 2);
     rc4 = run_probe("legacy-8dma", PROBE_LOW_HZ, 1);
-    exit((rc0 < 0 || rc1 < 0 || rc2 < 0 || rc3 < 0 || rc4 < 0) ? 1 : 0);
+    rc5 = run_opl_probe();
+    exit((rc0 < 0 || rc1 < 0 || rc2 < 0 || rc3 < 0 || rc4 < 0 ||
+          rc5 < 0) ? 1 : 0);
 }

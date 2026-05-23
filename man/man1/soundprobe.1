@@ -1,0 +1,23 @@
+SOUNDPROBE(1)
+
+NAME
+    soundprobe - exercise SmallOS sound devices
+
+SYNOPSIS
+    soundprobe
+
+DESCRIPTION
+    Plays short diagnostic samples through the SmallOS sound syscall surface.
+    The probe checks Sound Blaster digital playback paths and emits an
+    AdLib/OPL2 tone when an AdLib-compatible device is present.
+
+NOTES
+    For QEMU Wolf3D testing, expose SB16 for digitized effects and AdLib for
+    FM sound effects and music:
+
+        -audiodev sdl,id=audio0,out.frequency=48000,out.buffer-length=50000
+        -device sb16,audiodev=audio0,iobase=0x220,irq=5,dma=1,dma16=5
+        -device adlib,audiodev=audio0
+
+SEE ALSO
+    wolf3d(1), smallos(7)

@@ -2666,6 +2666,10 @@ static int sys_sound_op_impl(unsigned int op, unsigned int arg1,
         return 0;
     case SYS_SOUND_OP_PIT_DIVISOR:
         return sound_pit_divisor(arg1, arg2);
+    case SYS_SOUND_OP_OPL_WRITE:
+        return sound_opl_write(arg1, arg2);
+    case SYS_SOUND_OP_OPL_RESET:
+        return sound_opl_reset();
     case SYS_SOUND_OP_CAPS:
         return (int)sound_caps();
     case SYS_SOUND_OP_STATUS: {

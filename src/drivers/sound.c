@@ -49,6 +49,13 @@
 #define SB_MODE_UNSIGNED_MONO 0x00u
 #define SB_MODE_SIGNED_MONO 0x10u
 #define SB_IO_RETRY 4096u
+#define OPL_STATUS_PORT 0x388u
+#define OPL_ADDR_PORT 0x388u
+#define OPL_DATA_PORT 0x389u
+#define OPL_REG_TIMER1 0x02u
+#define OPL_REG_TIMER_CTRL 0x04u
+#define OPL_REG_WAVEFORM 0x01u
+#define OPL_REG_CSM_SEL 0x08u
 
 #define SB_PCM_MODE_16BIT 0
 #define SB_PCM_MODE_LEGACY_8BIT 1
@@ -85,6 +92,8 @@ static unsigned int s_sound_pcm_timeout_count;
 static unsigned int s_sound_pcm_error_count;
 static unsigned int s_sound_pcm_last_count;
 static unsigned int s_sound_pcm_last_hz;
+static int s_sound_opl_probe_done;
+static int s_sound_opl_present;
 
 static unsigned int irq_save(void) {
     unsigned int flags;
@@ -146,6 +155,66 @@ static int sound_sb_probe(void) {
         outb(SB_MIXER_DATA_PORT, SB_MIXER_DMA1_AND_5);
     }
     return s_sound_sb_present;
+}
+
+static void sound_opl_delay_addr(void) {
+    for (unsigned int i = 0; i < 6u; i++) {
+        (void)inb(OPL_STATUS_PORT);
+    }
+}
+
+static void sound_opl_delay_data(void) {
+    for (unsigned int i = 0; i < 35u; i++) {
+        (void)inb(OPL_STATUS_PORT);
+    }
+}
+
+static unsigned char sound_opl_read_status(void) {
+    return inb(OPL_STATUS_PORT);
+}
+
+static void sound_opl_write_raw(unsigned int reg, unsigned int value) {
+    outb(OPL_ADDR_PORT, (unsigned char)(reg & 0xffu));
+    sound_opl_delay_addr();
+    outb(OPL_DATA_PORT, (unsigned char)(value & 0xffu));
+    sound_opl_delay_data();
+}
+
+static void sound_opl_reset_raw(void) {
+    for (unsigned int reg = 1u; reg <= 0xf5u; reg++) {
+        sound_opl_write_raw(reg, 0u);
+    }
+    sound_opl_write_raw(OPL_REG_WAVEFORM, 0x20u);
+    sound_opl_write_raw(OPL_REG_CSM_SEL, 0u);
+}
+
+static int sound_opl_probe(void) {
+    unsigned char status1;
+    unsigned char status2;
+
+    if (s_sound_opl_probe_done) {
+        return s_sound_opl_present;
+    }
+    s_sound_opl_probe_done = 1;
+    s_sound_opl_present = 0;
+
+    sound_opl_write_raw(OPL_REG_TIMER_CTRL, 0x60u);
+    sound_opl_write_raw(OPL_REG_TIMER_CTRL, 0x80u);
+    status1 = sound_opl_read_status();
+    sound_opl_write_raw(OPL_REG_TIMER1, 0xffu);
+    sound_opl_write_raw(OPL_REG_TIMER_CTRL, 0x21u);
+    for (unsigned int i = 0; i < 200u; i++) {
+        (void)inb(OPL_STATUS_PORT);
+    }
+    status2 = sound_opl_read_status();
+    sound_opl_write_raw(OPL_REG_TIMER_CTRL, 0x60u);
+    sound_opl_write_raw(OPL_REG_TIMER_CTRL, 0x80u);
+
+    if (((status1 & 0xe0u) == 0x00u) && ((status2 & 0xe0u) == 0xc0u)) {
+        s_sound_opl_present = 1;
+        sound_opl_reset_raw();
+    }
+    return s_sound_opl_present;
 }
 
 static void sound_sb_ack_irq(void) {
@@ -543,11 +612,33 @@ int sound_pcm_u8_sb16_8(const unsigned char* samples, unsigned int count,
                              SB_PCM_MODE_SB16_8BIT);
 }
 
+int sound_opl_write(unsigned int reg, unsigned int value) {
+    if (reg > 0xffu || value > 0xffu) {
+        return -EINVAL;
+    }
+    if (!sound_opl_probe()) {
+        return -EIO;
+    }
+    sound_opl_write_raw(reg, value);
+    return 0;
+}
+
+int sound_opl_reset(void) {
+    if (!sound_opl_probe()) {
+        return -EIO;
+    }
+    sound_opl_reset_raw();
+    return 0;
+}
+
 unsigned int sound_caps(void) {
     unsigned int caps = SYS_SOUND_CAP_PC_SPEAKER;
 
     if (sound_sb_probe()) {
         caps |= SYS_SOUND_CAP_PCM_U8;
+    }
+    if (sound_opl_probe()) {
+        caps |= SYS_SOUND_CAP_ADLIB;
     }
     return caps;
 }

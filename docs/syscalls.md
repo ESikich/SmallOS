@@ -1369,15 +1369,19 @@ pitch-byte sequence and advances it from IRQ0 at the requested sample rate,
 `SYS_SOUND_OP_PCM_U8` plays an unsigned 8-bit mono PCM buffer through a
 Sound Blaster-compatible DSP when present, internally using the SB16 16-bit
 DMA path when available. `SYS_SOUND_OP_PCM_U8_LEGACY` and
-`SYS_SOUND_OP_PCM_U8_SB16_8` are diagnostic 8-bit DMA paths.
-`SYS_SOUND_OP_CAPS` returns `SYS_SOUND_CAP_*` bits, `SYS_SOUND_OP_STATUS`
+`SYS_SOUND_OP_PCM_U8_SB16_8` are diagnostic 8-bit DMA paths. `SYS_SOUND_OP_OPL_WRITE`
+writes the 8-bit OPL2 register in `arg1` with the 8-bit value in `arg2`, and
+`SYS_SOUND_OP_OPL_RESET` silences and reinitializes the AdLib-compatible OPL2
+device. `SYS_SOUND_OP_CAPS` returns `SYS_SOUND_CAP_*` bits, `SYS_SOUND_OP_STATUS`
 copies sound-driver diagnostic counters to `arg1`, and `SYS_SOUND_OP_STOP`
-silences active sound. A tone duration of `0` leaves it active until another
-sound operation or stop.
+silences active PC speaker and PCM sound. OPL callers should use
+`SYS_SOUND_OP_OPL_RESET` to silence FM synthesis. A tone duration of `0` leaves
+it active until another sound operation or stop.
 
 This stays intentionally small: it gives user programs a general beep/tone
 surface, lets DOS ports such as Wolf3D play their original PC speaker pitch
-data, and exposes a bounded PCM path for digitized effects.
+data, exposes a bounded PCM path for digitized effects, and exposes raw OPL2
+register writes for AdLib SFX/music sequencing.
 
 For structured operations, `arg1` points to the request structure:
 
@@ -1408,9 +1412,9 @@ typedef struct sys_sound_status {
 
 Returns `0` on playback success, capability bits for `SYS_SOUND_OP_CAPS`,
 `0` after copying `sys_sound_status_t` for `SYS_SOUND_OP_STATUS`, `-EFAULT`
-for an invalid buffer pointer, `-EIO` when PCM hardware is not available or
-cannot be programmed, or `-EINVAL` for an invalid operation, frequency, PIT
-divisor, buffer length, sample rate, or divisor scale.
+for an invalid buffer pointer, `-EIO` when PCM or OPL hardware is not available
+or cannot be programmed, or `-EINVAL` for an invalid operation, frequency, PIT
+divisor, buffer length, sample rate, divisor scale, or OPL register/value.
 
 ---
 
@@ -1446,7 +1450,8 @@ int sys_display_present_page(sys_display_present_page_t* req);
 Presents a page previously written through the `SYS_DISPLAY_MAP` mapping and
 returns the next hidden page in `req->next_page`. `req->page` must be less than
 the mapped `page_count`, and the caller must still own the display. The kernel
-issues the required framebuffer write fence before changing scanout.
+issues the required framebuffer write fence before changing scanout; on the BGA
+framebuffer backend, the scanout change waits for a fresh vertical-retrace edge.
 
 Returns `0` on success, `-EFAULT` for an invalid request pointer, or `-EIO` if
 there is no current process, the requested page is out of range, the caller

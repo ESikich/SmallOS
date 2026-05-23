@@ -47,15 +47,18 @@ FILESYSTEM
 GRAPHICS
     SmallOS exposes a 32-bit XRGB framebuffer through display syscalls and the
     user-space gfx helper.  Frame-paced ports can map page-flip framebuffer
-    pages directly after acquiring the display.  Programs such as bmpview(1),
-    diskview(1), mandel(1), plasma(1), gui(1), fractint(1), and wolf3d(1) use
-    this path.  Graphical programs work best under a graphical QEMU backend
-    with guest input grabbed.
+    pages directly after acquiring the display; the BGA framebuffer backend
+    synchronizes scanout changes to vertical retrace.  Programs such as
+    bmpview(1), diskview(1), mandel(1), plasma(1), gui(1), fractint(1), and
+    wolf3d(1) use this path.  Graphical programs work best under a graphical
+    QEMU backend with guest input grabbed.
 
 SOUND
     The kernel exposes PC speaker tone and bounded PCM playback through a small
     sound syscall surface.  Sound Blaster-compatible PCM uses DMA when the
-    emulated hardware is present; wolf3d(1) uses this for digitized effects.
+    emulated hardware is present; AdLib-compatible OPL2 register writes are
+    available for FM synthesis.  wolf3d(1) uses these paths for digitized
+    effects, AdLib sound effects, and music.
 
 NETWORKING
     The image includes IPv4 configuration tools, simple ICMP and ARP probes,

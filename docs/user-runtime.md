@@ -155,14 +155,15 @@ Programs that already manage their own framebuffers can use the mapped-display
 syscalls directly after acquiring the display. `SYS_DISPLAY_MAP` returns the
 user virtual address and page layout for the page-flip framebuffer aperture;
 `SYS_DISPLAY_PRESENT_PAGE` presents one hidden page and returns the next page to
-draw. The generic helpers keep using copy/blit presentation, while Wolf3D uses
-the mapped path to avoid long kernel framebuffer copies during sound playback.
+draw, with BGA scanout changes synchronized to a fresh vertical-retrace edge.
+The generic helpers keep using copy/blit presentation, while Wolf3D uses the
+mapped path to avoid long kernel framebuffer copies during sound playback.
 
 `sound.h` wraps the simple sound syscall surface. It provides PC speaker tone
-helpers, bounded PIT pitch sequences, unsigned 8-bit PCM playback, capability
-queries, status counters, and stop control. The kernel prefers Sound Blaster
-16-bit DMA for PCM when present and falls back only where the caller selects a
-diagnostic legacy path.
+helpers, bounded PIT pitch sequences, unsigned 8-bit PCM playback, AdLib/OPL2
+register writes, capability queries, status counters, and stop control. The
+kernel prefers Sound Blaster 16-bit DMA for PCM when present and falls back
+only where the caller selects a diagnostic legacy path.
 
 USB and mouse diagnostic commands use the same raw syscall layer instead of
 running as kernel built-ins. `sys_usbinfo()`, `sys_mouse_debug()`,

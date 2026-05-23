@@ -138,23 +138,28 @@ static void fb_wait_vblank(void) {
      * Syscalls enter with IF cleared.  A page flip can wait close to a full
      * refresh interval here, so let IRQs through while polling or SB DMA
      * completion gets delayed and playback fights the renderer.
+     *
+     * If we happen to arrive during retrace, wait for that retrace to finish
+     * and then flip at the start of the next one.  Flipping at the tail end of
+     * an existing retrace is still late enough to show a small top-edge tear.
      */
     flags = fb_irq_save();
-    if (inb(VGA_INPUT_STATUS_1) & VGA_STATUS_VRETRACE) {
-        fb_irq_restore(flags);
-        return;
-    }
-
     __asm__ __volatile__("sti" ::: "memory");
 
     for (i = 0; i < FB_VBLANK_WAIT_LIMIT; i++) {
+        if (!(inb(VGA_INPUT_STATUS_1) & VGA_STATUS_VRETRACE)) {
+            break;
+        }
+        io_wait();
+    }
+    for (i = 0; i < FB_VBLANK_WAIT_LIMIT; i++) {
         if (inb(VGA_INPUT_STATUS_1) & VGA_STATUS_VRETRACE) {
-            __asm__ __volatile__("cli" ::: "memory");
             break;
         }
         io_wait();
     }
 
+    __asm__ __volatile__("cli" ::: "memory");
     fb_irq_restore(flags);
 }
 

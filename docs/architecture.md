@@ -448,7 +448,10 @@ page-flip aperture with `SYS_DISPLAY_MAP` and present already-rendered hidden
 pages with `SYS_DISPLAY_PRESENT_PAGE`. That path is intentionally lower level
 than `gfx.c`: ports that already own their frame pacing, such as Wolf3D, can
 render directly into mapped VRAM and use the syscall only for the synchronized
-page flip instead of copying the full frame through the kernel.
+page flip instead of copying the full frame through the kernel. The BGA
+framebuffer backend waits for a fresh vertical-retrace edge before changing the
+scanout offset, which keeps page flips out of active scanout and reduces top-edge
+tearing for ports that present frequently.
 `src/user/gfx_indexed.c` builds on that base with
 an 8-bit shadow pixel plane, a 256-entry XRGB palette, and dirty-rectangle
 presentation for programs that still think in indexed color. `src/user/gfx_text.c`
@@ -503,8 +506,9 @@ file, sound, and config surface that the Borland-era code expects. Wolf renders
 indexed 320x200 pages in userland, scales them into mapped framebuffer pages
 when the display fast path is available, and falls back to normal display
 blits otherwise. Digitized effects use the generic sound syscall, which prefers
-the Sound Blaster 16-bit DMA path when QEMU exposes an SB16 device and keeps
-the PC speaker path available for simpler tones. The generated upstream objects
+the Sound Blaster 16-bit DMA path when QEMU exposes an SB16 device. AdLib SFX
+and music use the same syscall surface to stream OPL2 register writes to the
+Yamaha-compatible device at port 0x388. The generated upstream objects
 now reach the sign-on/title/menu path and early gameplay frames with staged
 data, while `usr/libexec/tests/wolf3d-srcprobe.elf` keeps bounded startup,
 menu, and first-frame probes available for regression checks.

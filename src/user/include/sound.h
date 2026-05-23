@@ -83,6 +83,16 @@ static inline int sound_caps(void) {
     return smallos_sound_syscall3(SYS_SOUND_OP, SYS_SOUND_OP_CAPS, 0u, 0u);
 }
 
+static inline int sound_opl_write(unsigned int reg, unsigned int value) {
+    return smallos_sound_syscall3(SYS_SOUND_OP, SYS_SOUND_OP_OPL_WRITE,
+                                  reg, value);
+}
+
+static inline int sound_opl_reset(void) {
+    return smallos_sound_syscall3(SYS_SOUND_OP, SYS_SOUND_OP_OPL_RESET,
+                                  0u, 0u);
+}
+
 static inline int sound_status(sys_sound_status_t* out) {
     return smallos_sound_syscall3(SYS_SOUND_OP, SYS_SOUND_OP_STATUS,
                                   (uint32_t)out, 0u);

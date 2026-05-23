@@ -471,6 +471,14 @@ static inline int sys_sound_caps(void) {
     return sys_sound_op(SYS_SOUND_OP_CAPS, 0u, 0u);
 }
 
+static inline int sys_sound_opl_write(uint32_t reg, uint32_t value) {
+    return sys_sound_op(SYS_SOUND_OP_OPL_WRITE, reg, value);
+}
+
+static inline int sys_sound_opl_reset(void) {
+    return sys_sound_op(SYS_SOUND_OP_OPL_RESET, 0u, 0u);
+}
+
 static inline int sys_sound_stop(void) {
     return sys_sound_op(SYS_SOUND_OP_STOP, 0u, 0u);
 }
