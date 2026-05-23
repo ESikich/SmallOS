@@ -38,6 +38,7 @@ void display_release(process_t* owner) {
     }
 
     s_display_owner = 0;
+    fb_console_reset_scanout();
     terminal_set_display_enabled(1);
     terminal_clear();
 }
@@ -57,6 +58,49 @@ int display_get_info(display_info_t* out) {
     out->pitch = pitch;
     out->bpp = bpp;
     out->format = SYS_DISPLAY_FORMAT_XRGB8888;
+    return 1;
+}
+
+int display_map(process_t* owner, sys_display_map_info_t* out) {
+    unsigned int base = 0;
+    unsigned int page_bytes = 0;
+    unsigned int page_count = 0;
+    unsigned int draw_page = 0;
+    display_info_t info;
+
+    if (!owner || s_display_owner != owner || !out) {
+        return 0;
+    }
+    if (!display_get_info(&info)) {
+        return 0;
+    }
+    if (!fb_console_map_user(owner->pd, &base, &page_bytes, &page_count,
+                             &draw_page)) {
+        return 0;
+    }
+
+    out->base = base;
+    out->width = info.width;
+    out->height = info.height;
+    out->pitch = info.pitch;
+    out->bpp = info.bpp;
+    out->format = info.format;
+    out->page_bytes = page_bytes;
+    out->page_count = page_count;
+    out->draw_page = draw_page;
+    return 1;
+}
+
+int display_present_page(process_t* owner, sys_display_present_page_t* req) {
+    unsigned int next_page = 0;
+
+    if (!owner || s_display_owner != owner || !req) {
+        return 0;
+    }
+    if (!fb_console_present_page(req->page, &next_page)) {
+        return 0;
+    }
+    req->next_page = next_page;
     return 1;
 }
 

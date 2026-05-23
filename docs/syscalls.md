@@ -1356,6 +1356,104 @@ Returns `1` when input is pending, `0` when the deadline is reached first, or
 
 ---
 
+### SYS_SOUND_OP (94)
+
+```c
+int sys_sound_op(uint32_t op, uint32_t arg1, uint32_t arg2);
+```
+
+Controls simple sound output. `SYS_SOUND_OP_TONE` plays `arg1` Hz for `arg2`
+milliseconds, `SYS_SOUND_OP_PIT_DIVISOR` programs PIT channel 2 directly with
+`arg1` for `arg2` milliseconds, `SYS_SOUND_OP_PIT_SEQUENCE` copies a bounded
+pitch-byte sequence and advances it from IRQ0 at the requested sample rate,
+`SYS_SOUND_OP_PCM_U8` plays an unsigned 8-bit mono PCM buffer through a
+Sound Blaster-compatible DSP when present, internally using the SB16 16-bit
+DMA path when available. `SYS_SOUND_OP_PCM_U8_LEGACY` and
+`SYS_SOUND_OP_PCM_U8_SB16_8` are diagnostic 8-bit DMA paths.
+`SYS_SOUND_OP_CAPS` returns `SYS_SOUND_CAP_*` bits, `SYS_SOUND_OP_STATUS`
+copies sound-driver diagnostic counters to `arg1`, and `SYS_SOUND_OP_STOP`
+silences active sound. A tone duration of `0` leaves it active until another
+sound operation or stop.
+
+This stays intentionally small: it gives user programs a general beep/tone
+surface, lets DOS ports such as Wolf3D play their original PC speaker pitch
+data, and exposes a bounded PCM path for digitized effects.
+
+For structured operations, `arg1` points to the request structure:
+
+```c
+typedef struct sys_sound_pit_sequence {
+    const unsigned char* samples;
+    unsigned int count;
+    unsigned int sample_hz;
+    unsigned int divisor_scale;
+} sys_sound_pit_sequence_t;
+
+typedef struct sys_sound_pcm_u8 {
+    const unsigned char* samples;
+    unsigned int count;
+    unsigned int sample_hz;
+} sys_sound_pcm_u8_t;
+
+typedef struct sys_sound_status {
+    unsigned int caps;
+    unsigned int pcm_active;
+    unsigned int pcm_irq_count;
+    unsigned int pcm_timeout_count;
+    unsigned int pcm_error_count;
+    unsigned int pcm_last_count;
+    unsigned int pcm_last_hz;
+} sys_sound_status_t;
+```
+
+Returns `0` on playback success, capability bits for `SYS_SOUND_OP_CAPS`,
+`0` after copying `sys_sound_status_t` for `SYS_SOUND_OP_STATUS`, `-EFAULT`
+for an invalid buffer pointer, `-EIO` when PCM hardware is not available or
+cannot be programmed, or `-EINVAL` for an invalid operation, frequency, PIT
+divisor, buffer length, sample rate, or divisor scale.
+
+---
+
+### SYS_DISPLAY_MAP (95)
+
+```c
+int sys_display_map(sys_display_map_info_t* out_info);
+```
+
+Maps the framebuffer page-flip aperture into the owning process at
+`SYS_DISPLAY_MAP_BASE` and copies mapped display geometry to `out_info`. The
+caller must hold the display via `SYS_DISPLAY_ACQUIRE`, and the kernel only
+enables this fast path when the active framebuffer can page flip. The mapped
+format is currently XRGB8888.
+
+`page_count` reports the number of VRAM pages available, `page_bytes` is the
+byte span between pages, and `draw_page` is the hidden page the caller should
+render next. Callers present a rendered page with `SYS_DISPLAY_PRESENT_PAGE`
+instead of copying the whole frame through the kernel.
+
+Returns `0` on success, `-EFAULT` for an invalid output pointer, or `-EIO` if
+there is no current process, the caller does not own the display, or page
+flipping is unavailable.
+
+---
+
+### SYS_DISPLAY_PRESENT_PAGE (96)
+
+```c
+int sys_display_present_page(sys_display_present_page_t* req);
+```
+
+Presents a page previously written through the `SYS_DISPLAY_MAP` mapping and
+returns the next hidden page in `req->next_page`. `req->page` must be less than
+the mapped `page_count`, and the caller must still own the display. The kernel
+issues the required framebuffer write fence before changing scanout.
+
+Returns `0` on success, `-EFAULT` for an invalid request pointer, or `-EIO` if
+there is no current process, the requested page is out of range, the caller
+does not own the display, or page flipping is unavailable.
+
+---
+
 ## Kernel Entry Point
 
 ```c
@@ -1468,6 +1566,9 @@ sys_display_fill(x, y, w, h, color)
 sys_display_blit(x, y, w, h, pixels)
 sys_display_acquire()
 sys_display_release()
+sys_display_blit_stride(x, y, w, h, pitch_pixels, pixels)
+sys_display_map(out_info)
+sys_display_present_page(req)
 sys_mouse_read(out_state)
 sys_input_read(out_events, max_events, flags)
 sys_fsinfo(out_info)
@@ -1498,6 +1599,16 @@ sys_pty_open(fds, master_flags)
 sys_pty_set_size(fd, rows, cols)
 sys_stat_full(path, out_info)
 sys_fstat_full(fd, out_info)
+sys_sound_op(op, arg1, arg2)
+sys_sound_tone(frequency_hz, duration_ms)
+sys_sound_pit_divisor(divisor, duration_ms)
+sys_sound_pit_sequence(samples, count, sample_hz, divisor_scale)
+sys_sound_pcm_u8(samples, count, sample_hz)
+sys_sound_pcm_u8_legacy(samples, count, sample_hz)
+sys_sound_pcm_u8_sb16_8(samples, count, sample_hz)
+sys_sound_caps()
+sys_sound_status(out)
+sys_sound_stop()
 ```
 
 `src/user/internal/user_lib.h` higher-level wrappers:

@@ -5,6 +5,7 @@
 #include "memory.h"
 #include "klib.h"
 #include "cpu.h"
+#include "ports.h"
 
 #define FB_FONT_WIDTH 8u
 #define FB_FONT_HEIGHT 16u
@@ -13,6 +14,26 @@
 #define FB_MAX_BYTES (16u * 1024u * 1024u)
 #define FB_COLOR_BG 0x00000000u
 #define FB_COLOR_FG 0x00FFFFFFu
+#define VGA_INPUT_STATUS_1 0x3dau
+#define VGA_STATUS_VRETRACE 0x08u
+#define FB_VBLANK_WAIT_LIMIT 100000u
+#define BGA_INDEX_PORT 0x01ceu
+#define BGA_DATA_PORT 0x01cfu
+#define BGA_INDEX_ID 0u
+#define BGA_INDEX_XRES 1u
+#define BGA_INDEX_YRES 2u
+#define BGA_INDEX_BPP 3u
+#define BGA_INDEX_ENABLE 4u
+#define BGA_INDEX_VIRT_WIDTH 6u
+#define BGA_INDEX_VIRT_HEIGHT 7u
+#define BGA_INDEX_X_OFFSET 8u
+#define BGA_INDEX_Y_OFFSET 9u
+#define BGA_INDEX_VIDEO_MEMORY_64K 10u
+#define BGA_ID_MIN 0xb0c0u
+#define BGA_ID_MAX 0xb0c5u
+#define BGA_ENABLE_ENABLED 0x0001u
+#define BGA_ENABLE_LFB 0x0040u
+#define BGA_ENABLE_NOCLEARMEM 0x0080u
 
 typedef struct {
     volatile u8* base;
@@ -21,6 +42,12 @@ typedef struct {
     u32 height;
     u32 pitch;
     u32 bpp;
+    u32 page_bytes;
+    u32 mapped_bytes;
+    int page_flip_ready;
+    unsigned int page_count;
+    unsigned int visible_page;
+    unsigned int draw_page;
     int rows;
     int cols;
     int row;
@@ -90,6 +117,135 @@ static void fb_copy_words(volatile u32* dst, const u32* src, u32 count) {
         : "+D"(out), "+S"(in), "+c"(count)
         :
         : "memory");
+}
+
+static unsigned int fb_irq_save(void) {
+    unsigned int flags;
+
+    __asm__ __volatile__("pushf; pop %0; cli" : "=r"(flags) :: "memory");
+    return flags;
+}
+
+static void fb_irq_restore(unsigned int flags) {
+    __asm__ __volatile__("push %0; popf" :: "r"(flags) : "memory", "cc");
+}
+
+static void fb_wait_vblank(void) {
+    unsigned int flags;
+    unsigned int i;
+
+    /*
+     * Syscalls enter with IF cleared.  A page flip can wait close to a full
+     * refresh interval here, so let IRQs through while polling or SB DMA
+     * completion gets delayed and playback fights the renderer.
+     */
+    flags = fb_irq_save();
+    if (inb(VGA_INPUT_STATUS_1) & VGA_STATUS_VRETRACE) {
+        fb_irq_restore(flags);
+        return;
+    }
+
+    __asm__ __volatile__("sti" ::: "memory");
+
+    for (i = 0; i < FB_VBLANK_WAIT_LIMIT; i++) {
+        if (inb(VGA_INPUT_STATUS_1) & VGA_STATUS_VRETRACE) {
+            __asm__ __volatile__("cli" ::: "memory");
+            break;
+        }
+        io_wait();
+    }
+
+    fb_irq_restore(flags);
+}
+
+static unsigned short fb_bga_read(unsigned short index) {
+    outw(BGA_INDEX_PORT, index);
+    return inw(BGA_DATA_PORT);
+}
+
+static void fb_bga_write(unsigned short index, unsigned short value) {
+    outw(BGA_INDEX_PORT, index);
+    outw(BGA_DATA_PORT, value);
+}
+
+static int fb_bga_detect(void) {
+    unsigned short id = fb_bga_read(BGA_INDEX_ID);
+    return id >= BGA_ID_MIN && id <= BGA_ID_MAX;
+}
+
+static void fb_bga_set_scanout_page(unsigned int page) {
+    if (!fb || !fb->page_flip_ready) {
+        return;
+    }
+    fb_wait_vblank();
+    fb_bga_write(BGA_INDEX_X_OFFSET, 0u);
+    fb_bga_write(BGA_INDEX_Y_OFFSET, (unsigned short)(page * fb->height));
+    fb->visible_page = page;
+    fb->draw_page = (page + 1u) % fb->page_count;
+}
+
+static int fb_bga_try_page_flip(u32 page_bytes, unsigned int page_count) {
+    u32 vram_bytes;
+    u32 virtual_width;
+    u32 virtual_height;
+    u32 needed_bytes;
+
+    if (!fb_bga_detect()) {
+        return 0;
+    }
+    if (page_count < 2u || page_count > 3u) {
+        return 0;
+    }
+    if (page_bytes == 0u || page_bytes > FB_MAX_BYTES / page_count) {
+        return 0;
+    }
+
+    needed_bytes = page_bytes * page_count;
+    vram_bytes = (u32)fb_bga_read(BGA_INDEX_VIDEO_MEMORY_64K) * 64u * 1024u;
+    if (vram_bytes < needed_bytes) {
+        return 0;
+    }
+
+    virtual_width = fb->pitch / 4u;
+    virtual_height = fb->height * page_count;
+    if (fb->width > 0xffffu ||
+        fb->height > 0xffffu ||
+        virtual_width < fb->width ||
+        virtual_width > 0xffffu ||
+        virtual_height > 0xffffu) {
+        return 0;
+    }
+
+    fb_bga_write(BGA_INDEX_ENABLE, 0u);
+    fb_bga_write(BGA_INDEX_XRES, (unsigned short)fb->width);
+    fb_bga_write(BGA_INDEX_YRES, (unsigned short)fb->height);
+    fb_bga_write(BGA_INDEX_BPP, 32u);
+    fb_bga_write(BGA_INDEX_VIRT_WIDTH, (unsigned short)virtual_width);
+    fb_bga_write(BGA_INDEX_VIRT_HEIGHT, (unsigned short)virtual_height);
+    fb_bga_write(BGA_INDEX_X_OFFSET, 0u);
+    fb_bga_write(BGA_INDEX_Y_OFFSET, 0u);
+    fb_bga_write(BGA_INDEX_ENABLE,
+                 BGA_ENABLE_ENABLED | BGA_ENABLE_LFB | BGA_ENABLE_NOCLEARMEM);
+
+    if (fb_bga_read(BGA_INDEX_XRES) != (unsigned short)fb->width ||
+        fb_bga_read(BGA_INDEX_YRES) != (unsigned short)fb->height ||
+        fb_bga_read(BGA_INDEX_BPP) != 32u ||
+        fb_bga_read(BGA_INDEX_VIRT_WIDTH) != (unsigned short)virtual_width ||
+        fb_bga_read(BGA_INDEX_VIRT_HEIGHT) < (unsigned short)virtual_height) {
+        return 0;
+    }
+
+    fb->page_bytes = page_bytes;
+    fb->mapped_bytes = needed_bytes;
+    fb->page_flip_ready = 1;
+    fb->page_count = page_count;
+    fb->visible_page = 0u;
+    fb->draw_page = 1u;
+    return 1;
+}
+
+static volatile u8* fb_page_base(unsigned int page) {
+    return fb->base + (u32)page * fb->page_bytes;
 }
 
 static void fb_clear_rect(u32 x, u32 y, u32 w, u32 h) {
@@ -391,9 +547,18 @@ int fb_console_init(void) {
         return 0;
     }
 
+    fb->page_bytes = bytes;
+    fb->mapped_bytes = bytes;
+    fb->page_count = 1u;
+    if (fb_bga_try_page_flip(bytes, 3u)) {
+        terminal_puts("boot: PASS framebuffer: VRAM triple buffering enabled\n");
+    } else if (fb_bga_try_page_flip(bytes, 2u)) {
+        terminal_puts("boot: PASS framebuffer: VRAM page flipping enabled\n");
+    }
+
     paging_map_kernel_range(FB_CONSOLE_VIRT_BASE,
                             fb->phys,
-                            bytes,
+                            fb->mapped_bytes,
                             PAGE_WRITE |
                             (cpu_write_combining_enabled()
                                 ? PAGE_WRITE_COMBINE
@@ -424,6 +589,50 @@ int fb_console_info(unsigned int* width, unsigned int* height,
     return 1;
 }
 
+int fb_console_map_user(u32* pd, unsigned int* out_base,
+                        unsigned int* out_page_bytes,
+                        unsigned int* out_page_count,
+                        unsigned int* out_draw_page) {
+    u32 flags;
+
+    if (!fb || !fb->ready || !fb->page_flip_ready || !pd) {
+        return 0;
+    }
+
+    flags = PAGE_WRITE | PAGE_USER |
+            (cpu_write_combining_enabled() ? PAGE_WRITE_COMBINE : 0u);
+    paging_map_kernel_range(FB_CONSOLE_VIRT_BASE,
+                            fb->phys,
+                            fb->mapped_bytes,
+                            PAGE_WRITE |
+                            (cpu_write_combining_enabled()
+                                ? PAGE_WRITE_COMBINE
+                                : 0u));
+    for (u32 mapped = 0; mapped < fb->mapped_bytes; mapped += PAGE_SIZE) {
+        paging_map_page(pd,
+                        FB_CONSOLE_USER_BASE + mapped,
+                        fb->phys + mapped,
+                        flags);
+    }
+
+    if (out_base) *out_base = FB_CONSOLE_USER_BASE;
+    if (out_page_bytes) *out_page_bytes = fb->page_bytes;
+    if (out_page_count) *out_page_count = fb->page_count;
+    if (out_draw_page) *out_draw_page = fb->draw_page;
+    return 1;
+}
+
+int fb_console_present_page(unsigned int page, unsigned int* out_next_page) {
+    if (!fb || !fb->ready || !fb->page_flip_ready || page >= fb->page_count) {
+        return 0;
+    }
+
+    cpu_write_fence();
+    fb_bga_set_scanout_page(page);
+    if (out_next_page) *out_next_page = fb->draw_page;
+    return 1;
+}
+
 int fb_console_fill(unsigned int x, unsigned int y, unsigned int w,
                     unsigned int h, unsigned int color) {
     if (!fb || !fb->ready) {
@@ -439,9 +648,14 @@ int fb_console_fill(unsigned int x, unsigned int y, unsigned int w,
         h = fb->height - y;
     }
 
-    for (unsigned int py = 0; py < h; py++) {
-        volatile u32* row = (volatile u32*)(fb->base + (y + py) * fb->pitch + x * 4u);
-        fb_store_words(row, color, w);
+    for (unsigned int page = 0; page < fb->page_count; page++) {
+        volatile u8* base = fb->page_flip_ready ? fb_page_base(page) : fb->base;
+
+        for (unsigned int py = 0; py < h; py++) {
+            volatile u32* row =
+                (volatile u32*)(base + (y + py) * fb->pitch + x * 4u);
+            fb_store_words(row, color, w);
+        }
     }
     cpu_write_fence();
     return 1;
@@ -471,11 +685,35 @@ int fb_console_blit_stride(unsigned int x, unsigned int y, unsigned int w,
         h = fb->height - y;
     }
 
+    if (fb->page_flip_ready) {
+        volatile u8* draw_base = fb_page_base(fb->draw_page);
+
+        for (unsigned int py = 0; py < h; py++) {
+            volatile u32* dst =
+                (volatile u32*)(draw_base + (y + py) * fb->pitch + x * 4u);
+            const unsigned int* src = pixels + py * pitch_pixels;
+            fb_copy_words(dst, src, w);
+        }
+        cpu_write_fence();
+        fb_bga_set_scanout_page(fb->draw_page);
+        return 1;
+    }
+
+    fb_wait_vblank();
     for (unsigned int py = 0; py < h; py++) {
-        volatile u32* dst = (volatile u32*)(fb->base + (y + py) * fb->pitch + x * 4u);
+        volatile u32* dst =
+            (volatile u32*)(fb->base + (y + py) * fb->pitch + x * 4u);
         const unsigned int* src = pixels + py * pitch_pixels;
         fb_copy_words(dst, src, w);
     }
     cpu_write_fence();
     return 1;
+}
+
+void fb_console_reset_scanout(void) {
+    if (!fb || !fb->ready || !fb->page_flip_ready) {
+        return;
+    }
+
+    fb_bga_set_scanout_page(0u);
 }

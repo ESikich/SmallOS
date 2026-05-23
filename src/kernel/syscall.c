@@ -19,6 +19,7 @@
 #include "../drivers/ntp.h"
 #include "../drivers/mouse.h"
 #include "../drivers/usb.h"
+#include "../drivers/sound.h"
 #include "uapi_poll.h"
 #include "uapi_errno.h"
 #include "uapi_dirent.h"
@@ -26,6 +27,7 @@
 #include "uapi_epoll.h"
 #include "uapi_display.h"
 #include "uapi_input.h"
+#include "uapi_sound.h"
 #include "uapi_syscall.h"
 #include "../exec/elf_loader.h"
 #include "vfs.h"
@@ -2389,6 +2391,27 @@ static int sys_display_blit_stride_impl(const sys_display_blit_stride_rect_t* us
     return 0;
 }
 
+static int sys_display_map_impl(sys_display_map_info_t* out_info) {
+    sys_display_map_info_t info;
+
+    if (!out_info) return -EFAULT;
+    if (!user_buf_ok((unsigned int)out_info, sizeof(*out_info))) return -EFAULT;
+    if (!display_map((process_t*)sched_current(), &info)) return -EIO;
+    if (copy_to_user(out_info, &info, sizeof(info)) < 0) return -EFAULT;
+    return 0;
+}
+
+static int sys_display_present_page_impl(sys_display_present_page_t* user_req) {
+    sys_display_present_page_t req;
+
+    if (!user_req) return -EFAULT;
+    if (!user_buf_ok((unsigned int)user_req, sizeof(*user_req))) return -EFAULT;
+    if (copy_from_user(&req, user_req, sizeof(req)) < 0) return -EFAULT;
+    if (!display_present_page((process_t*)sched_current(), &req)) return -EIO;
+    if (copy_to_user(user_req, &req, sizeof(req)) < 0) return -EFAULT;
+    return 0;
+}
+
 static int sys_mouse_read_impl(sys_mouse_state_t* out_state) {
     sys_mouse_state_t state;
 
@@ -2587,6 +2610,76 @@ static int sys_input_wait_until_impl(syscall_regs_t* regs,
     __asm__ volatile ("sti");
 
     return input_available() ? 1 : 0;
+}
+
+static int sys_sound_op_impl(unsigned int op, unsigned int arg1,
+                             unsigned int arg2) {
+    switch (op) {
+    case SYS_SOUND_OP_PCM_U8:
+    case SYS_SOUND_OP_PCM_U8_LEGACY:
+    case SYS_SOUND_OP_PCM_U8_SB16_8: {
+        sys_sound_pcm_u8_t req;
+        unsigned int bytes;
+        int rc = copy_from_user(&req, (const void*)arg1, sizeof(req));
+
+        if (rc < 0) return rc;
+        if (req.count == 0u || req.count > SYS_SOUND_PCM_MAX_SAMPLES ||
+            req.sample_hz < SYS_SOUND_PCM_MIN_HZ ||
+            req.sample_hz > SYS_SOUND_PCM_MAX_HZ) {
+            return -EINVAL;
+        }
+        if (!user_count_bytes_ok((unsigned int)req.samples, req.count,
+                                 sizeof(req.samples[0]), &bytes)) {
+            return -EFAULT;
+        }
+        (void)bytes;
+        if (op == SYS_SOUND_OP_PCM_U8_LEGACY) {
+            return sound_pcm_u8_legacy(req.samples, req.count, req.sample_hz);
+        }
+        if (op == SYS_SOUND_OP_PCM_U8_SB16_8) {
+            return sound_pcm_u8_sb16_8(req.samples, req.count, req.sample_hz);
+        }
+        return sound_pcm_u8(req.samples, req.count, req.sample_hz);
+    }
+    case SYS_SOUND_OP_PIT_SEQUENCE: {
+        sys_sound_pit_sequence_t req;
+        unsigned int bytes;
+        int rc = copy_from_user(&req, (const void*)arg1, sizeof(req));
+
+        if (rc < 0) return rc;
+        if (req.count == 0u || req.count > SYS_SOUND_SEQUENCE_MAX_SAMPLES ||
+            req.sample_hz == 0u || req.divisor_scale == 0u) {
+            return -EINVAL;
+        }
+        if (!user_count_bytes_ok((unsigned int)req.samples, req.count,
+                                 sizeof(req.samples[0]), &bytes)) {
+            return -EFAULT;
+        }
+        (void)bytes;
+        return sound_pit_sequence(req.samples, req.count, req.sample_hz,
+                                  req.divisor_scale);
+    }
+    case SYS_SOUND_OP_TONE:
+        return sound_tone(arg1, arg2);
+    case SYS_SOUND_OP_STOP:
+        sound_stop();
+        return 0;
+    case SYS_SOUND_OP_PIT_DIVISOR:
+        return sound_pit_divisor(arg1, arg2);
+    case SYS_SOUND_OP_CAPS:
+        return (int)sound_caps();
+    case SYS_SOUND_OP_STATUS: {
+        sys_sound_status_t status;
+
+        if (!user_buf_ok(arg1, sizeof(status))) {
+            return -EFAULT;
+        }
+        sound_status(&status);
+        return copy_to_user((void*)arg1, &status, sizeof(status));
+    }
+    default:
+        return -EINVAL;
+    }
 }
 
 static int sys_fsinfo_impl(sys_fsinfo_t* out_info) {
@@ -3357,6 +3450,16 @@ void syscall_handler_main(syscall_regs_t* regs) {
                             (const sys_display_blit_stride_rect_t*)regs->ebx);
             break;
 
+        case SYS_DISPLAY_MAP:
+            regs->eax = (unsigned int)sys_display_map_impl(
+                            (sys_display_map_info_t*)regs->ebx);
+            break;
+
+        case SYS_DISPLAY_PRESENT_PAGE:
+            regs->eax = (unsigned int)sys_display_present_page_impl(
+                            (sys_display_present_page_t*)regs->ebx);
+            break;
+
         case SYS_DISPLAY_ACQUIRE:
             regs->eax = (unsigned int)sys_display_acquire_impl();
             break;
@@ -3404,6 +3507,13 @@ void syscall_handler_main(syscall_regs_t* regs) {
             regs->eax = (unsigned int)sys_input_wait_until_impl(
                             regs,
                             regs->ebx);
+            break;
+
+        case SYS_SOUND_OP:
+            regs->eax = (unsigned int)sys_sound_op_impl(
+                            regs->ebx,
+                            regs->ecx,
+                            regs->edx);
             break;
 
         case SYS_FSINFO:

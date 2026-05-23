@@ -8,6 +8,7 @@
 #include "uapi_epoll.h"
 #include "uapi_display.h"
 #include "uapi_input.h"
+#include "uapi_sound.h"
 
 struct dirent;
 
@@ -375,6 +376,14 @@ static inline int sys_display_blit_stride(uint32_t x, uint32_t y, uint32_t w,
     return syscall1(SYS_DISPLAY_BLIT_STRIDE, (uint32_t)&req);
 }
 
+static inline int sys_display_map(sys_display_map_info_t* out_info) {
+    return syscall1(SYS_DISPLAY_MAP, (uint32_t)out_info);
+}
+
+static inline int sys_display_present_page(sys_display_present_page_t* req) {
+    return syscall1(SYS_DISPLAY_PRESENT_PAGE, (uint32_t)req);
+}
+
 static inline int sys_mouse_read(sys_mouse_state_t* out_state) {
     return syscall1(SYS_MOUSE_READ, (uint32_t)out_state);
 }
@@ -409,6 +418,61 @@ static inline int sys_input_read(sys_input_event_t* out_events,
 
 static inline int sys_input_wait_until(uint32_t deadline) {
     return syscall1(SYS_INPUT_WAIT_UNTIL, deadline);
+}
+
+static inline int sys_sound_op(uint32_t op, uint32_t arg1, uint32_t arg2) {
+    return syscall3(SYS_SOUND_OP, op, arg1, arg2);
+}
+
+static inline int sys_sound_tone(uint32_t frequency_hz, uint32_t duration_ms) {
+    return sys_sound_op(SYS_SOUND_OP_TONE, frequency_hz, duration_ms);
+}
+
+static inline int sys_sound_pit_divisor(uint32_t divisor, uint32_t duration_ms) {
+    return sys_sound_op(SYS_SOUND_OP_PIT_DIVISOR, divisor, duration_ms);
+}
+
+static inline int sys_sound_pit_sequence(const unsigned char* samples,
+                                         uint32_t count,
+                                         uint32_t sample_hz,
+                                         uint32_t divisor_scale) {
+    sys_sound_pit_sequence_t req;
+
+    req.samples = samples;
+    req.count = count;
+    req.sample_hz = sample_hz;
+    req.divisor_scale = divisor_scale;
+    return sys_sound_op(SYS_SOUND_OP_PIT_SEQUENCE, (uint32_t)&req, 0u);
+}
+
+static inline int sys_sound_pcm_u8(const unsigned char* samples,
+                                   uint32_t count,
+                                   uint32_t sample_hz) {
+    sys_sound_pcm_u8_t req;
+
+    req.samples = samples;
+    req.count = count;
+    req.sample_hz = sample_hz;
+    return sys_sound_op(SYS_SOUND_OP_PCM_U8, (uint32_t)&req, 0u);
+}
+
+static inline int sys_sound_pcm_u8_sb16_8(const unsigned char* samples,
+                                          uint32_t count,
+                                          uint32_t sample_hz) {
+    sys_sound_pcm_u8_t req;
+
+    req.samples = samples;
+    req.count = count;
+    req.sample_hz = sample_hz;
+    return sys_sound_op(SYS_SOUND_OP_PCM_U8_SB16_8, (uint32_t)&req, 0u);
+}
+
+static inline int sys_sound_caps(void) {
+    return sys_sound_op(SYS_SOUND_OP_CAPS, 0u, 0u);
+}
+
+static inline int sys_sound_stop(void) {
+    return sys_sound_op(SYS_SOUND_OP_STOP, 0u, 0u);
 }
 
 static inline int sys_socket(int domain, int type, int protocol) {

@@ -3,6 +3,7 @@
 #include "terminal.h"
 #include "keyboard.h"
 #include "mouse.h"
+#include "sound.h"
 #include "timer.h"
 #include "paging.h"
 #include "process.h"
@@ -11,6 +12,7 @@
 extern void idt_flush(unsigned int);
 extern void irq0_stub(void);
 extern void irq1_stub(void);
+extern void irq5_stub(void);
 extern void irq12_stub(void);
 extern void isr0_stub(void);
 extern void isr5_stub(void);
@@ -74,6 +76,7 @@ void idt_init(void) {
     idt_set_gate(8,   (unsigned int)isr8_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
     idt_set_gate(32,  (unsigned int)irq0_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
     idt_set_gate(33,  (unsigned int)irq1_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
+    idt_set_gate(37,  (unsigned int)irq5_stub,   KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
     idt_set_gate(44,  (unsigned int)irq12_stub,  KERNEL_CS_SELECTOR, IDT_FLAG_INT_GATE_KERNEL);
 
     /*
@@ -95,7 +98,7 @@ void idt_init(void) {
 
     idt_flush((unsigned int)&idtp);
 
-    outb(0x21, 0xF8);
+    outb(0x21, 0xD8);
     outb(0xA1, 0xEF);
 }
 
@@ -197,6 +200,7 @@ void page_fault_handler_main(unsigned int esp) {
 
 void irq0_handler_main(unsigned int esp) {
     timer_handle_irq();
+    sound_timer_tick();
     outb(0x20, 0x20);   /* EOI before sched_tick — see above */
     sched_tick(esp - SCHED_RESUME_RETADDR_OFFSET);
 }
@@ -205,6 +209,12 @@ void irq1_handler_main(unsigned int esp) {
     outb(0x20, 0x20);   /* EOI first — keep PIC unmasked before IRQ-side work */
     keyboard_handle_irq();
     process_deliver_pending_terminal_interrupt(esp - SCHED_RESUME_RETADDR_OFFSET);
+}
+
+void irq5_handler_main(unsigned int esp) {
+    (void)esp;
+    sound_irq_handler();
+    outb(0x20, 0x20);
 }
 
 void irq12_handler_main(unsigned int esp) {

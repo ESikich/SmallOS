@@ -449,6 +449,18 @@ on top of a `gfx_surface_t`. Indexed-color programs can use
 `src/user/gfx_indexed.c` for an 8-bit shadow framebuffer, palette conversion,
 and batched dirty-rectangle presentation.
 
+Ports with their own frame pacing can bypass the copy-based helpers after
+exclusive display acquire. `SYS_DISPLAY_MAP` maps the page-flip framebuffer
+aperture into the caller, and `SYS_DISPLAY_PRESENT_PAGE` flips a rendered
+hidden page. Wolf3D uses this path so long sound effects do not force full-frame
+kernel copies while the Sound Blaster DMA interrupt path is active.
+
+SmallOS also exposes a small sound syscall surface. `soundprobe` exercises PC
+speaker tones and Sound Blaster PCM, while Wolf3D uses unsigned 8-bit PCM data
+from the original assets. Under QEMU, expose an SB16 device for digitized
+effects, for example with `-audiodev sdl,id=audio0,out.frequency=48000,out.buffer-length=50000`
+and `-device sb16,audiodev=audio0,iobase=0x220,irq=5,dma=1,dma16=5`.
+
 QEMU guest RAM defaults to 64 MB. To exercise the expanded E820-backed PMM
 window, override the memory size:
 
@@ -608,8 +620,9 @@ an official SVN export under `third_party/fractint`. The Wolfenstein 3-D
 source is staged as `third_party/wolf3d`; its SmallOS command is a thin
 launcher linked against generated upstream Wolf3D objects and SmallOS
 compatibility shims. The shims own DOS/Borland source preparation, VGA/page
-presentation, input polling, DOS-width `CONFIG.` persistence, and display/input
-cleanup while the original engine tree remains unmodified.
+presentation, Sound Blaster/PC speaker bridging, input polling, DOS-width
+`CONFIG.` persistence, and display/input/sound cleanup while the original
+engine tree remains unmodified.
 
 The guest compiler toolchain ships as `usr/bin/tcc.elf`, built from the TinyCC
 submodule sources with the generic SmallOS CRT adapter. The guest entry point
@@ -733,6 +746,7 @@ Shipped ext2 programs:
 - `usr/bin/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
 - `usr/bin/mandel` - interactive Mandelbrot demo with arrow-key pan, +/- zoom, reset/quit keys, and mouse cursor movement
 - `usr/bin/fractint` - upstream Xfractint 20.04p17 port using the SmallOS indexed-color framebuffer adapter, Fractint's normal renderers, and `/usr/share/xfractint/fractint.hlp`
+- `bin/soundprobe` - PC speaker and Sound Blaster PCM diagnostic command
 - `usr/libexec/tests/ticks` - print the current tick count
 - `usr/libexec/tests/args` - print argc and argv
 - `usr/libexec/tests/runelf_test` - verify ELF loading, syscalls, and stack setup

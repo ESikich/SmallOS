@@ -258,6 +258,16 @@ u32* process_pd_clone_user(u32* src_pd) {
                 continue;
             }
 
+            u32 src_frame = src_pt[j] & ~0xFFFu;
+
+            if (!paging_phys_is_pmm_frame(src_frame)) {
+                paging_map_page(dst_pd,
+                                (i << 22) | (j << 12),
+                                src_frame,
+                                src_pt[j] & 0xFFFu);
+                continue;
+            }
+
             u32 new_frame = pmm_alloc_frame();
             if (!new_frame) {
                 process_pd_destroy(dst_pd);
@@ -265,7 +275,7 @@ u32* process_pd_clone_user(u32* src_pd) {
             }
 
             k_memcpy(paging_phys_to_kernel_virt(new_frame),
-                     paging_phys_to_kernel_virt(src_pt[j] & ~0xFFFu),
+                     paging_phys_to_kernel_virt(src_frame),
                      PAGE_SIZE);
 
             paging_map_page(dst_pd,
@@ -317,7 +327,8 @@ void process_pd_destroy(u32* pd) {
 
         /* Free only user-owned physical frames mapped in this private page table. */
         for (u32 j = 0; j < PT_ENTRIES; j++) {
-            if ((pt[j] & (PAGE_PRESENT | PAGE_USER)) == (PAGE_PRESENT | PAGE_USER)) {
+            if ((pt[j] & (PAGE_PRESENT | PAGE_USER)) == (PAGE_PRESENT | PAGE_USER) &&
+                paging_phys_is_pmm_frame(pt[j] & ~0xFFFu)) {
                 pmm_free_frame(pt[j] & ~0xFFFu);
             }
         }
@@ -350,7 +361,8 @@ unsigned int process_pd_count_private_frames(u32* pd) {
 
         frames++;
         for (u32 j = 0; j < PT_ENTRIES; j++) {
-            if ((pt[j] & (PAGE_PRESENT | PAGE_USER)) == (PAGE_PRESENT | PAGE_USER)) {
+            if ((pt[j] & (PAGE_PRESENT | PAGE_USER)) == (PAGE_PRESENT | PAGE_USER) &&
+                paging_phys_is_pmm_frame(pt[j] & ~0xFFFu)) {
                 frames++;
             }
         }

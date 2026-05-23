@@ -4,6 +4,7 @@ global gdt_flush
 global idt_flush
 global irq0_stub
 global irq1_stub
+global irq5_stub
 global irq12_stub
 global isr0_stub
 global isr5_stub
@@ -15,6 +16,7 @@ global isr8_stub
 
 extern irq0_handler_main
 extern irq1_handler_main
+extern irq5_handler_main
 extern irq12_handler_main
 extern divide_error_handler_main
 extern bound_range_handler_main
@@ -107,6 +109,30 @@ irq1_stub:
 
     push esp
     call irq1_handler_main
+    add esp, 4
+
+    pop gs
+    pop fs
+    pop es
+    pop ds
+    popa
+    iretd
+
+irq5_stub:
+    pusha
+    push ds
+    push es
+    push fs
+    push gs
+
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+
+    push esp
+    call irq5_handler_main
     add esp, 4
 
     pop gs
