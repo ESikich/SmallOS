@@ -344,7 +344,7 @@ set-1 scancodes, and injects mouse reports into the normal mouse state.
 | Red '8' on screen | Double fault — corrupt kernel stack or bad IDT entry |
 | Timer not advancing | IRQ0 not firing; missing EOI |
 | No keyboard input | IRQ1 masked, missing EOI, foreground consumer not registered, USB boot keyboard not found on OHCI/root port, or pre-scheduler PIC mask not restored |
-| Mouse cursor does not move | IRQ12 masked, PS/2 aux port unavailable, USB boot mouse not found on supported OHCI/root port, QEMU window not grabbed, or missing slave/master EOI |
+| Mouse cursor does not move | IRQ12 masked, PS/2 aux port unavailable, USB boot mouse not found on supported OHCI/root port, QEMU window not grabbed with `Ctrl+Alt+G`, or missing slave/master EOI |
 | Syscalls silently broken | `syscall_regs_t` mismatch with `isr128_stub` push order |
 | Timer fires but process never preempted | `sched_tick` not called; EOI sent after `sched_switch` |
 | Crash on first context switch | `sched_esp == 0` guard missing; switching to process with no saved stack |

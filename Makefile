@@ -77,11 +77,36 @@ FRACTINT_SVN_STAMP=$(FRACTINT_DIR)/.smallos-svn-r$(FRACTINT_SVN_REV)
 FRACTINT_HELP_CC ?= $(HOST_CC) -m32
 FRACTINT_PORT_DIR=$(USER_DIR)/ports/fractint
 FRACTINT_OBJ_DIR=$(OBJ_DIR)/fractint
+WOLF3D_SHAREWARE_URL=https://beta.wolf3d.net/file-download/download/private/4457
+WOLF3D_SHAREWARE_ZIP=$(STATE_DIR)/downloads/wolf3d-shareware.zip
+WOLF3D_DATA_DIR ?= $(STATE_DIR)/wolf3d
+WOLF3D_STAGE_DATA ?= 1
+WOLF3D_PALETTE_SRC=$(CURDIR)/third_party/wolf3d/WOLFSRC/WOLF3D.EXE
+WOLF3D_PALETTE_H=$(GEN_DIR)/wolf3d_palette.h
+WOLF3D_SIGNON_SRC=$(CURDIR)/third_party/wolf3d/WOLFSRC/OBJ/SIGNON.OBJ
+WOLF3D_SIGNON_H=$(GEN_DIR)/wolf3d_signon.h
+WOLF3D_PORT_DIR=$(USER_DIR)/ports/wolf3d
+WOLF3D_PORT_INCLUDE_DIR=$(WOLF3D_PORT_DIR)/include
+WOLF3D_SRC_DIR=$(CURDIR)/third_party/wolf3d/WOLFSRC
+WOLF3D_SRC_MIRROR=$(GEN_DIR)/wolf3d_src
+WOLF3D_SRC_STAMP=$(WOLF3D_SRC_MIRROR)/.stamp
+WOLF3D_NATIVE_CPPFLAGS=$(USER_CPPFLAGS) -I$(WOLF3D_PORT_INCLUDE_DIR) -I$(WOLF3D_SRC_MIRROR) -DUPLOAD -include wolf3d_port.h
+WOLF3D_UPSTREAM_PROBE_SRCS=ID_CA.C ID_IN.C ID_PM.C ID_US_1.C WL_ACT1.C WL_ACT2.C WL_AGENT.C WL_DEBUG.C WL_DRAW.C WL_GAME.C WL_INTER.C WL_MAIN.C WL_MENU.C WL_PLAY.C WL_SCALE.C WL_STATE.C WL_TEXT.C
+WOLF3D_UPSTREAM_PROBE_OBJS=$(addprefix $(OBJ_DIR)/user/ports/wolf3d/upstream/,$(WOLF3D_UPSTREAM_PROBE_SRCS:.C=.o))
+WOLF3D_UPSTREAM_EXTRA_COMPILE_SRCS=ID_MM.C ID_SD.C ID_VH.C ID_VL.C MUNGE.C OLDSCALE.C WOLFHACK.C
+WOLF3D_UPSTREAM_EXTRA_COMPILE_OBJS=$(addprefix $(OBJ_DIR)/user/ports/wolf3d/upstream/,$(WOLF3D_UPSTREAM_EXTRA_COMPILE_SRCS:.C=.o))
+WOLF3D_NATIVE_SHIM_OBJ=$(OBJ_DIR)/user/ports/wolf3d/wolf3d_dos_shim.o
+WOLF3D_PLATFORM_SHIM_OBJ=$(OBJ_DIR)/user/ports/wolf3d/wolf3d_platform_shim.o
+WOLF3D_CONFIG_SHIM_OBJ=$(OBJ_DIR)/user/ports/wolf3d/wolf3d_config_shim.o
+WOLF3D_ASSETS_OBJ=$(OBJ_DIR)/user/ports/wolf3d/wolf3d_assets.o
+WOLF3D_SOURCE_PROBE_OBJ=$(OBJ_DIR)/user/ports/wolf3d/wolf3d_source_probe.o
+WOLF3D_SOURCE_PROBE_BIN=$(BIN_DIR)/wolf3d-srcprobe.elf
 THIRD_PARTY_TINYCC_SENTINEL=$(CURDIR)/third_party/tinycc/tcc.c
 THIRD_PARTY_CSERVER_SENTINEL=$(CSERVER_DIR)/src/main.c
 THIRD_PARTY_FRACTINT_SENTINEL=$(FRACTINT_SVN_STAMP)
 THIRD_PARTY_FTP_CLIENT_SENTINEL=$(CURDIR)/third_party/ftp_client/include/ftp_client.h
 THIRD_PARTY_FTP_SERVER_SENTINEL=$(CURDIR)/third_party/ftp_server/include/ftp_server.h
+THIRD_PARTY_WOLF3D_SENTINEL=$(CURDIR)/third_party/wolf3d/WOLFSRC/WL_MAIN.C
 STATE_DIR=.state
 STATE_EXT2_IMG=$(STATE_DIR)/ext2.img
 STATE_EXT2_STAMP=$(STATE_DIR)/ext2.img.stamp
@@ -181,7 +206,7 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/ext2.c \
 	$(DRIVERS_DIR)/serial.c
 
-USER_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell ip ipconfig meminfo memmap cpuz top netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest hello ticks args runelf_test readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe envprobe plasma mandel fractint tcpecho sockeof ftpd
+USER_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell ip ipconfig meminfo memmap cpuz top netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest hello ticks args runelf_test readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe envprobe mathprobe plasma mandel wolf3d fractint tcpecho sockeof ftpd
 USER_PROGS := $(filter-out fractint,$(USER_PROGS))
 USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
 USER_LIBC_SRCS=\
@@ -237,8 +262,8 @@ USER_INCLUDE_ENTRIES=$(foreach file,$(USER_INCLUDE_FILES),usr/include/$(patsubst
 USER_UAPI_FILES=$(wildcard $(KERNEL_DIR)/uapi_*.h)
 USER_UAPI_ENTRIES=$(foreach file,$(USER_UAPI_FILES),usr/include/$(notdir $(file))=$(CURDIR)/$(file))
 EXT2_BIN_ENTRIES=bin/echo.elf=$(BIN_DIR)/echo.elf bin/about.elf=$(BIN_DIR)/about.elf bin/uptime.elf=$(BIN_DIR)/uptime.elf bin/halt.elf=$(BIN_DIR)/halt.elf bin/reboot.elf=$(BIN_DIR)/reboot.elf bin/date.elf=$(BIN_DIR)/date.elf bin/pwd.elf=$(BIN_DIR)/pwd.elf bin/cat.elf=$(BIN_DIR)/cat.elf bin/more.elf=$(BIN_DIR)/more.elf bin/man.elf=$(BIN_DIR)/man.elf bin/fsread.elf=$(BIN_DIR)/fsread.elf bin/ls.elf=$(BIN_DIR)/ls.elf bin/tree.elf=$(BIN_DIR)/tree.elf bin/touch.elf=$(BIN_DIR)/touch.elf bin/rm.elf=$(BIN_DIR)/rm.elf bin/mkdir.elf=$(BIN_DIR)/mkdir.elf bin/rmdir.elf=$(BIN_DIR)/rmdir.elf bin/cp.elf=$(BIN_DIR)/cp.elf bin/mv.elf=$(BIN_DIR)/mv.elf bin/edit.elf=$(BIN_DIR)/edit.elf bin/bmpview.elf=$(BIN_DIR)/bmpview.elf bin/bootsplash.elf=$(BIN_DIR)/bootsplash.elf bin/diskview.elf=$(BIN_DIR)/diskview.elf bin/gui.elf=$(BIN_DIR)/gui.elf bin/shell.elf=$(BIN_DIR)/shell.elf bin/ip.elf=$(BIN_DIR)/ip.elf bin/ipconfig.elf=$(BIN_DIR)/ipconfig.elf bin/meminfo.elf=$(BIN_DIR)/meminfo.elf bin/memmap.elf=$(BIN_DIR)/memmap.elf bin/cpuz.elf=$(BIN_DIR)/cpuz.elf bin/netinfo.elf=$(BIN_DIR)/netinfo.elf bin/dhcp.elf=$(BIN_DIR)/dhcp.elf bin/netsend.elf=$(BIN_DIR)/netsend.elf bin/netrecv.elf=$(BIN_DIR)/netrecv.elf bin/arpgw.elf=$(BIN_DIR)/arpgw.elf bin/ping.elf=$(BIN_DIR)/ping.elf bin/pinggw.elf=$(BIN_DIR)/pinggw.elf bin/pingpublic.elf=$(BIN_DIR)/pingpublic.elf bin/netcheck.elf=$(BIN_DIR)/netcheck.elf bin/ataread.elf=$(BIN_DIR)/ataread.elf bin/usbinfo.elf=$(BIN_DIR)/usbinfo.elf bin/usbports.elf=$(BIN_DIR)/usbports.elf bin/usbdiag.elf=$(BIN_DIR)/usbdiag.elf bin/usbpeek.elf=$(BIN_DIR)/usbpeek.elf bin/usbpower.elf=$(BIN_DIR)/usbpower.elf bin/usbmouse.elf=$(BIN_DIR)/usbmouse.elf bin/mousetest.elf=$(BIN_DIR)/mousetest.elf
-EXT2_DEMO_ENTRIES=usr/bin/hello.elf=$(BIN_DIR)/hello.elf usr/bin/plasma.elf=$(BIN_DIR)/plasma.elf usr/bin/mandel.elf=$(BIN_DIR)/mandel.elf usr/bin/fractint.elf=$(BIN_DIR)/fractint.elf
-EXT2_TEST_ENTRIES=usr/libexec/tests/ticks.elf=$(BIN_DIR)/ticks.elf usr/libexec/tests/args.elf=$(BIN_DIR)/args.elf usr/libexec/tests/runelf_test.elf=$(BIN_DIR)/runelf_test.elf usr/libexec/tests/readline.elf=$(BIN_DIR)/readline.elf usr/libexec/tests/exec_test.elf=$(BIN_DIR)/exec_test.elf usr/libexec/tests/waitprobe.elf=$(BIN_DIR)/waitprobe.elf usr/libexec/tests/fileread.elf=$(BIN_DIR)/fileread.elf usr/libexec/tests/compiler_demo.elf=$(BIN_DIR)/compiler_demo.elf usr/libexec/tests/heapprobe.elf=$(BIN_DIR)/heapprobe.elf usr/libexec/tests/statprobe.elf=$(BIN_DIR)/statprobe.elf usr/libexec/tests/fileprobe.elf=$(BIN_DIR)/fileprobe.elf usr/libexec/tests/cwdprobe.elf=$(BIN_DIR)/cwdprobe.elf usr/libexec/tests/stdioprobe.elf=$(BIN_DIR)/stdioprobe.elf usr/libexec/tests/dirprobe.elf=$(BIN_DIR)/dirprobe.elf usr/libexec/tests/errnoprobe.elf=$(BIN_DIR)/errnoprobe.elf usr/libexec/tests/badptrprobe.elf=$(BIN_DIR)/badptrprobe.elf usr/libexec/tests/fault.elf=$(BIN_DIR)/fault.elf usr/libexec/tests/sleep_test.elf=$(BIN_DIR)/sleep_test.elf usr/libexec/tests/timerfdprobe.elf=$(BIN_DIR)/timerfdprobe.elf usr/libexec/tests/signalfdprobe.elf=$(BIN_DIR)/signalfdprobe.elf usr/libexec/tests/connectprobe.elf=$(BIN_DIR)/connectprobe.elf usr/libexec/tests/ptrguard.elf=$(BIN_DIR)/ptrguard.elf usr/libexec/tests/spinwkr.elf=$(BIN_DIR)/spinwkr.elf usr/libexec/tests/pgrpprobe.elf=$(BIN_DIR)/pgrpprobe.elf usr/libexec/tests/preempt_test.elf=$(BIN_DIR)/preempt_test.elf usr/libexec/tests/crtprobe.elf=$(BIN_DIR)/crtprobe.elf usr/libexec/tests/displayprobe.elf=$(BIN_DIR)/displayprobe.elf usr/libexec/tests/inputprobe.elf=$(BIN_DIR)/inputprobe.elf usr/libexec/tests/pipeprobe.elf=$(BIN_DIR)/pipeprobe.elf usr/libexec/tests/dupprobe.elf=$(BIN_DIR)/dupprobe.elf usr/libexec/tests/forkprobe.elf=$(BIN_DIR)/forkprobe.elf usr/libexec/tests/execveprobe.elf=$(BIN_DIR)/execveprobe.elf usr/libexec/tests/envprobe.elf=$(BIN_DIR)/envprobe.elf
+EXT2_DEMO_ENTRIES=usr/bin/hello.elf=$(BIN_DIR)/hello.elf usr/bin/plasma.elf=$(BIN_DIR)/plasma.elf usr/bin/mandel.elf=$(BIN_DIR)/mandel.elf usr/bin/wolf3d.elf=$(BIN_DIR)/wolf3d.elf usr/bin/fractint.elf=$(BIN_DIR)/fractint.elf
+EXT2_TEST_ENTRIES=usr/libexec/tests/ticks.elf=$(BIN_DIR)/ticks.elf usr/libexec/tests/args.elf=$(BIN_DIR)/args.elf usr/libexec/tests/runelf_test.elf=$(BIN_DIR)/runelf_test.elf usr/libexec/tests/readline.elf=$(BIN_DIR)/readline.elf usr/libexec/tests/exec_test.elf=$(BIN_DIR)/exec_test.elf usr/libexec/tests/waitprobe.elf=$(BIN_DIR)/waitprobe.elf usr/libexec/tests/fileread.elf=$(BIN_DIR)/fileread.elf usr/libexec/tests/compiler_demo.elf=$(BIN_DIR)/compiler_demo.elf usr/libexec/tests/heapprobe.elf=$(BIN_DIR)/heapprobe.elf usr/libexec/tests/statprobe.elf=$(BIN_DIR)/statprobe.elf usr/libexec/tests/fileprobe.elf=$(BIN_DIR)/fileprobe.elf usr/libexec/tests/cwdprobe.elf=$(BIN_DIR)/cwdprobe.elf usr/libexec/tests/stdioprobe.elf=$(BIN_DIR)/stdioprobe.elf usr/libexec/tests/dirprobe.elf=$(BIN_DIR)/dirprobe.elf usr/libexec/tests/errnoprobe.elf=$(BIN_DIR)/errnoprobe.elf usr/libexec/tests/badptrprobe.elf=$(BIN_DIR)/badptrprobe.elf usr/libexec/tests/fault.elf=$(BIN_DIR)/fault.elf usr/libexec/tests/sleep_test.elf=$(BIN_DIR)/sleep_test.elf usr/libexec/tests/timerfdprobe.elf=$(BIN_DIR)/timerfdprobe.elf usr/libexec/tests/signalfdprobe.elf=$(BIN_DIR)/signalfdprobe.elf usr/libexec/tests/connectprobe.elf=$(BIN_DIR)/connectprobe.elf usr/libexec/tests/ptrguard.elf=$(BIN_DIR)/ptrguard.elf usr/libexec/tests/spinwkr.elf=$(BIN_DIR)/spinwkr.elf usr/libexec/tests/pgrpprobe.elf=$(BIN_DIR)/pgrpprobe.elf usr/libexec/tests/preempt_test.elf=$(BIN_DIR)/preempt_test.elf usr/libexec/tests/crtprobe.elf=$(BIN_DIR)/crtprobe.elf usr/libexec/tests/displayprobe.elf=$(BIN_DIR)/displayprobe.elf usr/libexec/tests/inputprobe.elf=$(BIN_DIR)/inputprobe.elf usr/libexec/tests/pipeprobe.elf=$(BIN_DIR)/pipeprobe.elf usr/libexec/tests/dupprobe.elf=$(BIN_DIR)/dupprobe.elf usr/libexec/tests/forkprobe.elf=$(BIN_DIR)/forkprobe.elf usr/libexec/tests/execveprobe.elf=$(BIN_DIR)/execveprobe.elf usr/libexec/tests/envprobe.elf=$(BIN_DIR)/envprobe.elf usr/libexec/tests/mathprobe.elf=$(BIN_DIR)/mathprobe.elf usr/libexec/tests/wolf3d-srcprobe.elf=$(WOLF3D_SOURCE_PROBE_BIN)
 EXT2_APP_ENTRIES=$(EXT2_BIN_ENTRIES) $(EXT2_DEMO_ENTRIES) $(EXT2_TEST_ENTRIES)
 EXT2_APP_ENTRIES+= bin/top.elf=$(BIN_DIR)/top.elf
 EXT2_APP_ENTRIES+= usr/sbin/tcpecho.elf=$(BIN_DIR)/tcpecho.elf usr/sbin/sockeof.elf=$(BIN_DIR)/sockeof.elf usr/sbin/ftpd.elf=$(BIN_DIR)/ftpd.elf
@@ -246,12 +271,18 @@ EXT2_APP_ENTRIES+= usr/sbin/cserve.elf=$(CSERVER_BIN)
 MAN_PAGE_FILES=$(wildcard man/man*/*)
 MAN_PAGE_ENTRIES=$(foreach page,$(MAN_PAGE_FILES),usr/share/$(page)=$(CURDIR)/$(page))
 USER_LIB_ENTRIES=usr/lib/crt0.o=$(USER_CRT0_OBJ) usr/lib/libc.a=$(USER_LIBC) usr/lib/libm.a=$(USER_LIBM) usr/lib/libposix.a=$(USER_LIBPOSIX)
-EXT2_EXTRA_DIRS=tmp/ var/log/ usr/include/ usr/include/arpa/ usr/include/netinet/ usr/include/sys/ usr/lib/ usr/share/examples/tinycc/ usr/share/man/man1/ usr/share/man/man2/ usr/share/man/man3/ usr/share/man/man4/ usr/share/man/man5/ usr/share/man/man6/ usr/share/man/man7/ usr/share/man/man8/
+WOLF3D_DATA_FILES=$(sort $(wildcard $(WOLF3D_DATA_DIR)/*.WL1) $(wildcard $(WOLF3D_DATA_DIR)/*.WL6) $(wildcard $(WOLF3D_DATA_DIR)/*.SOD) $(wildcard $(WOLF3D_DATA_DIR)/*.SDM))
+ifeq ($(WOLF3D_STAGE_DATA),1)
+WOLF3D_DATA_ENTRIES=$(foreach file,$(WOLF3D_DATA_FILES),usr/share/wolf3d/$(notdir $(file))=$(file))
+else
+WOLF3D_DATA_ENTRIES=
+endif
+EXT2_EXTRA_DIRS=tmp/ var/log/ usr/include/ usr/include/arpa/ usr/include/netinet/ usr/include/sys/ usr/lib/ usr/share/examples/tinycc/ usr/share/man/man1/ usr/share/man/man2/ usr/share/man/man3/ usr/share/man/man4/ usr/share/man/man5/ usr/share/man/man6/ usr/share/man/man7/ usr/share/man/man8/ usr/share/wolf3d/
 EXT2_EXTRA_ENTRIES=usr/bin/tcc.elf=$(TINYCC_SMALOS_BIN) $(USER_INCLUDE_ENTRIES) $(USER_UAPI_ENTRIES) $(USER_LIB_ENTRIES) usr/share/examples/tinycc/tccmath.c=$(CURDIR)/samples/tccmath.c usr/share/examples/tinycc/tccagg.c=$(CURDIR)/samples/tccagg.c usr/share/examples/tinycc/tcctree.c=$(CURDIR)/samples/tcctree.c usr/share/examples/tinycc/tccmini.c=$(CURDIR)/samples/tccmini.c usr/share/examples/tinycc/tccsysroot.c=$(CURDIR)/samples/tccsysroot.c usr/share/examples/tinycc/tccposix.c=$(CURDIR)/samples/tccposix.c etc/cserve.ini=$(CURDIR)/samples/cserve.ini var/www/index.html=$(CURDIR)/samples/cserve_index.html var/log/boot.txt=$(CURDIR)/samples/boot.txt boot/splash.bmp=$(CURDIR)/assets/boot_splash.bmp $(MAN_PAGE_ENTRIES)
 FRACTINT_EXTRA_ENTRIES=usr/share/xfractint/fractint.hlp=$(FRACTINT_DIR)/fractint.hlp usr/share/xfractint/sstools.ini=$(FRACTINT_DIR)/sstools.ini $(FRACTINT_DATA_ENTRIES)
-EXT2_ALL_EXTRA_ENTRIES=$(EXT2_EXTRA_ENTRIES) $(FRACTINT_EXTRA_ENTRIES)
+EXT2_ALL_EXTRA_ENTRIES=$(EXT2_EXTRA_ENTRIES) $(FRACTINT_EXTRA_ENTRIES) $(WOLF3D_DATA_ENTRIES)
 EXT2_EXTRA_DIRS+= usr/share/xfractint/ usr/share/xfractint/maps/ usr/share/xfractint/pars/ usr/share/xfractint/formulas/ usr/share/xfractint/lsystem/ usr/share/xfractint/ifs/
-EXT2_EXTRA_FILES=$(foreach entry,$(EXT2_EXTRA_ENTRIES),$(word 2,$(subst =, ,$(entry))))
+EXT2_EXTRA_FILES=$(foreach entry,$(EXT2_ALL_EXTRA_ENTRIES),$(word 2,$(subst =, ,$(entry))))
 
 KERNEL_OBJS=$(patsubst $(SRC_DIR)/%.asm,$(OBJ_DIR)/%.o,$(KERNEL_ASM_SRCS)) \
             $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(KERNEL_C_SRCS))
@@ -302,6 +333,11 @@ deps:
 
 fractint-source: $(FRACTINT_SVN_STAMP)
 
+wolf3d-shareware-data:
+	mkdir -p $(dir $(WOLF3D_SHAREWARE_ZIP)) $(WOLF3D_DATA_DIR)
+	curl -L --fail -o $(WOLF3D_SHAREWARE_ZIP) $(WOLF3D_SHAREWARE_URL)
+	unzip -j -o $(WOLF3D_SHAREWARE_ZIP) '*.WL1' -d $(WOLF3D_DATA_DIR)
+
 $(FRACTINT_SVN_STAMP):
 	rm -rf $(FRACTINT_DIR)
 	mkdir -p $(dir $(FRACTINT_DIR))
@@ -312,7 +348,8 @@ check-third-party: $(FRACTINT_SVN_STAMP)
 	@if [ ! -f "$(THIRD_PARTY_TINYCC_SENTINEL)" ] || \
 	    [ ! -f "$(THIRD_PARTY_CSERVER_SENTINEL)" ] || \
 	    [ ! -f "$(THIRD_PARTY_FTP_CLIENT_SENTINEL)" ] || \
-	    [ ! -f "$(THIRD_PARTY_FTP_SERVER_SENTINEL)" ]; then \
+	    [ ! -f "$(THIRD_PARTY_FTP_SERVER_SENTINEL)" ] || \
+	    [ ! -f "$(THIRD_PARTY_WOLF3D_SENTINEL)" ]; then \
 		echo "Missing third-party dependencies."; \
 		echo "Run: git submodule update --init --recursive"; \
 		echo "Then run: make deps"; \
@@ -350,6 +387,54 @@ $(OBJ_DIR)/exec/%.o: $(KERNEL_CONFIG_STAMP)
 
 $(OBJ_DIR)/user/%.o: $(USER_DIR)/%.c | dirs
 	$(CC) $(USER_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(OBJ_DIR)/user/wolf3d.o: $(USER_DIR)/wolf3d.c $(WOLF3D_PORT_INCLUDE_DIR)/wolf3d_port.h | dirs
+	$(CC) $(WOLF3D_NATIVE_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(WOLF3D_PALETTE_H): $(WOLF3D_PALETTE_SRC) Makefile | dirs
+	$(PYTHON3) -c 'import sys; data=open(sys.argv[1],"rb").read(); \
+matches=[i for i in range(len(data)-768) if max(data[i:i+768]) <= 63 and data[i:i+6] == b"\0\0\0\0\0*" and len(set(data[i:i+768])) >= 40]; \
+palette=data[matches[0]:matches[0]+768]; \
+out=open(sys.argv[2],"w"); \
+out.write("#ifndef SMALLOS_WOLF3D_PALETTE_H\n#define SMALLOS_WOLF3D_PALETTE_H\n\nstatic const unsigned char smallos_wolf3d_palette[768] = {\n"); \
+	[out.write("    " + ", ".join(str(b) for b in palette[i:i+12]) + ",\n") for i in range(0, 768, 12)]; \
+	out.write("};\n\n#endif\n")' $< $@
+
+$(WOLF3D_SIGNON_H): $(WOLF3D_SIGNON_SRC) Makefile | dirs
+	$(PYTHON3) tools/extract_wolf3d_signon.py $< $@
+
+$(WOLF3D_SRC_STAMP): $(THIRD_PARTY_WOLF3D_SENTINEL) tools/prepare_wolf3d_source.py Makefile | dirs
+	$(PYTHON3) tools/prepare_wolf3d_source.py $(WOLF3D_SRC_DIR) $(WOLF3D_SRC_MIRROR)
+	touch $@
+
+$(OBJ_DIR)/user/ports/wolf3d/upstream/%.o: $(WOLF3D_SRC_STAMP) $(WOLF3D_PORT_INCLUDE_DIR)/wolf3d_port.h
+	mkdir -p $(dir $@)
+	$(CC) -x c $(WOLF3D_NATIVE_CPPFLAGS) -DSMALLOS_WOLF3D_SOURCE_PROBE $(CFLAGS) $(USER_CFLAGS) -Dmain=wolf3d_upstream_main -Wno-unknown-pragmas -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Wno-switch -Wno-pointer-sign -Wno-incompatible-pointer-types -Wno-char-subscripts $(DEPFLAGS) -MF $(@:.o=.d) -c $(WOLF3D_SRC_MIRROR)/$*.C -o $@
+
+$(WOLF3D_NATIVE_SHIM_OBJ): $(WOLF3D_PORT_DIR)/wolf3d_dos_shim.c $(WOLF3D_PORT_INCLUDE_DIR)/wolf3d_port.h | dirs
+	mkdir -p $(dir $@)
+	$(CC) $(WOLF3D_NATIVE_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(WOLF3D_PLATFORM_SHIM_OBJ): $(WOLF3D_PORT_DIR)/wolf3d_platform_shim.c $(WOLF3D_PORT_INCLUDE_DIR)/wolf3d_port.h $(WOLF3D_SRC_STAMP) $(WOLF3D_PALETTE_H) $(WOLF3D_SIGNON_H) | dirs
+	mkdir -p $(dir $@)
+	$(CC) $(WOLF3D_NATIVE_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) -Wno-implicit-function-declaration $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(WOLF3D_CONFIG_SHIM_OBJ): $(WOLF3D_PORT_DIR)/wolf3d_config_shim.c $(WOLF3D_PORT_INCLUDE_DIR)/wolf3d_port.h $(WOLF3D_SRC_STAMP) | dirs
+	mkdir -p $(dir $@)
+	$(CC) $(WOLF3D_NATIVE_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(WOLF3D_ASSETS_OBJ): $(WOLF3D_PORT_DIR)/wolf3d_assets.c $(WOLF3D_PALETTE_H) $(WOLF3D_SIGNON_H) | dirs
+	mkdir -p $(dir $@)
+	$(CC) $(WOLF3D_NATIVE_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(WOLF3D_SOURCE_PROBE_OBJ): $(WOLF3D_PORT_DIR)/wolf3d_source_probe.c $(WOLF3D_PORT_INCLUDE_DIR)/wolf3d_port.h | dirs
+	mkdir -p $(dir $@)
+	$(CC) $(WOLF3D_NATIVE_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(WOLF3D_SOURCE_PROBE_BIN): $(WOLF3D_SOURCE_PROBE_OBJ) $(WOLF3D_NATIVE_SHIM_OBJ) $(WOLF3D_PLATFORM_SHIM_OBJ) $(WOLF3D_CONFIG_SHIM_OBJ) $(WOLF3D_ASSETS_OBJ) $(WOLF3D_UPSTREAM_PROBE_OBJS) $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
+	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
+
+wolf3d-source-probe: $(WOLF3D_SOURCE_PROBE_BIN) $(WOLF3D_UPSTREAM_EXTRA_COMPILE_OBJS)
 
 $(filter $(OBJ_DIR)/user/libc/%.o $(OBJ_DIR)/user/libm/%.o $(OBJ_DIR)/user/posix/%.o,$(USER_RUNTIME_OBJS)): USER_CFLAGS += -ffunction-sections -fdata-sections
 
@@ -430,6 +515,9 @@ $(BIN_DIR)/execveprobe.elf: $(OBJ_DIR)/user/execveprobe.o $(USER_CRT0_OBJ) $(USE
 $(BIN_DIR)/envprobe.elf: $(OBJ_DIR)/user/envprobe.o $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
 	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
 
+$(BIN_DIR)/mathprobe.elf: $(OBJ_DIR)/user/mathprobe.o $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
+	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
+
 $(BIN_DIR)/bmpview.elf: $(OBJ_DIR)/user/bmpview.o $(OBJ_DIR)/user/image_bmp.o $(OBJ_DIR)/user/gfx.o $(USER_LIB_ARCHIVES) | dirs
 	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
 
@@ -449,6 +537,9 @@ $(BIN_DIR)/plasma.elf: $(OBJ_DIR)/user/plasma.o $(OBJ_DIR)/user/gfx.o $(USER_LIB
 	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
 
 $(BIN_DIR)/mandel.elf: $(OBJ_DIR)/user/mandel.o $(OBJ_DIR)/user/gfx.o $(USER_LIB_ARCHIVES) | dirs
+	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
+
+$(BIN_DIR)/wolf3d.elf: $(OBJ_DIR)/user/wolf3d.o $(WOLF3D_NATIVE_SHIM_OBJ) $(WOLF3D_PLATFORM_SHIM_OBJ) $(WOLF3D_CONFIG_SHIM_OBJ) $(WOLF3D_ASSETS_OBJ) $(WOLF3D_UPSTREAM_PROBE_OBJS) $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
 	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
 
 $(BIN_DIR)/fractint.elf: $(FRACTINT_OBJS) $(USER_CRT0_OBJ) $(OBJ_DIR)/user/gfx.o $(OBJ_DIR)/user/gfx_indexed.o $(OBJ_DIR)/user/gfx_text.o $(USER_LIB_ARCHIVES) | dirs
@@ -635,7 +726,7 @@ QEMU_SELFTEST_FLAGS?=--summary
 QEMU_NET_MODE?=user
 QEMU_NET_IFACE?=tap0
 QEMU_NET_MAC?=52:54:00:12:34:56
-QEMU_MEMORY_MB?=32
+QEMU_MEMORY_MB?=64
 QEMU_DISPLAY?=curses
 QEMU_HEADLESS_DISPLAY?=none
 SMOKE_DIR=$(BUILD_DIR)/smoke
@@ -658,7 +749,7 @@ QEMU_USB_STORAGE_FLAGS=-drive if=none,id=stick,format=raw,file=$(IMG_FILE) \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all image img artifacts dirs deps fractint-source check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage usb-storage-smoke test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean FORCE
+.PHONY: all image img artifacts dirs deps fractint-source wolf3d-shareware-data wolf3d-source-probe check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage usb-storage-smoke test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean FORCE
 
 FORCE:
 

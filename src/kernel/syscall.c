@@ -2323,6 +2323,7 @@ static int sys_display_acquire_impl(void) {
     if (!display_acquire(proc)) {
         return -EIO;
     }
+    process_set_display_input_owner(proc, 1);
     keyboard_buf_clear();
     input_clear_events();
     return 0;
@@ -2330,6 +2331,9 @@ static int sys_display_acquire_impl(void) {
 
 static int sys_display_release_impl(void) {
     process_t* proc = (process_t*)sched_current();
+    process_set_display_input_owner(proc, 0);
+    keyboard_buf_clear();
+    input_clear_events();
     display_release(proc);
     return 0;
 }

@@ -1,0 +1,38 @@
+WOLF3D(1)
+
+NAME
+    wolf3d - launch the native Wolfenstein 3-D upstream port
+
+SYNOPSIS
+    wolf3d [upstream-options]
+
+DESCRIPTION
+    Starts the generated id-Software Wolfenstein 3-D source port through the
+    SmallOS DOS/VGA/input compatibility shims.  This command is intentionally
+    a thin entrypoint: it changes to /usr/share/wolf3d, passes argv through to
+    the renamed upstream main function, and lets the original engine run on
+    the SmallOS compatibility surface.
+
+    Current builds reach the sign-on, title/menu, and early gameplay paths
+    with staged Wolfenstein 3-D data.  The port stores CONFIG. in the original
+    DOS-width layout and releases display/input ownership before returning to
+    the shell.
+
+    Bounded startup probes and status checks live in wolf3d-srcprobe under
+    usr/libexec/tests.
+
+FILES
+    /usr/share/wolf3d
+        Runtime data directory used by the port.
+
+    third_party/wolf3d
+        Upstream id-Software source submodule.  SmallOS-owned port code should
+        stay outside this tree.
+
+NOTES
+    This is a work-in-progress native port of the original Borland C89/DOS
+    source, not a rewritten clone.  Use a graphical QEMU backend and grab the
+    guest window before testing mouse-driven gameplay.
+
+SEE ALSO
+    fractint(1), mandel(1), plasma(1), smallos(7)

@@ -43,7 +43,8 @@ guest.
 - Guest userland includes familiar commands such as `ls`, `tree`, `cat`,
   `more`, `man`, `pwd`, `touch`, `mkdir`, `rm`, `cp`, `mv`, `edit`, `date`, `ip`,
   `ipconfig`, `uptime`, `halt`, and `reboot`, plus diagnostics such as
-  `cpuz`, `usbinfo`, `usbports`, `usbpower`, `mousetest`, and demos.
+  `cpuz`, `usbinfo`, `usbports`, `usbpower`, `mousetest`, and demos/ports such
+  as `mandel`, `plasma`, `fractint`, and `wolf3d`.
 - TinyCC is built as `usr/bin/tcc.elf` and can compile sample C programs inside
   SmallOS.
 
@@ -61,10 +62,12 @@ gcc-multilib
 python3
 qemu-system-i386
 svn
+curl
+unzip
 ```
 
-Most third-party package sources are git submodules; Fractint is exported by
-`make deps` from the official SVN tag:
+Most third-party package sources are git submodules, including Wolfenstein 3-D;
+Fractint is exported by `make deps` from the official SVN tag:
 
 ```bash
 git clone --recurse-submodules <repo-url>
@@ -136,8 +139,9 @@ USB storage path instead of the IDE disk path. The USB image/run targets keep
 the loader2 RAM fallback enabled for hardware safety while the kernel still
 prefers the live `usb0` mount when it validates. If terminal input feels
 sluggish through curses, use `make run-gtk` or `make run QEMU_DISPLAY=gtk`.
-Mouse-driven graphics demos need a graphical QEMU backend and a grabbed QEMU
-window.
+Mouse-driven graphics demos and ports need a graphical QEMU backend and a
+grabbed QEMU window. With GTK, click the guest and press `Ctrl+Alt+G` to toggle
+mouse/keyboard grab; this is the most reliable Windows QEMU path for Wolf3D.
 
 Headless run with serial logging:
 
@@ -278,7 +282,7 @@ make cserve-smoke
 │   ├── shell/       shell, parser, line editor, built-in commands
 │   └── user/        user commands, demos, tests, runtime headers and libc-ish code
 ├── tests/           guest shell and ELF expectation files
-├── third_party/     TinyCC, FTP packages, and cserver submodules
+├── third_party/     TinyCC, FTP packages, cserver, Wolf3D, and Fractint source
 ├── tools/           image builders, layout checks, QEMU test harnesses
 ├── Makefile
 └── linker.ld

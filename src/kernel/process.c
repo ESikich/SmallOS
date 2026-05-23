@@ -30,6 +30,7 @@ static process_t* s_process_registry[PROCESS_REGISTRY_MAX];
 static volatile int s_terminal_interrupt_pending = 0;
 static process_t* s_terminal_interrupt_target = 0;
 static process_t* s_raw_console_reader = 0;
+static process_t* s_display_input_owner = 0;
 static volatile process_t* s_detach_requested = 0;
 static volatile int s_detach_allowed = 0;
 
@@ -197,6 +198,16 @@ static void process_orphan_children(u32 parent_pid) {
             proc->reaper_claimed = 0;
         }
     }
+}
+
+static void process_clear_display_input_owner(process_t* proc) {
+    if (!proc || s_display_input_owner != proc) {
+        return;
+    }
+
+    s_display_input_owner = 0;
+    keyboard_buf_clear();
+    input_clear_events();
 }
 
 /*
@@ -2194,6 +2205,7 @@ int process_kill_pid(int pid, int status, unsigned int esp) {
     if (s_raw_console_reader == proc) {
         s_raw_console_reader = 0;
     }
+    process_clear_display_input_owner(proc);
     input_forget_waiting_process(proc);
     socket_wait_clear_process(proc);
 
@@ -2501,6 +2513,10 @@ void process_destroy(process_t* proc) {
     if (keyboard_get_waiting_process() == (void*)proc) {
         keyboard_set_waiting_process(0);
     }
+    if (s_raw_console_reader == proc) {
+        s_raw_console_reader = 0;
+    }
+    process_clear_display_input_owner(proc);
     input_forget_waiting_process(proc);
     socket_wait_clear_process(proc);
     wait_queue_remove_proc(proc);
@@ -2545,6 +2561,24 @@ process_t* process_get_current(void) {
     return sched_current();
 }
 
+void process_set_display_input_owner(process_t* proc, int enabled) {
+    if (enabled) {
+        if (proc) {
+            s_display_input_owner = proc;
+        }
+        return;
+    }
+
+    if (!proc) {
+        s_display_input_owner = 0;
+        return;
+    }
+
+    if (s_display_input_owner == proc) {
+        process_clear_display_input_owner(proc);
+    }
+}
+
 void process_init_user_group(process_t* proc) {
     process_t* parent;
 
@@ -2559,6 +2593,9 @@ void process_init_user_group(process_t* proc) {
 }
 
 void process_set_foreground(process_t* proc) {
+    if (s_display_input_owner && s_display_input_owner != proc) {
+        process_clear_display_input_owner(s_display_input_owner);
+    }
     s_foreground_reader = proc;
     s_foreground_pgid = proc ? proc->pgid : 0;
     s_detach_requested = 0;
@@ -2575,6 +2612,9 @@ void process_set_foreground(process_t* proc) {
 }
 
 void process_set_foreground_preserve_input(process_t* proc) {
+    if (s_display_input_owner && s_display_input_owner != proc) {
+        process_clear_display_input_owner(s_display_input_owner);
+    }
     s_foreground_reader = proc;
     s_foreground_pgid = proc ? proc->pgid : 0;
     s_detach_requested = 0;
@@ -2662,6 +2702,7 @@ static int process_group_force_exit(u32 pgid,
         if (s_raw_console_reader == proc) {
             s_raw_console_reader = 0;
         }
+        process_clear_display_input_owner(proc);
         input_forget_waiting_process(proc);
         socket_wait_clear_process(proc);
 
@@ -2698,6 +2739,7 @@ void process_deliver_pending_terminal_interrupt(unsigned int esp) {
     if (s_raw_console_reader == proc) {
         s_raw_console_reader = 0;
     }
+    process_clear_display_input_owner(proc);
     input_forget_waiting_process(proc);
     socket_wait_clear_process(proc);
     paging_switch(paging_get_kernel_pd());

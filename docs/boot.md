@@ -28,7 +28,7 @@ LBA 0           → boot.bin              (512 bytes, exactly)
 LBA 1–16        → loader2.bin           (currently 8192 bytes, exactly)
 LBA 17+         → padded kernel region  (sector-aligned)
 LBA 17+ks
-               → ext2 partition        (16 MB volume inside the image)
+               → ext2 partition        (32 MB volume inside the image)
 ```
 
 where `ks = ceil(kernel.bin / BOOT_SECTOR_SIZE)` and `kernel_lba = 1 + loader2_sectors`.
@@ -108,7 +108,7 @@ Loaded to `0x4000:0x0000` (physical `0x40000`).
 * Check INT 0x13 LBA extension support and print drive diagnostics
 * Load kernel from disk immediately before the ext2 partition to physical `0x1000`
 * Optionally preload the used prefix of the ext2 partition through BIOS reads
-  into a 16 MB zero-filled RAM fallback at `0x800000`
+  into a 32 MB zero-filled RAM fallback at `0x800000`
 * Apply the build-time display policy: VBE framebuffer in auto mode, BIOS/VGA text in forced VGA mode
 * Copy the BIOS 8x16 font, publish framebuffer fields when VBE is selected, and collect BIOS E820 memory-map entries in boot info
 * Setup temporary GDT
@@ -194,7 +194,7 @@ as primary ATA hardware. Normal VM/IDE builds default to
 `BOOT_RAMDISK_FALLBACK=never`, so stage 2 does not spend time copying the ext2
 partition into RAM before the kernel mounts writable ATA. When the fallback is
 enabled, stage 2 preloads the used ext2 prefix into RAM at `0x800000`, zeroes
-the rest of the 16 MB volume image, and publishes the RAM copy through boot
+the rest of the 32 MB volume image, and publishes the RAM copy through boot
 info. It prefers INT 0x13 LBA reads and falls back to CHS reads when the BIOS
 reports no LBA extensions.
 

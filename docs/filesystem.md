@@ -40,7 +40,7 @@ The ext2 start LBA is **not** compiled into the kernel. The Makefile computes it
 
 # On-Disk Layout
 
-`build/bin/ext2.seed.img` is built by `tools/mkext2.c` as a raw 16 MB ext2
+`build/bin/ext2.seed.img` is built by `tools/mkext2.c` as a raw 32 MB ext2
 volume. Normal runs copy that seed to `.state/ext2.img`, which is the mutable
 volume appended to `smallos.img`. The seed includes `/var/log/boot.txt` from
 `samples/boot.txt` so the kernel can persist boot diagnostics by overwriting an
@@ -52,7 +52,7 @@ existing file after `bootseq` mounts ext2.
 sector size           512 bytes
 block size           4096 bytes
 sectors per block       8
-volume size          4096 blocks / 32768 sectors (16 MB)
+volume size          8192 blocks / 65536 sectors (32 MB)
 inode size            128 bytes
 inode count          1024
 root inode              2
@@ -363,7 +363,7 @@ Small fd reads can currently use a page-backed cache up to:
 That fd cache is page-backed, not one contiguous kernel buffer. Larger fd reads
 stream from ext2 blocks directly. Fd writes no longer require caching the
 whole file; practical write size is bounded by ext2 free space and the current
-15 MB safety limit for this 16 MB test volume.
+31 MB safety limit for this 32 MB test volume.
 
 ## Empty files
 

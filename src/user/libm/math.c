@@ -1,5 +1,9 @@
 #include "math.h"
 
+static const double pi = 3.14159265358979323846;
+static const double half_pi = 1.57079632679489661923;
+static const double two_pi = 6.28318530717958647692;
+
 double fabs(double x) {
     return x < 0.0 ? -x : x;
 }
@@ -43,33 +47,87 @@ double sqrt(double x) {
 }
 
 static double reduce_angle(double x) {
-    const double two_pi = 6.28318530717958647692;
-    const double pi = 3.14159265358979323846;
     x = fmod(x, two_pi);
     if (x > pi) x -= two_pi;
     if (x < -pi) x += two_pi;
     return x;
 }
 
+static double sin_kernel(double x) {
+    double x2 = x * x;
+    double term = x;
+    double sum = x;
+
+    term *= -x2 / (2.0 * 3.0);
+    sum += term;
+    term *= -x2 / (4.0 * 5.0);
+    sum += term;
+    term *= -x2 / (6.0 * 7.0);
+    sum += term;
+    term *= -x2 / (8.0 * 9.0);
+    sum += term;
+    term *= -x2 / (10.0 * 11.0);
+    sum += term;
+    term *= -x2 / (12.0 * 13.0);
+    sum += term;
+    term *= -x2 / (14.0 * 15.0);
+    sum += term;
+    term *= -x2 / (16.0 * 17.0);
+    sum += term;
+    return sum;
+}
+
+static double cos_kernel(double x) {
+    double x2 = x * x;
+    double term = 1.0;
+    double sum = 1.0;
+
+    term *= -x2 / (1.0 * 2.0);
+    sum += term;
+    term *= -x2 / (3.0 * 4.0);
+    sum += term;
+    term *= -x2 / (5.0 * 6.0);
+    sum += term;
+    term *= -x2 / (7.0 * 8.0);
+    sum += term;
+    term *= -x2 / (9.0 * 10.0);
+    sum += term;
+    term *= -x2 / (11.0 * 12.0);
+    sum += term;
+    term *= -x2 / (13.0 * 14.0);
+    sum += term;
+    term *= -x2 / (15.0 * 16.0);
+    sum += term;
+    return sum;
+}
+
 double sin(double x) {
-    double x2;
     x = reduce_angle(x);
-    x2 = x * x;
-    return x * (1.0 - x2 / 6.0 + (x2 * x2) / 120.0 -
-                (x2 * x2 * x2) / 5040.0);
+    if (x > half_pi) {
+        x = pi - x;
+    } else if (x < -half_pi) {
+        x = -pi - x;
+    }
+    return sin_kernel(x);
 }
 
 double cos(double x) {
-    double x2;
+    int sign = 1;
+
     x = reduce_angle(x);
-    x2 = x * x;
-    return 1.0 - x2 / 2.0 + (x2 * x2) / 24.0 -
-           (x2 * x2 * x2) / 720.0;
+    if (x < 0.0) {
+        x = -x;
+    }
+    if (x > half_pi) {
+        x = pi - x;
+        sign = -1;
+    }
+    return sign < 0 ? -cos_kernel(x) : cos_kernel(x);
 }
 
 double tan(double x) {
     double c = cos(x);
-    if (c == 0.0) {
+    if (fabs(c) < 1.0e-12) {
         return x < 0.0 ? -HUGE_VAL : HUGE_VAL;
     }
     return sin(x) / c;

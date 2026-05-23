@@ -9,7 +9,7 @@
 #define SECTOR_SIZE          512u
 #define EXT2_BLOCK_SIZE      4096u
 #define EXT2_SECTORS_PER_BLOCK (EXT2_BLOCK_SIZE / SECTOR_SIZE)
-#define EXT2_TOTAL_BLOCKS    4096u
+#define EXT2_TOTAL_BLOCKS    8192u
 #define EXT2_TOTAL_INODES    1024u
 #define EXT2_INODE_SIZE      128u
 #define EXT2_ROOT_INO        2u

@@ -31,6 +31,8 @@ gcc-multilib
 python3
 qemu-system-i386
 svn
+curl
+unzip
 ```
 
 Clone the repo with submodules:
@@ -365,6 +367,33 @@ color maps, parameter sets, formulas, L-system definitions, and IFS
 definitions. They are installed both at that search root and in their canonical
 upstream subdirectories, so names such as `altern.map` and paths such as
 `maps/altern.map` both resolve normally.
+
+`wolf3d` stages the original id-Software Wolfenstein 3-D source-port work as a
+guest-visible command:
+
+```text
+wolf3d
+```
+
+The upstream source is a clean git submodule at `third_party/wolf3d`. SmallOS
+does not ship Wolfenstein 3-D game data; place data files such as `VSWAP.WL6`,
+`GAMEMAPS.WL6`, and `VGAGRAPH.WL6` in the host-side `.state/wolf3d/` cache, or
+run `make wolf3d-shareware-data` to download and extract the public shareware
+v1.4 `.WL1` data set from Wolf3D.net. Normal image builds stage cached files
+under `/usr/share/wolf3d`; use `WOLF3D_STAGE_DATA=0` for a lean image without
+game data. The command changes into that directory and runs the generated
+upstream engine through SmallOS DOS, VGA, input, timer, file, and config
+compatibility shims. Current builds reach the sign-on/title/menu flow and the
+first gameplay frames with the original data files. `CONFIG.` is stored in the
+original DOS-width layout, and Wolf-owned display/input state is released on
+normal and error exits so the shell gets a clean foreground back.
+
+For manual runtime checks, use a graphical QEMU backend and grab the guest
+window before testing mouse input. GTK builds support `Ctrl+Alt+G` to toggle
+mouse/keyboard grab; on QEMU for Windows, GTK is usually more predictable than
+SDL for this path. Bounded host/guest probes live in
+`usr/libexec/tests/wolf3d-srcprobe.elf` and the host-side
+`make wolf3d-source-probe` target.
 
 The GUI opens a desktop with Files, Shell, System, Config, About, and Quit
 icons. Shell windows run real child shells through PTYs. The Config window can

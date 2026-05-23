@@ -3,7 +3,7 @@
 #include "timer.h"
 #include "klib.h"
 
-#define INPUT_QUEUE_SIZE 64u
+#define INPUT_QUEUE_SIZE 256u
 
 static sys_input_event_t s_queue[INPUT_QUEUE_SIZE];
 static unsigned int s_head = 0;
@@ -46,8 +46,47 @@ static void input_wake_waiter(void) {
     s_waiting_proc = 0;
 }
 
+static int input_is_mergeable_mouse_motion(const sys_input_event_t* ev) {
+    if (!ev || ev->type != SYS_INPUT_TYPE_MOUSE) {
+        return 0;
+    }
+    return ev->button_changes == 0u;
+}
+
+static int input_try_merge_mouse_motion(const sys_input_event_t* ev) {
+    unsigned int prev;
+    sys_input_event_t* last;
+
+    if (!input_is_mergeable_mouse_motion(ev) || s_count == 0) {
+        return 0;
+    }
+
+    prev = (s_head + INPUT_QUEUE_SIZE - 1u) % INPUT_QUEUE_SIZE;
+    last = &s_queue[prev];
+    if (!input_is_mergeable_mouse_motion(last) ||
+        last->buttons != ev->buttons ||
+        ((last->flags ^ ev->flags) & SYS_INPUT_MOUSE_ABSOLUTE) != 0u) {
+        return 0;
+    }
+
+    last->ticks = ev->ticks;
+    last->sequence = ev->sequence;
+    last->dx += ev->dx;
+    last->dy += ev->dy;
+    last->wheel += ev->wheel;
+    last->abs_x = ev->abs_x;
+    last->abs_y = ev->abs_y;
+    last->buttons = ev->buttons;
+    input_wake_waiter();
+    return 1;
+}
+
 static void input_push_event(const sys_input_event_t* ev) {
     if (!ev) return;
+
+    if (input_try_merge_mouse_motion(ev)) {
+        return;
+    }
 
     if (s_count >= INPUT_QUEUE_SIZE) {
         s_tail = (s_tail + 1u) % INPUT_QUEUE_SIZE;

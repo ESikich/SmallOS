@@ -34,11 +34,12 @@ i686-elf-objcopy → strip ELF metadata → flat binary
 gcc              → host tool compilation (mkext2, mkimage)
 gcc -m32         → Fractint help compiler, whose file format uses 32-bit long
 svn              → official Fractint source export
+curl, unzip      → optional Wolfenstein 3-D shareware data download/extract
 ```
 
 The `third_party/cserver`, `third_party/ftp_client`, `third_party/ftp_server`,
-and `third_party/tinycc` directories are git submodules. A fresh clone should
-include them with:
+`third_party/tinycc`, and `third_party/wolf3d` directories are git submodules.
+A fresh clone should include them with:
 
 ```bash
 git clone --recurse-submodules <repo-url>
@@ -61,6 +62,13 @@ The TinyCC sources stay clean in `third_party/tinycc`. SmallOS applies
 variant. That variant defaults to the SmallOS guest sysroot: `/usr/include`
 for headers and `/usr/lib` for `crt0.o`, `libc.a`, `libm.a`, and
 `libposix.a`.
+
+Wolfenstein 3-D data files are not tracked. `make wolf3d-shareware-data`
+downloads the public Wolfenstein 3-D Shareware v1.4 zip from Wolf3D.net into
+`.state/downloads/` and extracts the `.WL1` runtime data files into
+`.state/wolf3d/`. Normal image builds stage cached `*.WL1`, `*.WL6`, `*.SOD`,
+or `*.SDM` files under `/usr/share/wolf3d`; build with `WOLF3D_STAGE_DATA=0`
+for a lean image without game data.
 
 ---
 
@@ -157,7 +165,7 @@ public artifact names:
 make esxi-vmdk DISPLAY_BACKEND=vga
 ```
 
-The ESXi baseline VM should use legacy BIOS boot, an IDE disk, at least 32 MB
+The ESXi baseline VM should use legacy BIOS boot, an IDE disk, at least 64 MB
 of RAM, and an e1000 virtual NIC. The SmallOS e1000 driver binds both QEMU's
 Intel 82540EM device (`8086:100E`) and VMware's Intel 82545EM-style device
 (`8086:100F`). Keep `usb.present = "FALSE"` and avoid manual `mouse.*` or
@@ -382,9 +390,12 @@ make run-sdl
 make run QEMU_DISPLAY=gtk
 ```
 
-Mouse-driven graphics demos need a graphical QEMU backend and a grabbed guest
-window. Use `make run-gtk` or `make run-sdl`, then click/grab the QEMU window
-before testing `usr/bin/mandel` cursor movement.
+Mouse-driven graphics demos and ports need a graphical QEMU backend and a
+grabbed guest window. Use `make run-gtk`, then click the QEMU window and press
+`Ctrl+Alt+G` to toggle mouse/keyboard grab before testing `usr/bin/mandel`,
+`usr/bin/fractint`, or `usr/bin/wolf3d`. On QEMU for Windows, GTK is the
+preferred backend for this path; some SDL builds expose no configurable grab
+modifier.
 
 The guest terminal backend policy is controlled at build time:
 
@@ -438,7 +449,7 @@ on top of a `gfx_surface_t`. Indexed-color programs can use
 `src/user/gfx_indexed.c` for an 8-bit shadow framebuffer, palette conversion,
 and batched dirty-rectangle presentation.
 
-QEMU guest RAM defaults to 32 MB. To exercise the expanded E820-backed PMM
+QEMU guest RAM defaults to 64 MB. To exercise the expanded E820-backed PMM
 window, override the memory size:
 
 ```bash
@@ -593,7 +604,12 @@ including `<strings.h>`, `<malloc.h>`, `<endian.h>`, `<sys/dir.h>`, and
 Third-party source should stay unchanged. Port-specific glue belongs
 under `src/user/ports/`; for example, the Fractint framebuffer and keyboard
 adapter lives in `src/user/ports/fractint/` while upstream Xfractint remains
-an official SVN export under `third_party/fractint`.
+an official SVN export under `third_party/fractint`. The Wolfenstein 3-D
+source is staged as `third_party/wolf3d`; its SmallOS command is a thin
+launcher linked against generated upstream Wolf3D objects and SmallOS
+compatibility shims. The shims own DOS/Borland source preparation, VGA/page
+presentation, input polling, DOS-width `CONFIG.` persistence, and display/input
+cleanup while the original engine tree remains unmodified.
 
 The guest compiler toolchain ships as `usr/bin/tcc.elf`, built from the TinyCC
 submodule sources with the generic SmallOS CRT adapter. The guest entry point

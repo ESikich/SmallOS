@@ -1308,6 +1308,7 @@ void sh_shelltest(void) {
     sh_shelltest_exec("cpuz", "cpuz");
     sh_shelltest_exec("top", "top -r 1");
     sh_shelltest_exec("memmap", "memmap");
+    sh_shelltest_exec("wolf3d_check", "runelf usr/libexec/tests/wolf3d-srcprobe --check-episodes");
     sh_shelltest_exec("netinfo", "netinfo");
     sh_shelltest_exec("ip", "ip");
     sh_shelltest_exec("ip_addr", "ip addr show");
@@ -1446,6 +1447,11 @@ void sh_selftest(void) {
     sh_selftest_exec("dupprobe", "runelf usr/libexec/tests/dupprobe");
     sh_selftest_exec("forkprobe", "runelf usr/libexec/tests/forkprobe");
     sh_selftest_exec("execveprobe", "runelf usr/libexec/tests/execveprobe");
+    sh_selftest_exec("mathprobe", "runelf usr/libexec/tests/mathprobe");
+    sh_selftest_exec("wolf3d-srcprobe", "runelf usr/libexec/tests/wolf3d-srcprobe");
+    sh_selftest_exec("wolf3d-srcprobe episodes", "runelf usr/libexec/tests/wolf3d-srcprobe --check-episodes");
+    sh_selftest_exec("wolf3d-srcprobe init", "runelf usr/libexec/tests/wolf3d-srcprobe --init-game");
+    sh_selftest_exec("wolf3d-srcprobe demo", "runelf usr/libexec/tests/wolf3d-srcprobe --demo-preamble");
     sh_selftest_exec("fault ud", "runelf usr/libexec/tests/fault ud");
     sh_selftest_exec("fault gp", "runelf usr/libexec/tests/fault gp");
     sh_selftest_exec("fault de", "runelf usr/libexec/tests/fault de");

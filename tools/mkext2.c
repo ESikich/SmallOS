@@ -4,7 +4,7 @@
  * Usage:
  *   mkext2 output.img [dest=]source ... dir/ ...
  *
- * Produces a deterministic 16 MB raw ext2 volume with 4 KiB blocks,
+ * Produces a deterministic 32 MB raw ext2 volume with 4 KiB blocks,
  * 128-byte inodes, one block group, and native directory names.
  */
 
@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define TOTAL_SIZE_MB        16
+#define TOTAL_SIZE_MB        32
 #define TOTAL_BYTES          (TOTAL_SIZE_MB * 1024u * 1024u)
 #define BLOCK_SIZE           4096u
 #define TOTAL_BLOCKS         (TOTAL_BYTES / BLOCK_SIZE)

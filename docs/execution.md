@@ -145,6 +145,11 @@ to the shell cwd and may omit the `.elf` suffix. Commands like `echo`, `about`,
 `usbdiag`, `usbpeek`, `usbpower`, `usbmouse`, `mousetest`, `ip`, and
 `ipconfig` are shipped this way under `/bin/`.
 
+Larger demo and port binaries are staged under `/usr/bin/`, including
+`hello`, `plasma`, `mandel`, `fractint`, `wolf3d`, and `tcc`. Regression probes
+that are useful to keep out of the normal command namespace live under
+`/usr/libexec/tests/`, including `mathprobe` and `wolf3d-srcprobe`.
+
 The interactive shell editor keeps a short command history and command/path
 completion. History stores the full input line before tokenization, so recalled
 entries retain all arguments even when the command failed. Completion merges

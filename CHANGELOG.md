@@ -87,6 +87,7 @@ wrappers in `src/user/posix`.
   * Updated the SmallOS TinyCC build-local patch so guest `tcc` defaults to `/usr/include` and `/usr/lib`, then added hosted sysroot and POSIX sample coverage through `tccsysroot.c` and `tccposix.c`.
   * Kept low-level probes free to include `src/user/internal/*`, while normal hosted programs and ports can build against the installed public header/library surface.
   * Moved ordinary command ELFs such as `cat`, `cp`, `ls`, `man`, `more`, `tree`, `touch`, and `bmpview` off private `user_lib.h` / `user_syscall.h` includes and onto public libc/POSIX headers.
+  * Improved the freestanding `sin`, `cos`, and `tan` implementations and added `mathprobe` coverage for representative quadrants and singular-edge behavior.
 * **Shared framebuffer and keyboard helpers** (`src/user/gfx.c`, `src/user/gfx_indexed.c`, `src/user/gfx_text.c`, `src/user/term_keys.c`, `src/user/include/*.h`, `src/user/{bmpview,diskview,edit,mandel,plasma,top}.c`, `src/user/gui/app.c`, `docs/`)
   * Promoted reusable graphics pieces into public helpers: XRGB `gfx_surface_t` allocation/copy/presentation, temporary overlay presentation, 8-bit indexed shadow framebuffer/palette conversion, and VGA-style framebuffer text cells.
   * Added `term_keys.h` for decoded raw keyboard controls and terminal-size queries, and moved ordinary full-screen programs off private ANSI escape parsers or local raw-key polling helpers.
@@ -98,6 +99,13 @@ wrappers in `src/user/posix`.
   * Built the upstream Fractint help compiler with a 32-bit host ABI so the generated `fractint.hlp` signature/version layout matches the 32-bit SmallOS binary.
   * Kept Fractint's upstream renderers, menus, keyboard flow, and 256-entry palette model; the adapter supplies only the indexed framebuffer/video table, key translation, palette bridge, and classic text screen-stack behavior.
   * Staged the generated help database, `sstools.ini`, maps, parameter sets, formulas, L-system definitions, and IFS data under `/usr/share/xfractint`, both at the search root and in canonical upstream subdirectories.
+* **Wolfenstein 3-D source-port bootstrap** (`third_party/wolf3d`, `src/user/wolf3d.c`, `man/man1/wolf3d.1`, `docs/`)
+  * Added `id-Software/wolf3d` as a clean third-party git submodule and wired it into `make deps` / `check-third-party`.
+  * Added `usr/bin/wolf3d.elf`, a thin SmallOS command linked against generated upstream Wolf3D objects and compatibility shims; it checks for user-supplied Wolfenstein 3-D data under `/usr/share/wolf3d` and now reaches the original sign-on, title/menu, and early gameplay paths.
+  * Added an optional `make wolf3d-shareware-data` helper that downloads Wolfenstein 3-D Shareware v1.4 from Wolf3D.net and extracts the `.WL1` data files into `.state/wolf3d`; normal image builds stage cached data into `/usr/share/wolf3d`, with `WOLF3D_STAGE_DATA=0` available for lean images.
+  * Kept config compatibility in SmallOS-owned shims: `CONFIG.` is written in the original DOS-width layout, legacy host-width config files migrate on read, corrupt control config falls back to defaults, and Wolf releases display/input ownership on normal and error exits.
+  * Grew the generated ext2 seed image from 16 MB to 32 MB and raised the default QEMU guest RAM to 64 MB so the normal image can carry Wolf3D data without starving write-heavy tests or RAM-disk fallback boots.
+  * Documented that remaining polish belongs in SmallOS compatibility surfaces, especially interactive input feel, timing/page-update behavior, and sound, while keeping the upstream engine tree unmodified.
 
 ### Added
 

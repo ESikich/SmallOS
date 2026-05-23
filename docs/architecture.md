@@ -488,6 +488,22 @@ and IFS files both at the search root and under their canonical upstream
 subdirectories. This lets entries such as `map=altern.map` and
 `map=maps/altern.map` resolve through normal filesystem paths.
 
+`usr/bin/wolf3d` is the Wolfenstein 3-D source-port integration point. The
+upstream id-Software source is tracked as the `third_party/wolf3d` submodule
+and is not modified for SmallOS. The shipped command stays a thin launcher:
+it changes into `/usr/share/wolf3d`, passes arguments to the renamed upstream
+main, and lets SmallOS-owned shims provide the DOS, BIOS, VGA, timer, input,
+file, and config surface that the Borland-era code expects. The generated
+upstream objects now reach the sign-on/title/menu path and early gameplay
+frames with staged data, while `usr/libexec/tests/wolf3d-srcprobe.elf` keeps
+bounded startup, menu, and first-frame probes available for regression checks.
+`CONFIG.` is serialized in the original DOS-width layout, with legacy
+host-width config migration and validation in the port shim, and Wolf display
+and input ownership is released on normal/error exits. Game data stays outside
+git; `make wolf3d-shareware-data` can populate `.state/wolf3d/` with the
+shareware `.WL1` data set from Wolf3D.net. Normal builds stage cached files
+into `/usr/share/wolf3d`; other lean images can set `WOLF3D_STAGE_DATA=0`.
+
 ## Shell
 
 ```text
@@ -597,7 +613,7 @@ PAGE_ALIGN(bss_end)
                                    ELF segment frames, user stack frames,
                                    all process-private page tables,
                                    per-process kernel stack frames
-0x08000000   PMM ceiling (128 MB cap; default 32 MB guests expose less via E820)
+0x08000000   PMM ceiling (128 MB cap; default 64 MB guests expose less via E820)
 0x00400000   USER_CODE_BASE — user ELF virtual address (per-process mapping)
 0xBFFFF000   user stack virtual address (per-process mapping)
 ```
@@ -637,7 +653,7 @@ PMM-frame access API.
 
 # ext2 Partition
 
-A 16 MB ext2 volume is appended to the disk image directly after the kernel.
+A 32 MB ext2 volume is appended to the disk image directly after the kernel.
 The seeded tree uses normal ext2 native directory entries under `/bin`,
 `/usr/bin`, `/usr/include`, `/usr/lib`, `/usr/libexec/tests`, `/usr/sbin`,
 `/usr/share/examples/tinycc`, `/usr/share/man`, `/etc`, `/var`, and `/tmp`.
@@ -800,7 +816,7 @@ LBA N+1 ...               ext2.img
 build/gen/<profile>/loader2.gen.asm
                                 stack-top values injected
 build/bin/<profile>/ext2.seed.img
-                                16 MB seeded ext2 image built by build/tools/mkext2
+                                32 MB seeded ext2 image built by build/tools/mkext2
 .state/ext2.img             mutable ext2 working copy used by normal runs
 build/tools/mkext2          host tool for ext2 volume construction
 build/tools/mkimage          host tool for final disk image assembly

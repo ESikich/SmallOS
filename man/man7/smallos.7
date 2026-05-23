@@ -47,8 +47,9 @@ FILESYSTEM
 GRAPHICS
     SmallOS exposes a 32-bit XRGB framebuffer through display syscalls and the
     user-space gfx helper.  Programs such as bmpview(1), diskview(1),
-    mandel(1), plasma(1), gui(1), and fractint(1) use this path.  Graphical
-    programs work best under a graphical QEMU backend such as gtk or sdl.
+    mandel(1), plasma(1), gui(1), fractint(1), and wolf3d(1) use this path.
+    Graphical programs work best under a graphical QEMU backend with guest
+    input grabbed.
 
 NETWORKING
     The image includes IPv4 configuration tools, simple ICMP and ARP probes,

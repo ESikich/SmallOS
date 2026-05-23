@@ -10,3 +10,6 @@
 [submodule "third_party/ftp_server"]
 	path = third_party/ftp_server
 	url = https://github.com/ESikich/ftp_server.git
+[submodule "third_party/wolf3d"]
+	path = third_party/wolf3d
+	url = https://github.com/id-Software/wolf3d.git

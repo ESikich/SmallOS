@@ -123,7 +123,7 @@ The loader copies ELF segment data out of this buffer into PMM-backed frames bef
 
 Loader2 can preload the used prefix of the ext2 partition to physical
 `0x800000` as a boot-storage fallback, then zero-fill the rest of the current
-16 MB seed volume. The default `BOOT_RAMDISK_FALLBACK=never` policy disables
+32 MB seed volume. The default `BOOT_RAMDISK_FALLBACK=never` policy disables
 that preload for normal VM/IDE boots; QEMU and VMware normally mount the
 writable ATA path instead. `BOOT_RAMDISK_FALLBACK=auto` preloads only when EDD
 does not identify the boot drive as USB or ATA, and explicit USB image/run

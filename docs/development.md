@@ -18,6 +18,13 @@ COM1 plus QEMU logs:
 qemu-system-i386 -drive format=raw,file=build/img/smallos.img -m 32 -serial stdio -d int,cpu_reset,guest_errors -D qemu.log -display gtk 2>&1 | Tee-Object -FilePath qemu-console.log
 ```
 
+For graphics programs that need mouse capture, prefer GTK and toggle QEMU's
+guest grab with `Ctrl+Alt+G` after clicking inside the window:
+
+```powershell
+qemu-system-i386 -display gtk,grab-on-hover=off -drive format=raw,file=smallos.img -boot c -m 128 -nic user,model=e1000,mac=52:54:00:12:34:56,hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000,hostfwd=tcp::8080-:8080
+```
+
 `make test` runs the same image headlessly, launches the shell `selftest`
 command, feeds the interactive `readline` prompt, and verifies both the
 built-in shell commands (`tests/shell/`) and shipped ELFs

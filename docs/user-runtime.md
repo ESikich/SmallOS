@@ -200,7 +200,7 @@ shared file description, so duplicated and fork-inherited regular-file
 descriptors share offsets as POSIX code expects.
 
 Current fd-backed regular files are bounded by ext2 free space and the ext2
-driver's safety limit for the 16 MB test volume. The older whole-file
+driver's safety limit for the 32 MB test volume. The older whole-file
 `ext2_load()` helper still has a 1 MB static-buffer limit, so runtime file IO
 should prefer descriptors when it needs seek, append, writes, or larger
 readback.

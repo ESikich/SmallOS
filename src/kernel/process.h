@@ -208,6 +208,7 @@ process_t* process_get_current(void);
 void       process_init_user_group(process_t* proc);
 void       process_set_foreground(process_t* proc);
 void       process_set_foreground_preserve_input(process_t* proc);
+void       process_set_display_input_owner(process_t* proc, int enabled);
 process_t* process_get_foreground(void);
 u32        process_get_foreground_group(void);
 int        process_signal_deliver(process_t* proc, int signum);
