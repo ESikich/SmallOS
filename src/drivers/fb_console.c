@@ -691,16 +691,17 @@ int fb_console_blit_stride(unsigned int x, unsigned int y, unsigned int w,
     }
 
     if (fb->page_flip_ready) {
-        volatile u8* draw_base = fb_page_base(fb->draw_page);
+        for (unsigned int page = 0; page < fb->page_count; page++) {
+            volatile u8* base = fb_page_base(page);
 
-        for (unsigned int py = 0; py < h; py++) {
-            volatile u32* dst =
-                (volatile u32*)(draw_base + (y + py) * fb->pitch + x * 4u);
-            const unsigned int* src = pixels + py * pitch_pixels;
-            fb_copy_words(dst, src, w);
+            for (unsigned int py = 0; py < h; py++) {
+                volatile u32* dst =
+                    (volatile u32*)(base + (y + py) * fb->pitch + x * 4u);
+                const unsigned int* src = pixels + py * pitch_pixels;
+                fb_copy_words(dst, src, w);
+            }
         }
         cpu_write_fence();
-        fb_bga_set_scanout_page(fb->draw_page);
         return 1;
     }
 

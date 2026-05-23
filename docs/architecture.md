@@ -443,6 +443,10 @@ helper in `src/user/gfx.c` queries display geometry, requires XRGB8888/32 bpp,
 acquires exclusive graphics mode, allocates a full-screen user backbuffer,
 provides reusable `gfx_surface_t` allocation/copy helpers, and presents that
 buffer with `SYS_DISPLAY_BLIT` or sub-rectangles with `SYS_DISPLAY_BLIT_STRIDE`.
+Those copy-style blit syscalls keep every framebuffer page coherent when page
+flipping is available, so dirty-rectangle applications such as `gui` can keep
+using normal backbuffer semantics without exposing stale pixels from a hidden
+page.
 When the framebuffer backend can page flip, the display owner can also map the
 page-flip aperture with `SYS_DISPLAY_MAP` and present already-rendered hidden
 pages with `SYS_DISPLAY_PRESENT_PAGE`. That path is intentionally lower level

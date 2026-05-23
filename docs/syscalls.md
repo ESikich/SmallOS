@@ -834,7 +834,9 @@ int sys_display_blit(uint32_t x, uint32_t y, uint32_t w,
 
 Copies XRGB8888 pixels from user memory into the framebuffer. User graphics
 programs normally draw into `src/user/gfx.c`'s backbuffer and present the whole
-screen with one blit.
+screen with one blit. When the framebuffer backend has multiple pages, this
+copy-style syscall updates each page instead of flipping scanout, preserving
+normal dirty-rectangle semantics for apps such as `gui`.
 
 ---
 
@@ -1326,8 +1328,9 @@ int sys_display_blit_stride(uint32_t x, uint32_t y,
 Copies a rectangular XRGB8888 region from user memory into the framebuffer
 using a source pitch measured in pixels. This is the preferred path for
 presenting a sub-rectangle from a larger backbuffer without first packing it
-into a temporary contiguous buffer. The caller must hold the display via
-`SYS_DISPLAY_ACQUIRE`.
+into a temporary contiguous buffer. Like `SYS_DISPLAY_BLIT`, this keeps all
+framebuffer pages coherent rather than presenting a hidden page. The caller
+must hold the display via `SYS_DISPLAY_ACQUIRE`.
 
 Returns `0` on success, `-EFAULT` for an invalid request or pixel buffer,
 `-EINVAL` when `pitch_pixels < w`, `-EOVERFLOW` for impossible byte spans, or
