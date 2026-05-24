@@ -443,24 +443,27 @@ Userland framebuffer programs should use the small graphics helper in
 `src/user/gfx.c`. It validates the display mode, acquires exclusive graphics
 access, manages XRGB8888 `gfx_surface_t` buffers, provides rectangle copy
 helpers, and presents full frames, sub-rectangles, or temporary overlay
-surfaces through the display syscalls. Programs that need framebuffer text cells can also use
-`src/user/gfx_text.c`, which provides VGA-style colors and bitmap glyph drawing
-on top of a `gfx_surface_t`. Indexed-color programs can use
-`src/user/gfx_indexed.c` for an 8-bit shadow framebuffer, palette conversion,
-and batched dirty-rectangle presentation.
+surfaces through the display syscalls. It also owns mapped framebuffer setup
+and scaled indexed-surface presentation, so 8-bit ports can share palette
+conversion and page-flip fallback behavior. Programs that need framebuffer text
+cells can also use `src/user/gfx_text.c`, which provides VGA-style colors and
+bitmap glyph drawing on top of a `gfx_surface_t`. Indexed-color programs can
+use `src/user/gfx_indexed.c` for an 8-bit shadow framebuffer, palette
+conversion, and batched dirty-rectangle presentation.
 
-Ports with their own frame pacing can bypass the copy-based helpers after
-exclusive display acquire. `SYS_DISPLAY_MAP` maps the page-flip framebuffer
-aperture into the caller, and `SYS_DISPLAY_PRESENT_PAGE` flips a rendered
-hidden page at a fresh vertical-retrace edge. Wolf3D uses this path so long
-sound effects do not force full-frame kernel copies while PCM playback is
-active.
+Ports with their own frame pacing can call `gfx_map()` after exclusive display
+acquire. It wraps `SYS_DISPLAY_MAP`, maps the page-flip framebuffer aperture
+into the caller, and lets `gfx_present_mapped()` flip a rendered hidden page at
+a fresh vertical-retrace edge. Wolf3D uses this path through the shared indexed
+presentation helper, so long sound effects do not force full-frame kernel
+copies while PCM playback is active.
 
 SmallOS also exposes a small sound syscall surface. `soundprobe` exercises PC
-speaker tones, PCM playback, and AdLib/OPL2 writes, while Wolf3D uses
-unsigned 8-bit PCM data for digitized effects and OPL2 register streams for
-AdLib SFX/music. Under QEMU, expose AC97 and AdLib devices for Wolf3D sound,
-for example with `-audiodev sdl,id=audio0,in.voices=0,out.frequency=48000,out.buffer-length=50000`,
+speaker tones, PCM playback, AdLib/OPL2 writes, and kernel-timed OPL
+sequences/effects. Wolf3D uses unsigned 8-bit PCM data for digitized effects
+and kernel-scheduled OPL2 streams for AdLib SFX/music. Under QEMU, expose AC97
+and AdLib devices for Wolf3D sound, for example with
+`-audiodev sdl,id=audio0,in.voices=0,out.frequency=48000,out.buffer-length=50000`,
 `-device AC97,audiodev=audio0`, and `-device adlib,audiodev=audio0`. SB16
 remains a fallback/debug path, but QEMU's GTK display can freeze while its
 ISA DMA stream is active.
@@ -623,10 +626,14 @@ adapter lives in `src/user/ports/fractint/` while upstream Xfractint remains
 an official SVN export under `third_party/fractint`. The Wolfenstein 3-D
 source is staged as `third_party/wolf3d`; its SmallOS command is a thin
 launcher linked against generated upstream Wolf3D objects and SmallOS
-compatibility shims. The shims own DOS/Borland source preparation, VGA/page
-presentation, Sound Blaster/PC speaker bridging, input polling, DOS-width
-`CONFIG.` persistence, and display/input/sound cleanup while the original
-engine tree remains unmodified.
+compatibility shims. Reusable pressure from that port now lives in shared
+runtime and kernel helpers: DOS/Borland headers, `<conio.h>` and BIOS keyboard
+entry points, input waits, DOS-style tick clocks, VGA planar page math, indexed
+graphics presentation, and kernel-timed PC speaker/OPL sequences. The Wolf3D
+shim keeps the game-specific pieces, including upstream source preparation,
+asset and data-directory fallback, scaler/raycast glue, mouse INT 33h behavior,
+DOS-width `CONFIG.` persistence, and display/input/sound cleanup while the
+original engine tree remains unmodified.
 
 The guest compiler toolchain ships as `usr/bin/tcc.elf`, built from the TinyCC
 submodule sources with the generic SmallOS CRT adapter. The guest entry point

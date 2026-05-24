@@ -3,7 +3,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <smallos_dos.h>
 #define tell(fd) lseek((fd), 0, SEEK_CUR)
-#define filelength(fd) wolf3d_filelength(fd)
-long wolf3d_filelength(int fd);
+#define filelength(fd) smallos_filelength(fd)
 #endif

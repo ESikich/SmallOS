@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <smallos_dos.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -135,12 +136,6 @@ static inline uint16_t wolf3d_fp_off(const void* p) {
 #define poke(seg, ofs, val) wolf3d_poke((uint16_t)(seg), (uint16_t)(ofs), (uint16_t)(val))
 #define pokeb(seg, ofs, val) wolf3d_pokeb((uint16_t)(seg), (uint16_t)(ofs), (uint8_t)(val))
 #define geninterrupt(intno) wolf3d_geninterrupt((unsigned int)(intno))
-#define int86(intno, inregs, outregs) (0)
-#define int86x(intno, inregs, outregs, segregs) (0)
-#define inp(port) (0)
-#define inportb(port) (0)
-#define outp(port, val) ((void)0)
-#define outportb(port, val) ((void)0)
 #define harderr(handler) ((void)0)
 #define errout(message) ((void)0)
 
@@ -213,8 +208,6 @@ static inline uint16_t wolf3d_fp_off(const void* p) {
 char* ltoa(long value, char* str, int base);
 char* ultoa(unsigned long value, char* str, int base);
 char* itoa(int value, char* str, int base);
-void movedata(unsigned srcseg, unsigned srcoff, unsigned dstseg,
-              unsigned dstoff, unsigned len);
 void gotoxy(int x, int y);
 void clrscr(void);
 

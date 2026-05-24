@@ -18,6 +18,7 @@
 
 #include "user_lib.h"
 #include "gfx.h"
+#include "smallos_input.h"
 #include "dirent.h"
 #include "gui.h"
 #include "shell_window.h"
@@ -2618,7 +2619,7 @@ int gui_main(int argc, char** argv) {
             uint32_t now = sys_get_ticks();
             uint32_t deadline = gui_wait_deadline(shell_windows_need_poll(), now);
             if (deadline != 0u && !tick_due(now, deadline)) {
-                (void)sys_input_wait_until(deadline);
+                (void)smallos_input_wait_until(deadline);
             } else {
                 sys_yield();
             }

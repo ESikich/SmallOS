@@ -145,26 +145,27 @@ helper, not a descriptor-backed event stream.
 
 Framebuffer programs should use `gfx.h` rather than calling display syscalls
 directly. `gfx.c` owns display acquire/release, XRGB8888 surface allocation,
-rectangle copying, full-frame and rectangle presentation, and presentation of
-temporary overlay surfaces through `gfx_present_surface()`. `gfx_indexed.h`
-adds an 8-bit shadow framebuffer and palette conversion for Fractint-style
-programs, while `gfx_text.h` provides bitmap text cells on top of a
-`gfx_surface_t`.
+rectangle copying, full-frame and rectangle presentation, temporary overlay
+presentation through `gfx_present_surface()`, mapped framebuffer setup, and
+indexed 8-bit palette presentation. `gfx_indexed.h` adds an 8-bit shadow
+framebuffer and dirty-rectangle tracking for Fractint-style programs, while
+`gfx_text.h` provides bitmap text cells on top of a `gfx_surface_t`.
 
-Programs that already manage their own framebuffers can use the mapped-display
-syscalls directly after acquiring the display. `SYS_DISPLAY_MAP` returns the
-user virtual address and page layout for the page-flip framebuffer aperture;
-`SYS_DISPLAY_PRESENT_PAGE` presents one hidden page and returns the next page to
-draw, with BGA scanout changes synchronized to a fresh vertical-retrace edge.
-The generic helpers keep using copy/blit presentation, while Wolf3D uses the
-mapped path to avoid long kernel framebuffer copies during sound playback.
+Programs that already manage their own framebuffers can use `gfx_map()` after
+acquiring the display. It wraps `SYS_DISPLAY_MAP`, records the user virtual
+address and page layout for the page-flip framebuffer aperture, and lets
+`gfx_present_mapped()` flip a rendered hidden page at a fresh vertical-retrace
+edge. `gfx_present_indexed()` uses the mapped path when available and falls back
+to a reusable XRGB scratch surface otherwise, so old 8-bit ports do not need to
+carry private display syscall glue.
 
 `sound.h` wraps the simple sound syscall surface. It provides PC speaker tone
 helpers, bounded PIT pitch sequences, unsigned 8-bit PCM playback, AdLib/OPL2
-register writes, capability queries, status counters, and stop control. The
-kernel prefers AC97 PCI bus-master playback for PCM when present, falls back to
-Sound Blaster 16-bit DMA when AC97 is absent, and exposes the 8-bit SB paths
-only where the caller selects a diagnostic legacy path.
+register writes, kernel-timed OPL music sequences and single-voice OPL effects,
+capability queries, status counters, and stop control. The kernel prefers AC97
+PCI bus-master playback for PCM when present, falls back to Sound Blaster 16-bit
+DMA when AC97 is absent, and exposes the 8-bit SB paths only where the caller
+selects a diagnostic legacy path.
 
 USB and mouse diagnostic commands use the same raw syscall layer instead of
 running as kernel built-ins. `sys_usbinfo()`, `sys_mouse_debug()`,
@@ -260,11 +261,20 @@ that boundary:
   as `select()` on top of `SYS_POLL`
 - `src/user/include/` owns the public libc/POSIX/SmallOS-extension headers,
   including compatibility names such as `<strings.h>`, `<malloc.h>`,
-  `<endian.h>`, `<sys/dir.h>`, and `<sys/file.h>`
+  `<endian.h>`, `<sys/dir.h>`, `<sys/file.h>`, `<dos.h>`, `<dir.h>`,
+  `<conio.h>`, and `<bios.h>`
 - `src/user/internal/` owns raw syscall and native runtime helper headers
 - `src/user/posix/core.c` owns the broader syscall-backed descriptor and
   process wrappers
+- `src/user/posix/dos_compat.c` and `src/user/posix/conio_compat.c` own the
+  reusable DOS, Borland, BIOS, and console-keyboard compatibility entry points
 - `src/user/libc/time.c` owns C time formatting/parsing helpers
+
+SmallOS-specific helper headers keep recurring port pressure out of individual
+adapters. `smallos_input.h` centralizes blocking keyboard waits,
+`smallos_time.h` adapts the kernel tick counter to arbitrary guest tick rates,
+`smallos_vga.h` provides planar VGA page math for DOS-era engines, and
+`smallos_fs.h` exposes filesystem-capacity queries used by DOS disk helpers.
 
 The Makefile archives those objects as `libc.a`, `libm.a`, and `libposix.a`,
 then links user ELFs with `--gc-sections` so unused runtime functions do not

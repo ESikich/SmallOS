@@ -3,6 +3,46 @@
 #include "sys/wait.h"
 #include "unistd.h"
 
+static char* format_long(long value, unsigned long uvalue,
+                         int is_signed, char* str, int base) {
+    static const char digits[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+    char tmp[34];
+    unsigned long n;
+    unsigned int pos = 0;
+    unsigned int out = 0;
+
+    if (!str || base < 2 || base > 36) {
+        return str;
+    }
+    if (is_signed && value < 0 && base == 10) {
+        str[out++] = '-';
+        n = (unsigned long)(-value);
+    } else {
+        n = is_signed ? (unsigned long)value : uvalue;
+    }
+    do {
+        tmp[pos++] = digits[n % (unsigned long)base];
+        n /= (unsigned long)base;
+    } while (n && pos < sizeof(tmp));
+    while (pos) {
+        str[out++] = tmp[--pos];
+    }
+    str[out] = '\0';
+    return str;
+}
+
+__attribute__((weak)) char* ltoa(long value, char* str, int base) {
+    return format_long(value, 0, 1, str, base);
+}
+
+__attribute__((weak)) char* ultoa(unsigned long value, char* str, int base) {
+    return format_long(0, value, 0, str, base);
+}
+
+__attribute__((weak)) char* itoa(int value, char* str, int base) {
+    return format_long((long)value, 0, 1, str, base);
+}
+
 int abs(int x) {
     return x < 0 ? -x : x;
 }

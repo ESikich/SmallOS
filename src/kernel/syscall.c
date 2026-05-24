@@ -2659,6 +2659,50 @@ static int sys_sound_op_impl(unsigned int op, unsigned int arg1,
         return sound_pit_sequence(req.samples, req.count, req.sample_hz,
                                   req.divisor_scale);
     }
+    case SYS_SOUND_OP_OPL_SEQUENCE: {
+        sys_sound_opl_sequence_t req;
+        unsigned int bytes;
+        int rc = copy_from_user(&req, (const void*)arg1, sizeof(req));
+
+        if (rc < 0) return rc;
+        if (req.count == 0u ||
+            req.count > SYS_SOUND_OPL_SEQUENCE_MAX_EVENTS ||
+            req.timer_hz == 0u ||
+            (req.flags & ~SYS_SOUND_OPL_SEQUENCE_FLAG_LOOP) != 0u) {
+            return -EINVAL;
+        }
+        if (!user_count_bytes_ok((unsigned int)req.events,
+                                 req.count,
+                                 sizeof(req.events[0]),
+                                 &bytes)) {
+            return -EFAULT;
+        }
+        (void)bytes;
+        return sound_opl_sequence(req.events, req.count,
+                                  req.timer_hz, req.flags);
+    }
+    case SYS_SOUND_OP_OPL_EFFECT: {
+        sys_sound_opl_effect_t req;
+        unsigned int bytes;
+        int rc = copy_from_user(&req, (const void*)arg1, sizeof(req));
+
+        if (rc < 0) return rc;
+        if (req.count == 0u ||
+            req.count > SYS_SOUND_OPL_EFFECT_MAX_SAMPLES ||
+            req.sample_hz == 0u ||
+            req.sample_hz > SYS_SOUND_MAX_HZ ||
+            req.channel >= 9u) {
+            return -EINVAL;
+        }
+        if (!user_count_bytes_ok((unsigned int)req.samples,
+                                 req.count,
+                                 sizeof(req.samples[0]),
+                                 &bytes)) {
+            return -EFAULT;
+        }
+        (void)bytes;
+        return sound_opl_effect(&req);
+    }
     case SYS_SOUND_OP_TONE:
         return sound_tone(arg1, arg2);
     case SYS_SOUND_OP_STOP:
@@ -2670,6 +2714,12 @@ static int sys_sound_op_impl(unsigned int op, unsigned int arg1,
         return sound_opl_write(arg1, arg2);
     case SYS_SOUND_OP_OPL_RESET:
         return sound_opl_reset();
+    case SYS_SOUND_OP_OPL_SEQUENCE_STOP:
+        sound_opl_sequence_stop();
+        return 0;
+    case SYS_SOUND_OP_OPL_EFFECT_STOP:
+        sound_opl_effect_stop();
+        return 0;
     case SYS_SOUND_OP_CAPS:
         return (int)sound_caps();
     case SYS_SOUND_OP_STATUS: {

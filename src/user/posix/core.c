@@ -68,6 +68,10 @@ int open(const char* path, int flags, ...) {
     return errno_from_raw(sys_open_mode(path, open_flags_to_mode(flags)));
 }
 
+int creat(const char* path, unsigned mode) {
+    return open(path, O_CREAT | O_TRUNC | O_WRONLY, mode);
+}
+
 int fcntl(int fd, int cmd, ...) {
     __builtin_va_list ap;
     uint32_t arg = 0;

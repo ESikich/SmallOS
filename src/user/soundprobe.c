@@ -49,10 +49,11 @@ static void print_status(const char* tag) {
         return;
     }
 
-    printf("%s: caps=0x%x active=%u irq=%u timeout=%u err=%u last=%u@%u\n",
+    printf("%s: caps=0x%x active=%u irq=%u timeout=%u err=%u last=%u@%u oplseq=%u oplefx=%u\n",
            tag, status.caps, status.pcm_active, status.pcm_irq_count,
            status.pcm_timeout_count, status.pcm_error_count,
-           status.pcm_last_count, status.pcm_last_hz);
+           status.pcm_last_count, status.pcm_last_hz,
+           status.opl_sequence_active, status.opl_effect_active);
 }
 
 static int run_probe(const char* mode, unsigned int sample_hz, int path) {

@@ -8,10 +8,10 @@ SYNOPSIS
 
 DESCRIPTION
     Starts the generated id-Software Wolfenstein 3-D source port through the
-    SmallOS DOS/VGA/input compatibility shims.  This command is intentionally
-    a thin entrypoint: it changes to /usr/share/wolf3d, passes argv through to
-    the renamed upstream main function, and lets the original engine run on
-    the SmallOS compatibility surface.
+    SmallOS DOS/VGA/input/graphics/sound compatibility runtime.  This command
+    is intentionally a thin entrypoint: it changes to /usr/share/wolf3d,
+    passes argv through to the renamed upstream main function, and lets the
+    original engine run on the SmallOS compatibility surface.
 
     Current builds reach the sign-on, title/menu, and early gameplay paths
     with staged Wolfenstein 3-D data.  The port stores CONFIG. in the original
@@ -20,9 +20,9 @@ DESCRIPTION
 
     Digitized effects use the SmallOS sound syscall and prefer QEMU's AC97
     PCI device when present, falling back to SB16 where needed.  AdLib sound
-    effects and music use OPL2 register writes through the same syscall
-    surface when an AdLib-compatible device is present.  The video shim uses
-    mapped framebuffer pages and
+    effects and music use kernel-timed OPL2 sequences through the same syscall
+    surface when an AdLib-compatible device is present.  The video path uses
+    the shared indexed graphics helper, mapped framebuffer pages, and
     synchronized page flips when the framebuffer backend exposes them, falling
     back to normal display blits otherwise.
 

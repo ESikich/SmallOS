@@ -22,6 +22,7 @@
 #define F_SETFL SYS_FCNTL_SETFL
 
 int open(const char* path, int flags, ...);
+int creat(const char* path, unsigned mode);
 int fcntl(int fd, int cmd, ...);
 
 #endif

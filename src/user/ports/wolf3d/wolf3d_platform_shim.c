@@ -7,42 +7,28 @@
 #include <unistd.h>
 #include <limits.h>
 
+#include "gfx.h"
 #include "WL_DEF.H"
 #include "keyboard.h"
+#include "smallos_input.h"
+#include "smallos_time.h"
+#include "smallos_vga.h"
 #include "uapi_input.h"
 #include "uapi_sound.h"
 #include "uapi_syscall.h"
 #include "wolf3d_palette.h"
 #include "wolf3d_signon.h"
 
-#define WOLF3D_DISPLAY_INFO 53
-#define WOLF3D_DISPLAY_FILL 54
-#define WOLF3D_DISPLAY_BLIT 55
-#define WOLF3D_DISPLAY_ACQUIRE 56
-#define WOLF3D_DISPLAY_RELEASE 57
-#define WOLF3D_DISPLAY_MAP 95
-#define WOLF3D_DISPLAY_PRESENT_PAGE 96
-#define WOLF3D_INPUT_READ 59
 #define WOLF3D_SYS_EXIT 2
-#define WOLF3D_GET_TICKS 3
-#define WOLF3D_DISPLAY_FORMAT_XRGB8888 1u
 #define WOLF3D_SCREEN_W 320u
 #define WOLF3D_SCREEN_H 200u
 #define WOLF3D_SCREEN_PIXELS (WOLF3D_SCREEN_W * WOLF3D_SCREEN_H)
 #define WOLF3D_VIDEO_PAGES 3u
 #define WOLF3D_PAGE_BYTES (80u * 208u)
-#define WOLF3D_PAGE1START 0u
-#define WOLF3D_PAGE2START WOLF3D_PAGE_BYTES
-#define WOLF3D_PAGE3START (WOLF3D_PAGE_BYTES * 2u)
 #define WOLF3D_VISIBLE_STRIDE 80u
 #define WOLF3D_VGA_BYTES 65536u
 #define WOLF3D_TICS_PER_SECOND 70u
-#define WOLF3D_SMALLOS_TICS_PER_SECOND 300u
 #define WOLF3D_TIMER_UNITS_PER_SECOND 2100u
-#define WOLF3D_TIMER_UNITS_PER_TIC \
-    (WOLF3D_TIMER_UNITS_PER_SECOND / WOLF3D_TICS_PER_SECOND)
-#define WOLF3D_TIMER_UNITS_PER_SMALLOS_TIC \
-    (WOLF3D_TIMER_UNITS_PER_SECOND / WOLF3D_SMALLOS_TICS_PER_SECOND)
 #define WOLF3D_DEG90 (FINEANGLES / 4)
 #define WOLF3D_DEG180 (FINEANGLES / 2)
 #define WOLF3D_DEG270 (FINEANGLES * 3 / 4)
@@ -65,17 +51,8 @@
 #define WOLF3D_ADLIB_SOUND_HZ 140u
 #define WOLF3D_ADLIB_MUSIC_UNIT \
     (WOLF3D_TIMER_UNITS_PER_SECOND / WOLF3D_ADLIB_MUSIC_HZ)
-#define WOLF3D_ADLIB_SOUND_UNIT \
-    (WOLF3D_TIMER_UNITS_PER_SECOND / WOLF3D_ADLIB_SOUND_HZ)
 #define WOLF3D_ADLIB_MAX_EVENTS_PER_POLL 512u
-#define WOLF3D_AL_CHAR 0x20u
-#define WOLF3D_AL_SCALE 0x40u
-#define WOLF3D_AL_ATTACK 0x60u
-#define WOLF3D_AL_SUS 0x80u
-#define WOLF3D_AL_WAVE 0xe0u
-#define WOLF3D_AL_FREQ_L 0xa0u
 #define WOLF3D_AL_FREQ_H 0xb0u
-#define WOLF3D_AL_FEED_CON 0xc0u
 #define WOLF3D_AL_EFFECTS 0xbdu
 #define WOLF3D_SOUND_COMMON_LENGTH 0u
 #define WOLF3D_SOUND_COMMON_PRIORITY 4u
@@ -83,47 +60,6 @@
 #define WOLF3D_AL_SOUND_INST 6u
 #define WOLF3D_AL_SOUND_BLOCK 22u
 #define WOLF3D_AL_SOUND_DATA 23u
-
-typedef struct wolf3d_display_info {
-    unsigned int width;
-    unsigned int height;
-    unsigned int pitch;
-    unsigned int bpp;
-    unsigned int format;
-} wolf3d_display_info_t;
-
-typedef struct wolf3d_display_fill_rect {
-    unsigned int x;
-    unsigned int y;
-    unsigned int w;
-    unsigned int h;
-    unsigned int color;
-} wolf3d_display_fill_rect_t;
-
-typedef struct wolf3d_display_blit_rect {
-    unsigned int x;
-    unsigned int y;
-    unsigned int w;
-    unsigned int h;
-    const unsigned int* pixels;
-} wolf3d_display_blit_rect_t;
-
-typedef struct wolf3d_display_map_info {
-    unsigned int base;
-    unsigned int width;
-    unsigned int height;
-    unsigned int pitch;
-    unsigned int bpp;
-    unsigned int format;
-    unsigned int page_bytes;
-    unsigned int page_count;
-    unsigned int draw_page;
-} wolf3d_display_map_info_t;
-
-typedef struct wolf3d_display_present_page {
-    unsigned int page;
-    unsigned int next_page;
-} wolf3d_display_present_page_t;
 
 mminfotype mminfo;
 memptr bufferseg;
@@ -167,24 +103,17 @@ int DigiMap[LASTSOUND];
 longword TimeCount;
 
 static byte wolf3d_palette[768];
+static unsigned int wolf3d_xrgb_palette[256];
 static unsigned wolf3d_rnd_state = 1;
 static byte wolf3d_video_planes[4][WOLF3D_VGA_BYTES];
 static byte wolf3d_video_pages[WOLF3D_VIDEO_PAGES][WOLF3D_SCREEN_PIXELS];
-static unsigned int wolf3d_xrgb[WOLF3D_SCREEN_PIXELS];
-static unsigned int* wolf3d_scaled_xrgb;
-static unsigned int wolf3d_scaled_capacity;
-static uint32_t wolf3d_timer_base_units;
-static longword wolf3d_timer_observed;
-static int wolf3d_timer_ready;
-static wolf3d_display_info_t wolf3d_display;
-static int wolf3d_display_acquired;
+static smallos_vga_planar_t wolf3d_vga;
+static smallos_tick_clock_t wolf3d_clock;
+static gfx_context_t wolf3d_gfx;
 static int wolf3d_display_checked;
 static int wolf3d_display_cleared;
 static int wolf3d_video_dirty;
 static int wolf3d_video_deferred_present;
-static int wolf3d_display_mapped;
-static wolf3d_display_map_info_t wolf3d_display_map;
-static volatile unsigned int wolf3d_display_fence_word;
 static int wolf3d_mouse_dx;
 static int wolf3d_mouse_dy;
 static int wolf3d_mouse_x = WOLF3D_MOUSE_CENTER;
@@ -204,21 +133,18 @@ static longword wolf3d_digi_end_tick;
 static uint32_t wolf3d_digi_end_units;
 static word wolf3d_digi_number;
 static word wolf3d_digi_priority;
-static const byte wolf3d_al_carriers[9] = { 3, 4, 5, 11, 12, 13, 19, 20, 21 };
-static const byte wolf3d_al_modifiers[9] = { 0, 1, 2, 8, 9, 10, 16, 17, 18 };
-static const Instrument wolf3d_al_zero_inst = { 0 };
-static byte* wolf3d_al_sound_data;
-static longword wolf3d_al_sound_length;
-static uint32_t wolf3d_al_sound_next_units;
+static longword wolf3d_al_sound_end_tick;
 static word wolf3d_al_sound_number;
 static word wolf3d_al_sound_priority;
-static byte wolf3d_al_block;
 static word* wolf3d_music_data;
 static word* wolf3d_music_ptr;
 static unsigned int wolf3d_music_len_bytes;
 static unsigned int wolf3d_music_left_bytes;
 static uint32_t wolf3d_music_next_units;
 static int wolf3d_music_active;
+static int wolf3d_music_kernel_sequence;
+static int wolf3d_clock_initialized;
+static int wolf3d_vga_initialized;
 
 void HitHorizWall(void);
 void HitVertWall(void);
@@ -282,30 +208,17 @@ static int wolf3d_sound_op(unsigned int op, unsigned int arg1,
     return wolf3d_syscall3(SYS_SOUND_OP, op, arg1, arg2);
 }
 
-static void wolf3d_display_write_fence(void) {
-    __asm__ volatile("lock; addl $0, %0"
-                     : "+m"(wolf3d_display_fence_word)
-                     :
-                     : "memory", "cc");
-}
-
-static void wolf3d_planar_store(unsigned int offset, unsigned int plane,
-                                byte color);
-static byte wolf3d_planar_load(unsigned int offset, unsigned int plane);
+static void wolf3d_vga_ensure(void);
 static byte wolf3d_palette_channel(int value);
 static void wolf3d_wait_tics(unsigned int ticks);
 static void wolf3d_fade_wait_vbl(void);
 static void wolf3d_display_clear(void);
 static void wolf3d_display_release(void);
 static unsigned int wolf3d_display_scale(void);
-static int wolf3d_display_scale_buffer(unsigned int page, unsigned int scale,
-                                       unsigned int* out_w,
-                                       unsigned int* out_h,
-                                       unsigned int** out_pixels);
+static void wolf3d_palette_rebuild(void);
+static void wolf3d_palette_rebuild_color(unsigned int index);
+static void wolf3d_clock_ensure(void);
 static void wolf3d_video_flush_deferred_present(void);
-static void wolf3d_video_copy_bytes(unsigned int source, unsigned int dest,
-                                    unsigned int width_bytes,
-                                    unsigned int height);
 static void wolf3d_video_present(void);
 static void wolf3d_video_commit_buffer(void);
 static void wolf3d_sound_service(uint32_t now_units);
@@ -314,12 +227,14 @@ static int wolf3d_play_digi_sample(word page, unsigned int length);
 static void wolf3d_adlib_music_clear(void);
 
 void* wolf3d_screen_ptr(uint16_t ofs) {
+    wolf3d_vga_ensure();
     return &wolf3d_video_planes[0][ofs];
 }
 
 uint8_t wolf3d_peekb(uint16_t seg, uint16_t ofs) {
+    wolf3d_vga_ensure();
     if (seg == SCREENSEG) {
-        return wolf3d_planar_load(ofs, 0);
+        return smallos_vga_planar_load(&wolf3d_vga, ofs, 0);
     }
     return 0;
 }
@@ -332,81 +247,16 @@ uint16_t wolf3d_peek(uint16_t seg, uint16_t ofs) {
 }
 
 void wolf3d_pokeb(uint16_t seg, uint16_t ofs, uint8_t value) {
+    wolf3d_vga_ensure();
     if (seg == SCREENSEG) {
-        wolf3d_planar_store(ofs, 0, value);
+        smallos_vga_planar_store(&wolf3d_vga, ofs, 0, value);
+        wolf3d_video_dirty = 1;
     }
 }
 
 void wolf3d_poke(uint16_t seg, uint16_t ofs, uint16_t value) {
     wolf3d_pokeb(seg, ofs, (uint8_t)(value & 0xffu));
     wolf3d_pokeb(seg, (uint16_t)(ofs + 1u), (uint8_t)(value >> 8));
-}
-
-static unsigned int wolf3d_page_from_offset(unsigned offset) {
-    if (offset >= WOLF3D_PAGE3START) {
-        return 2u;
-    }
-    if (offset >= WOLF3D_PAGE2START) {
-        return 1u;
-    }
-    return 0u;
-}
-
-static unsigned int wolf3d_page_base(unsigned int page) {
-    if (page == 2u) {
-        return WOLF3D_PAGE3START;
-    }
-    if (page == 1u) {
-        return WOLF3D_PAGE2START;
-    }
-    return WOLF3D_PAGE1START;
-}
-
-static int wolf3d_offset_to_page(unsigned int offset, unsigned int* page,
-                                 unsigned int* within) {
-    unsigned int candidate = wolf3d_page_from_offset(offset);
-    unsigned int base = wolf3d_page_base(candidate);
-
-    if (offset >= WOLF3D_PAGE_BYTES * WOLF3D_VIDEO_PAGES) {
-        return 0;
-    }
-    if (page) {
-        *page = candidate;
-    }
-    if (within) {
-        *within = offset - base;
-    }
-    return 1;
-}
-
-static void wolf3d_planar_store(unsigned int offset, unsigned int plane,
-                                byte color) {
-    unsigned int page;
-    unsigned int within;
-    unsigned int xbyte;
-    unsigned int y;
-
-    if (plane >= 4u || offset >= WOLF3D_VGA_BYTES) {
-        return;
-    }
-    wolf3d_video_planes[plane][offset] = color;
-    if (!wolf3d_offset_to_page(offset, &page, &within)) {
-        return;
-    }
-    y = within / WOLF3D_VISIBLE_STRIDE;
-    xbyte = within % WOLF3D_VISIBLE_STRIDE;
-    if (y >= WOLF3D_SCREEN_H) {
-        return;
-    }
-    wolf3d_video_pages[page][y * WOLF3D_SCREEN_W + xbyte * 4u + plane] = color;
-    wolf3d_video_dirty = 1;
-}
-
-static byte wolf3d_planar_load(unsigned int offset, unsigned int plane) {
-    if (plane >= 4u || offset >= WOLF3D_VGA_BYTES) {
-        return 0;
-    }
-    return wolf3d_video_planes[plane][offset];
 }
 
 static byte wolf3d_palette_channel(int value) {
@@ -419,47 +269,61 @@ static byte wolf3d_palette_channel(int value) {
     return (byte)value;
 }
 
+static void wolf3d_vga_ensure(void) {
+    if (wolf3d_vga_initialized) {
+        return;
+    }
+    smallos_vga_planar_init(&wolf3d_vga,
+                            wolf3d_video_planes[0],
+                            wolf3d_video_planes[1],
+                            wolf3d_video_planes[2],
+                            wolf3d_video_planes[3],
+                            WOLF3D_VGA_BYTES,
+                            &wolf3d_video_pages[0][0],
+                            WOLF3D_VIDEO_PAGES,
+                            WOLF3D_PAGE_BYTES,
+                            WOLF3D_SCREEN_W,
+                            WOLF3D_SCREEN_H,
+                            WOLF3D_VISIBLE_STRIDE);
+    wolf3d_vga_initialized = 1;
+}
+
+static void wolf3d_clock_ensure(void) {
+    if (wolf3d_clock_initialized) {
+        return;
+    }
+    if (smallos_tick_clock_init(&wolf3d_clock,
+                                WOLF3D_TICS_PER_SECOND,
+                                WOLF3D_TIMER_UNITS_PER_SECOND) == 0) {
+        wolf3d_clock_initialized = 1;
+    }
+}
+
 static uint32_t wolf3d_now_units(void) {
-    return (uint32_t)wolf3d_syscall0(WOLF3D_GET_TICKS) *
-           WOLF3D_TIMER_UNITS_PER_SMALLOS_TIC;
-}
-
-static uint32_t wolf3d_ticks_to_units(longword ticks) {
-    return (uint32_t)ticks * WOLF3D_TIMER_UNITS_PER_TIC;
-}
-
-static longword wolf3d_units_to_ticks(uint32_t units) {
-    return (longword)(units / WOLF3D_TIMER_UNITS_PER_TIC);
-}
-
-static void wolf3d_rebase_time_count(uint32_t now) {
-    uint32_t elapsed = wolf3d_ticks_to_units(TimeCount);
-
-    wolf3d_timer_base_units = now - elapsed;
-    wolf3d_timer_observed = TimeCount;
-    wolf3d_timer_ready = 1;
+    wolf3d_clock_ensure();
+    return smallos_tick_clock_now_units(&wolf3d_clock);
 }
 
 void wolf3d_sync_time_count(void) {
-    uint32_t now = wolf3d_now_units();
-    longword elapsed_ticks;
+    uint32_t ticks = TimeCount;
+    uint32_t now;
 
-    if (!wolf3d_timer_ready || TimeCount != wolf3d_timer_observed) {
-        wolf3d_rebase_time_count(now);
-        wolf3d_sound_service(now);
+    wolf3d_clock_ensure();
+    if (smallos_tick_clock_sync(&wolf3d_clock, &ticks, &now) < 0) {
         return;
     }
-    elapsed_ticks = wolf3d_units_to_ticks(now - wolf3d_timer_base_units);
-    if (elapsed_ticks > TimeCount) {
-        TimeCount = elapsed_ticks;
-    }
-    wolf3d_timer_observed = TimeCount;
+    TimeCount = ticks;
     wolf3d_sound_service(now);
 }
 
 static int wolf3d_pc_sound_is_playing(void) {
     return wolf3d_pc_sound_data &&
            TimeCount < wolf3d_pc_sound_end_tick;
+}
+
+static int wolf3d_al_sound_is_playing(void) {
+    return wolf3d_al_sound_number != 0 &&
+           TimeCount < wolf3d_al_sound_end_tick;
 }
 
 static int wolf3d_digi_is_playing(void) {
@@ -514,40 +378,18 @@ static int wolf3d_adlib_out(unsigned int reg, unsigned int value) {
     return wolf3d_sound_op(SYS_SOUND_OP_OPL_WRITE, reg, value);
 }
 
-static void wolf3d_adlib_set_fx_inst(const Instrument* inst) {
-    byte m = wolf3d_al_modifiers[0];
-    byte c = wolf3d_al_carriers[0];
-
-    if (!inst || !AdLibPresent) {
-        return;
-    }
-    (void)wolf3d_adlib_out(m + WOLF3D_AL_CHAR, inst->mChar);
-    (void)wolf3d_adlib_out(m + WOLF3D_AL_SCALE, inst->mScale);
-    (void)wolf3d_adlib_out(m + WOLF3D_AL_ATTACK, inst->mAttack);
-    (void)wolf3d_adlib_out(m + WOLF3D_AL_SUS, inst->mSus);
-    (void)wolf3d_adlib_out(m + WOLF3D_AL_WAVE, inst->mWave);
-    (void)wolf3d_adlib_out(c + WOLF3D_AL_CHAR, inst->cChar);
-    (void)wolf3d_adlib_out(c + WOLF3D_AL_SCALE, inst->cScale);
-    (void)wolf3d_adlib_out(c + WOLF3D_AL_ATTACK, inst->cAttack);
-    (void)wolf3d_adlib_out(c + WOLF3D_AL_SUS, inst->cSus);
-    (void)wolf3d_adlib_out(c + WOLF3D_AL_WAVE, inst->cWave);
-    (void)wolf3d_adlib_out(WOLF3D_AL_FEED_CON, 0u);
-}
-
 static void wolf3d_adlib_stop_sound(void) {
-    wolf3d_al_sound_data = NULL;
-    wolf3d_al_sound_length = 0;
-    wolf3d_al_sound_next_units = 0;
+    wolf3d_al_sound_end_tick = 0;
     wolf3d_al_sound_number = 0;
     wolf3d_al_sound_priority = 0;
-    if (AdLibPresent) {
-        (void)wolf3d_adlib_out(WOLF3D_AL_FREQ_H, 0u);
-    }
+    (void)wolf3d_sound_op(SYS_SOUND_OP_OPL_EFFECT_STOP, 0u, 0u);
 }
 
 static void wolf3d_adlib_music_silence(void) {
     wolf3d_music_active = 0;
+    wolf3d_music_kernel_sequence = 0;
     wolf3d_music_next_units = 0;
+    (void)wolf3d_sound_op(SYS_SOUND_OP_OPL_SEQUENCE_STOP, 0u, 0u);
     if (AdLibPresent) {
         (void)wolf3d_adlib_out(WOLF3D_AL_EFFECTS, 0u);
         for (unsigned int i = 0; i < sqMaxTracks; i++) {
@@ -588,9 +430,12 @@ static void wolf3d_stop_sound_effects(void) {
 }
 
 static int wolf3d_adlib_play_sound(soundnames sound, void* al_sound) {
+    sys_sound_opl_effect_t req;
     Instrument inst;
     longword length;
     word priority;
+    unsigned int count;
+    longword ticks;
 
     if (!AdLibPresent || !al_sound) {
         return 0;
@@ -600,7 +445,7 @@ static int wolf3d_adlib_play_sound(soundnames sound, void* al_sound) {
     if (!length) {
         return 0;
     }
-    if (wolf3d_al_sound_data && priority < wolf3d_al_sound_priority) {
+    if (wolf3d_al_sound_is_playing() && priority < wolf3d_al_sound_priority) {
         return 0;
     }
     wolf3d_adlib_sound_chunk_inst(al_sound, &inst);
@@ -608,45 +453,50 @@ static int wolf3d_adlib_play_sound(soundnames sound, void* al_sound) {
         return 0;
     }
 
-    wolf3d_adlib_stop_sound();
-    wolf3d_adlib_set_fx_inst(&wolf3d_al_zero_inst);
-    wolf3d_adlib_set_fx_inst(&inst);
-    wolf3d_al_sound_data = wolf3d_adlib_sound_chunk_data(al_sound);
-    wolf3d_al_sound_length = length;
-    wolf3d_al_block =
+    count = length;
+    if (count > SYS_SOUND_OPL_EFFECT_MAX_SAMPLES) {
+        count = SYS_SOUND_OPL_EFFECT_MAX_SAMPLES;
+    }
+    req.samples = wolf3d_adlib_sound_chunk_data(al_sound);
+    req.count = count;
+    req.sample_hz = WOLF3D_ADLIB_SOUND_HZ;
+    req.channel = 0u;
+    req.block =
         (byte)(((wolf3d_adlib_sound_chunk_block(al_sound) & 7u) << 2) | 0x20u);
-    wolf3d_al_sound_next_units = wolf3d_now_units();
+    req.feedback = 0u;
+    req.m_char = inst.mChar;
+    req.c_char = inst.cChar;
+    req.m_scale = inst.mScale;
+    req.c_scale = inst.cScale;
+    req.m_attack = inst.mAttack;
+    req.c_attack = inst.cAttack;
+    req.m_sus = inst.mSus;
+    req.c_sus = inst.cSus;
+    req.m_wave = inst.mWave;
+    req.c_wave = inst.cWave;
+
+    wolf3d_adlib_stop_sound();
+    if (wolf3d_sound_op(SYS_SOUND_OP_OPL_EFFECT,
+                        (unsigned int)&req, 0u) < 0) {
+        return 0;
+    }
+    ticks = ((longword)count * WOLF3D_TICS_PER_SECOND +
+             WOLF3D_ADLIB_SOUND_HZ - 1u) / WOLF3D_ADLIB_SOUND_HZ;
+    if (!ticks) {
+        ticks = 1u;
+    }
+    wolf3d_al_sound_end_tick = TimeCount + ticks;
     wolf3d_al_sound_number = (word)sound;
     wolf3d_al_sound_priority = priority;
     return 1;
 }
 
-static void wolf3d_adlib_service_sound(uint32_t now_units) {
-    unsigned int events = 0;
-
-    while (wolf3d_al_sound_data && wolf3d_al_sound_length &&
-           (int32_t)(now_units - wolf3d_al_sound_next_units) >= 0 &&
-           events++ < WOLF3D_ADLIB_MAX_EVENTS_PER_POLL) {
-        byte sample = *wolf3d_al_sound_data++;
-
-        if (!sample) {
-            (void)wolf3d_adlib_out(WOLF3D_AL_FREQ_H, 0u);
-        } else {
-            (void)wolf3d_adlib_out(WOLF3D_AL_FREQ_L, sample);
-            (void)wolf3d_adlib_out(WOLF3D_AL_FREQ_H, wolf3d_al_block);
-        }
-        wolf3d_al_sound_length--;
-        wolf3d_al_sound_next_units += WOLF3D_ADLIB_SOUND_UNIT;
-    }
-
-    if (wolf3d_al_sound_data && wolf3d_al_sound_length == 0) {
-        wolf3d_adlib_stop_sound();
-    }
-}
-
 static void wolf3d_adlib_service_music(uint32_t now_units) {
     unsigned int events = 0;
 
+    if (wolf3d_music_kernel_sequence) {
+        return;
+    }
     while (wolf3d_music_active && wolf3d_music_left_bytes >= 4u &&
            (int32_t)(now_units - wolf3d_music_next_units) >= 0 &&
            events++ < WOLF3D_ADLIB_MAX_EVENTS_PER_POLL) {
@@ -668,6 +518,29 @@ static void wolf3d_adlib_service_music(uint32_t now_units) {
     }
 }
 
+static int wolf3d_adlib_start_music_sequence(void) {
+    sys_sound_opl_sequence_t req;
+
+    if (!wolf3d_music_data || wolf3d_music_len_bytes < 4u) {
+        return 0;
+    }
+    if ((wolf3d_music_len_bytes & 3u) != 0u ||
+        wolf3d_music_len_bytes / 4u > SYS_SOUND_OPL_SEQUENCE_MAX_EVENTS) {
+        return 0;
+    }
+
+    req.events = (const sys_sound_opl_event_t*)wolf3d_music_data;
+    req.count = wolf3d_music_len_bytes / 4u;
+    req.timer_hz = WOLF3D_ADLIB_MUSIC_HZ;
+    req.flags = SYS_SOUND_OPL_SEQUENCE_FLAG_LOOP;
+    if (wolf3d_sound_op(SYS_SOUND_OP_OPL_SEQUENCE,
+                        (unsigned int)&req, 0u) < 0) {
+        return 0;
+    }
+    wolf3d_music_kernel_sequence = 1;
+    return 1;
+}
+
 static void wolf3d_sound_stop(void) {
     wolf3d_stop_sound_effects();
     wolf3d_adlib_reset();
@@ -675,13 +548,17 @@ static void wolf3d_sound_stop(void) {
 
 static void wolf3d_sound_service(uint32_t now_units) {
     wolf3d_adlib_service_music(now_units);
-    wolf3d_adlib_service_sound(now_units);
     if (wolf3d_pc_sound_data && !wolf3d_pc_sound_is_playing()) {
         wolf3d_pc_sound_data = NULL;
         wolf3d_pc_sound_length = 0;
         wolf3d_pc_sound_end_tick = 0;
         wolf3d_pc_sound_priority = 0;
         wolf3d_pc_sound_number = 0;
+    }
+    if (wolf3d_al_sound_number && !wolf3d_al_sound_is_playing()) {
+        wolf3d_al_sound_end_tick = 0;
+        wolf3d_al_sound_number = 0;
+        wolf3d_al_sound_priority = 0;
     }
     if (DigiPlaying && (int32_t)(now_units - wolf3d_digi_end_units) >= 0) {
         DigiPlaying = false;
@@ -692,87 +569,31 @@ static void wolf3d_sound_service(uint32_t now_units) {
     }
 }
 
+static void wolf3d_clock_wait_hook(uint32_t now_units, void* ctx) {
+    (void)ctx;
+    wolf3d_sound_service(now_units);
+    wolf3d_input_poll();
+}
+
 static void wolf3d_wait_tics(unsigned int ticks) {
-    longword target;
-    uint32_t target_units;
+    uint32_t count = ticks;
 
+    wolf3d_clock_ensure();
     wolf3d_video_flush_deferred_present();
-    if (!ticks) {
-        ticks = 1u;
-    }
-    wolf3d_sync_time_count();
-    wolf3d_input_poll();
-    target = TimeCount + (longword)ticks;
-    target_units = wolf3d_timer_base_units + wolf3d_ticks_to_units(target);
-
-    while (1) {
-        uint32_t now = wolf3d_now_units();
-        uint32_t remaining;
-        uint32_t sleep_us;
-
-        if ((int32_t)(target_units - now) <= 0) {
-            break;
-        }
-        wolf3d_sound_service(now);
-        wolf3d_input_poll();
-        remaining = target_units - now;
-        if (remaining > WOLF3D_TIMER_UNITS_PER_SECOND / 20u) {
-            remaining = WOLF3D_TIMER_UNITS_PER_SECOND / 20u;
-        }
-        sleep_us = (remaining * 1000000u) / WOLF3D_TIMER_UNITS_PER_SECOND;
-        if (!sleep_us) {
-            sleep_us = 1u;
-        }
-        (void)usleep(sleep_us);
-    }
-
-    wolf3d_input_poll();
-    TimeCount = target;
-    wolf3d_timer_observed = TimeCount;
+    (void)smallos_tick_clock_wait(&wolf3d_clock, &TimeCount, count,
+                                  wolf3d_clock_wait_hook, NULL);
 }
 
 static void wolf3d_fade_wait_vbl(void) {
     wolf3d_wait_tics(1u);
 }
 
-static void wolf3d_video_copy_bytes(unsigned int source, unsigned int dest,
-                                    unsigned int width_bytes,
-                                    unsigned int height) {
-    if (width_bytes > WOLF3D_VISIBLE_STRIDE) {
-        width_bytes = WOLF3D_VISIBLE_STRIDE;
-    }
-    if (height > WOLF3D_SCREEN_H) {
-        height = WOLF3D_SCREEN_H;
-    }
-
-    for (unsigned int row = 0; row < height; row++) {
-        unsigned int srcrow = source + row * linewidth;
-        unsigned int dstrow = dest + row * linewidth;
-
-        for (unsigned int col = 0; col < width_bytes; col++) {
-            for (unsigned int plane = 0; plane < 4u; plane++) {
-                wolf3d_planar_store(dstrow + col, plane,
-                                    wolf3d_planar_load(srcrow + col, plane));
-            }
-        }
-    }
-}
-
 void wolf3d_vga_write_planar_byte(void* base, unsigned int byte_offset,
                                   unsigned int plane, uint8_t value) {
-    byte* ptr = (byte*)base;
-    uintptr_t raw;
-
-    if (!ptr) {
-        return;
-    }
-    if (ptr < &wolf3d_video_planes[0][0] ||
-        ptr >= &wolf3d_video_planes[0][WOLF3D_VGA_BYTES]) {
-        ptr[byte_offset] = value;
-        return;
-    }
-    raw = (uintptr_t)(ptr - &wolf3d_video_planes[0][0]) + byte_offset;
-    wolf3d_planar_store((unsigned int)raw, plane, value);
+    wolf3d_vga_ensure();
+    smallos_vga_write_planar_byte(&wolf3d_vga, base, byte_offset,
+                                  plane, value);
+    wolf3d_video_dirty = 1;
 }
 
 static unsigned int wolf3d_dac_to_8(byte value) {
@@ -782,7 +603,7 @@ static unsigned int wolf3d_dac_to_8(byte value) {
     return ((unsigned int)value * 255u + 31u) / 63u;
 }
 
-static unsigned int wolf3d_palette_color(byte index) {
+static unsigned int wolf3d_palette_color(unsigned int index) {
     unsigned int base = (unsigned int)index * 3u;
     unsigned int r = wolf3d_dac_to_8(wolf3d_palette[base + 0u]);
     unsigned int g = wolf3d_dac_to_8(wolf3d_palette[base + 1u]);
@@ -791,37 +612,27 @@ static unsigned int wolf3d_palette_color(byte index) {
     return (r << 16) | (g << 8) | b;
 }
 
-static void wolf3d_video_rebuild_page(unsigned int page) {
-    unsigned int base;
-
-    if (page >= WOLF3D_VIDEO_PAGES) {
+static void wolf3d_palette_rebuild_color(unsigned int index) {
+    if (index >= 256u) {
         return;
     }
-    base = wolf3d_page_base(page);
-    for (unsigned int y = 0; y < WOLF3D_SCREEN_H; y++) {
-        for (unsigned int xbyte = 0; xbyte < WOLF3D_VISIBLE_STRIDE; xbyte++) {
-            unsigned int offset = base + y * WOLF3D_VISIBLE_STRIDE + xbyte;
+    wolf3d_xrgb_palette[index] = wolf3d_palette_color(index);
+}
 
-            for (unsigned int plane = 0; plane < 4u; plane++) {
-                wolf3d_video_pages[page][y * WOLF3D_SCREEN_W + xbyte * 4u + plane] =
-                    wolf3d_planar_load(offset, plane);
-            }
-        }
+static void wolf3d_palette_rebuild(void) {
+    for (unsigned int i = 0; i < 256u; i++) {
+        wolf3d_palette_rebuild_color(i);
     }
 }
 
-static void wolf3d_video_put_offset(unsigned int base, int x, int y, byte color) {
-    unsigned int offset;
-    unsigned int plane;
+static void wolf3d_video_rebuild_page(unsigned int page) {
+    wolf3d_vga_ensure();
+    smallos_vga_rebuild_page(&wolf3d_vga, page);
+}
 
-    if (x < 0 || y < 0 ||
-        x >= (int)WOLF3D_SCREEN_W || y >= (int)WOLF3D_SCREEN_H) {
-        return;
-    }
-    offset = base + (unsigned int)y * WOLF3D_VISIBLE_STRIDE +
-             (unsigned int)x / 4u;
-    plane = (unsigned int)x & 3u;
-    wolf3d_planar_store(offset, plane, color);
+static void wolf3d_video_put_offset(unsigned int base, int x, int y, byte color) {
+    wolf3d_vga_ensure();
+    smallos_vga_put_pixel(&wolf3d_vga, base, x, y, color);
 }
 
 static void wolf3d_video_put(int x, int y, byte color) {
@@ -961,192 +772,53 @@ void wolf3d_scale_line(void) {
 }
 
 static void wolf3d_display_clear(void) {
-    wolf3d_display_fill_rect_t rect;
-
-    if (!wolf3d_display_acquired) {
+    if (!wolf3d_gfx.acquired) {
         return;
     }
-    rect.x = 0;
-    rect.y = 0;
-    rect.w = wolf3d_display.width;
-    rect.h = wolf3d_display.height;
-    rect.color = 0xff000000u;
-    (void)wolf3d_syscall1(WOLF3D_DISPLAY_FILL, (unsigned int)&rect);
+    (void)gfx_display_fill(&wolf3d_gfx, 0, 0,
+                           wolf3d_gfx.info.width,
+                           wolf3d_gfx.info.height,
+                           0xff000000u);
     wolf3d_display_cleared = 1;
 }
 
 static unsigned int wolf3d_display_scale(void) {
-    unsigned int scale_x = wolf3d_display.width / WOLF3D_SCREEN_W;
-    unsigned int scale_y = wolf3d_display.height / WOLF3D_SCREEN_H;
+    unsigned int scale_x = wolf3d_gfx.info.width / WOLF3D_SCREEN_W;
+    unsigned int scale_y = wolf3d_gfx.info.height / WOLF3D_SCREEN_H;
     unsigned int scale = scale_x < scale_y ? scale_x : scale_y;
 
     return scale ? scale : 1u;
 }
 
-static int wolf3d_display_scale_buffer(unsigned int page, unsigned int scale,
-                                       unsigned int* out_w,
-                                       unsigned int* out_h,
-                                       unsigned int** out_pixels) {
-    unsigned int scaled_w = WOLF3D_SCREEN_W * scale;
-    unsigned int scaled_h = WOLF3D_SCREEN_H * scale;
-    unsigned int needed = scaled_w * scaled_h;
-
-    if (scale == 1u) {
-        *out_w = WOLF3D_SCREEN_W;
-        *out_h = WOLF3D_SCREEN_H;
-        *out_pixels = wolf3d_xrgb;
-        for (unsigned int i = 0; i < WOLF3D_SCREEN_PIXELS; i++) {
-            wolf3d_xrgb[i] = wolf3d_palette_color(wolf3d_video_pages[page][i]);
-        }
-        return 1;
-    }
-
-    if (needed > wolf3d_scaled_capacity) {
-        unsigned int* scaled = realloc(wolf3d_scaled_xrgb,
-                                       needed * sizeof(*wolf3d_scaled_xrgb));
-        if (!scaled) {
-            return 0;
-        }
-        wolf3d_scaled_xrgb = scaled;
-        wolf3d_scaled_capacity = needed;
-    }
-
-    for (unsigned int src_y = 0; src_y < WOLF3D_SCREEN_H; src_y++) {
-        unsigned int* row = wolf3d_scaled_xrgb + src_y * scale * scaled_w;
-        for (unsigned int src_x = 0; src_x < WOLF3D_SCREEN_W; src_x++) {
-            unsigned int color =
-                wolf3d_palette_color(wolf3d_video_pages[page]
-                                     [src_y * WOLF3D_SCREEN_W + src_x]);
-            for (unsigned int sx = 0; sx < scale; sx++) {
-                row[src_x * scale + sx] = color;
-            }
-        }
-        for (unsigned int sy = 1; sy < scale; sy++) {
-            memcpy(row + sy * scaled_w, row, scaled_w * sizeof(*row));
-        }
-    }
-
-    *out_w = scaled_w;
-    *out_h = scaled_h;
-    *out_pixels = wolf3d_scaled_xrgb;
-    return 1;
-}
-
-static int wolf3d_display_present_mapped(unsigned int page, unsigned int scale,
-                                         unsigned int present_w,
-                                         unsigned int present_h,
-                                         unsigned int x, unsigned int y) {
-    volatile unsigned char* page_base;
-    wolf3d_display_present_page_t req;
-    unsigned int draw_page;
-    unsigned int bottom;
-    unsigned int row_end;
-
-    if (!wolf3d_display_mapped ||
-        page >= WOLF3D_VIDEO_PAGES ||
-        scale == 0u ||
-        present_w == 0u ||
-        present_h == 0u ||
-        x > wolf3d_display_map.width ||
-        y > wolf3d_display_map.height ||
-        present_w > wolf3d_display_map.width - x ||
-        present_h > wolf3d_display_map.height - y ||
-        wolf3d_display_map.draw_page >= wolf3d_display_map.page_count) {
-        return 0;
-    }
-
-    bottom = y + present_h - 1u;
-    row_end = bottom * wolf3d_display_map.pitch + (x + present_w) * 4u;
-    if (row_end > wolf3d_display_map.page_bytes) {
-        return 0;
-    }
-
-    draw_page = wolf3d_display_map.draw_page;
-    page_base = (volatile unsigned char*)(uintptr_t)
-        (wolf3d_display_map.base + draw_page * wolf3d_display_map.page_bytes);
-
-    for (unsigned int src_y = 0; src_y < WOLF3D_SCREEN_H; src_y++) {
-        volatile unsigned int* row =
-            (volatile unsigned int*)(page_base +
-                (y + src_y * scale) * wolf3d_display_map.pitch + x * 4u);
-
-        for (unsigned int src_x = 0; src_x < WOLF3D_SCREEN_W; src_x++) {
-            unsigned int color =
-                wolf3d_palette_color(wolf3d_video_pages[page]
-                                     [src_y * WOLF3D_SCREEN_W + src_x]);
-            for (unsigned int sx = 0; sx < scale; sx++) {
-                row[src_x * scale + sx] = color;
-            }
-        }
-        for (unsigned int sy = 1; sy < scale; sy++) {
-            volatile unsigned int* dup =
-                (volatile unsigned int*)((volatile unsigned char*)row +
-                                         sy * wolf3d_display_map.pitch);
-            for (unsigned int px = 0; px < present_w; px++) {
-                dup[px] = row[px];
-            }
-        }
-    }
-
-    wolf3d_display_write_fence();
-    req.page = draw_page;
-    req.next_page = draw_page;
-    if (wolf3d_syscall1(WOLF3D_DISPLAY_PRESENT_PAGE,
-                        (unsigned int)&req) < 0 ||
-        req.next_page >= wolf3d_display_map.page_count) {
-        wolf3d_display_mapped = 0;
-        return 0;
-    }
-    wolf3d_display_map.draw_page = req.next_page;
-    wolf3d_video_dirty = 0;
-    wolf3d_video_deferred_present = 0;
-    return 1;
-}
-
 static int wolf3d_display_open(void) {
-    if (wolf3d_display_acquired) {
+    if (wolf3d_gfx.acquired) {
         return 1;
     }
     if (wolf3d_display_checked) {
         return 0;
     }
     wolf3d_display_checked = 1;
-    memset(&wolf3d_display, 0, sizeof(wolf3d_display));
-    if (wolf3d_syscall1(WOLF3D_DISPLAY_INFO, (unsigned int)&wolf3d_display) < 0 ||
-        wolf3d_display.format != WOLF3D_DISPLAY_FORMAT_XRGB8888 ||
-        wolf3d_display.bpp != 32u ||
-        wolf3d_display.width < WOLF3D_SCREEN_W ||
-        wolf3d_display.height < WOLF3D_SCREEN_H) {
+    if (gfx_open_display(&wolf3d_gfx) < 0) {
         return 0;
     }
-    if (wolf3d_syscall0(WOLF3D_DISPLAY_ACQUIRE) < 0) {
+    if (wolf3d_gfx.info.width < WOLF3D_SCREEN_W ||
+        wolf3d_gfx.info.height < WOLF3D_SCREEN_H) {
+        gfx_close(&wolf3d_gfx);
         return 0;
     }
-    wolf3d_display_acquired = 1;
-    memset(&wolf3d_display_map, 0, sizeof(wolf3d_display_map));
-    wolf3d_display_mapped =
-        wolf3d_syscall1(WOLF3D_DISPLAY_MAP,
-                        (unsigned int)&wolf3d_display_map) >= 0 &&
-        wolf3d_display_map.format == WOLF3D_DISPLAY_FORMAT_XRGB8888 &&
-        wolf3d_display_map.bpp == 32u &&
-        wolf3d_display_map.width == wolf3d_display.width &&
-        wolf3d_display_map.height == wolf3d_display.height &&
-        wolf3d_display_map.pitch == wolf3d_display.pitch &&
-        wolf3d_display_map.page_count >= 2u &&
-        wolf3d_display_map.draw_page < wolf3d_display_map.page_count;
+    (void)gfx_map(&wolf3d_gfx);
     wolf3d_display_cleared = 0;
     wolf3d_display_clear();
     return 1;
 }
 
 static void wolf3d_video_present_page(unsigned int page) {
-    wolf3d_display_blit_rect_t rect;
+    gfx_indexed_surface_t surface;
     unsigned int x;
     unsigned int y;
     unsigned int scale;
     unsigned int present_w;
     unsigned int present_h;
-    unsigned int* present_pixels;
 
     if (page >= WOLF3D_VIDEO_PAGES || !wolf3d_display_open()) {
         return;
@@ -1159,29 +831,17 @@ static void wolf3d_video_present_page(unsigned int page) {
     scale = wolf3d_display_scale();
     present_w = WOLF3D_SCREEN_W * scale;
     present_h = WOLF3D_SCREEN_H * scale;
-    x = (wolf3d_display.width - present_w) / 2u;
-    y = (wolf3d_display.height - present_h) / 2u;
-    if (wolf3d_display_present_mapped(page, scale, present_w, present_h,
-                                      x, y)) {
-        return;
+    x = (wolf3d_gfx.info.width - present_w) / 2u;
+    y = (wolf3d_gfx.info.height - present_h) / 2u;
+    surface.width = WOLF3D_SCREEN_W;
+    surface.height = WOLF3D_SCREEN_H;
+    surface.pitch_pixels = WOLF3D_SCREEN_W;
+    surface.pixels = wolf3d_video_pages[page];
+    surface.palette = wolf3d_xrgb_palette;
+    if (gfx_present_indexed(&wolf3d_gfx, x, y, &surface, scale) == 0) {
+        wolf3d_video_dirty = 0;
+        wolf3d_video_deferred_present = 0;
     }
-
-    if (!wolf3d_display_scale_buffer(page, scale, &present_w, &present_h,
-                                     &present_pixels)) {
-        scale = 1u;
-        (void)wolf3d_display_scale_buffer(page, scale, &present_w, &present_h,
-                                          &present_pixels);
-    }
-    x = (wolf3d_display.width - present_w) / 2u;
-    y = (wolf3d_display.height - present_h) / 2u;
-    rect.x = x;
-    rect.y = y;
-    rect.w = present_w;
-    rect.h = present_h;
-    rect.pixels = present_pixels;
-    (void)wolf3d_syscall1(WOLF3D_DISPLAY_BLIT, (unsigned int)&rect);
-    wolf3d_video_dirty = 0;
-    wolf3d_video_deferred_present = 0;
 }
 
 static void wolf3d_video_present_offset_if_visible(unsigned int offset) {
@@ -1191,8 +851,9 @@ static void wolf3d_video_present_offset_if_visible(unsigned int offset) {
     if (displayofs >= WOLF3D_PAGE_BYTES * WOLF3D_VIDEO_PAGES) {
         return;
     }
-    visible_page = wolf3d_page_from_offset(displayofs);
-    draw_page = wolf3d_page_from_offset(offset);
+    wolf3d_vga_ensure();
+    visible_page = smallos_vga_page_from_offset(&wolf3d_vga, displayofs);
+    draw_page = smallos_vga_page_from_offset(&wolf3d_vga, offset);
     if (draw_page == visible_page) {
         wolf3d_video_deferred_present = 1;
         wolf3d_video_dirty = 1;
@@ -1207,20 +868,25 @@ static void wolf3d_video_flush_deferred_present(void) {
 }
 
 static void wolf3d_video_present(void) {
-    unsigned int page = wolf3d_page_from_offset(displayofs);
+    unsigned int page;
 
+    wolf3d_vga_ensure();
+    page = smallos_vga_page_from_offset(&wolf3d_vga, displayofs);
     if (displayofs >= WOLF3D_PAGE_BYTES * WOLF3D_VIDEO_PAGES) {
-        page = wolf3d_page_from_offset(bufferofs);
+        page = smallos_vga_page_from_offset(&wolf3d_vga, bufferofs);
     }
     wolf3d_video_present_page(page);
 }
 
 static void wolf3d_video_commit_buffer(void) {
     if (bufferofs != displayofs) {
-        wolf3d_video_copy_bytes(bufferofs, displayofs, WOLF3D_VISIBLE_STRIDE,
-                                WOLF3D_SCREEN_H);
+        wolf3d_vga_ensure();
+        smallos_vga_copy_bytes(&wolf3d_vga, bufferofs, displayofs,
+                               WOLF3D_VISIBLE_STRIDE, WOLF3D_SCREEN_H,
+                               linewidth);
     }
-    wolf3d_video_present_page(wolf3d_page_from_offset(displayofs));
+    wolf3d_video_present_page(smallos_vga_page_from_offset(&wolf3d_vga,
+                                                           displayofs));
 }
 
 int CheckIs386(void) {
@@ -1568,9 +1234,9 @@ void wolf3d_input_poll(void) {
 
     wolf3d_sound_service(wolf3d_now_units());
     do {
-        count = wolf3d_syscall3(WOLF3D_INPUT_READ, (unsigned int)events,
-                                sizeof(events) / sizeof(events[0]),
-                                SYS_INPUT_FLAG_NONBLOCK);
+        count = smallos_input_read(events,
+                                   sizeof(events) / sizeof(events[0]),
+                                   SYS_INPUT_FLAG_NONBLOCK);
         if (count <= 0) {
             break;
         }
@@ -1649,9 +1315,9 @@ void wolf3d_validate_control_config(void) {
 static void wolf3d_input_discard_pending(void) {
     sys_input_event_t events[8];
 
-    while (wolf3d_syscall3(WOLF3D_INPUT_READ, (unsigned int)events,
-                           sizeof(events) / sizeof(events[0]),
-                           SYS_INPUT_FLAG_NONBLOCK) > 0) {
+    while (smallos_input_read(events,
+                              sizeof(events) / sizeof(events[0]),
+                              SYS_INPUT_FLAG_NONBLOCK) > 0) {
     }
 }
 
@@ -2014,16 +1680,11 @@ void VL_Startup(void) {
 }
 
 static void wolf3d_display_release(void) {
-    if (wolf3d_display_acquired) {
-        (void)wolf3d_syscall0(WOLF3D_DISPLAY_RELEASE);
-        wolf3d_display_acquired = 0;
-    }
+    gfx_close(&wolf3d_gfx);
     wolf3d_display_cleared = 0;
     wolf3d_display_checked = 0;
     wolf3d_video_dirty = 0;
     wolf3d_video_deferred_present = 0;
-    wolf3d_display_mapped = 0;
-    memset(&wolf3d_display_map, 0, sizeof(wolf3d_display_map));
 }
 
 void VL_Shutdown(void) {
@@ -2044,10 +1705,8 @@ void VL_SetVGAPlaneMode(void) {
 }
 
 void VL_ClearVideo(byte color) {
-    memset(wolf3d_video_planes, color, sizeof(wolf3d_video_planes));
-    for (unsigned int page = 0; page < WOLF3D_VIDEO_PAGES; page++) {
-        memset(wolf3d_video_pages[page], color, WOLF3D_SCREEN_PIXELS);
-    }
+    wolf3d_vga_ensure();
+    smallos_vga_clear(&wolf3d_vga, color);
     wolf3d_video_dirty = 1;
     wolf3d_video_present();
 }
@@ -2093,6 +1752,7 @@ void VL_FillPalette(int red, int green, int blue) {
         wolf3d_palette[i * 3 + 1] = green_channel;
         wolf3d_palette[i * 3 + 2] = blue_channel;
     }
+    wolf3d_palette_rebuild();
     wolf3d_video_present();
 }
 
@@ -2103,6 +1763,7 @@ void VL_SetColor(int color, int red, int green, int blue) {
     wolf3d_palette[color * 3 + 0] = wolf3d_palette_channel(red);
     wolf3d_palette[color * 3 + 1] = wolf3d_palette_channel(green);
     wolf3d_palette[color * 3 + 2] = wolf3d_palette_channel(blue);
+    wolf3d_palette_rebuild_color((unsigned int)color);
     wolf3d_video_present();
 }
 
@@ -2121,8 +1782,9 @@ void VL_GetColor(int color, int* red, int* green, int* blue) {
 void VL_SetPalette(byte far* palette) {
     if (palette) {
         memcpy(wolf3d_palette, palette, sizeof(wolf3d_palette));
+        wolf3d_palette_rebuild();
     }
-    if (wolf3d_display_acquired || wolf3d_video_dirty) {
+    if (wolf3d_gfx.acquired || wolf3d_video_dirty) {
         wolf3d_video_present();
     }
 }
@@ -2282,25 +1944,32 @@ void VL_MemToLatch(byte far* source, int width, int height, unsigned dest) {
     }
     width_bytes = (unsigned int)((width + 3) >> 2);
     plane_size = width_bytes * (unsigned int)height;
+    wolf3d_vga_ensure();
     for (unsigned int plane = 0; plane < 4u; plane++) {
         for (unsigned int i = 0; i < plane_size; i++) {
-            wolf3d_planar_store(dest + i, plane, source[plane * plane_size + i]);
+            smallos_vga_planar_store(&wolf3d_vga, dest + i, plane,
+                                     source[plane * plane_size + i]);
         }
     }
+    wolf3d_video_dirty = 1;
 }
 
 void VL_ScreenToScreen(unsigned source, unsigned dest, int width, int height) {
     if (width <= 0 || height <= 0) {
         return;
     }
+    wolf3d_vga_ensure();
     for (int row = 0; row < height; row++) {
         unsigned int srcrow = source + (unsigned int)row * linewidth;
         unsigned int dstrow = dest + (unsigned int)row * linewidth;
 
         for (int col = 0; col < width; col++) {
             for (unsigned int plane = 0; plane < 4u; plane++) {
-                wolf3d_planar_store(dstrow + (unsigned int)col, plane,
-                                    wolf3d_planar_load(srcrow + (unsigned int)col, plane));
+                smallos_vga_planar_store(
+                    &wolf3d_vga, dstrow + (unsigned int)col, plane,
+                    smallos_vga_planar_load(&wolf3d_vga,
+                                            srcrow + (unsigned int)col,
+                                            plane));
             }
         }
     }
@@ -2321,6 +1990,7 @@ void VL_MemToScreen(byte far* source, int width, int height, int x, int y) {
     }
     base_x = x & ~3;
     mask = 1 << (x & 3);
+    wolf3d_vga_ensure();
     for (int plane = 0; plane < 4; plane++) {
         int plane_index;
 
@@ -2344,8 +2014,9 @@ void VL_MemToScreen(byte far* source, int width, int height, int x, int y) {
                 }
                 offset = bufferofs + ylookup[y + row] + (unsigned int)(base_x >> 2) +
                          (unsigned int)col;
-                wolf3d_planar_store(offset, (unsigned int)plane_index,
-                                    source[row * width_bytes + col]);
+                smallos_vga_planar_store(&wolf3d_vga, offset,
+                                         (unsigned int)plane_index,
+                                         source[row * width_bytes + col]);
             }
         }
         source += width_bytes * height;
@@ -2365,6 +2036,7 @@ void VL_LatchToScreen(unsigned source, int width, int height, int x, int y) {
     if (width <= 0 || height <= 0) {
         return;
     }
+    wolf3d_vga_ensure();
     for (int row = 0; row < height; row++) {
         for (int col = 0; col < width; col++) {
             for (unsigned int plane = 0; plane < 4u; plane++) {
@@ -2376,8 +2048,11 @@ void VL_LatchToScreen(unsigned source, int width, int height, int x, int y) {
                     dy >= (int)WOLF3D_SCREEN_H) {
                     continue;
                 }
-                color = wolf3d_planar_load(source + (unsigned int)row * (unsigned int)width +
-                                           (unsigned int)col, plane);
+                color = smallos_vga_planar_load(
+                    &wolf3d_vga,
+                    source + (unsigned int)row * (unsigned int)width +
+                    (unsigned int)col,
+                    plane);
                 wolf3d_video_put(dx, dy, color);
             }
         }
@@ -2622,7 +2297,9 @@ void wolf3d_visual_smoke_frame(void) {
         CA_CacheScreen(TITLEPIC);
         VW_UpdateScreen();
     } else {
-        wolf3d_video_present_page(wolf3d_page_from_offset(displayofs));
+        wolf3d_vga_ensure();
+        wolf3d_video_present_page(
+            smallos_vga_page_from_offset(&wolf3d_vga, displayofs));
     }
     VL_WaitVBL(84);
 }
@@ -2958,6 +2635,7 @@ void SD_StartMusic(MusicGroup far* music) {
     wolf3d_music_len_bytes = music->length;
     wolf3d_music_left_bytes = music->length;
     wolf3d_music_next_units = wolf3d_now_units();
+    wolf3d_music_kernel_sequence = wolf3d_adlib_start_music_sequence();
     wolf3d_music_active = 1;
     NeedsMusic = true;
 }
@@ -2965,6 +2643,9 @@ void SD_StartMusic(MusicGroup far* music) {
 void SD_MusicOn(void) {
     if (wolf3d_music_data && MusicMode == smm_AdLib && AdLibPresent) {
         wolf3d_music_next_units = wolf3d_now_units();
+        wolf3d_music_ptr = wolf3d_music_data;
+        wolf3d_music_left_bytes = wolf3d_music_len_bytes;
+        wolf3d_music_kernel_sequence = wolf3d_adlib_start_music_sequence();
         wolf3d_music_active = 1;
     }
 }
@@ -3019,7 +2700,7 @@ word SD_SoundPlaying(void) {
     if (wolf3d_pc_sound_is_playing()) {
         return wolf3d_pc_sound_number;
     }
-    if (wolf3d_al_sound_data) {
+    if (wolf3d_al_sound_is_playing()) {
         return wolf3d_al_sound_number;
     }
     /*

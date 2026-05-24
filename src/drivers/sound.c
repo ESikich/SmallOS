@@ -57,6 +57,14 @@
 #define OPL_REG_TIMER_CTRL 0x04u
 #define OPL_REG_WAVEFORM 0x01u
 #define OPL_REG_CSM_SEL 0x08u
+#define OPL_REG_CHAR 0x20u
+#define OPL_REG_SCALE 0x40u
+#define OPL_REG_ATTACK 0x60u
+#define OPL_REG_SUS 0x80u
+#define OPL_REG_FREQ_L 0xa0u
+#define OPL_REG_FREQ_H 0xb0u
+#define OPL_REG_FEED_CON 0xc0u
+#define OPL_REG_WAVE 0xe0u
 
 #define SB_PCM_MODE_16BIT 0
 #define SB_PCM_MODE_LEGACY_8BIT 1
@@ -134,6 +142,27 @@ static unsigned int s_sound_pcm_last_count;
 static unsigned int s_sound_pcm_last_hz;
 static int s_sound_opl_probe_done;
 static int s_sound_opl_present;
+static const unsigned char s_sound_opl_carriers[9] =
+    { 3, 4, 5, 11, 12, 13, 19, 20, 21 };
+static const unsigned char s_sound_opl_modifiers[9] =
+    { 0, 1, 2, 8, 9, 10, 16, 17, 18 };
+static sys_sound_opl_event_t s_sound_opl_seq[SYS_SOUND_OPL_SEQUENCE_MAX_EVENTS];
+static volatile unsigned int s_sound_opl_seq_active;
+static unsigned int s_sound_opl_seq_len;
+static unsigned int s_sound_opl_seq_pos;
+static unsigned int s_sound_opl_seq_accum;
+static unsigned int s_sound_opl_seq_timer_hz;
+static unsigned int s_sound_opl_seq_delay;
+static unsigned int s_sound_opl_seq_flags;
+static unsigned char s_sound_opl_effect_samples[SYS_SOUND_OPL_EFFECT_MAX_SAMPLES];
+static volatile unsigned int s_sound_opl_effect_active;
+static unsigned int s_sound_opl_effect_len;
+static unsigned int s_sound_opl_effect_pos;
+static unsigned int s_sound_opl_effect_accum;
+static unsigned int s_sound_opl_effect_sample_hz;
+static unsigned int s_sound_opl_effect_timer_hz;
+static unsigned int s_sound_opl_effect_channel;
+static unsigned int s_sound_opl_effect_block;
 
 static unsigned int irq_save(void) {
     unsigned int flags;
@@ -230,6 +259,33 @@ static void sound_opl_reset_raw(void) {
     }
     sound_opl_write_raw(OPL_REG_WAVEFORM, 0x20u);
     sound_opl_write_raw(OPL_REG_CSM_SEL, 0u);
+}
+
+static void sound_opl_sequence_clear(void) {
+    s_sound_opl_seq_active = 0u;
+    s_sound_opl_seq_len = 0u;
+    s_sound_opl_seq_pos = 0u;
+    s_sound_opl_seq_accum = 0u;
+    s_sound_opl_seq_timer_hz = 0u;
+    s_sound_opl_seq_delay = 0u;
+    s_sound_opl_seq_flags = 0u;
+}
+
+static void sound_opl_effect_clear(void) {
+    s_sound_opl_effect_active = 0u;
+    s_sound_opl_effect_len = 0u;
+    s_sound_opl_effect_pos = 0u;
+    s_sound_opl_effect_accum = 0u;
+    s_sound_opl_effect_sample_hz = 0u;
+    s_sound_opl_effect_timer_hz = 0u;
+    s_sound_opl_effect_channel = 0u;
+    s_sound_opl_effect_block = 0u;
+}
+
+static void sound_opl_effect_key_off(void) {
+    if (s_sound_opl_effect_channel < 9u) {
+        sound_opl_write_raw(OPL_REG_FREQ_H + s_sound_opl_effect_channel, 0u);
+    }
 }
 
 static int sound_opl_probe(void) {
@@ -836,20 +892,213 @@ int sound_pcm_u8_sb16_8(const unsigned char* samples, unsigned int count,
 }
 
 int sound_opl_write(unsigned int reg, unsigned int value) {
+    unsigned int flags;
+
     if (reg > 0xffu || value > 0xffu) {
         return -EINVAL;
     }
     if (!sound_opl_probe()) {
         return -EIO;
     }
+    flags = irq_save();
     sound_opl_write_raw(reg, value);
+    irq_restore(flags);
     return 0;
+}
+
+static void sound_opl_sequence_emit_budget(unsigned int budget) {
+    unsigned int timer_hz = timer_get_hz();
+
+    if (!s_sound_opl_seq_active || timer_hz == 0u) {
+        return;
+    }
+
+    while (s_sound_opl_seq_active && budget--) {
+        if (s_sound_opl_seq_delay) {
+            unsigned int needed;
+
+            if (s_sound_opl_seq_delay > 0xFFFFFFFFu / timer_hz) {
+                sound_opl_sequence_clear();
+                return;
+            }
+            needed = s_sound_opl_seq_delay * timer_hz;
+            if (s_sound_opl_seq_accum < needed) {
+                return;
+            }
+            s_sound_opl_seq_accum -= needed;
+            s_sound_opl_seq_delay = 0u;
+        }
+
+        if (s_sound_opl_seq_pos >= s_sound_opl_seq_len) {
+            if (s_sound_opl_seq_flags & SYS_SOUND_OPL_SEQUENCE_FLAG_LOOP) {
+                s_sound_opl_seq_pos = 0u;
+            } else {
+                sound_opl_sequence_clear();
+                return;
+            }
+        }
+
+        {
+            sys_sound_opl_event_t ev = s_sound_opl_seq[s_sound_opl_seq_pos++];
+            sound_opl_write_raw(ev.reg_value & 0xffu, ev.reg_value >> 8);
+            s_sound_opl_seq_delay = ev.delay;
+        }
+    }
+}
+
+int sound_opl_sequence(const sys_sound_opl_event_t* events,
+                       unsigned int count,
+                       unsigned int timer_hz,
+                       unsigned int flags) {
+    unsigned int saved_flags;
+
+    if (!events || count == 0u ||
+        count > SYS_SOUND_OPL_SEQUENCE_MAX_EVENTS ||
+        timer_hz == 0u ||
+        (flags & ~SYS_SOUND_OPL_SEQUENCE_FLAG_LOOP) != 0u) {
+        return -EINVAL;
+    }
+    if (!sound_opl_probe()) {
+        return -EIO;
+    }
+
+    saved_flags = irq_save();
+    sound_opl_sequence_clear();
+    for (unsigned int i = 0; i < count; i++) {
+        s_sound_opl_seq[i] = events[i];
+    }
+    s_sound_opl_seq_len = count;
+    s_sound_opl_seq_timer_hz = timer_hz;
+    s_sound_opl_seq_flags = flags;
+    s_sound_opl_seq_accum = 0u;
+    s_sound_opl_seq_delay = 0u;
+    s_sound_opl_seq_pos = 0u;
+    s_sound_opl_seq_active = 1u;
+    sound_opl_sequence_emit_budget(64u);
+    irq_restore(saved_flags);
+    return 0;
+}
+
+void sound_opl_sequence_stop(void) {
+    unsigned int flags = irq_save();
+    sound_opl_sequence_clear();
+    irq_restore(flags);
+}
+
+static void sound_opl_effect_emit_sample(unsigned char sample) {
+    if (s_sound_opl_effect_channel >= 9u) {
+        sound_opl_effect_clear();
+        return;
+    }
+    if (!sample) {
+        sound_opl_write_raw(OPL_REG_FREQ_H + s_sound_opl_effect_channel, 0u);
+        return;
+    }
+    sound_opl_write_raw(OPL_REG_FREQ_L + s_sound_opl_effect_channel, sample);
+    sound_opl_write_raw(OPL_REG_FREQ_H + s_sound_opl_effect_channel,
+                        s_sound_opl_effect_block);
+}
+
+static void sound_opl_effect_emit_budget(unsigned int budget) {
+    unsigned int timer_hz = timer_get_hz();
+
+    if (!s_sound_opl_effect_active || timer_hz == 0u) {
+        return;
+    }
+
+    while (s_sound_opl_effect_active &&
+           s_sound_opl_effect_accum >= s_sound_opl_effect_timer_hz &&
+           budget--) {
+        s_sound_opl_effect_accum -= s_sound_opl_effect_timer_hz;
+        if (s_sound_opl_effect_pos >= s_sound_opl_effect_len) {
+            sound_opl_effect_key_off();
+            sound_opl_effect_clear();
+            return;
+        }
+        sound_opl_effect_emit_sample(
+            s_sound_opl_effect_samples[s_sound_opl_effect_pos++]);
+    }
+}
+
+static void sound_opl_effect_program_instrument(
+    const sys_sound_opl_effect_t* effect) {
+    unsigned int channel = effect->channel;
+    unsigned int m = s_sound_opl_modifiers[channel];
+    unsigned int c = s_sound_opl_carriers[channel];
+
+    sound_opl_write_raw(m + OPL_REG_CHAR, effect->m_char);
+    sound_opl_write_raw(m + OPL_REG_SCALE, effect->m_scale);
+    sound_opl_write_raw(m + OPL_REG_ATTACK, effect->m_attack);
+    sound_opl_write_raw(m + OPL_REG_SUS, effect->m_sus);
+    sound_opl_write_raw(m + OPL_REG_WAVE, effect->m_wave);
+    sound_opl_write_raw(c + OPL_REG_CHAR, effect->c_char);
+    sound_opl_write_raw(c + OPL_REG_SCALE, effect->c_scale);
+    sound_opl_write_raw(c + OPL_REG_ATTACK, effect->c_attack);
+    sound_opl_write_raw(c + OPL_REG_SUS, effect->c_sus);
+    sound_opl_write_raw(c + OPL_REG_WAVE, effect->c_wave);
+    sound_opl_write_raw(channel + OPL_REG_FEED_CON, effect->feedback);
+}
+
+int sound_opl_effect(const sys_sound_opl_effect_t* effect) {
+    unsigned int saved_flags;
+    unsigned int timer_hz = timer_get_hz();
+
+    if (!effect ||
+        !effect->samples ||
+        effect->count == 0u ||
+        effect->count > SYS_SOUND_OPL_EFFECT_MAX_SAMPLES ||
+        effect->sample_hz == 0u ||
+        effect->sample_hz > SYS_SOUND_MAX_HZ ||
+        effect->channel >= 9u ||
+        timer_hz == 0u) {
+        return -EINVAL;
+    }
+    if (!sound_opl_probe()) {
+        return -EIO;
+    }
+
+    saved_flags = irq_save();
+    if (s_sound_opl_effect_active) {
+        sound_opl_effect_key_off();
+    }
+    sound_opl_effect_clear();
+    irq_restore(saved_flags);
+
+    for (unsigned int i = 0; i < effect->count; i++) {
+        s_sound_opl_effect_samples[i] = effect->samples[i];
+    }
+
+    saved_flags = irq_save();
+    sound_opl_effect_program_instrument(effect);
+    s_sound_opl_effect_len = effect->count;
+    s_sound_opl_effect_pos = 0u;
+    s_sound_opl_effect_accum = 0u;
+    s_sound_opl_effect_sample_hz = effect->sample_hz;
+    s_sound_opl_effect_timer_hz = timer_hz;
+    s_sound_opl_effect_channel = effect->channel;
+    s_sound_opl_effect_block = effect->block;
+    s_sound_opl_effect_active = 1u;
+    sound_opl_effect_emit_sample(
+        s_sound_opl_effect_samples[s_sound_opl_effect_pos++]);
+    irq_restore(saved_flags);
+    return 0;
+}
+
+void sound_opl_effect_stop(void) {
+    unsigned int flags = irq_save();
+    if (s_sound_opl_effect_active) {
+        sound_opl_effect_key_off();
+    }
+    sound_opl_effect_clear();
+    irq_restore(flags);
 }
 
 int sound_opl_reset(void) {
     if (!sound_opl_probe()) {
         return -EIO;
     }
+    sound_opl_sequence_stop();
+    sound_opl_effect_stop();
     sound_opl_reset_raw();
     return 0;
 }
@@ -911,9 +1160,20 @@ void sound_status(sys_sound_status_t* out) {
     out->pcm_error_count = s_sound_pcm_error_count;
     out->pcm_last_count = s_sound_pcm_last_count;
     out->pcm_last_hz = s_sound_pcm_last_hz;
+    out->opl_sequence_active = s_sound_opl_seq_active;
+    out->opl_effect_active = s_sound_opl_effect_active;
 }
 
 void sound_timer_tick(void) {
+    if (s_sound_opl_seq_active) {
+        s_sound_opl_seq_accum += s_sound_opl_seq_timer_hz;
+        sound_opl_sequence_emit_budget(512u);
+    }
+    if (s_sound_opl_effect_active) {
+        s_sound_opl_effect_accum += s_sound_opl_effect_sample_hz;
+        sound_opl_effect_emit_budget(512u);
+    }
+
     if (s_sound_pcm_active &&
         (int)(timer_get_ticks() - s_sound_pcm_deadline_tick) >= 0) {
         if (s_sound_pcm_backend == SOUND_PCM_BACKEND_AC97) {

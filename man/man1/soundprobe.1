@@ -9,7 +9,8 @@ SYNOPSIS
 DESCRIPTION
     Plays short diagnostic samples through the SmallOS sound syscall surface.
     The probe checks the active PCM playback path and emits an AdLib/OPL2 tone
-    when an AdLib-compatible device is present.
+    when an AdLib-compatible device is present.  Its status output also reports
+    active kernel-timed OPL music sequences and OPL effects.
 
 NOTES
     For QEMU Wolf3D testing, expose AC97 for digitized effects and AdLib for

@@ -93,6 +93,37 @@ static inline int sound_opl_reset(void) {
                                   0u, 0u);
 }
 
+static inline int sound_opl_sequence(const sys_sound_opl_event_t* events,
+                                     unsigned int count,
+                                     unsigned int timer_hz,
+                                     unsigned int flags) {
+    sys_sound_opl_sequence_t req;
+
+    req.events = events;
+    req.count = count;
+    req.timer_hz = timer_hz;
+    req.flags = flags;
+    return smallos_sound_syscall3(SYS_SOUND_OP, SYS_SOUND_OP_OPL_SEQUENCE,
+                                  (uint32_t)&req, 0u);
+}
+
+static inline int sound_opl_sequence_stop(void) {
+    return smallos_sound_syscall3(SYS_SOUND_OP,
+                                  SYS_SOUND_OP_OPL_SEQUENCE_STOP,
+                                  0u, 0u);
+}
+
+static inline int sound_opl_effect(const sys_sound_opl_effect_t* effect) {
+    return smallos_sound_syscall3(SYS_SOUND_OP, SYS_SOUND_OP_OPL_EFFECT,
+                                  (uint32_t)effect, 0u);
+}
+
+static inline int sound_opl_effect_stop(void) {
+    return smallos_sound_syscall3(SYS_SOUND_OP,
+                                  SYS_SOUND_OP_OPL_EFFECT_STOP,
+                                  0u, 0u);
+}
+
 static inline int sound_status(sys_sound_status_t* out) {
     return smallos_sound_syscall3(SYS_SOUND_OP, SYS_SOUND_OP_STATUS,
                                   (uint32_t)out, 0u);

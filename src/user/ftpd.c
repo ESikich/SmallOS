@@ -31,6 +31,7 @@ static int s_quiet;
 static void ftp_session_exit(int code) {
     s_session_exit_code = code;
     longjmp(s_session_exit_env, 1);
+    __builtin_unreachable();
 }
 
 static int str_eq(const char* a, const char* b) {
