@@ -1161,7 +1161,7 @@ Copies the current NIC, IPv4, socket, and TCP diagnostic state. The NIC fields
 include the active driver name, MAC/link state, TX/RX counters, error counters,
 and selected hardware cursors/config registers. The IPv4
 fields include whether an address is configured, address, netmask, gateway,
-DNS server, DHCP server, and lease time. `/bin/ip.elf`, `/bin/ipconfig.elf`,
+DNS server, DHCP server, and lease time. `/bin/ip`, `/bin/ipconfig`,
 `netinfo`, and network smoke tests use this as the read side of runtime network
 configuration.
 
@@ -1256,7 +1256,7 @@ int sys_usbinfo(sys_usbinfo_t* out_info);
 ```
 
 Copies the current USB controller, boot HID, USB storage, and last-probed OHCI
-diagnostic counters into `out_info`. This backs `/bin/usbinfo.elf` and returns
+diagnostic counters into `out_info`. This backs `/bin/usbinfo` and returns
 `0` on success or `-EFAULT` for an invalid output pointer.
 
 ### SYS_MOUSE_DEBUG (89)
@@ -1267,7 +1267,7 @@ int sys_mouse_debug(sys_mousedebug_t* out_info);
 
 Copies PS/2, VMware, and injected USB mouse diagnostic counters into
 `out_info`, including IRQ/byte/packet counts, packet size, device id, init
-state, and drop counters. This backs `/bin/mousetest.elf` and returns `0` on
+state, and drop counters. This backs `/bin/mousetest` and returns `0` on
 success or `-EFAULT` for an invalid output pointer.
 
 ### SYS_USB_DIAG_OP (90)
@@ -1284,9 +1284,9 @@ return structured records. Supported `op` values:
 | --- | --- |
 | `SYS_USB_DIAG_OP_PORTS` | Legacy kernel-print passive USB port dump. |
 | `SYS_USB_DIAG_OP_DIAG` | Legacy kernel-print USB port/descriptor diagnostic path. |
-| `SYS_USB_DIAG_OP_PEEK` | Run the OHCI address-0 descriptor peek for one-based port `arg`, used by `/bin/usbpeek.elf`. |
-| `SYS_USB_DIAG_OP_POWER` | Try OHCI root-hub port power and return the powered-port count, used by `/bin/usbpower.elf`. |
-| `SYS_USB_DIAG_OP_PORT_SNAPSHOT` | Copy a `sys_usb_port_snapshot_t` to `arg`; `/bin/usbports.elf` and the passive part of `/bin/usbdiag.elf` format this in userspace. |
+| `SYS_USB_DIAG_OP_PEEK` | Run the OHCI address-0 descriptor peek for one-based port `arg`, used by `/bin/usbpeek`. |
+| `SYS_USB_DIAG_OP_POWER` | Try OHCI root-hub port power and return the powered-port count, used by `/bin/usbpower`. |
+| `SYS_USB_DIAG_OP_PORT_SNAPSHOT` | Copy a `sys_usb_port_snapshot_t` to `arg`; `/bin/usbports` and the passive part of `/bin/usbdiag` format this in userspace. |
 
 `SYS_USB_DIAG_OP_PEEK` still performs active OHCI reset/control-transfer work
 and prints descriptor details through the kernel terminal path.
@@ -1311,7 +1311,7 @@ ticks, estimated task-owned RAM bytes, user heap bytes, and display name.
 
 The RAM estimate is frame-based: `process_t`, kernel stack frames, dynamic fd
 table frames, and private user page-directory/page-table/user frames. Kernel
-mappings shared into every process are not charged per process. `/bin/top.elf`
+mappings shared into every process are not charged per process. `/bin/top`
 uses repeated snapshots to compute per-refresh CPU percentages and render the
 live process table.
 
@@ -1387,6 +1387,11 @@ This stays intentionally small: it gives user programs a general beep/tone
 surface, lets DOS ports such as Wolf3D play their original PC speaker pitch
 data, exposes a bounded PCM path for digitized effects, and exposes raw OPL2
 register writes for AdLib SFX/music sequencing.
+
+The syscall starts or stops kernel-timed playback, but it is still mostly a
+fire-and-forget surface. Ports that need precise "effect finished" semantics
+currently keep their own monotonic deadlines in userland; Wolf3D's
+level-completion intermission is the regression case that guards this boundary.
 
 For structured operations, `arg1` points to the request structure:
 

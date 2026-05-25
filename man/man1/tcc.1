@@ -29,13 +29,13 @@ FILES
 
 EXAMPLES
     cd /var/tmp
-    tcc -o tccsysroot.elf /usr/share/examples/tinycc/tccsysroot.c
-    runelf /var/tmp/tccsysroot
-    tcc -o tccposix.elf /usr/share/examples/tinycc/tccposix.c
-    runelf /var/tmp/tccposix
+    tcc -o tccsysroot /usr/share/examples/tinycc/tccsysroot.c
+    /var/tmp/tccsysroot
+    tcc -o tccposix /usr/share/examples/tinycc/tccposix.c
+    /var/tmp/tccposix
 
-    tcc -nostdlib -o tccmini.elf /usr/share/examples/tinycc/tccmini.c
-    runelf /var/tmp/tccmini
+    tcc -nostdlib -o tccmini /usr/share/examples/tinycc/tccmini.c
+    /var/tmp/tccmini
 
 SEE ALSO
-    compiler_demo(1), runelf(1), smallos(7)
+    compiler_demo(1), shell(1), smallos(7)

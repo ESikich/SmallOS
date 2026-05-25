@@ -95,7 +95,7 @@ void _start(int argc, char** argv) {
 
     {
         /* A valid fd should still work, but bad read buffers must fail. */
-        int fd = sys_open("usr/bin/hello.elf");
+        int fd = sys_open("usr/bin/hello");
         check_true("sys_open hello", fd >= 3);
         if (fd >= 3) {
             check_int("sys_fread invalid buf",

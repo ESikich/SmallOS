@@ -2303,7 +2303,7 @@ int process_set_default_env(process_t* proc) {
     char* envp[] = {
         "PATH=/bin:/usr/bin:/usr/sbin",
         "HOME=/",
-        "SHELL=/bin/shell.elf",
+        "SHELL=/bin/shell",
         "TMPDIR=/tmp",
         0
     };
@@ -2603,7 +2603,7 @@ void process_set_foreground(process_t* proc) {
     if (proc) {
         keyboard_buf_clear();           /* discard any input that arrived before
                                            the process was ready to read it,
-                                           e.g. the Enter that launched runelf */
+                                           e.g. the Enter that launched the foreground program */
         input_clear_events();
         keyboard_set_consumer(process_key_consumer);
     } else {
@@ -2834,7 +2834,7 @@ int process_wait_restore_foreground(process_t* proc, process_t* restore_proc) {
  * reaper_task_main — runs as a permanent kernel task.
  *
  * On every wakeup it calls sched_reap_zombies() to destroy any processes
- * that exited without an explicit waiter (e.g. runelf_nowait or SYS_EXEC
+ * that exited without an explicit waiter (e.g. background launches or SYS_EXEC
  * children).  After each scan it halts until the next timer interrupt
  * wakes it, keeping CPU overhead near zero.
  */

@@ -159,7 +159,16 @@ static int sh_resolve_program(const char* name, char* out, unsigned int out_size
     }
 
     for (unsigned int i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
-        if (sh_join3(candidate, sizeof(candidate), prefixes[i], name, ".elf") &&
+        if (sh_join3(candidate, sizeof(candidate), prefixes[i], name, 0) &&
+            sh_file_exists(candidate)) {
+            sh_copy(out, candidate, out_size);
+            return 1;
+        }
+    }
+
+    for (unsigned int i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+        if (!sh_has_dot(name) &&
+            sh_join3(candidate, sizeof(candidate), prefixes[i], name, ".elf") &&
             sh_file_exists(candidate)) {
             sh_copy(out, candidate, out_size);
             return 1;
@@ -289,14 +298,11 @@ static void sh_help(void) {
     u_puts("  ataread         read mounted block sector diagnostics\n");
     u_puts("  cd              change the shell working directory\n");
     u_puts("  pwd             print the shell working directory\n");
-    u_puts("  runelf          run an ext2 ELF and wait\n");
-    u_puts("  runelf_nowait   run an ext2 ELF and return\n");
-    u_puts("  runelf_bg       run a reattachable background ELF\n");
-    u_puts("  bg              run a reattachable background ELF\n");
+    u_puts("  bg              run a reattachable background program\n");
     u_puts("  jobs            list reattachable background jobs\n");
     u_puts("  fg              reattach and wait for a job\n");
     u_puts("  kill            terminate a background job\n");
-    u_puts("  selftest        run shipped ELF self-tests\n");
+    u_puts("  selftest        run shipped program self-tests\n");
     u_puts("  shelltest       run built-in shell command tests\n");
     u_puts("  echo            print arguments\n");
     u_puts("  about           print system information\n");
@@ -321,8 +327,8 @@ static void sh_help(void) {
 }
 
 static const char* const s_builtin_names[] = {
-    "help", "clear", "ip", "ipconfig", "mousetest", "cd", "pwd", "wd", "runelf",
-    "runelf_nowait", "runelf_bg", "bg", "jobs", "fg", "kill",
+    "help", "clear", "ip", "ipconfig", "mousetest", "cd", "pwd", "wd",
+    "bg", "jobs", "fg", "kill",
     "selftest", "shelltest", "echo", "about", "halt", "reboot",
     "uptime", "ls", "tree", "fsread", "cat", "more", "man", "mkdir",
     "rmdir", "rm", "touch", "cp", "mv", "edit", "exit",
@@ -826,45 +832,6 @@ static int sh_run_external(int argc, char* argv[]) {
     return sh_launch_wait(path, argc, argv, argv[0]);
 }
 
-static int sh_runelf(int argc, char* argv[]) {
-    char path[SHELL_PATH_MAX];
-
-    if (argc < 2) {
-        u_puts("Usage: runelf <n>\n");
-        return 0;
-    }
-
-    if (!sh_resolve_program(argv[1], path, sizeof(path))) {
-        u_puts("runelf: failed\n");
-        return 0;
-    }
-
-    return sh_launch_wait(path, argc - 1, &argv[1], "runelf");
-}
-
-static int sh_runelf_nowait(int argc, char* argv[]) {
-    char path[SHELL_PATH_MAX];
-    int pid;
-
-    if (argc < 2) {
-        u_puts("Usage: runelf_nowait <n>\n");
-        return 0;
-    }
-
-    if (!sh_resolve_program(argv[1], path, sizeof(path))) {
-        u_puts("runelf_nowait: failed\n");
-        return 0;
-    }
-
-    pid = sys_exec(path, argc - 1, &argv[1]);
-    if (pid < 0) {
-        u_puts("runelf_nowait: failed\n");
-        return 0;
-    }
-
-    return 1;
-}
-
 static shell_job_t* sh_job_alloc(int pid, const char* command) {
     for (unsigned int i = 0; i < SHELL_JOB_MAX; i++) {
         if (!s_jobs[i].used) {
@@ -893,7 +860,7 @@ static void sh_job_clear(shell_job_t* job) {
     job->command[0] = 0;
 }
 
-static int sh_runelf_bg(int argc, char* argv[]) {
+static int sh_bg(int argc, char* argv[]) {
     char path[SHELL_PATH_MAX];
     int pid;
     shell_job_t* job;
@@ -1207,16 +1174,8 @@ static int sh_builtin(int argc, char* argv[], int* should_exit) {
         }
         return 1;
     }
-    if (sh_streq(argv[0], "runelf")) {
-        sh_runelf(argc, argv);
-        return 1;
-    }
-    if (sh_streq(argv[0], "runelf_nowait")) {
-        sh_runelf_nowait(argc, argv);
-        return 1;
-    }
-    if (sh_streq(argv[0], "runelf_bg") || sh_streq(argv[0], "bg")) {
-        sh_runelf_bg(argc, argv);
+    if (sh_streq(argv[0], "bg")) {
+        sh_bg(argc, argv);
         return 1;
     }
     if (sh_streq(argv[0], "jobs")) {
@@ -1308,7 +1267,7 @@ void sh_shelltest(void) {
     sh_shelltest_exec("cpuz", "cpuz");
     sh_shelltest_exec("top", "top -r 1");
     sh_shelltest_exec("memmap", "memmap");
-    sh_shelltest_exec("wolf3d_check", "runelf usr/libexec/tests/wolf3d-srcprobe --check-episodes");
+    sh_shelltest_exec("wolf3d_check", "usr/libexec/tests/wolf3d-srcprobe --check-episodes");
     sh_shelltest_exec("netinfo", "netinfo");
     sh_shelltest_exec("ip", "ip");
     sh_shelltest_exec("ip_addr", "ip addr show");
@@ -1327,8 +1286,8 @@ void sh_shelltest(void) {
     sh_shelltest_exec("ls_path", "ls usr/bin");
     sh_shelltest_exec("tree", "tree");
     sh_shelltest_exec("tree_path", "tree usr/bin");
-    sh_shelltest_exec("fsread", "fsread usr/bin/hello.elf");
-    sh_shelltest_exec("fsread_path", "fsread usr/bin/hello.elf");
+    sh_shelltest_exec("fsread", "fsread usr/bin/hello");
+    sh_shelltest_exec("fsread_path", "fsread usr/bin/hello");
     sh_shelltest_exec("cat", "cat var/tmp/compiler.out");
     sh_shelltest_exec("touch", "touch var/tmp/EMPTY.TXT");
     sh_shelltest_exec("fsread_touch", "fsread var/tmp/EMPTY.TXT");
@@ -1342,8 +1301,8 @@ void sh_shelltest(void) {
     sh_shelltest_exec("rmdir_nested_child", "rmdir NESTPARENT/CHILD");
     sh_shelltest_exec("rmdir_nested_parent", "rmdir NESTPARENT");
     sh_shelltest_exec("ls_nested_removed", "ls NESTPARENT");
-    sh_shelltest_exec("compiler_demo", "runelf usr/libexec/tests/compiler_demo");
-    sh_shelltest_exec("tinycc", "runelf usr/bin/tcc.elf -v");
+    sh_shelltest_exec("compiler_demo", "usr/libexec/tests/compiler_demo");
+    sh_shelltest_exec("tinycc", "tcc -v");
     sh_shelltest_exec("mkdir_var_tmp", "mkdir var/tmp");
     sh_shelltest_exec("mkdir_work", "mkdir var/tmp/WORK");
     sh_shelltest_exec("mkdir_samples", "mkdir var/tmp/samples");
@@ -1354,18 +1313,18 @@ void sh_shelltest(void) {
     sh_shelltest_exec("mv_tccsysroot", "mv usr/share/examples/tinycc/tccsysroot.c var/tmp/samples");
     sh_shelltest_exec("mv_tccposix", "mv usr/share/examples/tinycc/tccposix.c var/tmp/samples");
     sh_shelltest_exec("ls_samples", "ls var/tmp/samples");
-    sh_shelltest_exec("tccmath_build", "runelf usr/bin/tcc.elf -nostdlib -o var/tmp/tccmath.elf var/tmp/samples/tccmath.c");
-    sh_shelltest_exec("tccmath_run", "runelf var/tmp/tccmath");
-    sh_shelltest_exec("tccagg_build", "runelf usr/bin/tcc.elf -nostdlib -o var/tmp/tccagg.elf var/tmp/samples/tccagg.c");
-    sh_shelltest_exec("tccagg_run", "runelf var/tmp/tccagg");
-    sh_shelltest_exec("tcctree_build", "runelf usr/bin/tcc.elf -nostdlib -o var/tmp/tcctree.elf var/tmp/samples/tcctree.c");
-    sh_shelltest_exec("tcctree_run", "runelf var/tmp/tcctree");
-    sh_shelltest_exec("tccmini_build", "runelf usr/bin/tcc.elf -nostdlib -o var/tmp/tccmini.elf var/tmp/samples/tccmini.c");
-    sh_shelltest_exec("tccmini_run", "runelf var/tmp/tccmini");
-    sh_shelltest_exec("tccsysroot_build", "runelf usr/bin/tcc.elf -o var/tmp/tccsysroot.elf var/tmp/samples/tccsysroot.c");
-    sh_shelltest_exec("tccsysroot_run", "runelf var/tmp/tccsysroot");
-    sh_shelltest_exec("tccposix_build", "runelf usr/bin/tcc.elf -o var/tmp/tccposix.elf var/tmp/samples/tccposix.c");
-    sh_shelltest_exec("tccposix_run", "runelf var/tmp/tccposix");
+    sh_shelltest_exec("tccmath_build", "tcc -nostdlib -o var/tmp/tccmath var/tmp/samples/tccmath.c");
+    sh_shelltest_exec("tccmath_run", "var/tmp/tccmath");
+    sh_shelltest_exec("tccagg_build", "tcc -nostdlib -o var/tmp/tccagg var/tmp/samples/tccagg.c");
+    sh_shelltest_exec("tccagg_run", "var/tmp/tccagg");
+    sh_shelltest_exec("tcctree_build", "tcc -nostdlib -o var/tmp/tcctree var/tmp/samples/tcctree.c");
+    sh_shelltest_exec("tcctree_run", "var/tmp/tcctree");
+    sh_shelltest_exec("tccmini_build", "tcc -nostdlib -o var/tmp/tccmini var/tmp/samples/tccmini.c");
+    sh_shelltest_exec("tccmini_run", "var/tmp/tccmini");
+    sh_shelltest_exec("tccsysroot_build", "tcc -o var/tmp/tccsysroot var/tmp/samples/tccsysroot.c");
+    sh_shelltest_exec("tccsysroot_run", "var/tmp/tccsysroot");
+    sh_shelltest_exec("tccposix_build", "tcc -o var/tmp/tccposix var/tmp/samples/tccposix.c");
+    sh_shelltest_exec("tccposix_run", "var/tmp/tccposix");
     sh_shelltest_exec("cat", "cat var/tmp/compiler.out");
     sh_shelltest_exec("touch", "touch var/tmp/EMPTY.TXT");
     sh_shelltest_exec("fsread_touch", "fsread var/tmp/EMPTY.TXT");
@@ -1374,17 +1333,17 @@ void sh_shelltest(void) {
     sh_shelltest_exec("cd", "cd usr/bin");
     sh_shelltest_exec("pwd", "pwd");
     sh_shelltest_exec("ls", "ls");
-    sh_shelltest_exec("fsread_rel", "fsread hello.elf");
+    sh_shelltest_exec("fsread_rel", "fsread hello");
     sh_shelltest_exec("cat_rel", "cat ../../var/tmp/compiler.out");
     sh_shelltest_exec("touch_rel", "touch ../../var/tmp/LOCAL.TXT");
     sh_shelltest_exec("fsread_touch_rel", "fsread ../../var/tmp/LOCAL.TXT");
-    sh_shelltest_exec("runelf_rel", "runelf hello alpha beta");
-    sh_shelltest_exec("runelf", "runelf usr/bin/hello alpha beta");
+    sh_shelltest_exec("exec_rel", "hello alpha beta");
+    sh_shelltest_exec("exec", "usr/bin/hello alpha beta");
     sh_shelltest_exec("cd_root", "cd /");
     sh_shelltest_exec("pwd_root", "pwd");
-    sh_shelltest_exec("runelf_path", "runelf usr/bin/hello alpha beta");
+    sh_shelltest_exec("exec_path", "usr/bin/hello alpha beta");
     sh_shelltest_exec("ls_root", "ls");
-    sh_shelltest_exec("ls_glob", "ls *.elf");
+    sh_shelltest_exec("ls_glob", "ls usr/bin/h*");
     sh_shelltest_exec("cp", "cp var/tmp/compiler.out var/tmp/compiler.copy");
     sh_shelltest_exec("fsread_copy", "fsread var/tmp/compiler.copy");
     sh_shelltest_exec("mv", "mv var/tmp/compiler.copy var/tmp/compiler.moved");
@@ -1394,7 +1353,7 @@ void sh_shelltest(void) {
     sh_shelltest_exec("rm_dir", "rm var/tmp/WORK/compiler.out");
     sh_shelltest_exec("fsread_dir_removed", "fsread var/tmp/WORK/compiler.out");
     sh_shelltest_exec("mv_dir", "mv var/tmp/compiler.moved var/tmp/WORK");
-    sh_shelltest_exec("runelf_nowait", "runelf_nowait usr/libexec/tests/ticks");
+    sh_shelltest_exec("bg_ticks", "bg usr/libexec/tests/ticks");
     sys_sleep(10);
 
     u_puts("shelltest: PASS\n");
@@ -1420,43 +1379,44 @@ void sh_selftest(void) {
     sh_shelltest();
     sh_shelltest_end("overall");
 
-    sh_selftest_exec("hello", "runelf usr/bin/hello alpha beta");
-    sh_selftest_exec("ticks", "runelf usr/libexec/tests/ticks alpha beta");
-    sh_selftest_exec("args", "runelf usr/libexec/tests/args alpha beta");
-    sh_selftest_exec("runelf_test", "runelf usr/libexec/tests/runelf_test alpha beta gamma");
-    sh_selftest_exec("readline", "runelf usr/libexec/tests/readline alpha beta");
-    sh_selftest_exec("exec_test", "runelf usr/libexec/tests/exec_test alpha beta");
-    sh_selftest_exec("waitprobe", "runelf usr/libexec/tests/waitprobe alpha beta");
-    sh_selftest_exec("fileread", "runelf usr/libexec/tests/fileread alpha beta");
-    sh_selftest_exec("compiler_demo", "runelf usr/libexec/tests/compiler_demo alpha beta");
-    sh_selftest_exec("heapprobe", "runelf usr/libexec/tests/heapprobe alpha beta");
-    sh_selftest_exec("statprobe", "runelf usr/libexec/tests/statprobe alpha beta");
-    sh_selftest_exec("fileprobe", "runelf usr/libexec/tests/fileprobe alpha beta");
-    sh_selftest_exec("cwdprobe", "runelf usr/libexec/tests/cwdprobe alpha beta");
-    sh_selftest_exec("stdioprobe", "runelf usr/libexec/tests/stdioprobe alpha beta");
-    sh_selftest_exec("dirprobe", "runelf usr/libexec/tests/dirprobe alpha beta");
-    sh_selftest_exec("errnoprobe", "runelf usr/libexec/tests/errnoprobe alpha beta");
-    sh_selftest_exec("badptrprobe", "runelf usr/libexec/tests/badptrprobe alpha beta");
-    sh_selftest_exec("sleep_test", "runelf usr/libexec/tests/sleep_test alpha beta");
-    sh_selftest_exec("timerfdprobe", "runelf usr/libexec/tests/timerfdprobe alpha beta");
-    sh_selftest_exec("ptrguard", "runelf usr/libexec/tests/ptrguard alpha beta");
-    sh_selftest_exec("preempt_test", "runelf usr/libexec/tests/preempt_test alpha beta");
-    sh_selftest_exec("crtprobe", "runelf usr/libexec/tests/crtprobe.elf alpha nested/path longish-argument-0123456789abcdef");
-    sh_selftest_exec("inputprobe", "runelf usr/libexec/tests/inputprobe alpha beta");
-    sh_selftest_exec("pipeprobe", "runelf usr/libexec/tests/pipeprobe");
-    sh_selftest_exec("dupprobe", "runelf usr/libexec/tests/dupprobe");
-    sh_selftest_exec("forkprobe", "runelf usr/libexec/tests/forkprobe");
-    sh_selftest_exec("execveprobe", "runelf usr/libexec/tests/execveprobe");
-    sh_selftest_exec("mathprobe", "runelf usr/libexec/tests/mathprobe");
-    sh_selftest_exec("wolf3d-srcprobe", "runelf usr/libexec/tests/wolf3d-srcprobe");
-    sh_selftest_exec("wolf3d-srcprobe episodes", "runelf usr/libexec/tests/wolf3d-srcprobe --check-episodes");
-    sh_selftest_exec("wolf3d-srcprobe init", "runelf usr/libexec/tests/wolf3d-srcprobe --init-game");
-    sh_selftest_exec("wolf3d-srcprobe demo", "runelf usr/libexec/tests/wolf3d-srcprobe --demo-preamble");
-    sh_selftest_exec("fault ud", "runelf usr/libexec/tests/fault ud");
-    sh_selftest_exec("fault gp", "runelf usr/libexec/tests/fault gp");
-    sh_selftest_exec("fault de", "runelf usr/libexec/tests/fault de");
-    sh_selftest_exec("fault br", "runelf usr/libexec/tests/fault br");
-    sh_selftest_exec("fault pf", "runelf usr/libexec/tests/fault pf");
+    sh_selftest_exec("hello", "usr/bin/hello alpha beta");
+    sh_selftest_exec("ticks", "usr/libexec/tests/ticks alpha beta");
+    sh_selftest_exec("args", "usr/libexec/tests/args alpha beta");
+    sh_selftest_exec("exec_args", "usr/libexec/tests/exec_args alpha beta gamma");
+    sh_selftest_exec("readline", "usr/libexec/tests/readline alpha beta");
+    sh_selftest_exec("exec_test", "usr/libexec/tests/exec_test alpha beta");
+    sh_selftest_exec("waitprobe", "usr/libexec/tests/waitprobe alpha beta");
+    sh_selftest_exec("fileread", "usr/libexec/tests/fileread alpha beta");
+    sh_selftest_exec("compiler_demo", "usr/libexec/tests/compiler_demo alpha beta");
+    sh_selftest_exec("heapprobe", "usr/libexec/tests/heapprobe alpha beta");
+    sh_selftest_exec("statprobe", "usr/libexec/tests/statprobe alpha beta");
+    sh_selftest_exec("fileprobe", "usr/libexec/tests/fileprobe alpha beta");
+    sh_selftest_exec("cwdprobe", "usr/libexec/tests/cwdprobe alpha beta");
+    sh_selftest_exec("stdioprobe", "usr/libexec/tests/stdioprobe alpha beta");
+    sh_selftest_exec("dirprobe", "usr/libexec/tests/dirprobe alpha beta");
+    sh_selftest_exec("errnoprobe", "usr/libexec/tests/errnoprobe alpha beta");
+    sh_selftest_exec("badptrprobe", "usr/libexec/tests/badptrprobe alpha beta");
+    sh_selftest_exec("sleep_test", "usr/libexec/tests/sleep_test alpha beta");
+    sh_selftest_exec("timerfdprobe", "usr/libexec/tests/timerfdprobe alpha beta");
+    sh_selftest_exec("ptrguard", "usr/libexec/tests/ptrguard alpha beta");
+    sh_selftest_exec("preempt_test", "usr/libexec/tests/preempt_test alpha beta");
+    sh_selftest_exec("crtprobe", "usr/libexec/tests/crtprobe alpha nested/path longish-argument-0123456789abcdef");
+    sh_selftest_exec("inputprobe", "usr/libexec/tests/inputprobe alpha beta");
+    sh_selftest_exec("pipeprobe", "usr/libexec/tests/pipeprobe");
+    sh_selftest_exec("dupprobe", "usr/libexec/tests/dupprobe");
+    sh_selftest_exec("forkprobe", "usr/libexec/tests/forkprobe");
+    sh_selftest_exec("execveprobe", "usr/libexec/tests/execveprobe");
+    sh_selftest_exec("mathprobe", "usr/libexec/tests/mathprobe");
+    sh_selftest_exec("wolf3d-srcprobe", "usr/libexec/tests/wolf3d-srcprobe");
+    sh_selftest_exec("wolf3d-srcprobe episodes", "usr/libexec/tests/wolf3d-srcprobe --check-episodes");
+    sh_selftest_exec("wolf3d-srcprobe init", "usr/libexec/tests/wolf3d-srcprobe --init-game");
+    sh_selftest_exec("wolf3d-srcprobe demo", "usr/libexec/tests/wolf3d-srcprobe --demo-preamble");
+    sh_selftest_exec("wolf3d-srcprobe level-completed", "usr/libexec/tests/wolf3d-srcprobe --level-completed");
+    sh_selftest_exec("fault ud", "usr/libexec/tests/fault ud");
+    sh_selftest_exec("fault gp", "usr/libexec/tests/fault gp");
+    sh_selftest_exec("fault de", "usr/libexec/tests/fault de");
+    sh_selftest_exec("fault br", "usr/libexec/tests/fault br");
+    sh_selftest_exec("fault pf", "usr/libexec/tests/fault pf");
 
     u_puts("selftest: PASS\n");
 }

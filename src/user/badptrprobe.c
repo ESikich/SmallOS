@@ -71,10 +71,10 @@ void _start(int argc, char** argv) {
     check_int("write unmapped buffer", -EFAULT, sys_write(bad, 1));
     check_int("open unmapped path", -EFAULT, sys_open(bad));
     check_int("exec unmapped argv", -EFAULT,
-              sys_exec("usr/bin/hello.elf", 1, (char**)bad));
+              sys_exec("usr/bin/hello", 1, (char**)bad));
 
     {
-        int fd = sys_open("usr/bin/hello.elf");
+        int fd = sys_open("usr/bin/hello");
         check_int("open fixture", 0, fd >= 0 ? 0 : fd);
         if (fd >= 0) {
             check_int("fread unmapped buffer", -EFAULT, sys_fread(fd, bad, 1));

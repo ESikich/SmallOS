@@ -803,6 +803,13 @@ static int s_ends_with(const char* s, const char* suffix) {
     return u_streq(s + n - m, suffix);
 }
 
+static int s_starts_with(const char* s, const char* prefix) {
+    while (*prefix) {
+        if (*s++ != *prefix++) return 0;
+    }
+    return 1;
+}
+
 static void basename_of(const char* path, char* out, unsigned int cap) {
     const char* base = path;
     const char* p = path;
@@ -824,8 +831,28 @@ static int is_text_like_file(const char* path) {
            s_ends_with(path, ".html");
 }
 
+static int is_program_path(const char* path) {
+    const char* base = path;
+    const char* p = path;
+
+    while (*p) {
+        if (*p == '/') base = p + 1;
+        p++;
+    }
+    if (!base[0]) return 0;
+    for (p = base; *p; p++) {
+        if (*p == '.') return 0;
+    }
+
+    return s_starts_with(path, "/bin/") ||
+           s_starts_with(path, "/usr/bin/") ||
+           s_starts_with(path, "/usr/sbin/") ||
+           s_starts_with(path, "/usr/libexec/tests/");
+}
+
 static launch_kind_t launch_kind_for_path(const char* path) {
     if (s_ends_with(path, ".elf")) return LAUNCH_ELF;
+    if (is_program_path(path)) return LAUNCH_ELF;
     if (s_ends_with(path, ".bmp") || s_ends_with(path, ".BMP")) return LAUNCH_BMP;
     if (is_text_like_file(path)) return LAUNCH_EDIT;
     return LAUNCH_NONE;
@@ -867,12 +894,12 @@ static int run_queued_launch(gfx_context_t* gfx, int* sw, int* sh) {
         argv[0] = "bmpview";
         argv[1] = path;
         argv[2] = 0;
-        pid = sys_exec_foreground("/bin/bmpview.elf", 2, argv);
+        pid = sys_exec_foreground("/bin/bmpview", 2, argv);
     } else {
         argv[0] = "edit";
         argv[1] = path;
         argv[2] = 0;
-        pid = sys_exec_foreground("/bin/edit.elf", 2, argv);
+        pid = sys_exec_foreground("/bin/edit", 2, argv);
     }
 
     if (pid >= 0) {

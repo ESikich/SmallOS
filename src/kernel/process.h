@@ -240,7 +240,7 @@ int        process_wait_restore_foreground(process_t* proc, process_t* restore_p
  *
  * Create and enqueue the kernel reaper task.  The reaper wakes on every
  * timer tick, calls sched_reap_zombies() to free any unclaimed ZOMBIE
- * processes (e.g. runelf_nowait / SYS_EXEC children), then halts until
+ * processes (e.g. background launches or SYS_EXEC children), then halts until
  * the next interrupt.  Call once from kernel_main() before sched_start().
  * Returns 1 on success, 0 if the task could not be created or queued.
  */

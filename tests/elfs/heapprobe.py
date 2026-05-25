@@ -4,7 +4,7 @@ from .common import case
 CASES = [
     case(
         name="heapprobe",
-        command="runelf usr/libexec/tests/heapprobe alpha beta",
+        command="usr/libexec/tests/heapprobe alpha beta",
         must_contain=[
             "heapprobe start",
             "malloc a: PASS",

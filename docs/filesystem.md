@@ -182,7 +182,7 @@ bootseq task  # ext2 mount and boot-log persistence
 ```
 
 in that order. The DHCP-provided network config is runtime state; after boot,
-`/bin/ip.elf` and `/bin/ipconfig.elf` can inspect or replace it without writing
+`/bin/ip` and `/bin/ipconfig` can inspect or replace it without writing
 anything to the filesystem. The storage policy tries ATA first, USB mass storage
 second, and the loader2-published boot RAM fallback last. During the early
 storage probe, only timer IRQ0 is temporarily unmasked so boot timestamps and
@@ -277,8 +277,8 @@ Examples that are distinct names:
 ```text
 hello
 hello.elf
-Hello.elf
-HELLO.ELF
+Hello
+HELLO
 ```
 
 Internally the driver:
@@ -287,7 +287,7 @@ Internally the driver:
 - compares each component byte-for-byte against ext2 directory entries
 - uses the directory entry `file_type` field plus inode mode bits to distinguish files and directories
 
-Path components such as `usr/bin/hello.elf` therefore work even though each
+Path components such as `usr/bin/hello` therefore work even though each
 component is matched independently.
 
 Practical limits:
@@ -433,7 +433,7 @@ The main consumer of the filesystem today is the ELF loader.
 Launch path:
 
 ```text
-runelf <name>
+<name>
   ↓
 elf_run_named(name, argc, argv)
   ↓

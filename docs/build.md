@@ -58,7 +58,7 @@ source files and prints the dependency command if they are missing.
 
 The TinyCC sources stay clean in `third_party/tinycc`. SmallOS applies
 `patches/tinycc/smallos.patch` to a build-local copy under
-`build/tinycc-smalos-src/` before compiling the guest `usr/bin/tcc.elf`
+`build/tinycc-smalos-src/` before compiling the guest `usr/bin/tcc`
 variant. That variant defaults to the SmallOS guest sysroot: `/usr/include`
 for headers and `/usr/lib` for `crt0.o`, `libc.a`, `libm.a`, and
 `libposix.a`.
@@ -77,7 +77,7 @@ for a lean image without game data.
 ```text
 build/
 ├── bin/<profile>/ → final binaries (kernel.elf, kernel.bin,
-│                    usr/bin/*.elf, usr/libexec/tests/*.elf,
+│                    user program *.elf artifacts,
 │                    ext2.seed.img, boot.bin, loader2.bin, tcc-smalos.elf)
 ├── obj/<profile>/ → object files and depfiles (.o, .d), mirrored by source subtree
 ├── gen/<profile>/ → generated source (loader2.gen.asm)
@@ -92,7 +92,7 @@ The generated seed image lives at `build/bin/<profile>/ext2.seed.img`; normal
 runs use the mutable copy at `.state/ext2.img` so guest writes survive ordinary
 rebuilds. Make tracks that copy with `.state/ext2.img.stamp`, so rebuilding
 userland refreshes the runtime partition from the latest seed instead of
-leaving stale ELFs in place. Use `make reset-disk` when you want to discard
+leaving stale installed binaries in place. Use `make reset-disk` when you want to discard
 guest writes explicitly.
 
 ---
@@ -104,9 +104,9 @@ source files (.c, .asm)
   ↓
 object files (.o)
   ↓
-kernel.elf          usr/bin/hello.elf   usr/libexec/tests/*.elf   ...
-  ↓                      ↓
-kernel.bin         user program ELFs
+kernel.elf          hello.elf   exec_args.elf   ...
+  ↓                    ↓
+kernel.bin        user program ELFs
   ↓                      ↓
 loader2.gen.asm     ext2.seed.img      ← built by build/tools/mkext2 from seeded entries
   ↓                      ↓
@@ -251,8 +251,8 @@ sequence.
 Most freestanding test ELFs define `_start(argc, argv)` directly and link
 against the SmallOS user libraries built under `build/obj/.../user/lib/`.
 Hosted-ish programs also link `src/user/crt/crt0.c`, which supplies `_start`,
-sets `environ`, and exits with `main`'s return value. `usr/bin/tcc.elf` and
-`usr/libexec/tests/crtprobe.elf` use that CRT path; there is no TinyCC-specific
+sets `environ`, and exits with `main`'s return value. `usr/bin/tcc` and
+`usr/libexec/tests/crtprobe` use that CRT path; there is no TinyCC-specific
 startup wrapper.
 
 ## Automated Guest Test
@@ -269,8 +269,8 @@ the long regression run from corrupting process state while the guest test
 harness is exercising the full matrix.
 
 The guest suite also exercises the SmallOS-hosted TinyCC compiler
-(`usr/bin/tcc.elf`) by compiling several sample C files inside the guest
-and immediately running the generated ELFs. `usr/bin/tcc.elf` links the generic
+(`usr/bin/tcc`) by compiling several sample C files inside the guest
+and immediately running the generated ELFs. `usr/bin/tcc` links the generic
 SmallOS CRT adapter and runs TinyCC's normal hosted CLI `main()` path inside
 the freestanding guest runtime. The suite covers both freestanding
 `-nostdlib` samples and a hosted sysroot sample that uses installed headers,
@@ -594,7 +594,7 @@ sources also change.
 src/user/hello.c
 src/user/ticks.c
 src/user/args.c
-src/user/runelf_test.c
+src/user/exec_args.c
 src/user/readline.c
 src/user/exec_test.c
 src/user/fileread.c
@@ -629,13 +629,16 @@ launcher linked against generated upstream Wolf3D objects and SmallOS
 compatibility shims. Reusable pressure from that port now lives in shared
 runtime and kernel helpers: DOS/Borland headers, `<conio.h>` and BIOS keyboard
 entry points, input waits, DOS-style tick clocks, VGA planar page math, indexed
-graphics presentation, and kernel-timed PC speaker/OPL sequences. The Wolf3D
+graphics presentation, and kernel-timed PC speaker/OPL sequences. The
+level-completion regression also keeps the sound/timer boundary honest:
+upstream animation code may reset its DOS `TimeCount`, while SmallOS sound
+deadlines need monotonic OS time. The Wolf3D
 shim keeps the game-specific pieces, including upstream source preparation,
 asset and data-directory fallback, scaler/raycast glue, mouse INT 33h behavior,
 DOS-width `CONFIG.` persistence, and display/input/sound cleanup while the
 original engine tree remains unmodified.
 
-The guest compiler toolchain ships as `usr/bin/tcc.elf`, built from the TinyCC
+The guest compiler toolchain ships as `usr/bin/tcc`, built from the TinyCC
 submodule sources with the generic SmallOS CRT adapter. The guest entry point
 bridges the kernel `_start(argc, argv)` launch ABI to TinyCC's normal
 `main(argc, argv)` path. The shell selftests compile
@@ -668,7 +671,7 @@ Key link options:
 * `-e _start` — entry point symbol
 * no `-T linker.ld` — user programs use a simpler layout than the kernel
 
-Multiple programs sharing `-Ttext-segment 0x400000` is safe because each `runelf` invocation creates its own page directory, mapping that virtual address to different physical frames.
+Multiple programs sharing `-Ttext-segment 0x400000` is safe because each user program launch creates its own page directory, mapping that virtual address to different physical frames.
 
 ## Properties
 
@@ -696,14 +699,14 @@ $(TOOLS_DIR)/mkext2: tools/mkext2.c | dirs
 
 ```bash
 build/tools/mkext2 build/bin/auto/ext2.seed.img \
-    bin/echo.elf=build/bin/auto/echo.elf \
-    bin/date.elf=build/bin/auto/date.elf \
-    usr/bin/hello.elf=build/bin/auto/hello.elf \
-    usr/bin/plasma.elf=build/bin/auto/plasma.elf \
-    usr/bin/mandel.elf=build/bin/auto/mandel.elf \
-    usr/libexec/tests/runelf_test.elf=build/bin/auto/runelf_test.elf \
-    usr/sbin/ftpd.elf=build/bin/auto/ftpd.elf \
-    usr/bin/tcc.elf=build/bin/auto/tcc-smalos.elf \
+    bin/echo=build/bin/auto/echo.elf \
+    bin/date=build/bin/auto/date.elf \
+    usr/bin/hello=build/bin/auto/hello.elf \
+    usr/bin/plasma=build/bin/auto/plasma.elf \
+    usr/bin/mandel=build/bin/auto/mandel.elf \
+    usr/libexec/tests/exec_args=build/bin/auto/exec_args.elf \
+    usr/sbin/ftpd=build/bin/auto/ftpd.elf \
+    usr/bin/tcc=build/bin/auto/tcc-smalos.elf \
     usr/include/stdio.h=src/user/include/stdio.h \
     usr/lib/crt0.o=build/obj/auto/user/crt/crt0.o \
     usr/lib/libc.a=build/obj/auto/user/lib/libc.a \
@@ -760,7 +763,7 @@ Shipped ext2 programs:
 - `bin/soundprobe` - PC speaker, PCM, and AdLib OPL2 diagnostic command
 - `usr/libexec/tests/ticks` - print the current tick count
 - `usr/libexec/tests/args` - print argc and argv
-- `usr/libexec/tests/runelf_test` - verify ELF loading, syscalls, and stack setup
+- `usr/libexec/tests/exec_args` - verify ELF loading, syscalls, and stack setup
 - `usr/libexec/tests/readline` - interactive SYS_READ demo
 - `usr/libexec/tests/exec_test` - exercise SYS_EXEC semantics
 - `usr/libexec/tests/waitprobe` - exercise getpid/waitpid/kill process lifecycle
@@ -784,7 +787,7 @@ Shipped ext2 programs:
 - `usr/libexec/tests/preempt_test` - prove timer-driven preemption
 - `usr/libexec/tests/crtprobe` - verify `main(argc, argv)` via `crt0`
 - `usr/libexec/tests/fault` - fault probe (ud/gp/de/br/pf)
-- `usr/bin/tcc.elf` - SmallOS-hosted TinyCC compiler binary linked through
+- `usr/bin/tcc` - SmallOS-hosted TinyCC compiler binary linked through
   `src/user/crt/crt0.c`
 - `/usr/include` - public libc/POSIX/SmallOS headers and kernel UAPI headers
 - `/usr/lib` - `crt0.o`, `libc.a`, `libm.a`, and `libposix.a` for guest builds
@@ -794,10 +797,10 @@ Shipped ext2 programs:
 
 * fixed-size volume defined by `tools/mkext2.c`
 * root directory is intended to stay directory-only during normal use
-* `bin/` contains command-style app ELFs found by bare shell command lookup
+* `bin/` contains command-style app binaries found by bare shell command lookup
 * `usr/bin/` contains demos, development tools, and larger user-facing programs such as `hello`, `plasma`, `mandel`, `fractint`, and `tcc`
-* `usr/libexec/tests/` contains the remaining shipped test ELFs
-* `usr/sbin/` contains guest service ELFs
+* `usr/libexec/tests/` contains the remaining shipped test binaries
+* `usr/sbin/` contains guest service binaries
 * `usr/include/` and `usr/lib/` contain the guest C build sysroot, including public SmallOS helpers such as `term_keys.h`
 * `usr/share/man/` contains plain-text manual pages installed from repository `man/man*/`
 * `usr/share/xfractint/` contains the generated Fractint help database, `sstools.ini`, and upstream maps, parameter sets, formulas, L-system definitions, and IFS definitions staged both at the Fractint search root and in canonical upstream subdirectories
@@ -1016,9 +1019,9 @@ Cause: simple linker script does not separate read-only and executable sections.
 # Dependency Model
 
 ```text
-usr/bin/hello.elf ────────────────────┐
-usr/libexec/tests/*.elf ───────────────────────┤
-usr/bin/tcc.elf / usr/share/examples/*.c ─┤→ ext2.seed.img → .state/ext2.img ─┐
+usr/bin/hello ────────────────────┐
+usr/libexec/tests/* ───────────────────────────┤
+usr/bin/tcc / usr/share/examples/*.c ─┤→ ext2.seed.img → .state/ext2.img ─┐
                                         │                           │
 kernel.bin ───────────────┐             │                           │
                           ├→ loader2.gen.asm → loader2.bin ───────┤
@@ -1052,7 +1055,7 @@ Cons: no relocation, no metadata, BSS must be zeroed manually.
 
 ## All User Programs at 0x400000
 
-All user ELFs are linked at the same virtual address. This is safe because each `runelf` creates a new page directory with its own private mapping at PD index 1. The same virtual address maps to different physical frames for different processes.
+All user ELFs are linked at the same virtual address. This is safe because each user program launch creates a new page directory with its own private mapping at PD index 1. The same virtual address maps to different physical frames for different processes.
 
 Pros: simple linking, no need for unique link addresses per program.
 Cons: no PIE, no dynamic linking, and all programs must currently fit the fixed loader / exec model even though a scheduler now exists.
@@ -1113,9 +1116,9 @@ both supported boot HID devices are found, while skipping the active
 USB-storage port and already-claimed HID ports. The HID matcher accepts keyboard
 and mouse protocol interfaces even when older firmware reports a non-boot HID
 subclass, then requests boot protocol before polling. Retry diagnostics stay
-quiet after the shell prompt; the visible `Input:` lines and `/bin/usbinfo.elf`
+quiet after the shell prompt; the visible `Input:` lines and `/bin/usbinfo`
 report keyboard/mouse endpoint, packet, poll, report, and condition-code
-counters for hardware bring-up; `/bin/mousetest.elf` can poll the shared mouse
+counters for hardware bring-up; `/bin/mousetest` can poll the shared mouse
 state and USB boot mouse path from userland.
 
 ---

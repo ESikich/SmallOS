@@ -44,7 +44,7 @@ Verification rule:
 
 ```text
 meminfo
-runelf usr/bin/hello
+usr/bin/hello
 meminfo
 ```
 

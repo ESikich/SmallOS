@@ -229,7 +229,7 @@ not final: the `usb` service task retries boot keyboard and mouse discovery
 once per second, skips the already-mounted USB-storage port and already-active
 HID ports, and preserves USB addresses for failed attempts so late devices can
 still be claimed after the shell is visible. Retry diagnostics stay quiet at the
-prompt; use `/bin/usbinfo.elf` for live HID counters. The HID matcher accepts keyboard
+prompt; use `/bin/usbinfo` for live HID counters. The HID matcher accepts keyboard
 and mouse protocol interfaces even when older firmware reports a non-boot HID
 subclass, then requests boot protocol before polling. The visible `Input:` lines show
 keyboard and mouse endpoint/poll/report counters so hardware bring-up can be
@@ -488,7 +488,7 @@ deltas. Avoid VMX `mouse.*` or `vmmouse.*` overrides on ESXi 6.7 unless you are
 deliberately testing VM configuration; the known-good baseline leaves those
 keys absent and keeps `usb.present = "FALSE"`.
 
-Use `/bin/mousetest.elf` through the shell command `mousetest` to confirm input
+Use `/bin/mousetest` through the shell command `mousetest` to confirm input
 delivery. A VMware console with working movement should report nonzero
 `dx`/`dy` events and a summary with nonzero `vmware=` packets.
 
@@ -625,13 +625,13 @@ Kernel   →  zero BSS
 Bootseq  →  mount ext2 from ATA, USB storage, or boot RAM fallback
          →  save /var/log/boot.txt when the filesystem is writable
          →  switch async DHCP/NTP/service messages to log-only mode
-         →  load /bin/shell.elf suspended
-         →  run /bin/bootsplash.elf boot/splash.bmp
+         →  load /bin/shell suspended
+         →  run /bin/bootsplash boot/splash.bmp
          →  probe OHCI boot keyboard/mouse HID and queue retrying usb service
 Bootnet  →  dhcp_configure, then best-effort ntp_sync through the DHCP gateway
 Bootsvc  →  after ext2 and splash are ready, start boot FTP and cserve services
 Bootseq  →  print welcome/time/network/memory summary and SmallOS ready
-         →  foreground and resume /bin/shell.elf
+         →  foreground and resume /bin/shell
          →  idle if the user shell exits or fails
 ```
 

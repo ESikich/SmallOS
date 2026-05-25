@@ -11,7 +11,7 @@ int main(void) {
     int fd;
     unsigned char byte;
 
-    fd = open("usr/bin/hello.elf", O_RDONLY);
+    fd = open("usr/bin/hello", O_RDONLY);
     if (fd < 0 || read(fd, &byte, 1) != 1 || byte != 0x7fu) {
         puts("forkprobe file setup: FAIL");
         return 1;

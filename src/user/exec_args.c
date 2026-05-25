@@ -53,9 +53,9 @@ static const char* basename_ptr(const char* s) {
     return base;
 }
 
-static int argv0_is_runelf_test(const char* s) {
+static int argv0_is_exec_args(const char* s) {
     const char* base = basename_ptr(s);
-    return str_eq(base, "runelf_test") || str_eq(base, "runelf_test.elf");
+    return str_eq(base, "exec_args");
 }
 
 static void check_true(const char* name, int cond) {
@@ -126,8 +126,8 @@ static void check_argv(int argc, char** argv) {
     check_true("argc >= 1", argc >= 1);
 
     if (argc >= 1) {
-        check_true("argv[0] == runelf_test[/ .elf]",
-                   argv0_is_runelf_test(argv[0]));
+        check_true("argv[0] == exec_args",
+                   argv0_is_exec_args(argv[0]));
     }
 
     if (argc >= 2) {
@@ -144,7 +144,7 @@ static void check_argv(int argc, char** argv) {
 }
 
 void _start(int argc, char** argv) {
-    u_puts("=== runelf test begin ===\n");
+    u_puts("=== exec test begin ===\n");
 
     /* argv / argc forwarding */
     check_int_eq("argc", 4, argc);
@@ -193,10 +193,10 @@ void _start(int argc, char** argv) {
     u_putc('\n');
 
     if (g_failures == 0) {
-        u_puts("=== runelf test PASS ===\n");
+        u_puts("=== exec test PASS ===\n");
         sys_exit(0);
     } else {
-        u_puts("=== runelf test FAIL ===\n");
+        u_puts("=== exec test FAIL ===\n");
         sys_exit(1);
     }
 }

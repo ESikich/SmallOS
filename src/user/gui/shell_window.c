@@ -6,7 +6,7 @@
 #define GUI_SHELL_NO_FD (-1)
 #define GUI_SHELL_PIPE_FLAGS SYS_FD_FLAG_NONBLOCK
 #define GUI_SHELL_SIGTERM 15
-#define GUI_SHELL_PATH "/bin/shell.elf"
+#define GUI_SHELL_PATH "/bin/shell"
 #define GUI_TREE_MAX_ENTRIES 64
 #define GUI_TREE_MAX_DEPTH 6
 #define GUI_SHELL_POLL_BYTE_BUDGET 2048
@@ -944,8 +944,8 @@ static void cmd_echo(gui_shell_window_t* shell, int argc, char* argv[]) {
 static const char* const gui_shell_builtins[] = {
     "help", "clear", "meminfo", "memmap", "netinfo", "dhcp",
     "netsend", "netrecv", "arpgw", "ping", "pinggw", "pingpublic",
-    "netcheck", "mousetest", "ataread", "cd", "pwd", "wd", "runelf",
-    "runelf_nowait", "runelf_bg", "bg", "jobs", "fg", "kill",
+    "netcheck", "mousetest", "ataread", "cd", "pwd", "wd",
+    "bg", "jobs", "fg", "kill",
     "selftest", "shelltest", "echo", "about", "halt", "reboot",
     "uptime", "ls", "tree", "fsread", "cat", "more", "mkdir",
     "rmdir", "rm", "touch", "cp", "mv", "edit", "exit",

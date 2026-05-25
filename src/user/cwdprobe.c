@@ -51,7 +51,7 @@ void _start(int argc, char** argv) {
     }
 
     {
-        int fd = sys_open("hello.elf");
+        int fd = sys_open("hello");
         if (fd < 0) {
             u_puts("cwdprobe open relative: FAIL\n");
             sys_exit(1);
@@ -62,14 +62,14 @@ void _start(int argc, char** argv) {
 
     {
         char resolved[128];
-        if (!realpath("./hello.elf", resolved) || !streq(resolved, "/usr/bin/hello.elf")) {
+        if (!realpath("./hello", resolved) || !streq(resolved, "/usr/bin/hello")) {
             u_puts("cwdprobe realpath relative: FAIL\n");
             sys_exit(1);
         }
         u_puts("cwdprobe realpath relative: PASS\n");
     }
 
-    if (access("hello.elf", R_OK) != 0 || access("missing.elf", F_OK) == 0) {
+    if (access("hello", R_OK) != 0 || access("missing", F_OK) == 0) {
         u_puts("cwdprobe access relative: FAIL\n");
         sys_exit(1);
     }

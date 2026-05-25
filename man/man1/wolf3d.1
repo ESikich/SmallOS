@@ -13,10 +13,10 @@ DESCRIPTION
     passes argv through to the renamed upstream main function, and lets the
     original engine run on the SmallOS compatibility surface.
 
-    Current builds reach the sign-on, title/menu, and early gameplay paths
-    with staged Wolfenstein 3-D data.  The port stores CONFIG. in the original
-    DOS-width layout and releases display/input ownership before returning to
-    the shell.
+    Current builds reach the sign-on, title/menu, early gameplay, and first
+    level-completion intermission paths with staged Wolfenstein 3-D data.  The
+    port stores CONFIG. in the original DOS-width layout and releases
+    display/input/sound ownership before returning to the shell.
 
     Digitized effects use the SmallOS sound syscall and prefer QEMU's AC97
     PCI device when present, falling back to SB16 where needed.  AdLib sound
@@ -26,8 +26,8 @@ DESCRIPTION
     synchronized page flips when the framebuffer backend exposes them, falling
     back to normal display blits otherwise.
 
-    Bounded startup probes and status checks live in wolf3d-srcprobe under
-    usr/libexec/tests.
+    Bounded startup, status, and level-completion probes live in
+    wolf3d-srcprobe under usr/libexec/tests.
 
 FILES
     /usr/share/wolf3d

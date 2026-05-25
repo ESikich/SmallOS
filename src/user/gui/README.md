@@ -1,11 +1,11 @@
 # SmallOS GUI
 
-`/bin/gui.elf` still enters through `src/user/gui.c`, but the desktop code now lives
+`/bin/gui` still enters through `src/user/gui.c`, but the desktop code now lives
 under this folder so the GUI can grow into separate modules.
 
 - `app.c`: desktop, windows, icons, drawing, and event dispatch.
 - `shell_window.c`: shell-window state, scrollback, prompt handling, and the
-  shell backend. It prefers a PTY-backed `/bin/shell.elf` child process, keeps
+  shell backend. It prefers a PTY-backed `/bin/shell` child process, keeps
   pipe-backed child launching as a compatibility fallback, and falls back to
   the embedded command runner if child launch fails.
 - `gui.h`: user-program entrypoint shared by the tiny wrapper and the desktop.
@@ -16,10 +16,10 @@ The Files window is a live ext2 directory browser. Directory rows open in place,
 including the synthesized `..` parent row for non-root paths. File rows use a
 double-click launcher:
 
-- `.elf` files run directly as foreground programs.
-- `.bmp` files run through `/bin/bmpview.elf`.
+- Extensionless files in program directories run directly as foreground programs.
+- `.bmp` files run through `/bin/bmpview`.
 - Text-like files (`.txt`, `.c`, `.h`, `.md`, `.ini`, `.log`, `.html`) run
-  through `/bin/edit.elf`.
+  through `/bin/edit`.
 
 The desktop owns the framebuffer while it is active, so launching a full-screen
 program temporarily releases the display, waits for that child to exit, then
@@ -49,7 +49,7 @@ The GUI treats each shell window as a window-owned terminal session:
 5. Close the window by closing the backend and reaping the child.
 
 The normal path forks a child, duplicates the PTY slave onto fd `0`, `1`, and
-`2`, then execs `/bin/shell.elf`. The parent keeps the PTY master nonblocking
+`2`, then execs `/bin/shell`. The parent keeps the PTY master nonblocking
 so the desktop can poll shell output without freezing pointer or window input.
 The user shell owns command dispatch, history, completion, pipelines, and
 external program launch. The GUI fallback shell keeps matching history and

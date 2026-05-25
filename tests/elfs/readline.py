@@ -4,7 +4,7 @@ from .common import case
 CASES = [
     case(
         name="readline",
-        command="runelf usr/libexec/tests/readline alpha beta",
+        command="usr/libexec/tests/readline alpha beta",
         must_contain=[
             "readline test",
             'Hello, erik!',

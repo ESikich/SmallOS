@@ -309,7 +309,7 @@ def main():
     parser.add_argument("--pidfile", default="/tmp/smallos.pid")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=2121)
-    parser.add_argument("--retr-path", default="usr/bin/hello.elf")
+    parser.add_argument("--retr-path", default="usr/bin/hello")
     parser.add_argument("--stor-path", default="PY_SMOKE.TXT")
     parser.add_argument("--stor-payload", default="ftp smoke payload\r\n")
     parser.add_argument("--nested-dir", default="PYFTP")

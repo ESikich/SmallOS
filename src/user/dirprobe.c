@@ -38,7 +38,7 @@ void _start(int argc, char** argv) {
         ok = 0;
     }
 
-    if (dir_contains("usr/libexec/tests", "cwdprobe.elf")) {
+    if (dir_contains("usr/libexec/tests", "cwdprobe")) {
         puts("dir nested: PASS");
     } else {
         puts("dir nested: FAIL");
@@ -61,7 +61,7 @@ void _start(int argc, char** argv) {
         closedir(d);
     }
 
-    if (!opendir("usr/bin/hello.elf")) {
+    if (!opendir("usr/bin/hello")) {
         puts("dir invalid file: PASS");
     } else {
         puts("dir invalid file: FAIL");

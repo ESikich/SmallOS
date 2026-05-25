@@ -4,7 +4,7 @@ from .common import case
 CASES = [
     case(
         name="inputprobe",
-        command="runelf usr/libexec/tests/inputprobe",
+        command="usr/libexec/tests/inputprobe",
         must_contain=[
             "inputprobe start",
             "inputprobe waiting for key",

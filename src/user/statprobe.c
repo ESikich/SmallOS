@@ -25,7 +25,7 @@ void _start(int argc, char** argv) {
 
     u_puts("statprobe start\n");
     check_stat("demo_dir", "usr/bin");
-    check_stat("demo_hello", "usr/bin/hello.elf");
+    check_stat("demo_hello", "usr/bin/hello");
     check_stat("tests_dir", "usr/libexec/tests");
     {
         struct stat st;
@@ -38,7 +38,7 @@ void _start(int argc, char** argv) {
     }
     {
         struct stat st;
-        if (stat("usr/bin/hello.elf", &st) == 0 &&
+        if (stat("usr/bin/hello", &st) == 0 &&
             S_ISREG(st.st_mode) &&
             st.st_ino != 0 &&
             st.st_nlink >= 1 &&
@@ -51,7 +51,7 @@ void _start(int argc, char** argv) {
             sys_exit(1);
         }
     }
-    if (access("usr/bin/hello.elf", R_OK) == 0 && access("usr/bin/nope.elf", F_OK) < 0) {
+    if (access("usr/bin/hello", R_OK) == 0 && access("usr/bin/nope", F_OK) < 0) {
         u_puts("statprobe access: PASS\n");
     } else {
         u_puts("statprobe access: FAIL\n");

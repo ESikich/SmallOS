@@ -126,9 +126,9 @@ Inside `kernel_main()`:
 11. `pci_init()` — scan PCI config space and log discovered network controllers
 12. `nic_init()` — bind a supported Ethernet adapter. QEMU/ESXi use the e1000 driver; the WYSE S10-class Realtek `10EC:8139` path uses the RTL8139 driver.
 13. `tcp_init()` — create and enqueue the TCP/network service kernel task
-14. `process_create_kernel_task("bootnet", ...)` — if a NIC is present, request DHCP IPv4 configuration from the attached network and then run best-effort NTP through the DHCP gateway. The runtime network config is shared by ARP, TCP, NTP, `netinfo`, and the `/bin/ip.elf` and `/bin/ipconfig.elf` configuration tools. Static IPv4 settings use the same `SYS_NET_OP` path and remain runtime-only.
+14. `process_create_kernel_task("bootnet", ...)` — if a NIC is present, request DHCP IPv4 configuration from the attached network and then run best-effort NTP through the DHCP gateway. The runtime network config is shared by ARP, TCP, NTP, `netinfo`, and the `/bin/ip` and `/bin/ipconfig` configuration tools. Static IPv4 settings use the same `SYS_NET_OP` path and remain runtime-only.
 15. `process_create_kernel_task("bootsvc", ...)` — wait until ext2 is mounted and the splash has been presented, then queue the default FTP and cserve user services. Service status is appended to `/var/log/boot.txt` without drawing over the splash.
-16. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` mounts writable ATA, read-only USB mass storage, or loader2 RAM fallback, saves the accumulated boot log to `/var/log/boot.txt` when the filesystem is writable, loads `/bin/shell.elf` suspended, and runs `/bin/bootsplash.elf boot/splash.bmp`. While that splash remains visible, `bootseq` probes OHCI boot keyboard/mouse HID, starts the retrying USB HID service, captures input diagnostics, and refreshes the boot log. It then clears the splash, prints the welcome/time/network/memory summary plus `SmallOS ready`, and releases the shell. If that fails or exits, it reports that no kernel shell fallback is linked and idles.
+16. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` mounts writable ATA, read-only USB mass storage, or loader2 RAM fallback, saves the accumulated boot log to `/var/log/boot.txt` when the filesystem is writable, loads `/bin/shell` suspended, and runs `/bin/bootsplash boot/splash.bmp`. While that splash remains visible, `bootseq` probes OHCI boot keyboard/mouse HID, starts the retrying USB HID service, captures input diagnostics, and refreshes the boot log. It then clears the splash, prints the welcome/time/network/memory summary plus `SmallOS ready`, and releases the shell. If that fails or exits, it reports that no kernel shell fallback is linked and idles.
 17. `sched_enqueue(boot_proc)` — make the boot sequence task runnable
 18. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
 19. `sched_start(boot_proc)` - switch from the boot stack into the boot sequence task with interrupts still masked
@@ -155,7 +155,7 @@ Selector values for ring-3 entries include RPL=3 in the low two bits (`0x18|3=0x
 
 # Process Abstraction
 
-Each `runelf` invocation still creates a `process_t` struct allocated from a single PMM frame. The same structure is now also used for kernel tasks such as the shell:
+Each user program launch still creates a `process_t` struct allocated from a single PMM frame. The same structure is now also used for kernel tasks such as the shell:
 
 ```c
 typedef struct {
@@ -290,7 +290,7 @@ irq0_stub — add esp 4, pop segments, popa, iretd → ring 3 resumes
 ## Lifecycle
 
 ```text
-runelf (foreground):
+foreground command:
   process_create()
   allocate proc->kernel_stack_frame
   seed proc->sched_esp         → first entry via elf_user_task_bootstrap()
@@ -298,7 +298,7 @@ runelf (foreground):
   process_wait(proc)           → shell waits until child is ZOMBIE
   process_destroy(proc)        → called from shell's safe stack on wakeup
 
-runelf_nowait (background):
+bg (background):
   process_create()
   allocate proc->kernel_stack_frame
   seed proc->sched_esp         → first entry via elf_user_task_bootstrap()
@@ -322,7 +322,7 @@ SYS_FORK + SYS_EXECVE (POSIX-shaped):
   child may dup2 pipe ends, close unused fds, then execve()
   execve replaces user image and closes FD_CLOEXEC descriptors
 
-user shell bg / runelf_bg (reattachable background):
+user shell bg (reattachable background):
   process_create()
   allocate proc->kernel_stack_frame
   seed proc->sched_esp         → first entry via elf_user_task_bootstrap()
@@ -515,14 +515,23 @@ when needed. AdLib SFX and music use the same syscall surface to stream OPL2
 register writes to the
 Yamaha-compatible device at port 0x388. The generated upstream objects
 now reach the sign-on/title/menu path and early gameplay frames with staged
-data, while `usr/libexec/tests/wolf3d-srcprobe.elf` keeps bounded startup,
-menu, and first-frame probes available for regression checks.
+data, while `usr/libexec/tests/wolf3d-srcprobe` keeps bounded startup,
+menu, first-frame, and level-completion intermission probes available for
+regression checks.
 `CONFIG.` is serialized in the original DOS-width layout, with legacy
 host-width config migration and validation in the port shim, and Wolf display
 and input ownership is released on normal/error exits. Game data stays outside
 git; `make wolf3d-shareware-data` can populate `.state/wolf3d/` with the
 shareware `.WL1` data set from Wolf3D.net. Normal builds stage cached files
 into `/usr/share/wolf3d`; other lean images can set `WOLF3D_STAGE_DATA=0`.
+
+The level-completion path is a useful OS boundary test. Upstream Wolf resets
+its DOS `TimeCount` during some intermission animation loops, so SmallOS-owned
+sound completion must not depend on that game-local counter. The port tracks
+PC speaker and AdLib effect deadlines against the SmallOS monotonic clock while
+letting the original code keep its `SD_SoundPlaying()` waits. Longer term,
+that pressure points toward a fuller kernel sound status/wait surface so ports
+do not need to mirror playback deadlines in userland.
 
 ## Shell
 
@@ -543,7 +552,7 @@ keyboard IRQ → keyboard_handle_irq()
 ```
 
 The active consumer is managed by `keyboard_set_consumer()`:
-- `process_set_foreground(proc)` clears `kb_buf` (discarding any stale input, e.g. the Enter that launched `runelf`), records the foreground process group, then registers `process_key_consumer` when a user process takes the foreground
+- `process_set_foreground(proc)` clears `kb_buf` (discarding any stale input, e.g. the Enter that launched the foreground program), records the foreground process group, then registers `process_key_consumer` when a user process takes the foreground
 - `process_set_foreground_preserve_input(proc)` keeps already-buffered input while refreshing the same foreground owner; bootseq uses an explicit `process_set_foreground(shell)` before resuming the suspended user shell so PS/2 and USB keyboard events are routed to the prompt immediately
 - `process_key_consumer` pushes ASCII into `kb_buf`; after each push it checks `keyboard_get_waiting_process()` and, if a process is parked in `PROCESS_STATE_WAITING`, sets it back to `PROCESS_STATE_RUNNING` and clears the waiter slot so the scheduler picks it up
 - Ctrl+C is normally handled by `process_key_consumer` as a terminal interrupt for the foreground process group. Matching signalfds receive `SIGINT`; otherwise the group gets exit status `130`, pending console/socket waits are cleared, and any actively running member is switched away from the IRQ1 frame. If the foreground console owner is parked in `SYS_READ_RAW`, as the user shell is while editing its prompt, Ctrl+C is queued as byte `0x03` so the editor can cancel the current line without killing the shell.
@@ -558,7 +567,7 @@ values for arrows, Home/End, Insert/Delete, PageUp/PageDown, F1-F4, and common
 control keys. Fractint and `mandel` use this shared path instead of carrying
 program-local ANSI escape parsers.
 
-The boot sequence launches `/bin/shell.elf` as the interactive shell. The old
+The boot sequence launches `/bin/shell` as the interactive shell. The old
 kernel shell is no longer linked into the kernel image.
 
 Mouse input is intentionally lower-level today. `mouse.c` initializes the PS/2
@@ -580,9 +589,9 @@ protocol interfaces even when older firmware does not report the exact boot HID
 subclass, then requests boot protocol before polling. USB keyboard reports are translated into
 set-1 scancodes; USB mouse reports are injected into the normal mouse state.
 The shell-facing USB and mouse diagnostics are userland programs
-(`/bin/usbinfo.elf`, `/bin/usbports.elf`, `/bin/usbdiag.elf`,
-`/bin/usbpeek.elf`, `/bin/usbpower.elf`, `/bin/usbmouse.elf`, and
-`/bin/mousetest.elf`) that call narrow diagnostic syscalls. Passive USB port
+(`/bin/usbinfo`, `/bin/usbports`, `/bin/usbdiag`,
+`/bin/usbpeek`, `/bin/usbpower`, `/bin/usbmouse`, and
+`/bin/mousetest`) that call narrow diagnostic syscalls. Passive USB port
 views are copied out as structured snapshots and formatted by `usbports` and
 the passive half of `usbdiag`; active OHCI descriptor peeks still execute in
 the kernel. The kernel still owns OHCI/MMIO access, boot-HID session state, and
@@ -747,7 +756,7 @@ ata_read_sectors(lba, count, buf)
 # ELF Execution Model
 
 ```text
-runelf usr/bin/hello arg1
+usr/bin/hello arg1
   ↓
 vfs_load_file_owned("hello", &size, &frame, &frames)
   → backend lookup, follow block chain, load into a private PMM image buffer
@@ -766,7 +775,7 @@ proc->state = RUNNING
 sched_enqueue(proc)             → child becomes a runnable task
 process_set_foreground(proc)    → foreground reader/group for interactive waits
 
-[runelf waits with process_wait(proc); runelf_nowait returns immediately]
+[foreground commands wait; bg returns immediately]
 
 scheduler enters child via elf_user_task_bootstrap()
   tss_set_kernel_stack(proc->kernel_stack_frame + PAGE_SIZE)
@@ -892,7 +901,7 @@ physical memory manager (bitmap, all frames reclaimed on exit — no leak)
 per-process kernel stacks (PMM frame per process, freed on exit)
 SYS_READ / fd 0 — true blocking keyboard input through the console handle: parks process in PROCESS_STATE_WAITING, woken by keyboard IRQ via process_key_consumer()
 SYS_MOUSE_READ — polling mouse state for graphics demos: returns accumulated relative deltas/buttons and clears the movement counters
-SYS_USBINFO / SYS_MOUSE_DEBUG / SYS_USB_DIAG_OP / SYS_USB_MOUSE_OP — USB and mouse diagnostic interfaces used by `/bin/usb*.elf` and `/bin/mousetest.elf`; userland owns passive snapshot formatting while controller access and active diagnostic transfers remain in the kernel
+SYS_USBINFO / SYS_MOUSE_DEBUG / SYS_USB_DIAG_OP / SYS_USB_MOUSE_OP — USB and mouse diagnostic interfaces used by `/bin/usb*` and `/bin/mousetest`; userland owns passive snapshot formatting while controller access and active diagnostic transfers remain in the kernel
 SYS_YIELD — voluntary preemption via sched_yield_now()
 SYS_SLEEP — timed sleep: parks process in PROCESS_STATE_SLEEPING and wakes via the timer IRQ once the deadline is reached
 SYS_EXEC / SYS_FORK / SYS_EXECVE / SYS_WAITPID / SYS_KILL — legacy async ELF spawn plus POSIX-shaped fork/replace; userland can collect exit/signal status or terminate a child by pid
@@ -904,17 +913,17 @@ SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_ACCEPT4 / SYS_CONNECT / SY
 SYS_PIPE / SYS_PIPE2 / SYS_DUP* / SYS_FCNTL / SYS_POLL / SYS_EPOLL_* / SYS_TIMERFD_* / SYS_SIGNALFD — pipes, descriptor duplication, descriptor flags, and event-loop shims for shell pipelines and cserve-style guest services; socket waits register on socket wait queues, timerfd handles register read waiters that timer IRQs can wake when timerfds expire, and signalfd handles can be woken by kernel SIGINT/SIGTERM delivery
 SYS_INPUT_READ / SYS_INPUT_WAIT_UNTIL — shared keyboard/mouse event queue for GUI-style programs; callers can drain queued events or sleep until input arrives or a frame deadline is reached
 SYS_CLOCK_GETTIME / SYS_CLOCK_SETTIME / SYS_NTP_SYNC — realtime clock syscalls; `CLOCK_MONOTONIC` reports uptime, `CLOCK_REALTIME` is maintained as an offset from uptime and can be set directly or by the tiny NTP client
-SYS_PROCINFO — scheduler/process diagnostic snapshot used by `/bin/top.elf` for live CPU tick deltas, process state, and task-owned RAM estimates
-CPUID + diagnostic syscalls — `/bin/cpuz.elf` prints CPU vendor/brand/features/cache and combines existing memory, display, USB, network, and storage snapshots into one hardware summary
+SYS_PROCINFO — scheduler/process diagnostic snapshot used by `/bin/top` for live CPU tick deltas, process state, and task-owned RAM estimates
+CPUID + diagnostic syscalls — `/bin/cpuz` prints CPU vendor/brand/features/cache and combines existing memory, display, USB, network, and storage snapshots into one hardware summary
 TCP service task — drains NIC RX, dispatches ARP/IPv4/TCP frames, advertises receive windows from per-connection RX rings, services retransmit/idle timers for control handshakes, buffered TX payloads, active-open SYNs, and FIN paths, handles duplicate peer-FIN ACKs and close-driven final writes, and wakes socket wait queues
 page-aware copy-from-user validation — syscall pointer arguments are checked against user address space [USER_CODE_BASE, USER_STACK_TOP), mapped user pages, page-crossing buffers/structs, and wrapped variable-length byte counts before dereference
 preemptive round-robin scheduler — timer IRQ context switch, `SCHED_QUANTUM_MS` quantum
 ATA disk driver — 28-bit LBA reads/writes from primary IDE channel (0x1F0), with bus-master DMA and PIO fallback
 USB storage/HID driver — OHCI Bulk-Only Transport/SCSI read-only block device used as `usb0`, plus retrying boot keyboard/mouse polling
-ext2 filesystem — ELF programs loaded from ATA, USB storage, or the boot RAM fallback
-run/runimg infrastructure removed — `runelf` is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
-interactive shell with builtin job control plus `/bin` command ELFs such as meminfo / memmap / cpuz / top / ataread / ls / tree / fsread / mkdir / rmdir
-guest TinyCC compiler path — `usr/bin/tcc.elf` runs inside SmallOS through `crt0` and TinyCC's normal `main`, then compiles guest C samples during `make test`
+ext2 filesystem — user programs loaded from ATA, USB storage, or the boot RAM fallback
+run/runimg infrastructure removed — direct shell execution is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
+interactive shell with builtin job control plus `/bin` command binaries such as meminfo / memmap / cpuz / top / ataread / ls / tree / fsread / mkdir / rmdir
+guest TinyCC compiler path — `usr/bin/tcc` runs inside SmallOS through `crt0` and TinyCC's normal `main`, then compiles guest C samples during `make test`
 ```
 
 Foundation for:

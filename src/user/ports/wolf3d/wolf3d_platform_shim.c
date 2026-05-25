@@ -125,6 +125,7 @@ static const byte* wolf3d_line_shape;
 static const byte* wolf3d_pc_sound_data;
 static longword wolf3d_pc_sound_length;
 static longword wolf3d_pc_sound_end_tick;
+static uint32_t wolf3d_pc_sound_end_units;
 static word wolf3d_pc_sound_number;
 static word wolf3d_pc_sound_priority;
 static byte* wolf3d_digi_buffer;
@@ -134,6 +135,7 @@ static uint32_t wolf3d_digi_end_units;
 static word wolf3d_digi_number;
 static word wolf3d_digi_priority;
 static longword wolf3d_al_sound_end_tick;
+static uint32_t wolf3d_al_sound_end_units;
 static word wolf3d_al_sound_number;
 static word wolf3d_al_sound_priority;
 static word* wolf3d_music_data;
@@ -160,6 +162,7 @@ int wolf3d_probe_stop_after_demo_prelude;
 int wolf3d_probe_stop_after_title_frame;
 int wolf3d_probe_stop_after_control_panel_frame;
 int wolf3d_probe_stop_after_first_game_frame;
+int wolf3d_probe_skip_level_completed_ack;
 
 extern unsigned vgaCeiling[];
 extern int midangle;
@@ -316,14 +319,34 @@ void wolf3d_sync_time_count(void) {
     wolf3d_sound_service(now);
 }
 
-static int wolf3d_pc_sound_is_playing(void) {
+static uint32_t wolf3d_sound_duration_units(unsigned int samples,
+                                            unsigned int sample_hz) {
+    uint32_t units;
+
+    if (!samples || !sample_hz) {
+        return 1u;
+    }
+    units = ((uint32_t)samples * WOLF3D_TIMER_UNITS_PER_SECOND +
+             sample_hz - 1u) / sample_hz;
+    return units ? units : 1u;
+}
+
+static int wolf3d_pc_sound_is_playing_at(uint32_t now_units) {
     return wolf3d_pc_sound_data &&
-           TimeCount < wolf3d_pc_sound_end_tick;
+           (int32_t)(now_units - wolf3d_pc_sound_end_units) < 0;
+}
+
+static int wolf3d_pc_sound_is_playing(void) {
+    return wolf3d_pc_sound_is_playing_at(wolf3d_now_units());
+}
+
+static int wolf3d_al_sound_is_playing_at(uint32_t now_units) {
+    return wolf3d_al_sound_number != 0 &&
+           (int32_t)(now_units - wolf3d_al_sound_end_units) < 0;
 }
 
 static int wolf3d_al_sound_is_playing(void) {
-    return wolf3d_al_sound_number != 0 &&
-           TimeCount < wolf3d_al_sound_end_tick;
+    return wolf3d_al_sound_is_playing_at(wolf3d_now_units());
 }
 
 static int wolf3d_digi_is_playing(void) {
@@ -380,6 +403,7 @@ static int wolf3d_adlib_out(unsigned int reg, unsigned int value) {
 
 static void wolf3d_adlib_stop_sound(void) {
     wolf3d_al_sound_end_tick = 0;
+    wolf3d_al_sound_end_units = 0;
     wolf3d_al_sound_number = 0;
     wolf3d_al_sound_priority = 0;
     (void)wolf3d_sound_op(SYS_SOUND_OP_OPL_EFFECT_STOP, 0u, 0u);
@@ -418,6 +442,7 @@ static void wolf3d_stop_sound_effects(void) {
     wolf3d_pc_sound_data = NULL;
     wolf3d_pc_sound_length = 0;
     wolf3d_pc_sound_end_tick = 0;
+    wolf3d_pc_sound_end_units = 0;
     wolf3d_pc_sound_priority = 0;
     wolf3d_pc_sound_number = 0;
     DigiPlaying = false;
@@ -436,6 +461,7 @@ static int wolf3d_adlib_play_sound(soundnames sound, void* al_sound) {
     word priority;
     unsigned int count;
     longword ticks;
+    uint32_t now_units;
 
     if (!AdLibPresent || !al_sound) {
         return 0;
@@ -485,7 +511,10 @@ static int wolf3d_adlib_play_sound(soundnames sound, void* al_sound) {
     if (!ticks) {
         ticks = 1u;
     }
+    now_units = wolf3d_now_units();
     wolf3d_al_sound_end_tick = TimeCount + ticks;
+    wolf3d_al_sound_end_units =
+        now_units + wolf3d_sound_duration_units(count, WOLF3D_ADLIB_SOUND_HZ);
     wolf3d_al_sound_number = (word)sound;
     wolf3d_al_sound_priority = priority;
     return 1;
@@ -548,15 +577,17 @@ static void wolf3d_sound_stop(void) {
 
 static void wolf3d_sound_service(uint32_t now_units) {
     wolf3d_adlib_service_music(now_units);
-    if (wolf3d_pc_sound_data && !wolf3d_pc_sound_is_playing()) {
+    if (wolf3d_pc_sound_data && !wolf3d_pc_sound_is_playing_at(now_units)) {
         wolf3d_pc_sound_data = NULL;
         wolf3d_pc_sound_length = 0;
         wolf3d_pc_sound_end_tick = 0;
+        wolf3d_pc_sound_end_units = 0;
         wolf3d_pc_sound_priority = 0;
         wolf3d_pc_sound_number = 0;
     }
-    if (wolf3d_al_sound_number && !wolf3d_al_sound_is_playing()) {
+    if (wolf3d_al_sound_number && !wolf3d_al_sound_is_playing_at(now_units)) {
         wolf3d_al_sound_end_tick = 0;
+        wolf3d_al_sound_end_units = 0;
         wolf3d_al_sound_number = 0;
         wolf3d_al_sound_priority = 0;
     }
@@ -2602,6 +2633,9 @@ boolean SD_PlaySound(soundnames sound) {
     wolf3d_pc_sound_data = (byte*)pc_data;
     wolf3d_pc_sound_length = count;
     wolf3d_pc_sound_end_tick = TimeCount + (longword)((count + 1u) / 2u);
+    wolf3d_pc_sound_end_units =
+        wolf3d_now_units() +
+        wolf3d_sound_duration_units(count, WOLF3D_TICS_PER_SECOND * 2u);
     wolf3d_pc_sound_number = (word)sound;
     wolf3d_pc_sound_priority = priority;
     return false;
@@ -2696,11 +2730,15 @@ boolean SD_SetMusicMode(SMMode mode) {
 }
 
 word SD_SoundPlaying(void) {
+    uint32_t now_units;
+
     wolf3d_sync_time_count();
-    if (wolf3d_pc_sound_is_playing()) {
+    now_units = wolf3d_now_units();
+    wolf3d_sound_service(now_units);
+    if (wolf3d_pc_sound_is_playing_at(now_units)) {
         return wolf3d_pc_sound_number;
     }
-    if (wolf3d_al_sound_is_playing()) {
+    if (wolf3d_al_sound_is_playing_at(now_units)) {
         return wolf3d_al_sound_number;
     }
     /*

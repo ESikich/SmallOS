@@ -18,12 +18,12 @@ It reflects the current code in:
 # Overview
 
 ELF programs are scheduler-owned user processes. The boot path launches the
-user shell from `/bin/shell.elf`, and the user shell uses the kernel loader
+user shell from `/bin/shell`, and the user shell uses the kernel loader
 machinery for child programs:
 
 ```text
 user shell command
-  → runelf <name> [args]
+  → <name> [args]
   → vfs_load_file_owned()
   → elf_run_image()
   → sched_enqueue(proc)
@@ -35,14 +35,14 @@ user shell command
   → child becomes ZOMBIE, waiter destroys it
 
 user shell command or kernel fallback command
-  → runelf_nowait <name> [args]
+  → bg <name> [args]
   → vfs_load_file_owned()
   → elf_run_image()
   → sched_enqueue(proc)
   → return immediately
 
 user shell command
-  → bg <name> [args] / runelf_bg <name> [args]
+  → bg <name> [args]
   → vfs_load_file_owned()
   → elf_run_image()
   → sched_enqueue(proc)
@@ -53,7 +53,7 @@ user shell command
 
 Important current-state facts:
 
-- the default **shell** is `/bin/shell.elf`, a scheduler-owned ring-3 user
+- the default **shell** is `/bin/shell`, a scheduler-owned ring-3 user
   process launched by `bootseq`; no kernel shell fallback is linked
 - **keyboard IRQ1** decodes scancodes and calls a registered `keyboard_consumer_fn` — it makes no routing decisions itself; USB boot keyboards inject translated set-1 scancodes into the same path
 - the **process consumer** (`process_key_consumer` in `process.c`) pushes ASCII into `kb_buf`; Ctrl+C is delivered as raw byte `0x03` to a foreground `SYS_READ_RAW` prompt reader, and otherwise targets the foreground process group as a terminal signal
@@ -65,7 +65,7 @@ Important current-state facts:
   an absolute frame deadline with `SYS_INPUT_WAIT_UNTIL`.
 - **ELF user programs** are loaded into their own page directory and do execute in ring 3
 - ELF launch and exit are now scheduler-owned: `elf_run_image()` seeds a bootstrap context, enqueues the task, and returns `process_t*`
-- the scheduler supports kernel tasks, ELF tasks, voluntary yielding, timer-driven sleeping, and timer-driven switching; `runelf` blocks with `process_wait()`, `runelf_nowait` returns immediately, and the user shell's `bg` / `runelf_bg` return while keeping a reattachable shell job
+- the scheduler supports kernel tasks, ELF tasks, voluntary yielding, timer-driven sleeping, and timer-driven switching; foreground commands wait for children, and `bg` returns while keeping a reattachable shell job
 - user ELFs have a small freestanding runtime layer with a heap allocator,
   fd-backed console streams, streaming VFS-backed file handles,
   `stat`/`rename`/`unlink`, `lseek`, and socket wrappers, which is enough for
@@ -74,7 +74,7 @@ Important current-state facts:
   `0`/`1`/`2`, and keep the master in the GUI process so foreground commands
   draw inside the window instead of the global console. The GUI paces frame
   work and shell PTY polling so quiet windows do not keep the desktop awake.
-- the shipped `usr/bin/tcc.elf` compiler binary links the generic SmallOS `crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from ext2, write the results back to disk, and then those generated ELFs can be executed immediately
+- the shipped `usr/bin/tcc` compiler binary links the generic SmallOS `crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from ext2, write the results back to disk, and then those generated ELFs can be executed immediately
 - QEMU user networking is still the default for `make run` / `make test`, but the guest now learns its IPv4 address, netmask, gateway, DNS server, and lease time through DHCP instead of assuming QEMU's NAT addresses. `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT.
 - Boot queues DHCP and best-effort NTP as an async kernel task once the scheduler is live. On success, `CLOCK_REALTIME` is set and the boot log prints the UTC time; on failure, boot continues with a warning.
 - Protected-mode boot diagnostics are muted on the active display, mirrored to
@@ -83,11 +83,11 @@ Important current-state facts:
   is visible are display-suppressed but still appended to the boot log.
 - `pinggw` and bare `ping` target the DHCP-provided gateway. `ping <ip>` routes through the DHCP gateway when the target is off-subnet. Public ICMP may still be blocked by the surrounding hypervisor or NAT, so `pingpublic` is only a best-effort probe.
 - `netcheck` prints the gateway steps separately from the public ICMP probe so a `1.1.1.1` timeout does not imply the local NAT path is broken
-- `usr/sbin/tcpecho.elf`, `usr/sbin/sockeof.elf`, `usr/sbin/ftpd.elf`, and `usr/sbin/cserve.elf` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
-- `tcpecho.elf` listens on `2323` in the guest and is driven by `make socket-parallel-smoke` to verify multiple simultaneous echo clients
-- `sockeof.elf` listens on `2463` in the guest and is driven by `make socket-eof-smoke` to verify a multi-segment payload before EOF, `POLLHUP`, post-EOF response writes, and guest write-side shutdown
-- `ftpd.elf` listens on `2121` in the guest and expects passive data connections on `30000`; the boot sequence starts it in quiet mode, `make ftp-smoke` and `make ftp-loop-smoke` cover that path, and host-side clients such as `lftp`, WinSCP, and FileZilla should use passive mode
-- `cserve.elf` listens on `8080` from `/var/www` by default; the boot sequence starts it with logging disabled and `max-conn` set to 28
+- `usr/sbin/tcpecho`, `usr/sbin/sockeof`, `usr/sbin/ftpd`, and `usr/sbin/cserve` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
+- `tcpecho` listens on `2323` in the guest and is driven by `make socket-parallel-smoke` to verify multiple simultaneous echo clients
+- `sockeof` listens on `2463` in the guest and is driven by `make socket-eof-smoke` to verify a multi-segment payload before EOF, `POLLHUP`, post-EOF response writes, and guest write-side shutdown
+- `ftpd` listens on `2121` in the guest and expects passive data connections on `30000`; the boot sequence starts it in quiet mode, `make ftp-smoke` and `make ftp-loop-smoke` cover that path, and host-side clients such as `lftp`, WinSCP, and FileZilla should use passive mode
+- `cserve` listens on `8080` from `/var/www` by default; the boot sequence starts it with logging disabled and `max-conn` set to 28
 
 ---
 
@@ -122,11 +122,11 @@ SYS_MOUSE_READ copies state to userland and clears dx/dy
 After kernel diagnostics, `kernel_main()` creates `bootnet`, `bootsvc`, and
 `bootseq` kernel tasks and enters the scheduler on `bootseq`. `bootseq` mounts
 ext2, saves `/var/log/boot.txt`, switches async chatter to log-only mode, loads
-`/bin/shell.elf` suspended, and runs `/bin/bootsplash.elf boot/splash.bmp`.
+`/bin/shell` suspended, and runs `/bin/bootsplash boot/splash.bmp`.
 While the splash remains visible, boot input/HID diagnostics finish and
 `bootnet`/`bootsvc` append DHCP, NTP, FTP, and cserve status to the boot log.
 `bootseq` then clears the splash, prints a welcome/time/network/memory summary
-plus `SmallOS ready`, and launches `/bin/shell.elf` as the default user shell.
+plus `SmallOS ready`, and launches `/bin/shell` as the default user shell.
 If that user shell exits or cannot be loaded, `bootseq` reports that no kernel
 shell fallback is linked and idles.
 
@@ -136,9 +136,9 @@ shell fallback is linked and idles.
 
 ## 1. Shell commands and app commands
 
-The user shell resolves bare command names through `/bin/<name>.elf` and then
-the current filesystem namespace. Path-like command names are resolved relative
-to the shell cwd and may omit the `.elf` suffix. Commands like `echo`, `about`,
+The user shell resolves bare command names through `/bin/<name>`,
+`/usr/bin/<name>`, and `/usr/sbin/<name>`. Path-like command names are resolved
+relative to the shell cwd. Commands like `echo`, `about`,
 `uptime`, `halt`, `reboot`, `date`, `pwd`, `cat`, `fsread`, `ls`, `tree`,
 `touch`, `rm`, `mkdir`, `rmdir`, `cp`, `mv`, `edit`, `meminfo`, `memmap`,
 `cpuz`, `top`, `netinfo`, `ping`, `dhcp`, `ataread`, `usbinfo`, `usbports`,
@@ -154,9 +154,9 @@ The interactive shell editor keeps a short command history and command/path
 completion. History stores the full input line before tokenization, so recalled
 entries retain all arguments even when the command failed. Completion merges
 duplicate visible candidates, such as a built-in command that also exists as a
-`/bin/*.elf`, before deciding whether there is a unique match.
+program under `/bin`, before deciding whether there is a unique match.
 
-`/bin/ip.elf` and `/bin/ipconfig.elf` are the user-facing runtime network
+`/bin/ip` and `/bin/ipconfig` are the user-facing runtime network
 configuration tools. They read NIC/IPv4/TCP state through `SYS_NETINFO` and
 update the runtime IPv4 address, route, DNS, or DHCP lease through `SYS_NET_OP`.
 Those settings are intentionally volatile; rebooting returns to boot-time DHCP.
@@ -171,23 +171,15 @@ console reads and ANSI-style cursor control to run as a full-screen text
 editor, so Ctrl+C/Ctrl+Z foreground job control still belongs to the same
 process-management path as other interactive ELFs.
 
-## 2. ELF programs (`runelf`)
+## 2. Program execution
 
-`runelf` is the current external-user-program path.
+Typing an external command is the normal user-program path. The shell resolves
+the command to a filesystem path, calls the foreground exec syscall, and waits
+for the child unless the command was launched through `bg`.
 
-Command handler:
-
-```c
-if (!elf_run_named(cmd->argv[1], cmd->argc - 1, &cmd->argv[1])) {
-    terminal_puts("runelf: failed\n");
-}
-```
-
-That means `argv[0]` inside the ELF process is the launch token passed after
-`runelf`, and the rest of the shell tokens follow as normal argv entries. For
-`runelf hello alpha beta`, `argv[0]` is `hello`; for
-`runelf usr/bin/hello alpha beta`, `argv[0]` is `usr/bin/hello`. Nested
-paths and explicit `.elf` suffixes are preserved in argv as written.
+That means `argv[0]` inside the process is the command token as typed. For
+`hello alpha beta`, `argv[0]` is `hello`; for
+`usr/bin/hello alpha beta`, `argv[0]` is `usr/bin/hello`.
 
 There is **no active `runimg` command path** in the current shell command table.
 The shell also supports `shell -c "command args"` for non-interactive command
@@ -196,16 +188,16 @@ execution; libc `system()` uses that path.
 The same path is used by the guest TinyCC smoke tests:
 
 ```text
-runelf usr/bin/tcc.elf -nostdlib -o var/tmp/tccmath.elf usr/share/examples/tinycc/tccmath.c
-runelf var/tmp/tccmath
-runelf usr/bin/tcc.elf -o var/tmp/tccsysroot.elf usr/share/examples/tinycc/tccsysroot.c
-runelf var/tmp/tccsysroot
-runelf usr/bin/tcc.elf -o var/tmp/tccposix.elf usr/share/examples/tinycc/tccposix.c
-runelf var/tmp/tccposix
+tcc -nostdlib -o var/tmp/tccmath usr/share/examples/tinycc/tccmath.c
+var/tmp/tccmath
+tcc -o var/tmp/tccsysroot usr/share/examples/tinycc/tccsysroot.c
+var/tmp/tccsysroot
+tcc -o var/tmp/tccposix usr/share/examples/tinycc/tccposix.c
+var/tmp/tccposix
 ```
 
 The test suite uses this flow to compile several focused C samples inside the
-guest and then run the generated ELFs. The `-nostdlib` samples exercise
+guest and then run the generated programs. The `-nostdlib` samples exercise
 freestanding output, while `tccsysroot.c` exercises the installed
 `/usr/include` and `/usr/lib` hosted path. `tccposix.c` goes further and uses
 that sysroot for ordinary file, stat, cwd, directory, stderr, time, header
@@ -322,9 +314,12 @@ The code currently does all of the following:
 4. enqueue it with `sched_enqueue(proc)`
 5. return the `process_t*` to the caller
 
-`tss_set_kernel_stack()` is **not** called during `elf_run_image()` setup. That update happens later inside `elf_user_task_bootstrap()`, at the moment the scheduler first enters the new process. This avoids clobbering the currently running task's ESP0 during async launch paths such as `runelf_nowait` and `SYS_EXEC`.
+`tss_set_kernel_stack()` is **not** called during `elf_run_image()` setup. That update happens later inside `elf_user_task_bootstrap()`, at the moment the scheduler first enters the new process. This avoids clobbering the currently running task's ESP0 during async launch paths such as `bg` and `SYS_EXEC`.
 
-For `runelf`, the shell then calls `process_wait(proc)` and blocks until the child reaches `PROCESS_STATE_ZOMBIE`. For `runelf_nowait`, the shell returns immediately after enqueue. For the user shell's `bg` / `runelf_bg`, the shell claims the child and stores its pid in a small job table so the process can be listed, foregrounded, or killed later.
+For foreground commands, the shell then waits until the child reaches
+`PROCESS_STATE_ZOMBIE`. For `bg`, the shell claims the child and stores its pid
+in a small job table so the process can be listed, foregrounded, or killed
+later.
 
 The user shell keeps its larger scripted regression command lists in static
 storage. That matters for `shelltest` and `selftest`, which run through the same
@@ -349,9 +344,8 @@ That transitions the CPU from CPL 0 to CPL 3 and begins execution at `e_entry` w
 The current design combines scheduler ownership, foreground input ownership, a
 small process registry, and automatic zombie reaping:
 
-- `runelf` launches the child, then waits with `process_wait(proc)`
-- `runelf_nowait` launches the child and returns immediately; the reaper task frees it after exit
-- user-shell `bg` / `runelf_bg` launch the child and return immediately, but shell job control owns cleanup until `fg <jobid>` reaps it or `kill <jobid>` stops it
+- foreground shell execution launches the child, then waits for it
+- `bg` launches the child and returns immediately, but shell job control owns cleanup until `fg <jobid>` reaps it or `kill <jobid>` stops it
 - Ctrl+Z while a shell-owned job is foregrounded detaches it back to the shell job table without killing it
 - `SYS_EXEC` returns the child pid and claims the child for its parent so userland can call `waitpid()`
 - if a parent exits without waiting, its children are orphaned and any unclaimed zombies become reaper-owned
@@ -495,10 +489,10 @@ The scheduler owns everything:
 The active execution path is:
 
 - **ELF launch uses `sched_enqueue(proc)`**
-- **foreground `runelf` waits with `process_wait()`**
-- **`runelf_nowait` children are reaped automatically by the reaper task**
+- **foreground commands wait with `process_wait()`**
+- **`bg` children are reaped automatically by the reaper task**
 - **`SYS_EXEC` children are collected by `waitpid()` or orphaned to the reaper when the parent exits**
-- **user-shell `bg` / `runelf_bg` children are claimed by shell job control so they can be listed, foregrounded, or killed**
+- **user-shell `bg` children are claimed by shell job control so they can be listed, foregrounded, or killed**
 
 ---
 
@@ -532,7 +526,7 @@ Properties of the current setup:
 
 # Argument Passing
 
-When `runelf usr/bin/hello a b` is invoked, the ELF sees:
+When `usr/bin/hello a b` is invoked, the ELF sees:
 
 - `argc = 3`
 - `argv[0] = "usr/bin/hello"`
@@ -593,7 +587,7 @@ The following must remain true:
 
 # Failure Modes
 
-## `runelf: failed`
+## Program launch failed
 
 Likely causes:
 
@@ -635,5 +629,5 @@ The execution model is fully scheduler-owned.
 - timer-driven preemption
 - `SYS_YIELD`, `SYS_EXEC`, `SYS_FORK`, `SYS_EXECVE`, `SYS_EXIT` all scheduler-owned
 - ELF processes have real per-process page directories
-- foreground `runelf` waits with `process_wait()`; `runelf_nowait` children are reaped automatically; `SYS_EXEC` and `SYS_FORK` children are parent-waitable with `waitpid()`; user-shell `bg` / `runelf_bg` children are shell-owned jobs until `fg` or `kill`
+- foreground commands wait with `process_wait()`; `bg` children are reaped automatically; `SYS_EXEC` and `SYS_FORK` children are parent-waitable with `waitpid()`; user-shell `bg` children are shell-owned jobs until `fg` or `kill`
 - no known zombie or frame leaks

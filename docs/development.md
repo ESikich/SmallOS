@@ -27,7 +27,7 @@ qemu-system-i386 -display gtk,grab-on-hover=off -drive format=raw,file=smallos.i
 
 `make test` runs the same image headlessly, launches the shell `selftest`
 command, feeds the interactive `readline` prompt, and verifies both the
-built-in shell commands (`tests/shell/`) and shipped ELFs
+built-in shell commands (`tests/shell/`) and shipped test programs
 (`tests/elfs/`).
 
 The scripted shell/selftest tables live in the user shell and are kept in static
@@ -50,7 +50,7 @@ before asking QEMU's monitor for `screendump`. For the framebuffer path it
 verifies that the PPM is present, 1024x768, and not blank; for
 `DISPLAY_BACKEND=vga` it verifies the forced-VGA marker, fails if the
 framebuffer backend is selected, and also requires a nonblank VGA text
-screenshot. `make gui-smoke` launches `/bin/gui.elf`, fails on display-open or
+screenshot. `make gui-smoke` launches `/bin/gui`, fails on display-open or
 present errors, exits with `q`, and verifies that the shell prompt returns.
 Keep these checks out of the regular `make test` loop until they have proven
 stable across host QEMU setups.
@@ -70,8 +70,8 @@ the post-diagnostics boot sequence starts.
 After core diagnostics, `kernel_main()` queues `bootnet`, `bootsvc`, `bootseq`,
 and the zombie reaper, then enters the scheduler on `bootseq`. The boot
 sequence mounts ext2, saves the current log to `/var/log/boot.txt`, switches
-DHCP/NTP/service chatter to log-only mode, preloads `/bin/shell.elf` suspended,
-and runs `/bin/bootsplash.elf boot/splash.bmp`. The splash remains on screen
+DHCP/NTP/service chatter to log-only mode, preloads `/bin/shell` suspended,
+and runs `/bin/bootsplash boot/splash.bmp`. The splash remains on screen
 while input/HID diagnostics finish and the async network/service tasks append
 their status to `/var/log/boot.txt`. Only after capture ends does `bootseq`
 re-enable display output, clear the splash, print the welcome/time/network/memory
@@ -248,7 +248,7 @@ void paging_map_page(u32* pd, u32 virt, u32 phys, u32 flags);
 * Any process-private user page table comes from `pmm_alloc_frame()`
 * Kernel-shared page tables remain shared from `kernel_page_directory`
 
-Do not allocate process-owned paging structures with `kmalloc_page()`. The bump allocator has no free path and will leak across `runelf` invocations.
+Do not allocate process-owned paging structures with `kmalloc_page()`. The bump allocator has no free path and will leak across user program invocations.
 
 ### Switching CR3
 
@@ -294,9 +294,9 @@ dereferencing PMM frame addresses.
 
 ```text
 meminfo              ← note heap top and free frame count
-runelf usr/bin/hello
+usr/bin/hello
 meminfo              ← heap top and frame count must be identical
-runelf usr/bin/hello
+usr/bin/hello
 meminfo              ← still identical after second run
 ```
 
@@ -414,7 +414,7 @@ sys_write("debug\n", 6);
 ### Memory accounting
 
 ```text
-meminfo   ← before and after runelf (heap and frames must be stable)
+meminfo   ← before and after program launch (heap and frames must be stable)
 ```
 
 ### QEMU logging
@@ -449,14 +449,14 @@ Useful signals:
 | 6 | argv garbage in ring 3 | Strings not copied to user stack before iret |
 | 7 | Shell doesn't return | child never reached ZOMBIE, or scheduler resume ESP bookkeeping is wrong |
 | 8 | Syscalls silently broken | syscall_regs_t mismatch |
-| 9 | PMM leak after runelf | ELF linked with `-Ttext` not `-Ttext-segment` |
+| 9 | PMM leak after program launch | ELF linked with `-Ttext` not `-Ttext-segment` |
 | 10 | "pmm: double free" | process_destroy called twice |
 | 11 | Crash on first context switch | sched_esp==0 guard missing; or sched_init not called before sti |
 | 12 | Timer fires but no preemption | EOI sent after sched_tick; or irq0_stub not passing ESP |
 | 13 | System freezes after context switch | EOI not sent before sched_switch; IRQ0 permanently masked |
 | 14 | Hangs at "Loading." | Kernel too large — overwrites loader2 during INT 0x13 read; move loader2 higher |
 | 15 | "ext2: bad MBR signature" / "ext2: partition entry not populated" | final image assembly failed; check the `mkimage` step and its arguments |
-| 16 | Heap or PMM frame count grows across runelf | executable image buffers or mapped ELF frames are not being freed |
+| 16 | Heap or PMM frame count grows across program launches | executable image buffers or mapped ELF frames are not being freed |
 | 17 | "ext2: not found" | Path does not match the native case-sensitive ext2 name; check mkext2 output |
 | 18 | "ext2: unsupported geometry" | `tools/mkext2.c` and `src/drivers/ext2.c` disagree on fixed ext2 geometry; update both sides together |
 
@@ -470,10 +470,10 @@ Useful signals:
 4. `ls /` — confirm ext2 root directory lists correctly
 5. `tree` — confirm recursive directory traversal works from the ext2 root
 6. `mkdir TESTDIR` / `rmdir TESTDIR` — confirm directory creation and removal
-7. `fsread usr/bin/hello.elf` — confirm `7F 45 4C 46` (ELF magic)
-8. `runelf usr/bin/hello` — confirm ELF loads from ext2 and exits cleanly
+7. `fsread usr/bin/hello` — confirm `7F 45 4C 46` (ELF magic)
+8. `usr/bin/hello` — confirm ELF loads from ext2 and exits cleanly
 9. `meminfo` before and after — heap top and frame count must be identical
-10. Run a second `runelf usr/bin/hello` — confirm private image buffers are freed and reusable
+10. Run a second `usr/bin/hello` — confirm private image buffers are freed and reusable
 11. Then expand
 
 ---
@@ -485,10 +485,10 @@ Useful signals:
 3. Link through the SmallOS user libraries (`libc.a`, `libm.a`, `libposix.a`) instead of adding runtime objects by hand
 4. Keep public interfaces in `src/user/include/`; Make installs them into the guest `/usr/include` sysroot
 5. Add `myprog` to `USER_PROGS` in Makefile - automatically included in the ext2 image
-6. If the program needs extra user objects, add a custom link rule like `bmpview.elf` or `plasma.elf`
+6. If the program needs extra user objects, add a custom link rule like `bmpview` or `plasma`
 7. Add a matching plain-text manual page under `man/man1/myprog.1` for user commands or `man/man8/myprog.8` for services/admin tools; Make installs `man/man*/*` under `/usr/share/man/`
 8. `make clean && make`
-9. `runelf myprog`
+9. `myprog`
 
 The launch ABI enters `_start(argc, argv, envp)` and guarantees both
 `argv[argc] == NULL` and a NULL-terminated environment vector. Two-argument

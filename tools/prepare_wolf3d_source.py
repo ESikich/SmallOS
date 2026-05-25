@@ -739,6 +739,25 @@ def normalize_c_source(data: bytes) -> bytes:
         b"\t\tVL_WaitVBL(1);",
     )
     data = data.replace(
+        b"\twhile(!IN_CheckAck())\n"
+        b"\t  BJ_Breathe();",
+        b"#ifdef SMALLOS_WOLF3D_SOURCE_PROBE\n"
+        b"\t{\n"
+        b"\t  extern int wolf3d_probe_skip_level_completed_ack;\n"
+        b"\t  if (!wolf3d_probe_skip_level_completed_ack)\n"
+        b"\t  {\n"
+        b"#endif\n"
+        b"\twhile(!IN_CheckAck())\n"
+        b"\t{\n"
+        b"\t  BJ_Breathe();\n"
+        b"\t  VL_WaitVBL(1);\n"
+        b"\t}\n"
+        b"#ifdef SMALLOS_WOLF3D_SOURCE_PROBE\n"
+        b"\t  }\n"
+        b"\t}\n"
+        b"#endif",
+    )
+    data = data.replace(
         b"\t\twhile (TimeCount<lasttimecount+DEMOTICS)\n"
         b"\t\t;",
         b"\t\twhile (TimeCount<lasttimecount+DEMOTICS)\n"

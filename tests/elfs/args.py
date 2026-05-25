@@ -4,7 +4,7 @@ from .common import case
 CASES = [
     case(
         name="args",
-        command="runelf usr/libexec/tests/args alpha beta",
+        command="usr/libexec/tests/args alpha beta",
         must_contain=[
             "argc = 3",
             "argv[0] = usr/libexec/tests/args",

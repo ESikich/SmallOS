@@ -4,7 +4,7 @@ from .common import case
 CASES = [
     case(
         name="timerfdprobe",
-        command="runelf usr/libexec/tests/timerfdprobe",
+        command="usr/libexec/tests/timerfdprobe",
         must_contain=[
             "timerfdprobe start",
             "timerfdprobe poll ok",

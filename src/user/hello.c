@@ -3,7 +3,7 @@
 #include "time.h"
 
 void _start(int argc, char** argv) {
-    puts("hello from elf via int 0x80");
+    puts("hello from user mode via int 0x80");
     printf("argc = %d\n", argc);
 
     for (int i = 0; i < argc; i++) {

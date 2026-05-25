@@ -331,7 +331,7 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=2121)
     parser.add_argument("--iterations", type=int, default=5)
-    parser.add_argument("--retr-path", default="usr/bin/hello.elf")
+    parser.add_argument("--retr-path", default="usr/bin/hello")
     parser.add_argument("--stor-prefix", default="LOOP")
     parser.add_argument("--payload-size", type=int, default=96)
     parser.add_argument("--timeout", type=float, default=120.0)

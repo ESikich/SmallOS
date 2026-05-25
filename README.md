@@ -5,7 +5,7 @@
 SmallOS is a BIOS-booted 32-bit x86 hobby operating system. It builds a raw
 hard-disk image, boots through a two-stage loader, enters protected mode,
 enables paging, mounts an ext2 filesystem, and runs a small shell plus ring-3
-ELF programs.
+user programs.
 
 The project is intentionally small enough to understand end to end, but it now
 has real subsystems: process scheduling, user/kernel syscalls, persistent disk
@@ -45,7 +45,7 @@ guest.
   `ipconfig`, `uptime`, `halt`, and `reboot`, plus diagnostics such as
   `cpuz`, `usbinfo`, `usbports`, `usbpower`, `mousetest`, and demos/ports such
   as `mandel`, `plasma`, `fractint`, and `wolf3d`.
-- TinyCC is built as `usr/bin/tcc.elf` and can compile sample C programs inside
+- TinyCC is built as `usr/bin/tcc` and can compile sample C programs inside
   SmallOS.
 
 ## Requirements
@@ -244,8 +244,8 @@ make test
 ```
 
 `make test` boots headlessly, checks the boot diagnostics, runs the shell
-selftest, drives the interactive `readline` prompt, and verifies shipped ELFs
-against expectations under `tests/shell/` and `tests/elfs/`.
+selftest, drives the interactive `readline` prompt, and verifies shipped
+programs against expectations under `tests/shell/` and `tests/elfs/`.
 
 Useful verification targets:
 

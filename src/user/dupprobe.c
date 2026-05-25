@@ -38,7 +38,7 @@ int main(void) {
     close(d);
     close(fds[0]);
 
-    file_fd = open("usr/bin/hello.elf", O_RDONLY);
+    file_fd = open("usr/bin/hello", O_RDONLY);
     if (file_fd < 0) {
         puts("dupprobe file open: FAIL");
         return 1;

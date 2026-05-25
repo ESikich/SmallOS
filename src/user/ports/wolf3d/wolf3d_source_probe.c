@@ -3,6 +3,7 @@
 #include <unistd.h>
 
 #include "wolf3d_port.h"
+#include "WL_DEF.H"
 
 void wolf3d_upstream_main(void);
 void CheckForEpisodes(void);
@@ -19,6 +20,7 @@ extern int wolf3d_probe_stop_after_demo_prelude;
 extern int wolf3d_probe_stop_after_title_frame;
 extern int wolf3d_probe_stop_after_control_panel_frame;
 extern int wolf3d_probe_stop_after_first_game_frame;
+extern int wolf3d_probe_skip_level_completed_ack;
 
 static void use_nowait_startup_args(void) {
     static char arg0[] = "wolf3d-srcprobe";
@@ -115,6 +117,29 @@ int main(int argc, char** argv) {
         wolf3d_probe_stop_after_first_game_frame = 0;
         ShutdownId();
         printf("wolf3d-source-probe: upstream first game frame completed %s\n",
+               extension);
+        return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "--level-completed") == 0) {
+        (void)chdir("/usr/share/wolf3d");
+        use_nowait_startup_args();
+        CheckForEpisodes();
+        Patch386();
+        InitGame();
+        NewGame(1, 0);
+        mapon = gamestate.mapon;
+        gamestate.TimeCount = 4200;
+        gamestate.killtotal = 0;
+        gamestate.secrettotal = 0;
+        gamestate.treasuretotal = 0;
+        gamestate.killcount = 0;
+        gamestate.secretcount = 0;
+        gamestate.treasurecount = 0;
+        wolf3d_probe_skip_level_completed_ack = 1;
+        LevelCompleted();
+        wolf3d_probe_skip_level_completed_ack = 0;
+        ShutdownId();
+        printf("wolf3d-source-probe: upstream level-completed completed %s\n",
                extension);
         return 0;
     }

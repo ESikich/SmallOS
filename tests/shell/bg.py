@@ -3,11 +3,11 @@ from .common import case
 
 CASES = [
     case(
-        name="runelf_nowait",
+        name="bg_ticks",
         must_contain=[
-            "shelltest: runelf_nowait begin",
+            "shelltest: bg_ticks begin",
             "ticks program",
-            "shelltest: runelf_nowait end",
+            "shelltest: bg_ticks end",
         ],
         timeout=60.0,
     )

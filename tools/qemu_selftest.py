@@ -311,7 +311,7 @@ def run_interactive_regressions(sock, log, start_offset, deadline, echo=True, re
 
     if echo:
         tee_stdout("\n[interactive-regression] ")
-    send_text(sock, "runelf poop")
+    send_text(sock, "poop")
     send_key(sock, "ret")
 
     saw_failed = False
@@ -321,13 +321,13 @@ def run_interactive_regressions(sock, log, start_offset, deadline, echo=True, re
             if echo:
                 tee_stdout(chunk)
             buf += chunk
-            if "runelf: failed" in buf and not saw_failed:
+            if "Unknown command: poop" in buf and not saw_failed:
                 saw_failed = True
                 send_text(sock, "pwd")
                 send_key(sock, "ret")
             if saw_failed and saw_prompt_after(buf, "pwd: /"):
                 if report:
-                    print("[runelf_missing_keeps_input] PASS")
+                    print("[exec_missing_keeps_input] PASS")
                 return True, log_offset
             if len(buf) > TRANSCRIPT_LIMIT:
                 buf = buf[-TRANSCRIPT_TRIM:]
@@ -335,7 +335,7 @@ def run_interactive_regressions(sock, log, start_offset, deadline, echo=True, re
             time.sleep(0.05)
 
     if report:
-        print("[runelf_missing_keeps_input] FAIL")
+        print("[exec_missing_keeps_input] FAIL")
     return False, log_offset
 
 
@@ -345,7 +345,7 @@ def run_ctrl_c_regression(sock, log, start_offset, deadline, echo=True, report=T
 
     if echo:
         tee_stdout("\n[ctrl-c-regression] ")
-    send_text(sock, "runelf usr/libexec/tests/spinwkr late ctrlc.txt 500")
+    send_text(sock, "usr/libexec/tests/spinwkr late ctrlc.txt 500")
     send_key(sock, "ret")
     time.sleep(0.5)
     send_key(sock, "ctrl-c")
@@ -393,7 +393,7 @@ def run_signalfd_regression(sock, log, start_offset, deadline, echo=True, report
 
     if echo:
         tee_stdout("\n[signalfd-regression] ")
-    send_text(sock, "runelf usr/libexec/tests/signalfdprobe")
+    send_text(sock, "usr/libexec/tests/signalfdprobe")
     send_key(sock, "ret")
 
     sent_interrupt = False
@@ -450,7 +450,7 @@ def run_process_group_ctrl_c_regression(sock, log, start_offset, deadline, echo=
     if echo:
         tee_stdout("\n[pgrp-ctrl-c-regression] ")
     clear_prompt_line(sock)
-    send_text(sock, "runelf usr/libexec/tests/pgrpprobe")
+    send_text(sock, "usr/libexec/tests/pgrpprobe")
     send_key(sock, "ret")
 
     while time.time() < deadline:
@@ -560,7 +560,7 @@ def run_connect_regression(sock, log, start_offset, deadline, echo=True, report=
     if echo:
         tee_stdout("\n[connect-regression] ")
     clear_prompt_line(sock)
-    send_text(sock, "runelf usr/libexec/tests/connectprobe")
+    send_text(sock, "usr/libexec/tests/connectprobe")
     send_key(sock, "ret")
 
     while time.time() < deadline:
@@ -715,7 +715,7 @@ def main():
         overall_pass = guest_pass and case_pass
 
         if args.summary:
-            status_begin("interactive: runelf missing")
+            status_begin("interactive: exec missing")
         interactive_pass, log_offset = run_interactive_regressions(
             sock, log, log_offset, deadline, echo=echo, report=not args.summary
         )

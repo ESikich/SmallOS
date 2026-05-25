@@ -6,7 +6,7 @@ CASES = [
         name="fsread",
         must_contain=[
             "shelltest: fsread begin",
-            "fsread: hello.elf",
+            "fsread: hello",
             "bytes",
             "shelltest: fsread end",
         ],

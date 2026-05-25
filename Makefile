@@ -207,7 +207,7 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/ext2.c \
 	$(DRIVERS_DIR)/serial.c
 
-USER_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell ip ipconfig meminfo memmap cpuz top netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest hello ticks args runelf_test readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe envprobe mathprobe soundprobe plasma mandel wolf3d fractint tcpecho sockeof ftpd
+USER_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell ip ipconfig meminfo memmap cpuz top netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest hello ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe envprobe mathprobe soundprobe plasma mandel wolf3d fractint tcpecho sockeof ftpd
 USER_PROGS := $(filter-out fractint,$(USER_PROGS))
 USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
 USER_LIBC_SRCS=\
@@ -264,14 +264,16 @@ USER_INCLUDE_FILES=$(shell find $(USER_INCLUDE_DIR) -type f | sort)
 USER_INCLUDE_ENTRIES=$(foreach file,$(USER_INCLUDE_FILES),usr/include/$(patsubst $(USER_INCLUDE_DIR)/%,%,$(file))=$(CURDIR)/$(file))
 USER_UAPI_FILES=$(wildcard $(KERNEL_DIR)/uapi_*.h)
 USER_UAPI_ENTRIES=$(foreach file,$(USER_UAPI_FILES),usr/include/$(notdir $(file))=$(CURDIR)/$(file))
-EXT2_BIN_ENTRIES=bin/echo.elf=$(BIN_DIR)/echo.elf bin/about.elf=$(BIN_DIR)/about.elf bin/uptime.elf=$(BIN_DIR)/uptime.elf bin/halt.elf=$(BIN_DIR)/halt.elf bin/reboot.elf=$(BIN_DIR)/reboot.elf bin/date.elf=$(BIN_DIR)/date.elf bin/pwd.elf=$(BIN_DIR)/pwd.elf bin/cat.elf=$(BIN_DIR)/cat.elf bin/more.elf=$(BIN_DIR)/more.elf bin/man.elf=$(BIN_DIR)/man.elf bin/fsread.elf=$(BIN_DIR)/fsread.elf bin/ls.elf=$(BIN_DIR)/ls.elf bin/tree.elf=$(BIN_DIR)/tree.elf bin/touch.elf=$(BIN_DIR)/touch.elf bin/rm.elf=$(BIN_DIR)/rm.elf bin/mkdir.elf=$(BIN_DIR)/mkdir.elf bin/rmdir.elf=$(BIN_DIR)/rmdir.elf bin/cp.elf=$(BIN_DIR)/cp.elf bin/mv.elf=$(BIN_DIR)/mv.elf bin/edit.elf=$(BIN_DIR)/edit.elf bin/bmpview.elf=$(BIN_DIR)/bmpview.elf bin/bootsplash.elf=$(BIN_DIR)/bootsplash.elf bin/diskview.elf=$(BIN_DIR)/diskview.elf bin/gui.elf=$(BIN_DIR)/gui.elf bin/shell.elf=$(BIN_DIR)/shell.elf bin/ip.elf=$(BIN_DIR)/ip.elf bin/ipconfig.elf=$(BIN_DIR)/ipconfig.elf bin/meminfo.elf=$(BIN_DIR)/meminfo.elf bin/memmap.elf=$(BIN_DIR)/memmap.elf bin/cpuz.elf=$(BIN_DIR)/cpuz.elf bin/netinfo.elf=$(BIN_DIR)/netinfo.elf bin/dhcp.elf=$(BIN_DIR)/dhcp.elf bin/netsend.elf=$(BIN_DIR)/netsend.elf bin/netrecv.elf=$(BIN_DIR)/netrecv.elf bin/arpgw.elf=$(BIN_DIR)/arpgw.elf bin/ping.elf=$(BIN_DIR)/ping.elf bin/pinggw.elf=$(BIN_DIR)/pinggw.elf bin/pingpublic.elf=$(BIN_DIR)/pingpublic.elf bin/netcheck.elf=$(BIN_DIR)/netcheck.elf bin/ataread.elf=$(BIN_DIR)/ataread.elf bin/usbinfo.elf=$(BIN_DIR)/usbinfo.elf bin/usbports.elf=$(BIN_DIR)/usbports.elf bin/usbdiag.elf=$(BIN_DIR)/usbdiag.elf bin/usbpeek.elf=$(BIN_DIR)/usbpeek.elf bin/usbpower.elf=$(BIN_DIR)/usbpower.elf bin/usbmouse.elf=$(BIN_DIR)/usbmouse.elf bin/mousetest.elf=$(BIN_DIR)/mousetest.elf
-EXT2_DEMO_ENTRIES=usr/bin/hello.elf=$(BIN_DIR)/hello.elf usr/bin/plasma.elf=$(BIN_DIR)/plasma.elf usr/bin/mandel.elf=$(BIN_DIR)/mandel.elf usr/bin/wolf3d.elf=$(BIN_DIR)/wolf3d.elf usr/bin/fractint.elf=$(BIN_DIR)/fractint.elf
-EXT2_TEST_ENTRIES=usr/libexec/tests/ticks.elf=$(BIN_DIR)/ticks.elf usr/libexec/tests/args.elf=$(BIN_DIR)/args.elf usr/libexec/tests/runelf_test.elf=$(BIN_DIR)/runelf_test.elf usr/libexec/tests/readline.elf=$(BIN_DIR)/readline.elf usr/libexec/tests/exec_test.elf=$(BIN_DIR)/exec_test.elf usr/libexec/tests/waitprobe.elf=$(BIN_DIR)/waitprobe.elf usr/libexec/tests/fileread.elf=$(BIN_DIR)/fileread.elf usr/libexec/tests/compiler_demo.elf=$(BIN_DIR)/compiler_demo.elf usr/libexec/tests/heapprobe.elf=$(BIN_DIR)/heapprobe.elf usr/libexec/tests/statprobe.elf=$(BIN_DIR)/statprobe.elf usr/libexec/tests/fileprobe.elf=$(BIN_DIR)/fileprobe.elf usr/libexec/tests/cwdprobe.elf=$(BIN_DIR)/cwdprobe.elf usr/libexec/tests/stdioprobe.elf=$(BIN_DIR)/stdioprobe.elf usr/libexec/tests/dirprobe.elf=$(BIN_DIR)/dirprobe.elf usr/libexec/tests/errnoprobe.elf=$(BIN_DIR)/errnoprobe.elf usr/libexec/tests/badptrprobe.elf=$(BIN_DIR)/badptrprobe.elf usr/libexec/tests/fault.elf=$(BIN_DIR)/fault.elf usr/libexec/tests/sleep_test.elf=$(BIN_DIR)/sleep_test.elf usr/libexec/tests/timerfdprobe.elf=$(BIN_DIR)/timerfdprobe.elf usr/libexec/tests/signalfdprobe.elf=$(BIN_DIR)/signalfdprobe.elf usr/libexec/tests/connectprobe.elf=$(BIN_DIR)/connectprobe.elf usr/libexec/tests/ptrguard.elf=$(BIN_DIR)/ptrguard.elf usr/libexec/tests/spinwkr.elf=$(BIN_DIR)/spinwkr.elf usr/libexec/tests/pgrpprobe.elf=$(BIN_DIR)/pgrpprobe.elf usr/libexec/tests/preempt_test.elf=$(BIN_DIR)/preempt_test.elf usr/libexec/tests/crtprobe.elf=$(BIN_DIR)/crtprobe.elf usr/libexec/tests/displayprobe.elf=$(BIN_DIR)/displayprobe.elf usr/libexec/tests/inputprobe.elf=$(BIN_DIR)/inputprobe.elf usr/libexec/tests/pipeprobe.elf=$(BIN_DIR)/pipeprobe.elf usr/libexec/tests/dupprobe.elf=$(BIN_DIR)/dupprobe.elf usr/libexec/tests/forkprobe.elf=$(BIN_DIR)/forkprobe.elf usr/libexec/tests/execveprobe.elf=$(BIN_DIR)/execveprobe.elf usr/libexec/tests/envprobe.elf=$(BIN_DIR)/envprobe.elf usr/libexec/tests/mathprobe.elf=$(BIN_DIR)/mathprobe.elf usr/libexec/tests/wolf3d-srcprobe.elf=$(WOLF3D_SOURCE_PROBE_BIN)
+EXT2_BIN_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell ip ipconfig meminfo memmap cpuz netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest top soundprobe
+EXT2_DEMO_PROGS=hello plasma mandel wolf3d fractint
+EXT2_TEST_PROGS=ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe envprobe mathprobe
+EXT2_SBIN_PROGS=tcpecho sockeof ftpd
+EXT2_BIN_ENTRIES=$(foreach prog,$(EXT2_BIN_PROGS),bin/$(prog)=$(BIN_DIR)/$(prog).elf)
+EXT2_DEMO_ENTRIES=$(foreach prog,$(EXT2_DEMO_PROGS),usr/bin/$(prog)=$(BIN_DIR)/$(prog).elf)
+EXT2_TEST_ENTRIES=$(foreach prog,$(EXT2_TEST_PROGS),usr/libexec/tests/$(prog)=$(BIN_DIR)/$(prog).elf) usr/libexec/tests/wolf3d-srcprobe=$(WOLF3D_SOURCE_PROBE_BIN)
+EXT2_SBIN_ENTRIES=$(foreach prog,$(EXT2_SBIN_PROGS),usr/sbin/$(prog)=$(BIN_DIR)/$(prog).elf) usr/sbin/cserve=$(CSERVER_BIN)
 EXT2_APP_ENTRIES=$(EXT2_BIN_ENTRIES) $(EXT2_DEMO_ENTRIES) $(EXT2_TEST_ENTRIES)
-EXT2_APP_ENTRIES+= bin/top.elf=$(BIN_DIR)/top.elf
-EXT2_APP_ENTRIES+= bin/soundprobe.elf=$(BIN_DIR)/soundprobe.elf
-EXT2_APP_ENTRIES+= usr/sbin/tcpecho.elf=$(BIN_DIR)/tcpecho.elf usr/sbin/sockeof.elf=$(BIN_DIR)/sockeof.elf usr/sbin/ftpd.elf=$(BIN_DIR)/ftpd.elf
-EXT2_APP_ENTRIES+= usr/sbin/cserve.elf=$(CSERVER_BIN)
+EXT2_APP_ENTRIES+= $(EXT2_SBIN_ENTRIES)
 MAN_PAGE_FILES=$(wildcard man/man*/*)
 MAN_PAGE_ENTRIES=$(foreach page,$(MAN_PAGE_FILES),usr/share/$(page)=$(CURDIR)/$(page))
 USER_LIB_ENTRIES=usr/lib/crt0.o=$(USER_CRT0_OBJ) usr/lib/libc.a=$(USER_LIBC) usr/lib/libm.a=$(USER_LIBM) usr/lib/libposix.a=$(USER_LIBPOSIX)
@@ -282,7 +284,7 @@ else
 WOLF3D_DATA_ENTRIES=
 endif
 EXT2_EXTRA_DIRS=tmp/ var/log/ usr/include/ usr/include/arpa/ usr/include/netinet/ usr/include/sys/ usr/lib/ usr/share/examples/tinycc/ usr/share/man/man1/ usr/share/man/man2/ usr/share/man/man3/ usr/share/man/man4/ usr/share/man/man5/ usr/share/man/man6/ usr/share/man/man7/ usr/share/man/man8/ usr/share/wolf3d/
-EXT2_EXTRA_ENTRIES=usr/bin/tcc.elf=$(TINYCC_SMALOS_BIN) $(USER_INCLUDE_ENTRIES) $(USER_UAPI_ENTRIES) $(USER_LIB_ENTRIES) usr/share/examples/tinycc/tccmath.c=$(CURDIR)/samples/tccmath.c usr/share/examples/tinycc/tccagg.c=$(CURDIR)/samples/tccagg.c usr/share/examples/tinycc/tcctree.c=$(CURDIR)/samples/tcctree.c usr/share/examples/tinycc/tccmini.c=$(CURDIR)/samples/tccmini.c usr/share/examples/tinycc/tccsysroot.c=$(CURDIR)/samples/tccsysroot.c usr/share/examples/tinycc/tccposix.c=$(CURDIR)/samples/tccposix.c etc/cserve.ini=$(CURDIR)/samples/cserve.ini var/www/index.html=$(CURDIR)/samples/cserve_index.html var/log/boot.txt=$(CURDIR)/samples/boot.txt boot/splash.bmp=$(CURDIR)/assets/boot_splash.bmp $(MAN_PAGE_ENTRIES)
+EXT2_EXTRA_ENTRIES=usr/bin/tcc=$(TINYCC_SMALOS_BIN) $(USER_INCLUDE_ENTRIES) $(USER_UAPI_ENTRIES) $(USER_LIB_ENTRIES) usr/share/examples/tinycc/tccmath.c=$(CURDIR)/samples/tccmath.c usr/share/examples/tinycc/tccagg.c=$(CURDIR)/samples/tccagg.c usr/share/examples/tinycc/tcctree.c=$(CURDIR)/samples/tcctree.c usr/share/examples/tinycc/tccmini.c=$(CURDIR)/samples/tccmini.c usr/share/examples/tinycc/tccsysroot.c=$(CURDIR)/samples/tccsysroot.c usr/share/examples/tinycc/tccposix.c=$(CURDIR)/samples/tccposix.c etc/cserve.ini=$(CURDIR)/samples/cserve.ini var/www/index.html=$(CURDIR)/samples/cserve_index.html var/log/boot.txt=$(CURDIR)/samples/boot.txt boot/splash.bmp=$(CURDIR)/assets/boot_splash.bmp $(MAN_PAGE_ENTRIES)
 FRACTINT_EXTRA_ENTRIES=usr/share/xfractint/fractint.hlp=$(FRACTINT_DIR)/fractint.hlp usr/share/xfractint/sstools.ini=$(FRACTINT_DIR)/sstools.ini $(FRACTINT_DATA_ENTRIES)
 EXT2_ALL_EXTRA_ENTRIES=$(EXT2_EXTRA_ENTRIES) $(FRACTINT_EXTRA_ENTRIES) $(WOLF3D_DATA_ENTRIES)
 EXT2_EXTRA_DIRS+= usr/share/xfractint/ usr/share/xfractint/maps/ usr/share/xfractint/pars/ usr/share/xfractint/formulas/ usr/share/xfractint/lsystem/ usr/share/xfractint/ifs/
@@ -431,7 +433,7 @@ $(WOLF3D_ASSETS_OBJ): $(WOLF3D_PORT_DIR)/wolf3d_assets.c $(WOLF3D_PALETTE_H) $(W
 	mkdir -p $(dir $@)
 	$(CC) $(WOLF3D_NATIVE_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
-$(WOLF3D_SOURCE_PROBE_OBJ): $(WOLF3D_PORT_DIR)/wolf3d_source_probe.c $(WOLF3D_PORT_INCLUDE_DIR)/wolf3d_port.h | dirs
+$(WOLF3D_SOURCE_PROBE_OBJ): $(WOLF3D_PORT_DIR)/wolf3d_source_probe.c $(WOLF3D_PORT_INCLUDE_DIR)/wolf3d_port.h $(WOLF3D_SRC_STAMP) | dirs
 	mkdir -p $(dir $@)
 	$(CC) $(WOLF3D_NATIVE_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
@@ -572,7 +574,7 @@ $(TOOLS_DIR)/mkimage: tools/mkimage.c | dirs
 
 # ext2 seed image (generated from the current tree)
 #
-$(BIN_DIR)/ext2.seed.img: $(USER_ELFS) $(CSERVER_BIN) $(TOOLS_DIR)/mkext2 $(EXT2_EXTRA_FILES) $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/fractint.hlp Makefile | dirs
+$(BIN_DIR)/ext2.seed.img: $(USER_ELFS) $(CSERVER_BIN) $(WOLF3D_SOURCE_PROBE_BIN) $(TOOLS_DIR)/mkext2 $(EXT2_EXTRA_FILES) $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/fractint.hlp Makefile | dirs
 	$(TOOLS_DIR)/mkext2 $@ $(EXT2_APP_ENTRIES) $(EXT2_ALL_EXTRA_ENTRIES) $(EXT2_EXTRA_DIRS)
 
 $(STATE_EXT2_STAMP): $(BIN_DIR)/ext2.seed.img | dirs

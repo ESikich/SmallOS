@@ -184,7 +184,7 @@ static void elf_enter_ring3(unsigned int entry,
  *
  * This is where TSS.ESP0 is updated for the process-owned kernel stack.
  * Do not move that tss_set_kernel_stack() call earlier into elf_run_image():
- * async launch paths such as runelf_nowait or SYS_EXEC may build a new process
+ * async launch paths such as background launches or SYS_EXEC may build a new process
  * while some other task is still running, and updating ESP0 during setup would
  * clobber the currently running task's ring-3 return stack.
  */
@@ -521,7 +521,11 @@ static process_t* elf_run_named_with_group(const char* name,
             }
         }
 
-        if (!has_dot) {
+        data = vfs_load_file_owned(name, &size,
+                                   &image_frame, &image_frames);
+        loaded_name = name;
+
+        if (!data && !has_dot) {
             u32 len = (u32)k_strlen(name);
             if (len + 4u < sizeof(alt_name)) {
                 k_memcpy(alt_name, name, len);
@@ -533,12 +537,6 @@ static process_t* elf_run_named_with_group(const char* name,
                     loaded_name = alt_name;
                 }
             }
-        }
-
-        if (!data) {
-            data = vfs_load_file_owned(name, &size,
-                                       &image_frame, &image_frames);
-            loaded_name = name;
         }
     }
 
@@ -594,7 +592,12 @@ int elf_exec_named_into(process_t* proc,
                 break;
             }
         }
-        if (!has_dot) {
+
+        data = vfs_load_file_owned(name, &size,
+                                   &image_frame, &image_frames);
+        loaded_name = name;
+
+        if (!data && !has_dot) {
             u32 len = (u32)k_strlen(name);
             if (len + 4u < sizeof(alt_name)) {
                 k_memcpy(alt_name, name, len);
@@ -603,11 +606,6 @@ int elf_exec_named_into(process_t* proc,
                                            &image_frame, &image_frames);
                 if (data) loaded_name = alt_name;
             }
-        }
-        if (!data) {
-            data = vfs_load_file_owned(name, &size,
-                                       &image_frame, &image_frames);
-            loaded_name = name;
         }
     }
 

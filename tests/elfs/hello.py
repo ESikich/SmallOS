@@ -4,9 +4,9 @@ from .common import case
 CASES = [
     case(
         name="hello",
-        command="runelf usr/bin/hello alpha beta",
+        command="usr/bin/hello alpha beta",
         must_contain=[
-            "hello from elf via int 0x80",
+            "hello from user mode via int 0x80",
             "argc = 3",
             'argv[0] = "usr/bin/hello"',
             'argv[1] = "alpha"',

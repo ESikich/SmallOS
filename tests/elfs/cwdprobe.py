@@ -4,7 +4,7 @@ from .common import case
 CASES = [
     case(
         name="cwdprobe",
-        command="runelf usr/libexec/tests/cwdprobe",
+        command="usr/libexec/tests/cwdprobe",
         must_contain=[
             "cwdprobe start",
             "cwdprobe cwd=/",

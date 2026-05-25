@@ -214,7 +214,7 @@ u32* paging_get_kernel_pd(void) {
  *
  * Allocates the page directory from the PMM (not the bump allocator) so
  * that process_pd_destroy() can free it on exit, closing the 4 KB-per-
- * runelf heap leak that existed when kmalloc_page() was used here.
+ * user program heap leak that existed when kmalloc_page() was used here.
  *
  * The returned value is the physical PD frame address cast to u32*. Kernel
  * code must translate it through the PMM alias before dereferencing.

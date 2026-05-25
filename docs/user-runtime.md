@@ -90,7 +90,7 @@ with a leading slash, such as:
 
 ```text
 cwd: /usr/bin
-realpath("./hello.elf") -> /usr/bin/hello.elf
+realpath("./hello") -> /usr/bin/hello
 ```
 
 Current runtime limits are intentionally small:
@@ -170,8 +170,8 @@ selects a diagnostic legacy path.
 USB and mouse diagnostic commands use the same raw syscall layer instead of
 running as kernel built-ins. `sys_usbinfo()`, `sys_mouse_debug()`,
 `sys_usb_port_snapshot()`, `sys_usb_diag_op()`, and `sys_usb_mouse_op()` expose
-snapshots or explicit diagnostic actions for `/bin/usb*.elf` and
-`/bin/mousetest.elf`. `usbports` and the passive part of `usbdiag` format
+snapshots or explicit diagnostic actions for `/bin/usb*` and
+`/bin/mousetest`. `usbports` and the passive part of `usbdiag` format
 `sys_usb_port_snapshot_t` records in userspace; active USB peeks, controller
 access, and report injection remain kernel-owned.
 
@@ -383,7 +383,7 @@ directory listing behavior should stay aligned with `dirprobe`.
 
 # TinyCC Expectations
 
-`usr/bin/tcc.elf` is built from TinyCC submodule sources plus the SmallOS user
+`usr/bin/tcc` is built from TinyCC submodule sources plus the SmallOS user
 libraries. It links `src/user/crt/crt0.c`, so the kernel still enters
 `_start(argc, argv)` while TinyCC itself runs through its upstream
 `main(argc, argv)` path. Inside the guest it searches `/usr/include` and

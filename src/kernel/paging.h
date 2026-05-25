@@ -106,7 +106,7 @@ u32* paging_get_kernel_pd(void);
  * Allocate and initialize a new page directory for a user process.
  *
  * Allocation is from pmm_alloc_frame() so that process_pd_destroy() can
- * free the directory itself on exit (no heap leak per runelf).
+ * free the directory itself on exit (no heap leak per user program launch).
  *
  * The kernel's identity-mapped entries (PD indices 0 and 2–1023) are
  * copied in so that kernel code, heap, and VGA remain accessible

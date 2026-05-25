@@ -180,11 +180,11 @@ top
 cpuz
 ```
 
-You can also run an ELF explicitly:
+You can also run a program by path:
 
 ```text
-runelf usr/bin/hello
-runelf hello alpha beta
+usr/bin/hello
+hello alpha beta
 ```
 
 Background jobs use `bg`, `jobs`, `fg`, and `kill`:
@@ -207,10 +207,10 @@ Try this from the SmallOS shell:
 
 ```text
 cd /var/tmp
-tcc -o tccsysroot.elf /usr/share/examples/tinycc/tccsysroot.c
-runelf /var/tmp/tccsysroot
-tcc -o tccposix.elf /usr/share/examples/tinycc/tccposix.c
-runelf /var/tmp/tccposix
+tcc -o tccsysroot /usr/share/examples/tinycc/tccsysroot.c
+/var/tmp/tccsysroot
+tcc -o tccposix /usr/share/examples/tinycc/tccposix.c
+/var/tmp/tccposix
 ```
 
 The older freestanding samples are still useful when testing direct `_start`
@@ -218,8 +218,8 @@ programs:
 
 ```text
 cd /var/tmp
-tcc -nostdlib -o tccmini.elf /usr/share/examples/tinycc/tccmini.c
-runelf /var/tmp/tccmini
+tcc -nostdlib -o tccmini /usr/share/examples/tinycc/tccmini.c
+/var/tmp/tccmini
 ```
 
 Generated programs written under `/var/tmp` remain on the mutable guest disk
@@ -384,16 +384,19 @@ under `/usr/share/wolf3d`; use `WOLF3D_STAGE_DATA=0` for a lean image without
 game data. The command changes into that directory and runs the generated
 upstream engine through SmallOS DOS, VGA, input, timer, file, and config
 compatibility shims. Current builds reach the sign-on/title/menu flow and the
-first gameplay frames with the original data files. `CONFIG.` is stored in the
-original DOS-width layout, and Wolf-owned display/input state is released on
-normal and error exits so the shell gets a clean foreground back.
+first gameplay frames with the original data files, and the regression probes
+cover the first level-completion intermission path. `CONFIG.` is stored in the
+original DOS-width layout, and Wolf-owned display/input/sound state is released
+on normal and error exits so the shell gets a clean foreground back.
 
 For manual runtime checks, use a graphical QEMU backend and grab the guest
 window before testing mouse input. GTK builds support `Ctrl+Alt+G` to toggle
 mouse/keyboard grab; on QEMU for Windows, GTK is usually more predictable than
 SDL for this path. Bounded host/guest probes live in
-`usr/libexec/tests/wolf3d-srcprobe.elf` and the host-side
-`make wolf3d-source-probe` target.
+`usr/libexec/tests/wolf3d-srcprobe` and the host-side
+`make wolf3d-source-probe` target. The `--level-completed` probe is useful
+when changing timer, input, or sound code because it exercises Wolf's
+post-level bonus-counting waits.
 
 The GUI opens a desktop with Files, Shell, System, Config, About, and Quit
 icons. Shell windows run real child shells through PTYs. The Config window can
