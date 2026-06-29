@@ -1,7 +1,7 @@
 ASM=nasm
 CC=i686-elf-gcc
 LD=i686-elf-ld
-AR=i686-elf-ar
+AR?=$(if $(shell command -v i686-elf-ar 2>/dev/null),i686-elf-ar,ar)
 OBJCOPY=i686-elf-objcopy
 QEMU_IMG?=qemu-img
 MAKEFLAGS += --no-print-directory
@@ -153,7 +153,7 @@ DISPLAY_DRIVER_CFLAGS ?= -O2
 USER_CFLAGS ?= -O2
 DEPFLAGS=-MMD -MP
 HOST_CC=gcc
-LIBGCC_FILE ?= $(shell $(CC) -print-libgcc-file-name)
+LIBGCC_FILE ?= $(shell $(CC) -m32 -print-libgcc-file-name)
 LDFLAGS=-T linker.ld -m elf_i386
 USER_LDFLAGS=-m elf_i386 -Ttext-segment 0x400000 -e _start --gc-sections
 
@@ -252,6 +252,7 @@ FRACTINT_OBJS=$(FRACTINT_COMMON_OBJS) $(FRACTINT_UNIX_OBJS) $(FRACTINT_PORT_OBJS
 FRACTINT_CPPFLAGS=$(USER_PUBLIC_CPPFLAGS) -I$(FRACTINT_DIR)/headers
 FRACTINT_PORT_CPPFLAGS=$(FRACTINT_CPPFLAGS)
 FRACTINT_DEFS=-DXFRACT -DNOBSTRING -DHAVESTRI -DBIG_ANSI_C -DLINUX -DDO_NOT_USE_LONG_DOUBLE -DSRCDIR=\"/usr/share/xfractint\"
+FRACTINT_COMPAT_CFLAGS=-Wno-implicit-function-declaration -Wno-incompatible-pointer-types
 FRACTINT_DATA_FILES=$(wildcard $(FRACTINT_DIR)/maps/*.map) \
                     $(wildcard $(FRACTINT_DIR)/pars/*.par) \
                     $(wildcard $(FRACTINT_DIR)/formulas/*.frm) \
@@ -415,7 +416,7 @@ $(WOLF3D_SRC_STAMP): $(THIRD_PARTY_WOLF3D_SENTINEL) tools/prepare_wolf3d_source.
 
 $(OBJ_DIR)/user/ports/wolf3d/upstream/%.o: $(WOLF3D_SRC_STAMP) $(WOLF3D_PORT_INCLUDE_DIR)/wolf3d_port.h
 	mkdir -p $(dir $@)
-	$(CC) -x c $(WOLF3D_NATIVE_CPPFLAGS) -DSMALLOS_WOLF3D_SOURCE_PROBE $(CFLAGS) $(USER_CFLAGS) -Dmain=wolf3d_upstream_main -Wno-unknown-pragmas -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Wno-switch -Wno-pointer-sign -Wno-incompatible-pointer-types -Wno-char-subscripts $(DEPFLAGS) -MF $(@:.o=.d) -c $(WOLF3D_SRC_MIRROR)/$*.C -o $@
+	$(CC) -x c $(WOLF3D_NATIVE_CPPFLAGS) -DSMALLOS_WOLF3D_SOURCE_PROBE $(CFLAGS) $(USER_CFLAGS) -Dmain=wolf3d_upstream_main -Wno-unknown-pragmas -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Wno-switch -Wno-pointer-sign -Wno-incompatible-pointer-types -Wno-char-subscripts -Wno-implicit-function-declaration $(DEPFLAGS) -MF $(@:.o=.d) -c $(WOLF3D_SRC_MIRROR)/$*.C -o $@
 
 $(WOLF3D_NATIVE_SHIM_OBJ): $(WOLF3D_PORT_DIR)/wolf3d_dos_shim.c $(WOLF3D_PORT_INCLUDE_DIR)/wolf3d_port.h | dirs
 	mkdir -p $(dir $@)
@@ -492,16 +493,16 @@ $(FRACTINT_DIR)/headers/helpdefs.h $(FRACTINT_DIR)/fractint.hlp: $(FRACTINT_SVN_
 	mv -f $(FRACTINT_DIR)/dos_help/helpdefs.h $(FRACTINT_DIR)/headers/helpdefs.h
 
 $(FRACTINT_OBJ_DIR)/common/fractint.o: $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/common/fractint.c $(FRACTINT_DIR)/headers/helpdefs.h Makefile | dirs
-	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -Dmain=fractint_upstream_main -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $(FRACTINT_DIR)/common/fractint.c -o $@
+	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) $(FRACTINT_COMPAT_CFLAGS) -Dmain=fractint_upstream_main -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $(FRACTINT_DIR)/common/fractint.c -o $@
 
 $(FRACTINT_OBJ_DIR)/common/%.o: $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/common/%.c $(FRACTINT_DIR)/headers/helpdefs.h Makefile | dirs
-	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $(FRACTINT_DIR)/common/$*.c -o $@
+	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) $(FRACTINT_COMPAT_CFLAGS) -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $(FRACTINT_DIR)/common/$*.c -o $@
 
 $(FRACTINT_OBJ_DIR)/unix/%.o: $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/unix/%.c $(FRACTINT_DIR)/headers/helpdefs.h Makefile | dirs
-	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $(FRACTINT_DIR)/unix/$*.c -o $@
+	$(CC) $(FRACTINT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) $(FRACTINT_COMPAT_CFLAGS) -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $(FRACTINT_DIR)/unix/$*.c -o $@
 
 $(FRACTINT_OBJ_DIR)/port/%.o: $(FRACTINT_SVN_STAMP) $(FRACTINT_PORT_DIR)/%.c $(FRACTINT_DIR)/headers/helpdefs.h Makefile | dirs
-	$(CC) $(FRACTINT_PORT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $(FRACTINT_PORT_DIR)/$*.c -o $@
+	$(CC) $(FRACTINT_PORT_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(FRACTINT_DEFS) $(FRACTINT_COMPAT_CFLAGS) -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $(FRACTINT_PORT_DIR)/$*.c -o $@
 
 $(BIN_DIR)/crtprobe.elf: $(OBJ_DIR)/user/crtprobe.o $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
 	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
