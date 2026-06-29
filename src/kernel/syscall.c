@@ -44,6 +44,12 @@
 #define POLL_MAX_FDS          PROCESS_FD_LIMIT_HARD
 #define INPUT_READ_MAX_EVENTS 64u
 #define DIRLIST_BATCH_MAX     64u
+#define SYS_PROT_READ         1u
+#define SYS_PROT_WRITE        2u
+#define SYS_PROT_EXEC         4u
+#define SYS_MAP_PRIVATE       0x02u
+#define SYS_MAP_FIXED         0x10u
+#define SYS_MAP_ANON          0x20u
 
 static unsigned char s_sys_block_sector[512] __attribute__((aligned(16)));
 static volatile int s_sys_block_sector_locked = 0;
@@ -984,6 +990,218 @@ static unsigned int sys_brk_impl(unsigned int new_brk) {
         proc->heap_brk = new_brk;
         return new_brk;
     }
+}
+
+static int user_page_present_in_pd(u32* pd, unsigned int addr) {
+    u32* pd_virt;
+    u32 pde;
+    u32* pt;
+    u32 pte;
+
+    if (!pd) return 0;
+    pd_virt = (u32*)paging_phys_to_kernel_virt((u32)pd);
+    pde = pd_virt[addr >> 22];
+    if (!(pde & PAGE_PRESENT)) return 0;
+    pt = (u32*)paging_phys_to_kernel_virt(pde & ~0xFFFu);
+    pte = pt[(addr >> 12) & 0x3FFu];
+    return (pte & PAGE_PRESENT) != 0u;
+}
+
+static int user_mapping_range_ok(unsigned int start, unsigned int length) {
+    unsigned int end;
+
+    if (length == 0u) return 0;
+    if ((start & (PAGE_SIZE - 1u)) != 0u) return 0;
+    if (length > USER_HEAP_BASE - USER_MMAP_BASE) return 0;
+    end = start + PAGE_ALIGN(length);
+    if (end < start) return 0;
+    if (start < USER_MMAP_BASE) return 0;
+    if (end > USER_INTERP_BASE) return 0;
+    return 1;
+}
+
+static int sys_mmap_pick_start(process_t* proc,
+                               unsigned int addr,
+                               unsigned int size,
+                               unsigned int flags,
+                               unsigned int* out_start) {
+    unsigned int start;
+
+    if (!proc || !out_start) return -EINVAL;
+    if (flags & SYS_MAP_FIXED) {
+        start = addr & ~(PAGE_SIZE - 1u);
+        if (start != addr) return -EINVAL;
+    } else {
+        start = PAGE_ALIGN(proc->mmap_next ? proc->mmap_next : USER_MMAP_BASE);
+        while (start + size <= USER_INTERP_BASE) {
+            int occupied = 0;
+            for (unsigned int page = start; page < start + size; page += PAGE_SIZE) {
+                if (user_page_present_in_pd(proc->pd, page)) {
+                    occupied = 1;
+                    break;
+                }
+            }
+            if (!occupied) break;
+            start += size;
+        }
+    }
+
+    if (!user_mapping_range_ok(start, size)) return -ENOMEM;
+
+    for (unsigned int page = start; page < start + size; page += PAGE_SIZE) {
+        if (user_page_present_in_pd(proc->pd, page)) {
+            return -EEXIST;
+        }
+    }
+
+    *out_start = start;
+    return 0;
+}
+
+static int sys_mmap_anon_impl(process_t* proc,
+                              unsigned int start,
+                              unsigned int size,
+                              unsigned int prot) {
+    unsigned int page_flags = PAGE_USER | ((prot & SYS_PROT_WRITE) ? PAGE_WRITE : 0u);
+
+    for (unsigned int page = start; page < start + size; page += PAGE_SIZE) {
+        u32 frame = pmm_alloc_frame();
+        if (!frame) {
+            for (unsigned int undo = start; undo < page; undo += PAGE_SIZE) {
+                heap_unmap_page(proc->pd, undo);
+            }
+            return -ENOMEM;
+        }
+        k_memset(paging_phys_to_kernel_virt(frame), 0, PAGE_SIZE);
+        paging_map_page(proc->pd, page, frame, page_flags);
+    }
+    return 0;
+}
+
+static int sys_mmap_file_ro_impl(process_t* proc,
+                                 unsigned int start,
+                                 unsigned int size,
+                                 int fd,
+                                 unsigned int offset) {
+    fd_entry_t* ent;
+    u32 file_size = 0;
+    int is_dir = 0;
+
+    if ((offset & (PAGE_SIZE - 1u)) != 0u) return -EINVAL;
+    ent = process_fd_get(proc, fd);
+    if (!ent) return -EBADF;
+    if (ent->kind != PROCESS_HANDLE_KIND_FILE || !ent->readable ||
+        ent->writable || ent->is_dir) {
+        return -EBADF;
+    }
+    if (vfs_file_stat_fd(ent, &file_size, &is_dir) < 0 || is_dir) return -EBADF;
+    if (offset >= file_size) return -EINVAL;
+    if (size > PAGE_ALIGN(file_size - offset)) return -EINVAL;
+
+    for (unsigned int mapped = 0; mapped < size; mapped += PAGE_SIZE) {
+        u32 frame = 0;
+        u32 bytes = 0;
+        int rc = vfs_file_map_ro_page(ent, offset + mapped, &frame, &bytes);
+        (void)bytes;
+        if (rc < 0) {
+            for (unsigned int undo = 0; undo < mapped; undo += PAGE_SIZE) {
+                heap_unmap_page(proc->pd, start + undo);
+            }
+            return rc;
+        }
+        paging_map_page(proc->pd,
+                        start + mapped,
+                        frame,
+                        PAGE_USER | PAGE_SHARED_RO_FILE);
+    }
+    return 0;
+}
+
+static int sys_mmap_impl(unsigned int addr,
+                         unsigned int length,
+                         unsigned int prot,
+                         unsigned int flags,
+                         int fd,
+                         unsigned int offset) {
+    process_t* proc = (process_t*)sched_current();
+    unsigned int size;
+    unsigned int start;
+    unsigned int supported_flags = SYS_MAP_PRIVATE | SYS_MAP_FIXED | SYS_MAP_ANON;
+    int rc;
+
+    if (!proc || !proc->pd) return -EINVAL;
+    if (length == 0u) return -EINVAL;
+    size = PAGE_ALIGN(length);
+    if (size == 0u || size < length) return -EINVAL;
+    if ((flags & ~supported_flags) != 0u) return -EINVAL;
+    if ((flags & SYS_MAP_PRIVATE) == 0u) return -EINVAL;
+
+    rc = sys_mmap_pick_start(proc, addr, size, flags, &start);
+    if (rc < 0) return rc;
+
+    if (flags & SYS_MAP_ANON) {
+        rc = sys_mmap_anon_impl(proc, start, size, prot);
+    } else {
+        if ((prot & SYS_PROT_WRITE) != 0u) return -ENOSYS;
+        if ((prot & SYS_PROT_READ) == 0u) return -EINVAL;
+        if ((prot & ~(SYS_PROT_READ | SYS_PROT_EXEC)) != 0u) return -EINVAL;
+        rc = sys_mmap_file_ro_impl(proc, start, size, fd, offset);
+    }
+    if (rc < 0) return rc;
+
+    if (!(flags & SYS_MAP_FIXED) || start + size > proc->mmap_next) {
+        proc->mmap_next = start + size;
+    }
+    return (int)start;
+}
+
+static int sys_munmap_impl(unsigned int addr, unsigned int length) {
+    process_t* proc = (process_t*)sched_current();
+    unsigned int size;
+
+    if (!proc || !proc->pd) return -EINVAL;
+    if (length == 0u) return -EINVAL;
+    size = PAGE_ALIGN(length);
+    if (!user_mapping_range_ok(addr, size)) return -EINVAL;
+
+    for (unsigned int page = addr; page < addr + size; page += PAGE_SIZE) {
+        if (user_page_present_in_pd(proc->pd, page)) {
+            heap_unmap_page(proc->pd, page);
+        }
+    }
+    return 0;
+}
+
+static int sys_mprotect_impl(unsigned int addr, unsigned int length, unsigned int prot) {
+    process_t* proc = (process_t*)sched_current();
+    unsigned int size;
+    u32* pd_virt;
+
+    if (!proc || !proc->pd) return -EINVAL;
+    if (length == 0u) return -EINVAL;
+    size = PAGE_ALIGN(length);
+    if (!user_mapping_range_ok(addr, size)) return -EINVAL;
+
+    pd_virt = (u32*)paging_phys_to_kernel_virt((u32)proc->pd);
+    for (unsigned int page = addr; page < addr + size; page += PAGE_SIZE) {
+        u32 pde = pd_virt[page >> 22];
+        u32* pt;
+        u32 idx;
+        if (!(pde & PAGE_PRESENT)) return -ENOMEM;
+        pt = (u32*)paging_phys_to_kernel_virt(pde & ~0xFFFu);
+        idx = (page >> 12) & 0x3FFu;
+        if (!(pt[idx] & PAGE_PRESENT)) return -ENOMEM;
+        if ((pt[idx] & PAGE_SHARED_RO_FILE) && (prot & SYS_PROT_WRITE)) {
+            return -ENOSYS;
+        }
+        if (prot & SYS_PROT_WRITE) {
+            pt[idx] |= PAGE_WRITE;
+        } else {
+            pt[idx] &= ~PAGE_WRITE;
+        }
+        __asm__ __volatile__("invlpg (%0)" : : "r"(page) : "memory");
+    }
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2785,6 +3003,8 @@ static int sys_meminfo_impl(sys_meminfo_t* out_info) {
     info.pmm_total_frames = pmm_total_count();
     info.e820_valid = boot_info_e820_valid() ? 1u : 0u;
     info.e820_count = info.e820_valid ? boot_info_e820_count() : 0u;
+    vfs_file_map_cache_stats(&info.ro_file_cache_pages,
+                             &info.ro_file_cache_mapped_refs);
 
     if (copy_to_user(out_info, &info, sizeof(info)) < 0) return -EFAULT;
     return 0;
@@ -3118,6 +3338,26 @@ void syscall_handler_main(syscall_regs_t* regs) {
 
         case SYS_BRK:
             regs->eax = sys_brk_impl(regs->ebx);
+            break;
+
+        case SYS_MMAP:
+            regs->eax = (unsigned int)sys_mmap_impl(regs->ebx,
+                                                    regs->ecx,
+                                                    regs->edx,
+                                                    regs->esi,
+                                                    (int)regs->edi,
+                                                    regs->ebp);
+            break;
+
+        case SYS_MUNMAP:
+            regs->eax = (unsigned int)sys_munmap_impl(regs->ebx,
+                                                      regs->ecx);
+            break;
+
+        case SYS_MPROTECT:
+            regs->eax = (unsigned int)sys_mprotect_impl(regs->ebx,
+                                                        regs->ecx,
+                                                        regs->edx);
             break;
 
         case SYS_HALT:

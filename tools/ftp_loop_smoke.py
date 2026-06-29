@@ -103,6 +103,54 @@ def wait_for_log(log, offset, marker, timeout_s):
     raise RuntimeError(f"timed out waiting for serial marker: {marker}")
 
 
+def wait_for_log_anywhere(log, marker, timeout_s):
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        log.seek(0)
+        if marker in log.read():
+            return
+        time.sleep(0.05)
+    raise RuntimeError(f"timed out waiting for serial marker: {marker}")
+
+
+def log_contains(log, marker):
+    log.seek(0)
+    return marker in log.read()
+
+
+def wait_for_any_log(log, offset, markers, timeout_s):
+    deadline = time.time() + timeout_s
+    buf = ""
+    while time.time() < deadline:
+        chunk, offset = read_new(log, offset)
+        if chunk:
+            tee_stdout(chunk)
+            buf += chunk
+            for marker in markers:
+                if marker in buf:
+                    return offset
+            if len(buf) > 16384:
+                buf = buf[-8192:]
+        else:
+            time.sleep(0.05)
+    raise RuntimeError(f"timed out waiting for serial markers: {', '.join(markers)}")
+
+
+def ensure_dhcp_configured(monitor, log, offset, timeout_s):
+    marker = "boot: PASS dhcp: IPv4 lease acquired"
+    try:
+        wait_for_log_anywhere(log, marker, min(timeout_s, 5.0))
+        return offset
+    except RuntimeError:
+        if log_contains(log, marker):
+            return offset
+
+    print("DHCP boot marker not ready; running guest dhcp")
+    send_text(monitor, "dhcp")
+    send_key(monitor, "ret")
+    return wait_for_any_log(log, offset, ["dhcp: ok", marker], timeout_s)
+
+
 def connect_tcp(host, port, timeout_s):
     deadline = time.time() + timeout_s
     last_error = None
@@ -298,6 +346,7 @@ def run_ftp_loop_smoke(args):
     try:
         with open(args.serial, "r", encoding="utf-8", errors="replace") as log:
             offset = wait_for_prompt(log, args.timeout)
+            offset = ensure_dhcp_configured(monitor, log, offset, args.timeout)
             offset = capture_netinfo(monitor, log, offset, args.timeout, "before")
 
             for i in range(args.iterations):

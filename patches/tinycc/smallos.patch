@@ -37,6 +37,17 @@ index 2884259..d92dbf4 100644
      && defined __APPLE__ == defined TCC_TARGET_MACHO
  # if defined __i386__ && defined TCC_TARGET_I386
  #  define TCC_IS_NATIVE
+@@ -311,6 +318,10 @@
+ #  define CONFIG_TCC_ELFINTERP "/lib/ld-linux.so.3"
+ #  define CONFIG_TCC_ELFINTERP_ARMHF "/lib/ld-linux-armhf.so.3"
+ # else
++#  if defined(TCC_TARGET_SMALLOS)
++#   define CONFIG_TCC_ELFINTERP "/lib/ld-smallos.so"
++#  else
+ #  define CONFIG_TCC_ELFINTERP "/lib/ld-linux.so.2"
++#  endif
+ # endif
+ #endif
 diff --git a/tccelf.c b/tccelf.c
 index 0950365..b2efb0d 100644
 --- a/tccelf.c

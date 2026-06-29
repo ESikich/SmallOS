@@ -128,10 +128,11 @@ Loader2 can preload the used prefix of the ext2 partition to physical
 32 MB seed volume. The default `BOOT_RAMDISK_FALLBACK=never` policy disables
 that preload for normal VM/IDE boots; QEMU and VMware normally mount the
 writable ATA path instead. `BOOT_RAMDISK_FALLBACK=auto` preloads only when EDD
-does not identify the boot drive as USB or ATA, and explicit USB image/run
-targets force it back on for hardware resilience. USB boots can now mount the
-device directly through read-only USB mass storage when OHCI/BOT/SCSI probing
-succeeds, and only fall back to this RAM-backed copy when protected-mode
+does not identify the boot drive as USB or ATA, and USB image/fallback targets
+force it back on for hardware resilience. Direct QEMU USB storage runs keep the
+preload disabled so the protected-mode `usb0` path is tested directly. USB boots
+can now mount the device through read-only USB mass storage when OHCI/BOT/SCSI
+probing succeeds, and only fall back to this RAM-backed copy when protected-mode
 storage cannot validate the filesystem. For BIOSes that identify the boot
 device as USB, loader2 tests EDD direct high-memory reads by comparing a sample
 against the bounce-buffer path before using them for the fallback preload. USB

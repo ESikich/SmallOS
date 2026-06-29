@@ -25,6 +25,13 @@ guest grab with `Ctrl+Alt+G` after clicking inside the window:
 qemu-system-i386 -display gtk,grab-on-hover=off -drive format=raw,file=smallos.img -boot c -m 128 -nic user,model=e1000,mac=52:54:00:12:34:56,hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000,hostfwd=tcp::8080-:8080
 ```
 
+For a plain Windows command prompt launch of a copied `smallos.img`, keep the
+whole QEMU command on one line:
+
+```cmd
+qemu-system-i386 -drive format=raw,file=smallos.img -boot c -m 64 -serial stdio -nic user,model=e1000,mac=52:54:00:12:34:56
+```
+
 `make test` runs the same image headlessly, launches the shell `selftest`
 command, feeds the interactive `readline` prompt, and verifies both the
 built-in shell commands (`tests/shell/`) and shipped test programs
@@ -39,9 +46,11 @@ stack so the full regression run stays predictable.
 commands without running the full guest suite.
 
 Use the verification ladder to match the risk of the change:
-`make verify` for the normal preflight, `make verify-display` for terminal or
-framebuffer work, `make verify-network` for socket/FTP/cserve work, and
-`make verify-full` before handing off broad changes.
+`make verify` for the normal preflight including dynamic-link artifact and
+negative failure-path checks, `make verify-display` for terminal or framebuffer
+work, `make verify-network` for socket/FTP/cserve work, and `make verify-full`
+before handing off broad changes. Use `make dynamic-link-check` or
+`make dynlink-negative-smoke` directly when iterating on loader/staging changes.
 
 `make display-smoke` runs the framebuffer screenshot, forced-VGA screenshot,
 and GUI launch smoke checks. The host harness still treats serial as truth:

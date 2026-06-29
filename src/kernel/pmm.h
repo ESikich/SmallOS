@@ -40,8 +40,11 @@
 void pmm_init(void);
 u32  pmm_alloc_frame(void);
 u32  pmm_alloc_contiguous_frames(u32 count);
+int  pmm_retain_frame(u32 addr);
+void pmm_release_frame(u32 addr);
 void pmm_free_frame(u32 addr);
 void pmm_free_contiguous_frames(u32 addr, u32 count);
+u32  pmm_frame_refcount(u32 addr);
 u32  pmm_free_count(void);
 u32  pmm_total_count(void);
 

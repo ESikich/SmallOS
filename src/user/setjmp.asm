@@ -1,8 +1,8 @@
 bits 32
 section .text
 
-global setjmp
-global longjmp
+global setjmp:function
+global longjmp:function
 
 setjmp:
     mov  eax, [esp+4]

@@ -36,6 +36,7 @@
 #define OHCI_HC_CONTROL_HEAD_REG 0x20u
 #define OHCI_HC_CONTROL_CUR_REG  0x24u
 #define OHCI_HC_BULK_HEAD     0x28u
+#define OHCI_HC_BULK_CUR      0x2Cu
 #define OHCI_HC_DONE_HEAD     0x30u
 #define OHCI_HC_FM_INTERVAL   0x34u
 #define OHCI_HC_PERIOD_START  0x40u
@@ -972,6 +973,15 @@ static int ohci_td_ok(const ohci_td_t* td) {
     return ((td->control >> OHCI_TD_CC_SHIFT) & 0xFu) == 0u;
 }
 
+static u32 ohci_dma_addr(const void* ptr) {
+    u32 virt = (u32)ptr;
+
+    if (virt >= KERNEL_PMM_MAP_BASE && virt < KERNEL_PMM_MAP_END) {
+        return paging_kernel_virt_to_phys(ptr);
+    }
+    return virt;
+}
+
 int usb_bus_try_lock(void) {
     return __sync_bool_compare_and_swap(&s_usb_bus_locked, 0, 1);
 }
@@ -1030,7 +1040,7 @@ static int ohci_wait_td(const ohci_td_t* td, unsigned int timeout_ms) {
     unsigned int deadline = timer_get_ticks() + timer_ms_to_ticks_round_up(timeout_ms);
     unsigned int spins = 0;
 
-    while ((int)(timer_get_ticks() - deadline) < 0 && spins++ < 1000000u) {
+    while ((int)(timer_get_ticks() - deadline) < 0 && spins++ < 100000000u) {
         if (ohci_td_done(td)) {
             return ohci_td_ok(td);
         }
@@ -1335,6 +1345,9 @@ static int ohci_bulk_transfer(usb_mass_device_t* dev,
     }
 
     ohci_quiet_interrupts(regs);
+    regs[OHCI_HC_CONTROL / 4u] = regs[OHCI_HC_CONTROL / 4u] & ~OHCI_CONTROL_BLE;
+    regs[OHCI_HC_BULK_HEAD / 4u] = 0;
+    regs[OHCI_HC_BULK_CUR / 4u] = 0;
     k_memset(&s_bulk_ed, 0, sizeof(s_bulk_ed));
     k_memset(s_bulk_td, 0, sizeof(s_bulk_td));
 
@@ -1356,11 +1369,12 @@ static int ohci_bulk_transfer(usb_mass_device_t* dev,
     if (in) {
         td->control |= OHCI_TD_BUFFER_ROUNDING;
     }
-    td->cbp = (u32)(unsigned int)data;
-    td->be = (u32)(unsigned int)data + len - 1u;
+    td->cbp = ohci_dma_addr(data);
+    td->be = td->cbp + len - 1u;
     td->next_td = (u32)(unsigned int)&s_bulk_td[1];
 
     regs[OHCI_HC_BULK_HEAD / 4u] = (u32)(unsigned int)&s_bulk_ed;
+    regs[OHCI_HC_BULK_CUR / 4u] = 0;
     regs[OHCI_HC_CONTROL / 4u] =
         regs[OHCI_HC_CONTROL / 4u] | OHCI_CONTROL_BLE | OHCI_CONTROL_USB_OPERATIONAL;
     regs[OHCI_HC_COMMAND_STATUS / 4u] = OHCI_CMD_BLF;
@@ -1371,8 +1385,17 @@ static int ohci_bulk_transfer(usb_mass_device_t* dev,
         terminal_puts(in ? " in" : " out");
         terminal_puts(" cc=");
         terminal_put_hex((td->control >> OHCI_TD_CC_SHIFT) & 0xFu);
+        terminal_puts(" head=");
+        terminal_put_hex(s_bulk_ed.head_td);
+        terminal_puts(" tail=");
+        terminal_put_hex(s_bulk_ed.tail_td);
+        terminal_puts(" stat=");
+        terminal_put_hex(regs[OHCI_HC_COMMAND_STATUS / 4u]);
         terminal_putc('\n');
         s_bulk_ed.control |= OHCI_ED_CTRL_SKIP;
+        regs[OHCI_HC_CONTROL / 4u] = regs[OHCI_HC_CONTROL / 4u] & ~OHCI_CONTROL_BLE;
+        regs[OHCI_HC_BULK_HEAD / 4u] = 0;
+        regs[OHCI_HC_BULK_CUR / 4u] = 0;
         return 0;
     }
 
@@ -1393,6 +1416,10 @@ static int ohci_bulk_transfer(usb_mass_device_t* dev,
     if (out_len) {
         *out_len = actual;
     }
+    s_bulk_ed.control |= OHCI_ED_CTRL_SKIP;
+    regs[OHCI_HC_CONTROL / 4u] = regs[OHCI_HC_CONTROL / 4u] & ~OHCI_CONTROL_BLE;
+    regs[OHCI_HC_BULK_HEAD / 4u] = 0;
+    regs[OHCI_HC_BULK_CUR / 4u] = 0;
     return 1;
 }
 

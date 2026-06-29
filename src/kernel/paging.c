@@ -259,12 +259,25 @@ u32* process_pd_clone_user(u32* src_pd) {
             }
 
             u32 src_frame = src_pt[j] & ~0xFFFu;
+            u32 src_flags = src_pt[j] & 0xFFFu;
 
             if (!paging_phys_is_pmm_frame(src_frame)) {
                 paging_map_page(dst_pd,
                                 (i << 22) | (j << 12),
                                 src_frame,
-                                src_pt[j] & 0xFFFu);
+                                src_flags);
+                continue;
+            }
+
+            if (src_flags & PAGE_SHARED_RO_FILE) {
+                if (!pmm_retain_frame(src_frame)) {
+                    process_pd_destroy(dst_pd);
+                    return 0;
+                }
+                paging_map_page(dst_pd,
+                                (i << 22) | (j << 12),
+                                src_frame,
+                                src_flags & ~PAGE_WRITE);
                 continue;
             }
 
@@ -281,7 +294,7 @@ u32* process_pd_clone_user(u32* src_pd) {
             paging_map_page(dst_pd,
                             (i << 22) | (j << 12),
                             new_frame,
-                            src_pt[j] & 0xFFFu);
+                            src_flags);
         }
     }
 

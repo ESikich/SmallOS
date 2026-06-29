@@ -110,7 +110,6 @@ start:
     mov si, loader_msg
     call print_string
 
-    call cache_ramdisk_layout
     call load_kernel
 
     mov si, kernel_loaded_msg
@@ -196,6 +195,8 @@ lba_read:
     mov ax, LOADER2_SEGMENT
     mov fs, ax
     mov gs, ax
+    mov eax, [dap_lba]
+    mov [DISK_LAST_LBA], eax
     mov ah, 0x42
     mov dl, [BOOT_DRIVE]
     mov si, dap
@@ -217,6 +218,8 @@ lba_read_high_ramdisk:
     push gs
     mov ax, LOADER2_SEGMENT
     mov ds, ax
+    mov eax, [dap_high_lba]
+    mov [DISK_LAST_LBA], eax
     mov ah, 0x42
     mov dl, [BOOT_DRIVE]
     mov si, dap_high
@@ -378,31 +381,10 @@ chs_cap_track_chunk:
     pop eax
     ret
 
-cache_ramdisk_layout:
-    pusha
-    push ds
-    push es
-    xor ax, ax
-    mov ds, ax
-    mov ax, LOADER2_SEGMENT
-    mov es, ax
-    mov eax, [BOOT_SECTOR_ADDR + MBR_PARTITION_TABLE_OFFSET + EXT2_PARTITION_INDEX * MBR_PARTITION_ENTRY_SIZE + MBR_PARTITION_LBA_OFFSET]
-    mov [es:RAMDISK_LBA], eax
-    mov eax, [BOOT_SECTOR_ADDR + MBR_PARTITION_TABLE_OFFSET + EXT2_PARTITION_INDEX * MBR_PARTITION_ENTRY_SIZE + MBR_PARTITION_SIZE_OFFSET]
-    mov [es:RAMDISK_SECTORS], eax
-    pop es
-    pop ds
-    popa
-    ret
-
 load_kernel:
     pusha
-    push ds
-    xor ax, ax
-    mov ds, ax
-    mov eax, [BOOT_SECTOR_ADDR + MBR_PARTITION_TABLE_OFFSET + KERNEL_PARTITION_INDEX * MBR_PARTITION_ENTRY_SIZE + MBR_PARTITION_LBA_OFFSET]
-    mov edx, [BOOT_SECTOR_ADDR + MBR_PARTITION_TABLE_OFFSET + KERNEL_PARTITION_INDEX * MBR_PARTITION_ENTRY_SIZE + MBR_PARTITION_SIZE_OFFSET]
-    pop ds
+    mov eax, [KERNEL_LBA]
+    mov edx, [KERNEL_SECTORS]
     test dx, dx
     jz disk_error
 
@@ -461,7 +443,7 @@ load_ramdisk:
     call print_string
     mov eax, [RAMDISK_LBA]
     mov edx, [RAMDISK_SECTORS]
-    test dx, dx
+    test edx, edx
     jz disk_error
     call probe_high_ramdisk_read
     call detect_ramdisk_preload_sectors
@@ -1335,6 +1317,7 @@ switch_to_pm:
 
 [bits 32]
 init_pm:
+    cld
     mov ax, DATA_SEG
     mov ds, ax
     mov ss, ax
@@ -1368,9 +1351,12 @@ CHS_HEADS            dw 16
 CHS_SECTORS_PER_TRACK dw 63
 DISK_LAST_LBA        dd 0
 vbe_candidate_mode   dw 0
+; Patched by tools/mkimage.c after final kernel and filesystem LBAs are known.
+KERNEL_LBA           dd 0x4B4C324C
+KERNEL_SECTORS       dd 0x4B53324C
+RAMDISK_LBA          dd 0x464C324C
+RAMDISK_SECTORS      dd 0x4653324C
 RAMDISK_SIZE_BYTES   dd 0
-RAMDISK_LBA          dd 0
-RAMDISK_SECTORS      dd 0
 RAMDISK_PRELOAD_SECTORS dd 0
 RAMDISK_SECTORS_READ dd 0
 RAMDISK_NEXT_DOT     dd 0

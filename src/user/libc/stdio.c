@@ -1452,7 +1452,26 @@ long double ldexpl(long double x, int exp) {
     return x;
 }
 
+void (*__smallos_fini_hook)(void);
+
+typedef struct smallos_dlfcn_services {
+    void* (*dlopen)(const char* filename, int flag);
+    void* (*dlsym)(void* handle, const char* symbol);
+    int (*dlclose)(void* handle);
+    const char* (*dlerror)(void);
+} smallos_dlfcn_services_t;
+
+smallos_dlfcn_services_t* __smallos_dlfcn_services;
+static const char* __smallos_static_dlerror;
+
+static void __smallos_set_static_dlerror(const char* msg) {
+    __smallos_static_dlerror = msg;
+}
+
 __attribute__((noreturn)) void exit(int code) {
+    if (__smallos_fini_hook) {
+        __smallos_fini_hook();
+    }
     sys_exit(code);
     for (;;) {}
 }
@@ -1475,24 +1494,37 @@ char* getenv(const char* name) {
 }
 
 void* dlopen(const char* filename, int flag) {
-    (void)filename;
-    (void)flag;
+    if (__smallos_dlfcn_services && __smallos_dlfcn_services->dlopen) {
+        return __smallos_dlfcn_services->dlopen(filename, flag);
+    }
+    __smallos_set_static_dlerror("dynamic loader unavailable");
     errno = ENOSYS;
     return 0;
 }
 
 const char* dlerror(void) {
-    return "dlerror unsupported";
+    const char* msg;
+    if (__smallos_dlfcn_services && __smallos_dlfcn_services->dlerror) {
+        return __smallos_dlfcn_services->dlerror();
+    }
+    msg = __smallos_static_dlerror;
+    __smallos_static_dlerror = 0;
+    return msg;
 }
 
-void* dlsym(void* handle, char* symbol) {
-    (void)handle;
-    (void)symbol;
+void* dlsym(void* handle, const char* symbol) {
+    if (__smallos_dlfcn_services && __smallos_dlfcn_services->dlsym) {
+        return __smallos_dlfcn_services->dlsym(handle, symbol);
+    }
+    __smallos_set_static_dlerror("dynamic loader unavailable");
     return 0;
 }
 
 int dlclose(void* handle) {
-    (void)handle;
+    if (__smallos_dlfcn_services && __smallos_dlfcn_services->dlclose) {
+        return __smallos_dlfcn_services->dlclose(handle);
+    }
+    __smallos_set_static_dlerror("dynamic loader unavailable");
     errno = ENOSYS;
     return -1;
 }

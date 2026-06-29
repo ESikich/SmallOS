@@ -10,6 +10,7 @@
 #include "sys/timerfd.h"
 #include "sys/signalfd.h"
 #include "sys/uio.h"
+#include "sys/mman.h"
 #include "sys/sendfile.h"
 #include "sys/wait.h"
 #include "fcntl.h"
@@ -23,6 +24,10 @@
 int errno = 0;
 char* __smallos_empty_env[] = { 0 };
 char** environ = __smallos_empty_env;
+
+void __smallos_set_environ(char** envp) {
+    environ = envp ? envp : __smallos_empty_env;
+}
 
 static int errno_from_raw(int raw) {
     if (raw < 0) {
@@ -465,6 +470,23 @@ int getpeername(int fd, struct sockaddr* addr, socklen_t* addrlen) {
 
 int shutdown(int fd, int how) {
     return errno_from_raw(sys_shutdown(fd, how));
+}
+
+void* mmap(void* addr, unsigned int length, int prot, int flags, int fd, int offset) {
+    int raw = sys_mmap(addr, length, prot, flags, fd, (uint32_t)offset);
+    if (raw < 0) {
+        errno = -raw;
+        return MAP_FAILED;
+    }
+    return (void*)raw;
+}
+
+int munmap(void* addr, unsigned int length) {
+    return errno_from_raw(sys_munmap(addr, length));
+}
+
+int mprotect(void* addr, unsigned int length, int prot) {
+    return errno_from_raw(sys_mprotect(addr, length, prot));
 }
 
 int epoll_create1(int flags) {

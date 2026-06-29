@@ -7,6 +7,13 @@
 typedef uint8_t  u8;
 typedef uint32_t u32;
 
+enum {
+    LOADER2_PATCH_KERNEL_LBA = 0x4B4C324C, /* "L2LK" */
+    LOADER2_PATCH_KERNEL_SECTORS = 0x4B53324C, /* "L2SK" */
+    LOADER2_PATCH_FS_LBA = 0x464C324C, /* "L2LF" */
+    LOADER2_PATCH_FS_SECTORS = 0x4653324C, /* "L2SF" */
+};
+
 /*
  * Final disk image assembly inputs and layout parameters.
  *
@@ -178,11 +185,49 @@ static void write_zeroes(FILE* f, size_t count, const char* out_path) {
     }
 }
 
+static u32 read_u32_le(const u8* buf, u32 offset) {
+    return ((u32)buf[offset + 0]) |
+           ((u32)buf[offset + 1] << 8) |
+           ((u32)buf[offset + 2] << 16) |
+           ((u32)buf[offset + 3] << 24);
+}
+
 static void patch_u32_le(u8* buf, u32 offset, u32 value) {
     buf[offset + 0] = (u8)(value & 0xFF);
     buf[offset + 1] = (u8)((value >> 8) & 0xFF);
     buf[offset + 2] = (u8)((value >> 16) & 0xFF);
     buf[offset + 3] = (u8)((value >> 24) & 0xFF);
+}
+
+static void patch_loader2_layout(u8* loader, size_t loader_size,
+                                 u32 kernel_lba, u32 kernel_sectors,
+                                 u32 fs_lba, u32 fs_sectors) {
+    int found = 0;
+    u32 patch_offset = 0;
+
+    if (loader_size < 16) {
+        die("loader image is too small for layout patch");
+    }
+
+    for (size_t off = 0; off + 16 <= loader_size; off++) {
+        if (read_u32_le(loader, (u32)off + 0) == LOADER2_PATCH_KERNEL_LBA &&
+            read_u32_le(loader, (u32)off + 4) == LOADER2_PATCH_KERNEL_SECTORS &&
+            read_u32_le(loader, (u32)off + 8) == LOADER2_PATCH_FS_LBA &&
+            read_u32_le(loader, (u32)off + 12) == LOADER2_PATCH_FS_SECTORS) {
+            found++;
+            patch_offset = (u32)off;
+        }
+    }
+
+    if (found != 1) {
+        fprintf(stderr, "mkimage: expected one loader2 layout patch slot, found %d\n", found);
+        exit(1);
+    }
+
+    patch_u32_le(loader, patch_offset + 0, kernel_lba);
+    patch_u32_le(loader, patch_offset + 4, kernel_sectors);
+    patch_u32_le(loader, patch_offset + 8, fs_lba);
+    patch_u32_le(loader, patch_offset + 12, fs_sectors);
 }
 
 static void write_partition_entry(u8* boot, u32 entry_offset, u8 bootable, u8 type,
@@ -265,6 +310,7 @@ int main(int argc, char** argv) {
     write_partition_entry(boot,
                           opt.boot_partition_table_offset + 1u * opt.boot_partition_entry_size,
                           0x00u, 0x83u, fs_lba, fs_sectors);
+    patch_loader2_layout(loader, loader_size, kernel_lba, kernel_sectors, fs_lba, fs_sectors);
 
     FILE* out = fopen(opt.out_path, "wb");
     if (!out) die_errno("cannot open output", opt.out_path);

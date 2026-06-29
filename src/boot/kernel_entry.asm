@@ -5,6 +5,7 @@ extern bss_start
 extern bss_end
 
 _start:
+    cld
     mov edi, bss_start
     mov ecx, bss_end
     sub ecx, edi

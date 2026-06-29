@@ -1373,7 +1373,51 @@ static void sh_selftest_exec(const char* label, const char* command) {
     u_puts("PASS\n");
 }
 
+static int s_selftest_failures;
+
+static void sh_selftest_exec_expect(const char* label, const char* command, int expected_status) {
+    char line[SHELL_LINE_MAX];
+    char* argv[SHELL_ARG_MAX + 1];
+    char path[SHELL_PATH_MAX];
+    int argc;
+    int pid;
+    int status = 0;
+    int ok = 0;
+
+    u_puts("selftest: ");
+    u_puts(label);
+    u_puts(" ... ");
+    sh_copy(line, command, sizeof(line));
+    argc = sh_tokenize(line, argv, SHELL_ARG_MAX);
+    argv[argc] = 0;
+    if (argc <= 0 || !sh_resolve_program(argv[0], path, sizeof(path))) {
+        u_puts("selftest: ");
+        u_puts(label);
+        u_puts(" FAIL\n");
+        s_selftest_failures++;
+        return;
+    }
+
+    u_puts("selftest: ");
+    u_puts(label);
+    u_puts(" launched\n");
+    pid = sys_exec_foreground(path, argc, argv);
+    if (pid >= 0 && sh_wait_foreground(pid, &status) >= 0) {
+        ok = WIFEXITED(status) && WEXITSTATUS(status) == expected_status;
+    }
+    u_puts("selftest: ");
+    u_puts(label);
+    u_puts(" woke\n");
+    if (ok) {
+        u_puts("PASS\n");
+    } else {
+        u_puts("FAIL\n");
+        s_selftest_failures++;
+    }
+}
+
 void sh_selftest(void) {
+    s_selftest_failures = 0;
     u_puts("selftest: start\n");
     sh_shelltest_begin("overall");
     sh_shelltest();
@@ -1401,6 +1445,14 @@ void sh_selftest(void) {
     sh_selftest_exec("ptrguard", "usr/libexec/tests/ptrguard alpha beta");
     sh_selftest_exec("preempt_test", "usr/libexec/tests/preempt_test alpha beta");
     sh_selftest_exec("crtprobe", "usr/libexec/tests/crtprobe alpha nested/path longish-argument-0123456789abcdef");
+    sh_selftest_exec_expect("dynhello", "usr/libexec/tests/dynhello alpha beta", 0);
+    sh_selftest_exec_expect("dyncrtprobe", "usr/libexec/tests/dyncrtprobe alpha nested/path longish-argument-0123456789abcdef", 7);
+    sh_selftest_exec_expect("dynmathprobe", "usr/libexec/tests/dynmathprobe", 0);
+    sh_selftest_exec_expect("dynstdioprobe", "usr/libexec/tests/dynstdioprobe", 0);
+    sh_selftest_exec_expect("dynlinkprobe", "usr/libexec/tests/dynlinkprobe", 0);
+    sh_selftest_exec_expect("dynpathprobe", "usr/libexec/tests/dynpathprobe", 0);
+    sh_selftest_exec_expect("dynfiniprobe", "usr/libexec/tests/dynfiniprobe", 0);
+    sh_selftest_exec_expect("dlopenprobe", "usr/libexec/tests/dlopenprobe", 0);
     sh_selftest_exec("inputprobe", "usr/libexec/tests/inputprobe alpha beta");
     sh_selftest_exec("pipeprobe", "usr/libexec/tests/pipeprobe");
     sh_selftest_exec("dupprobe", "usr/libexec/tests/dupprobe");
@@ -1418,6 +1470,10 @@ void sh_selftest(void) {
     sh_selftest_exec("fault br", "usr/libexec/tests/fault br");
     sh_selftest_exec("fault pf", "usr/libexec/tests/fault pf");
 
+    if (s_selftest_failures) {
+        u_puts("selftest: FAIL\n");
+        return;
+    }
     u_puts("selftest: PASS\n");
 }
 

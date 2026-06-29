@@ -1140,6 +1140,8 @@ Copies a kernel memory diagnostic summary into `out_info`, including the kernel
 heap range, PMM free/total frame counts, and whether E820 boot memory metadata
 is available. `pmm_total_frames` is the real managed frame count captured after
 E820 filtering and boot reservations, not the fixed PMM address-window ceiling.
+`ro_file_cache_pages` and `ro_file_cache_mapped_refs` expose diagnostic counts
+for the shared read-only file mapping cache used by dynamic DSO text pages.
 
 ### SYS_E820_ENTRY (78)
 
@@ -1469,6 +1471,41 @@ does not own the display, or page flipping is unavailable.
 
 ---
 
+### SYS_MMAP (97)
+
+```c
+void* sys_mmap(void* addr, uint32_t length, uint32_t prot, uint32_t flags,
+               int fd, uint32_t offset);
+```
+
+Creates private user mappings. Anonymous mappings keep using `MAP_ANON`; file
+mappings currently support only read-only/private mappings from a readable
+regular file descriptor with a page-aligned `offset`. Writable file mappings
+are rejected, and `mprotect(PROT_WRITE)` is rejected on shared read-only file
+cache pages. Eligible file-backed pages are refcounted and may be shared across
+processes and `fork()`. `PROT_EXEC` is accepted for ABI shape, but current x86
+paging only enforces present/user/write bits.
+
+### SYS_MUNMAP (98)
+
+```c
+int sys_munmap(void* addr, uint32_t length);
+```
+
+Unmaps pages from a user mapping range. Partial-page addresses are rounded to
+page boundaries by the kernel.
+
+### SYS_MPROTECT (99)
+
+```c
+int sys_mprotect(void* addr, uint32_t length, uint32_t prot);
+```
+
+Updates read/write protection on user mapping pages. Execute permission is
+accepted but not separately enforced on current paging hardware.
+
+---
+
 ## Kernel Entry Point
 
 ```c
@@ -1624,6 +1661,9 @@ sys_sound_pcm_u8_sb16_8(samples, count, sample_hz)
 sys_sound_caps()
 sys_sound_status(out)
 sys_sound_stop()
+sys_mmap(addr, length, prot, flags)
+sys_munmap(addr, length)
+sys_mprotect(addr, length, prot)
 ```
 
 `src/user/internal/user_lib.h` higher-level wrappers:

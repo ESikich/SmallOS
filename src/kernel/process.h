@@ -100,6 +100,7 @@ struct fd_entry {
 #define PROCESS_ARG_BYTES 256
 #define PROCESS_MAX_ENVS  16
 #define PROCESS_ENV_BYTES 512
+#define PROCESS_AUXV_MAX  16
 #define PROCESS_CWD_MAX   PROCESS_FD_NAME_MAX
 #define PROCESS_KERNEL_STACK_FRAMES 8u
 #define PROCESS_KERNEL_STACK_BYTES  (PROCESS_KERNEL_STACK_FRAMES * PAGE_SIZE)
@@ -125,8 +126,12 @@ typedef struct process {
     int             user_envc;
     char*           user_envp[PROCESS_MAX_ENVS + 1];
     char            user_env_data[PROCESS_ENV_BYTES];
+    int             user_auxc;
+    unsigned int    user_auxv[PROCESS_AUXV_MAX * 2 + 2];
     unsigned int    heap_base;
     unsigned int    heap_brk;
+    unsigned int    mmap_base;
+    unsigned int    mmap_next;
     char            cwd[PROCESS_CWD_MAX];  /* canonical path without leading slash */
     char            name[PROCESS_NAME_MAX];
     fd_entry_t*     fds;                /* PMM-backed per-process open handles */
@@ -193,6 +198,7 @@ int        process_kill_pid(int pid, int status, unsigned int esp);
 int        process_reap_unclaimed_zombies(void);
 int        process_set_args(process_t* proc, int argc, char** argv);
 int        process_set_env(process_t* proc, int envc, char** envp);
+int        process_set_auxv(process_t* proc, int auxc, const unsigned int* auxv_pairs);
 int        process_set_default_env(process_t* proc);
 
 process_t* process_get_current(void);

@@ -13,6 +13,7 @@
  *   ecx = arg2
  *   edx = arg3
  *   esi = arg4 for four-argument calls
+ *   edi = arg5 and ebp = arg6 for extended calls
  *
  * Return value:
  *   eax = result
@@ -72,6 +73,8 @@ typedef struct sys_meminfo {
     unsigned int pmm_total_frames;
     unsigned int e820_valid;
     unsigned int e820_count;
+    unsigned int ro_file_cache_pages;
+    unsigned int ro_file_cache_mapped_refs;
 } sys_meminfo_t;
 
 #define SYS_PROCINFO_MAX 16u
@@ -383,7 +386,10 @@ enum {
     SYS_INPUT_WAIT_UNTIL = 93, /* wait for input or an absolute tick deadline */
     SYS_SOUND_OP       = 94, /* sound operation */
     SYS_DISPLAY_MAP    = 95, /* map display pages into owner address space */
-    SYS_DISPLAY_PRESENT_PAGE = 96 /* present a mapped display page */
+    SYS_DISPLAY_PRESENT_PAGE = 96, /* present a mapped display page */
+    SYS_MMAP           = 97, /* anonymous or read-only file private mapping */
+    SYS_MUNMAP         = 98, /* unmap user mapping pages */
+    SYS_MPROTECT       = 99  /* update user mapping write permission */
 };
 
 #endif

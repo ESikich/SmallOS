@@ -49,6 +49,7 @@ typedef struct syscall_regs {
  *   regs->ecx = arg2
  *   regs->edx = arg3
  *   regs->esi = arg4 for four-argument calls
+ *   regs->edi = arg5 and regs->ebp = arg6 for extended calls
  *
  * Output:
  *   regs->eax = return value

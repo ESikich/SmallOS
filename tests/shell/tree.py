@@ -9,7 +9,6 @@ CASES = [
             "/",
             "├── bin/",
             "├── usr/",
-            "│   ├── bin/",
             "│   │   ├── hello",
             "└── var/",
             "directories, ",

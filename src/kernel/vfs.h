@@ -11,6 +11,11 @@ void vfs_file_retain(fd_entry_t* ent);
 void vfs_file_set_is_dir(fd_entry_t* ent, int is_dir);
 int vfs_file_stat_fd(fd_entry_t* ent, u32* out_size, int* out_is_dir);
 int vfs_file_stat_info_fd(fd_entry_t* ent, sys_stat_info_t* out);
+int vfs_file_map_ro_page(fd_entry_t* ent,
+                         u32 file_offset,
+                         u32* out_frame,
+                         u32* out_bytes);
+void vfs_file_map_cache_stats(u32* out_pages, u32* out_mapped_refs);
 
 const u8* vfs_load_file(const char* path, u32* out_size);
 u8* vfs_load_file_owned(const char* path,

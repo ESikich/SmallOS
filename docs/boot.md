@@ -555,6 +555,7 @@ device:
 ```bash
 make run-usb-storage
 make usb-storage-smoke
+make usb-ramdisk-fallback-smoke
 ```
 
 The smoke target expects the serial transcript to show `usbms: ready`,
@@ -563,6 +564,11 @@ does not attach a boot keyboard, so `usb: WARN boot HID unavailable` is
 acceptable as long as `usb: HID service task queued` follows it; on hardware the
 same service continues retrying quietly so late keyboard/mouse discovery does not
 write over the prompt. Use `usbinfo` to inspect the live HID state after boot.
+`usb-storage-smoke` keeps `BOOT_RAMDISK_FALLBACK=never` so a pass proves the
+protected-mode USB block driver can mount the image directly.
+`usb-ramdisk-fallback-smoke` is the separate BIOS-stage preload coverage target;
+it also sets `BOOT_SKIP_USB_STORAGE=1` so the kernel intentionally skips `usb0`
+and mounts the loader2 RAM copy.
 
 ---
 
@@ -590,8 +596,12 @@ tries ATA first because it is writable, then USB mass storage as a read-only
 block device, then the loader2-published RAM fallback. With the default
 `BOOT_RAMDISK_FALLBACK=never` policy, normal VM/IDE boots skip that preload
 entirely. `BOOT_RAMDISK_FALLBACK=auto` preloads only when EDD does not identify
-the boot drive as USB or ATA. USB image targets override this to `always`
-because real USB firmware and controllers are less predictable than QEMU.
+the boot drive as USB or ATA. USB image targets and `usb-ramdisk-fallback-smoke`
+override this to `always`; the direct QEMU USB storage run/smoke targets keep it
+at `never` so they test the protected-mode USB storage driver without a RAM
+preload masking failures. `usb-ramdisk-fallback-smoke` also sets
+`BOOT_SKIP_USB_STORAGE=1` to exercise the RAM fallback even when direct OHCI
+storage is working.
 
 USB HID is deliberately claimed after storage. That keeps shell ELF loading on
 the storage path that just mounted, then starts a retrying OHCI boot-HID service

@@ -23,6 +23,7 @@ typedef unsigned int uint32_t;
  *   ecx = arg2
  *   edx = arg3
  *   esi = arg4 for four-argument calls
+ *   edi = arg5 and ebp = arg6 for extended calls
  *
  * Return:
  *   eax = result
@@ -81,6 +82,29 @@ static inline int syscall4(int num, uint32_t arg1, uint32_t arg2, uint32_t arg3,
         "int $0x80"
         : "=a"(ret)
         : "a"(num), "b"(arg1), "c"(arg2), "d"(arg3), "S"(arg4)
+        : "memory"
+    );
+    return ret;
+}
+
+static inline int syscall6(int num,
+                           uint32_t arg1,
+                           uint32_t arg2,
+                           uint32_t arg3,
+                           uint32_t arg4,
+                           uint32_t arg5,
+                           uint32_t arg6) {
+    int ret;
+    __asm__ volatile (
+        "pushl %[arg6]\n"
+        "push %%ebp\n"
+        "movl 4(%%esp), %%ebp\n"
+        "int $0x80\n"
+        "pop %%ebp\n"
+        "addl $4, %%esp\n"
+        : "=a"(ret)
+        : "a"(num), "b"(arg1), "c"(arg2), "d"(arg3),
+          "S"(arg4), "D"(arg5), [arg6] "g"(arg6)
         : "memory"
     );
     return ret;
@@ -668,6 +692,24 @@ static inline int sys_writefile_path(const char* path, const char* buf, uint32_t
  */
 static inline uint32_t sys_brk(uint32_t new_brk) {
     return (uint32_t)syscall1(SYS_BRK, new_brk);
+}
+
+static inline int sys_mmap(void* addr, uint32_t length, int prot, int flags, int fd, uint32_t offset) {
+    return syscall6(SYS_MMAP,
+                    (uint32_t)addr,
+                    length,
+                    (uint32_t)prot,
+                    (uint32_t)flags,
+                    (uint32_t)fd,
+                    offset);
+}
+
+static inline int sys_munmap(void* addr, uint32_t length) {
+    return syscall2(SYS_MUNMAP, (uint32_t)addr, length);
+}
+
+static inline int sys_mprotect(void* addr, uint32_t length, int prot) {
+    return syscall3(SYS_MPROTECT, (uint32_t)addr, length, (uint32_t)prot);
 }
 
 static inline int sys_halt(void) {

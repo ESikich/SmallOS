@@ -37,6 +37,12 @@ void _start(int argc, char** argv) {
     u_put_uint(used_frames * 4u);
     u_puts(" KB)\n");
 
+    u_puts("rofile: ");
+    u_put_uint(info.ro_file_cache_pages);
+    u_puts(" cache pages / ");
+    u_put_uint(info.ro_file_cache_mapped_refs);
+    u_puts(" mapped refs\n");
+
     u_puts("e820:   ");
     if (info.e820_valid) {
         u_put_uint(info.e820_count);

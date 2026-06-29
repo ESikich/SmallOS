@@ -10,7 +10,8 @@ TinyCC.
 # Runtime Layers
 
 SmallOS user programs are freestanding ELF binaries linked with SmallOS user
-libraries built from `src/user/`: `libc.a`, `libm.a`, and `libposix.a`.
+libraries built from `src/user/`: `libc.a`, `libm.a`, and `libposix.a`, or
+dynamic executables linked against the combined `/lib/libc.so` runtime.
 Hosted-ish programs also link `src/user/crt/crt0.c`.
 
 Public user headers live under `src/user/include/`. Raw syscall and native
@@ -23,6 +24,12 @@ The seed filesystem installs the same public surface for guest builds:
 and `/usr/lib` contains `crt0.o`, `libc.a`, `libm.a`, and `libposix.a`.
 That lets in-guest compilers target the normal hosted `main()` path without
 knowing about repository-internal runtime files.
+
+Runtime dynamic-linking artifacts live outside that guest build sysroot:
+`/lib/ld-smallos.so` is the interpreter named by dynamic executables, and
+`/lib/libc.so` is the combined shared libc/POSIX/libm runtime loaded by the
+interpreter. The static archives remain supported indefinitely for TinyCC and
+for commands that are not yet part of the dynamic conversion wave.
 
 The layers are:
 
@@ -37,6 +44,37 @@ program code
 
 Programs may call raw `sys_*` helpers directly, but higher-level code should
 prefer the POSIX-like wrappers when it wants normal `errno` behavior.
+
+---
+
+# Dynamic Runtime Notes
+
+Dynamic executables use the same public headers and libc/POSIX APIs as static
+programs. The current loader supports eager i386 relocations needed by the
+runtime, including copy relocations for process globals such as `stdout`,
+`stderr`, `errno`, and `environ`. That means code using normal stdio and errno
+should behave the same whether the program was staged from `foo.elf` or
+`foo.dyn.elf`.
+
+The v2 loader is a self-relocating `ET_DYN` interpreter. It maps eligible
+read-only DSO file pages through the kernel's shared read-only file cache, so
+`/lib/libc.so` text can share physical frames across dynamic processes.
+Writable DSO data, BSS, GOT/relocation-bearing pages, and mixed tail pages
+remain private per process. Startup dependency lookup honors absolute
+`DT_NEEDED` paths, absolute-only `DT_RUNPATH`/`DT_RPATH`, and the default
+`/lib` fallback.
+
+Dynamic programs also get the public `<dlfcn.h>` surface through a loader
+service table installed into `/lib/libc.so` before program entry. `dlopen()`
+supports `RTLD_NOW`, treats `RTLD_LAZY` as eager binding, accepts
+`RTLD_GLOBAL` in the current flat global namespace, and keeps `RTLD_LOCAL` as
+the default no-op mode. `dlsym(RTLD_DEFAULT, name)` searches the active global
+load order, while object handles search that object and its dependency
+closure. `dlclose()` drops runtime references and runs finalizers when the last
+runtime reference goes away, but it does not unmap or reclaim DSO pages yet.
+Static programs still report unsupported `dlfcn` operations. Lazy PLT binding,
+TLS, `RTLD_NEXT`, symbol versioning, and aggressive unload/reclamation remain
+out of scope.
 
 ---
 

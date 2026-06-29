@@ -23,6 +23,7 @@ BOOT_FORCE_CHS ?= 0
 BOOT_VBE_DIAG ?= 1
 BOOT_VBE_RELAXED ?= 0
 BOOT_RAMDISK_FALLBACK ?= never
+BOOT_SKIP_USB_STORAGE ?= 0
 ifneq ($(filter $(DISPLAY_BACKEND),auto vga),$(DISPLAY_BACKEND))
 $(error DISPLAY_BACKEND must be one of: auto vga)
 endif
@@ -43,6 +44,9 @@ $(error BOOT_VBE_RELAXED must be one of: 0 1)
 endif
 ifneq ($(filter $(BOOT_RAMDISK_FALLBACK),auto always never 0 1),$(BOOT_RAMDISK_FALLBACK))
 $(error BOOT_RAMDISK_FALLBACK must be one of: auto always never 0 1)
+endif
+ifneq ($(filter $(BOOT_SKIP_USB_STORAGE),0 1),$(BOOT_SKIP_USB_STORAGE))
+$(error BOOT_SKIP_USB_STORAGE must be one of: 0 1)
 endif
 LOADER2_RAMDISK_FALLBACK_POLICY=$(if $(filter always 1,$(BOOT_RAMDISK_FALLBACK)),1,$(if $(filter never 0,$(BOOT_RAMDISK_FALLBACK)),0,2))
 SERIAL_SUFFIX=$(if $(filter 1,$(SERIAL_CONSOLE)),-serial,)
@@ -138,6 +142,9 @@ endif
 ifeq ($(SERIAL_CONSOLE),1)
 CPPFLAGS+=-DSMALLOS_SERIAL_CONSOLE=1
 endif
+ifeq ($(BOOT_SKIP_USB_STORAGE),1)
+CPPFLAGS+=-DSMALLOS_BOOT_SKIP_USB_STORAGE=1
+endif
 ifneq ($(filter e1000 all,$(NIC_DRIVER)),)
 CPPFLAGS+=-DSMALLOS_NIC_E1000=1
 KERNEL_NIC_SRCS+=$(DRIVERS_DIR)/e1000.c
@@ -156,6 +163,8 @@ HOST_CC=gcc
 LIBGCC_FILE ?= $(shell $(CC) -m32 -print-libgcc-file-name)
 LDFLAGS=-T linker.ld -m elf_i386
 USER_LDFLAGS=-m elf_i386 -Ttext-segment 0x400000 -e _start --gc-sections
+USER_DYN_LDFLAGS=-m elf_i386 -Ttext-segment 0x400000 -e _start --dynamic-linker /lib/ld-smallos.so --hash-style=sysv -z now
+LD_SMALLOS_LDFLAGS=-m elf_i386 -shared -e _start --gc-sections --hash-style=sysv -z now -z notext
 
 KERNEL_ASM_SRCS=\
 	$(BOOT_DIR)/kernel_entry.asm \
@@ -268,24 +277,59 @@ USER_UAPI_ENTRIES=$(foreach file,$(USER_UAPI_FILES),usr/include/$(notdir $(file)
 EXT2_BIN_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell ip ipconfig meminfo memmap cpuz netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest top soundprobe
 EXT2_DEMO_PROGS=hello plasma mandel wolf3d fractint
 EXT2_TEST_PROGS=ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe envprobe mathprobe
+USER_DYNAMIC_NO_CRT0=echo about uptime date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv meminfo memmap cpuz top hello args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe dirprobe errnoprobe badptrprobe sleep_test timerfdprobe ptrguard preempt_test inputprobe stdioprobe ip ipconfig netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ticks fault signalfdprobe connectprobe spinwkr pgrpprobe tcpecho sockeof ftpd halt reboot ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest soundprobe displayprobe
+USER_DYNAMIC_WITH_CRT0=crtprobe mathprobe pipeprobe dupprobe forkprobe execveprobe envprobe
+USER_DYNAMIC_PROGS=$(USER_DYNAMIC_NO_CRT0) $(USER_DYNAMIC_WITH_CRT0)
+EXT2_BIN_STATIC_PROGS=$(filter-out $(USER_DYNAMIC_PROGS),$(EXT2_BIN_PROGS))
+EXT2_DEMO_STATIC_PROGS=$(filter-out $(USER_DYNAMIC_PROGS),$(EXT2_DEMO_PROGS))
+EXT2_TEST_STATIC_PROGS=$(filter-out $(USER_DYNAMIC_PROGS),$(EXT2_TEST_PROGS))
 EXT2_SBIN_PROGS=tcpecho sockeof ftpd
-EXT2_BIN_ENTRIES=$(foreach prog,$(EXT2_BIN_PROGS),bin/$(prog)=$(BIN_DIR)/$(prog).elf)
-EXT2_DEMO_ENTRIES=$(foreach prog,$(EXT2_DEMO_PROGS),usr/bin/$(prog)=$(BIN_DIR)/$(prog).elf)
-EXT2_TEST_ENTRIES=$(foreach prog,$(EXT2_TEST_PROGS),usr/libexec/tests/$(prog)=$(BIN_DIR)/$(prog).elf) usr/libexec/tests/wolf3d-srcprobe=$(WOLF3D_SOURCE_PROBE_BIN)
-EXT2_SBIN_ENTRIES=$(foreach prog,$(EXT2_SBIN_PROGS),usr/sbin/$(prog)=$(BIN_DIR)/$(prog).elf) usr/sbin/cserve=$(CSERVER_BIN)
+EXT2_SBIN_STATIC_PROGS=$(filter-out $(USER_DYNAMIC_PROGS),$(EXT2_SBIN_PROGS))
+EXT2_BIN_ENTRIES=$(foreach prog,$(EXT2_BIN_STATIC_PROGS),bin/$(prog)=$(BIN_DIR)/$(prog).elf) \
+                 $(foreach prog,$(filter $(USER_DYNAMIC_PROGS),$(EXT2_BIN_PROGS)),bin/$(prog)=$(BIN_DIR)/$(prog).dyn.elf)
+EXT2_DEMO_ENTRIES=$(foreach prog,$(EXT2_DEMO_STATIC_PROGS),usr/bin/$(prog)=$(BIN_DIR)/$(prog).elf) \
+                  $(foreach prog,$(filter $(USER_DYNAMIC_PROGS),$(EXT2_DEMO_PROGS)),usr/bin/$(prog)=$(BIN_DIR)/$(prog).dyn.elf)
+EXT2_TEST_ENTRIES=$(foreach prog,$(EXT2_TEST_STATIC_PROGS),usr/libexec/tests/$(prog)=$(BIN_DIR)/$(prog).elf) \
+                  $(foreach prog,$(filter $(USER_DYNAMIC_PROGS),$(EXT2_TEST_PROGS)),usr/libexec/tests/$(prog)=$(BIN_DIR)/$(prog).dyn.elf) \
+                  usr/libexec/tests/wolf3d-srcprobe=$(WOLF3D_SOURCE_PROBE_BIN)
+EXT2_TEST_ENTRIES+=usr/libexec/tests/dynhello=$(BIN_DIR)/dynhello.elf \
+                   usr/libexec/tests/dyncrtprobe=$(BIN_DIR)/dyncrtprobe.elf \
+                   usr/libexec/tests/dynmathprobe=$(BIN_DIR)/dynmathprobe.elf \
+                   usr/libexec/tests/dynstdioprobe=$(BIN_DIR)/dynstdioprobe.elf \
+                   usr/libexec/tests/dynlinkprobe=$(BIN_DIR)/dynlinkprobe.elf \
+                   usr/libexec/tests/dynpathprobe=$(BIN_DIR)/dynpathprobe.elf \
+                   usr/libexec/tests/dynfiniprobe=$(BIN_DIR)/dynfiniprobe.elf \
+                   usr/libexec/tests/dlopenprobe=$(BIN_DIR)/dlopenprobe.elf \
+                   usr/libexec/tests/static/hello=$(BIN_DIR)/hello.elf \
+                   usr/libexec/tests/static/crtprobe=$(BIN_DIR)/crtprobe.elf \
+                   usr/libexec/tests/static/mathprobe=$(BIN_DIR)/mathprobe.elf \
+                   usr/libexec/tests/static/stdioprobe=$(BIN_DIR)/stdioprobe.elf
+EXT2_SBIN_ENTRIES=$(foreach prog,$(EXT2_SBIN_STATIC_PROGS),usr/sbin/$(prog)=$(BIN_DIR)/$(prog).elf) \
+                  $(foreach prog,$(filter $(USER_DYNAMIC_PROGS),$(EXT2_SBIN_PROGS)),usr/sbin/$(prog)=$(BIN_DIR)/$(prog).dyn.elf) \
+                  usr/sbin/cserve=$(CSERVER_BIN)
 EXT2_APP_ENTRIES=$(EXT2_BIN_ENTRIES) $(EXT2_DEMO_ENTRIES) $(EXT2_TEST_ENTRIES)
 EXT2_APP_ENTRIES+= $(EXT2_SBIN_ENTRIES)
 MAN_PAGE_FILES=$(wildcard man/man*/*)
 MAN_PAGE_ENTRIES=$(foreach page,$(MAN_PAGE_FILES),usr/share/$(page)=$(CURDIR)/$(page))
-USER_LIB_ENTRIES=usr/lib/crt0.o=$(USER_CRT0_OBJ) usr/lib/libc.a=$(USER_LIBC) usr/lib/libm.a=$(USER_LIBM) usr/lib/libposix.a=$(USER_LIBPOSIX)
+USER_STATIC_LIB_ENTRIES=usr/lib/crt0.o=$(USER_CRT0_OBJ) usr/lib/libc.a=$(USER_LIBC) usr/lib/libm.a=$(USER_LIBM) usr/lib/libposix.a=$(USER_LIBPOSIX)
+USER_DYN_LOADER_ENTRY=lib/ld-smallos.so=$(LD_SMALLOS_BIN)
+USER_DYN_LIBC_ENTRY=lib/libc.so=$(USER_DYN_LIBC)
+USER_DYN_FINI_ENTRY=lib/libdynfini.so=$(USER_DYN_FINI)
+USER_DYN_PATH_ENTRY=usr/lib/libdynpath.so=$(USER_DYN_PATH)
+USER_DYN_DLOPEN_DEP_ENTRY=usr/lib/libdlplugdep.so=$(USER_DYN_DLOPEN_DEP)
+USER_DYN_DLOPEN_PLUGIN_ENTRY=usr/lib/libdlplug.so=$(USER_DYN_DLOPEN_PLUGIN)
+USER_LIB_ENTRIES=$(USER_STATIC_LIB_ENTRIES) $(USER_DYN_LOADER_ENTRY) $(USER_DYN_LIBC_ENTRY) $(USER_DYN_FINI_ENTRY) $(USER_DYN_PATH_ENTRY) $(USER_DYN_DLOPEN_DEP_ENTRY) $(USER_DYN_DLOPEN_PLUGIN_ENTRY)
+USER_LIB_ENTRIES_NO_LOADER=$(USER_STATIC_LIB_ENTRIES) $(USER_DYN_LIBC_ENTRY) $(USER_DYN_FINI_ENTRY) $(USER_DYN_PATH_ENTRY) $(USER_DYN_DLOPEN_DEP_ENTRY) $(USER_DYN_DLOPEN_PLUGIN_ENTRY)
+USER_LIB_ENTRIES_NO_LIBC=$(USER_STATIC_LIB_ENTRIES) $(USER_DYN_LOADER_ENTRY)
 WOLF3D_DATA_FILES=$(sort $(wildcard $(WOLF3D_DATA_DIR)/*.WL1) $(wildcard $(WOLF3D_DATA_DIR)/*.WL6) $(wildcard $(WOLF3D_DATA_DIR)/*.SOD) $(wildcard $(WOLF3D_DATA_DIR)/*.SDM))
 ifeq ($(WOLF3D_STAGE_DATA),1)
 WOLF3D_DATA_ENTRIES=$(foreach file,$(WOLF3D_DATA_FILES),usr/share/wolf3d/$(notdir $(file))=$(file))
 else
 WOLF3D_DATA_ENTRIES=
 endif
-EXT2_EXTRA_DIRS=tmp/ var/log/ usr/include/ usr/include/arpa/ usr/include/netinet/ usr/include/sys/ usr/lib/ usr/share/examples/tinycc/ usr/share/man/man1/ usr/share/man/man2/ usr/share/man/man3/ usr/share/man/man4/ usr/share/man/man5/ usr/share/man/man6/ usr/share/man/man7/ usr/share/man/man8/ usr/share/wolf3d/
-EXT2_EXTRA_ENTRIES=usr/bin/tcc=$(TINYCC_SMALOS_BIN) $(USER_INCLUDE_ENTRIES) $(USER_UAPI_ENTRIES) $(USER_LIB_ENTRIES) usr/share/examples/tinycc/tccmath.c=$(CURDIR)/samples/tccmath.c usr/share/examples/tinycc/tccagg.c=$(CURDIR)/samples/tccagg.c usr/share/examples/tinycc/tcctree.c=$(CURDIR)/samples/tcctree.c usr/share/examples/tinycc/tccmini.c=$(CURDIR)/samples/tccmini.c usr/share/examples/tinycc/tccsysroot.c=$(CURDIR)/samples/tccsysroot.c usr/share/examples/tinycc/tccposix.c=$(CURDIR)/samples/tccposix.c etc/cserve.ini=$(CURDIR)/samples/cserve.ini var/www/index.html=$(CURDIR)/samples/cserve_index.html var/log/boot.txt=$(CURDIR)/samples/boot.txt boot/splash.bmp=$(CURDIR)/assets/boot_splash.bmp $(MAN_PAGE_ENTRIES)
+EXT2_EXTRA_DIRS=tmp/ var/log/ lib/ usr/include/ usr/include/arpa/ usr/include/netinet/ usr/include/sys/ usr/lib/ usr/libexec/tests/static/ usr/share/examples/tinycc/ usr/share/man/man1/ usr/share/man/man2/ usr/share/man/man3/ usr/share/man/man4/ usr/share/man/man5/ usr/share/man/man6/ usr/share/man/man7/ usr/share/man/man8/ usr/share/wolf3d/
+EXT2_BASE_EXTRA_ENTRIES=usr/bin/tcc=$(TINYCC_SMALOS_BIN) $(USER_INCLUDE_ENTRIES) $(USER_UAPI_ENTRIES) usr/share/examples/tinycc/tccmath.c=$(CURDIR)/samples/tccmath.c usr/share/examples/tinycc/tccagg.c=$(CURDIR)/samples/tccagg.c usr/share/examples/tinycc/tcctree.c=$(CURDIR)/samples/tcctree.c usr/share/examples/tinycc/tccmini.c=$(CURDIR)/samples/tccmini.c usr/share/examples/tinycc/tccsysroot.c=$(CURDIR)/samples/tccsysroot.c usr/share/examples/tinycc/tccposix.c=$(CURDIR)/samples/tccposix.c etc/cserve.ini=$(CURDIR)/samples/cserve.ini var/www/index.html=$(CURDIR)/samples/cserve_index.html var/log/boot.txt=$(CURDIR)/samples/boot.txt boot/splash.bmp=$(CURDIR)/assets/boot_splash.bmp $(MAN_PAGE_ENTRIES)
+EXT2_EXTRA_ENTRIES=$(EXT2_BASE_EXTRA_ENTRIES) $(USER_LIB_ENTRIES)
 FRACTINT_EXTRA_ENTRIES=usr/share/xfractint/fractint.hlp=$(FRACTINT_DIR)/fractint.hlp usr/share/xfractint/sstools.ini=$(FRACTINT_DIR)/sstools.ini $(FRACTINT_DATA_ENTRIES)
 EXT2_ALL_EXTRA_ENTRIES=$(EXT2_EXTRA_ENTRIES) $(FRACTINT_EXTRA_ENTRIES) $(WOLF3D_DATA_ENTRIES)
 EXT2_EXTRA_DIRS+= usr/share/xfractint/ usr/share/xfractint/maps/ usr/share/xfractint/pars/ usr/share/xfractint/formulas/ usr/share/xfractint/lsystem/ usr/share/xfractint/ifs/
@@ -310,13 +354,47 @@ USER_LIBPOSIX=$(USER_LIB_DIR)/libposix.a
 USER_LIB_ARCHIVES=$(USER_LIBPOSIX) $(USER_LIBC) $(USER_LIBM)
 USER_LINK_LIBS=-L$(USER_LIB_DIR) --start-group -lposix -lc -lm --end-group
 USER_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_PROGS))) $(BIN_DIR)/fractint.elf
+USER_DYN_OBJ_DIR=$(OBJ_DIR)/user-dyn
+USER_DYN_LIB_DIR=$(BIN_DIR)/lib
+LD_SMALLOS_OBJ=$(USER_DYN_OBJ_DIR)/ld_smallos.o
+LD_SMALLOS_BOOT_OBJ=$(USER_DYN_OBJ_DIR)/ld_smallos_boot.pic.o
+LD_SMALLOS_OBJS=$(LD_SMALLOS_BOOT_OBJ) $(LD_SMALLOS_OBJ)
+LD_SMALLOS_BIN=$(USER_DYN_LIB_DIR)/ld-smallos.so
+USER_DYN_RUNTIME_OBJS=$(patsubst $(USER_DIR)/%.c,$(USER_DYN_OBJ_DIR)/%.pic.o,$(filter $(USER_DIR)/%.c,$(USER_RUNTIME_SRCS))) \
+                      $(patsubst $(USER_DIR)/%.asm,$(USER_DYN_OBJ_DIR)/%.pic.o,$(filter $(USER_DIR)/%.asm,$(USER_RUNTIME_SRCS)))
+USER_DYN_LIBC=$(USER_DYN_LIB_DIR)/libc.so
+USER_DYN_FINI=$(USER_DYN_LIB_DIR)/libdynfini.so
+USER_DYN_PATH=$(USER_DYN_LIB_DIR)/libdynpath.so
+USER_DYN_DLOPEN_DEP=$(USER_DYN_LIB_DIR)/libdlplugdep.so
+USER_DYN_DLOPEN_PLUGIN=$(USER_DYN_LIB_DIR)/libdlplug.so
+USER_DYN_PROGS=dynhello dyncrtprobe dynmathprobe dynstdioprobe dynlinkprobe dynpathprobe dynfiniprobe dlopenprobe
+USER_DYN_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_DYN_PROGS)))
+DYNFAILPROBE_BIN=$(BIN_DIR)/dynfailprobe.elf
+DYN_NO_LOADER_EXT2=$(BIN_DIR)/ext2.dyn-no-loader.img
+DYN_NO_LIBC_EXT2=$(BIN_DIR)/ext2.dyn-no-libc.img
+DYN_NO_LOADER_IMG=$(IMG_DIR)/smallos-dyn-no-loader.img
+DYN_NO_LIBC_IMG=$(IMG_DIR)/smallos-dyn-no-libc.img
+DYN_NEG_TEST_ENTRIES=usr/libexec/tests/dynfailprobe=$(DYNFAILPROBE_BIN)
+DYN_NEG_APP_ENTRIES=$(EXT2_BIN_ENTRIES) $(EXT2_DEMO_ENTRIES) $(EXT2_TEST_ENTRIES) $(DYN_NEG_TEST_ENTRIES) usr/sbin/cserve=$(CSERVER_BIN)
+DYN_NO_LOADER_ALL_EXTRA_ENTRIES=$(EXT2_BASE_EXTRA_ENTRIES) $(USER_LIB_ENTRIES_NO_LOADER) $(FRACTINT_EXTRA_ENTRIES) $(WOLF3D_DATA_ENTRIES)
+DYN_NO_LIBC_ALL_EXTRA_ENTRIES=$(EXT2_BASE_EXTRA_ENTRIES) $(USER_LIB_ENTRIES_NO_LIBC) $(FRACTINT_EXTRA_ENTRIES) $(WOLF3D_DATA_ENTRIES)
+DYN_NO_LOADER_EXTRA_FILES=$(foreach entry,$(DYN_NO_LOADER_ALL_EXTRA_ENTRIES),$(word 2,$(subst =, ,$(entry))))
+DYN_NO_LIBC_EXTRA_FILES=$(foreach entry,$(DYN_NO_LIBC_ALL_EXTRA_ENTRIES),$(word 2,$(subst =, ,$(entry))))
+USER_DYNAMIC_NO_CRT0_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .dyn.elf,$(USER_DYNAMIC_NO_CRT0)))
+USER_DYNAMIC_WITH_CRT0_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .dyn.elf,$(USER_DYNAMIC_WITH_CRT0)))
+USER_DYNAMIC_ELFS=$(USER_DYNAMIC_NO_CRT0_ELFS) $(USER_DYNAMIC_WITH_CRT0_ELFS)
+USER_DYNAMIC_STATIC_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_DYNAMIC_PROGS)))
+USER_ELFS+=$(USER_DYN_ELFS) $(USER_DYNAMIC_ELFS) $(USER_DYN_FINI) $(USER_DYN_DLOPEN_DEP) $(USER_DYN_DLOPEN_PLUGIN)
 
 OBJ_SUBDIRS=$(sort \
 	$(dir $(KERNEL_OBJS)) \
 	$(dir $(USER_OBJS)) \
 	$(dir $(USER_RUNTIME_OBJS)) \
+	$(dir $(USER_DYN_RUNTIME_OBJS)) \
+	$(USER_DYN_OBJ_DIR) \
 	$(dir $(USER_CRT0_OBJ)) \
 	$(USER_LIB_DIR) \
+	$(USER_DYN_LIB_DIR) \
 	$(dir $(GUI_OBJS)) \
 	$(dir $(USER_SHELL_OBJS)) \
 	$(dir $(FRACTINT_OBJS)) \
@@ -343,7 +421,7 @@ fractint-source: $(FRACTINT_SVN_STAMP)
 wolf3d-shareware-data:
 	mkdir -p $(dir $(WOLF3D_SHAREWARE_ZIP)) $(WOLF3D_DATA_DIR)
 	curl -L --fail -o $(WOLF3D_SHAREWARE_ZIP) $(WOLF3D_SHAREWARE_URL)
-	unzip -j -o $(WOLF3D_SHAREWARE_ZIP) '*.WL1' -d $(WOLF3D_DATA_DIR)
+	$(PYTHON3) -c 'import os,sys,zipfile; z,d=sys.argv[1:3]; os.makedirs(d,exist_ok=True); zf=zipfile.ZipFile(z); [open(os.path.join(d,os.path.basename(n)),"wb").write(zf.read(n)) for n in zf.namelist() if n.upper().endswith(".WL1")]' $(WOLF3D_SHAREWARE_ZIP) $(WOLF3D_DATA_DIR)
 
 $(FRACTINT_SVN_STAMP):
 	rm -rf $(FRACTINT_DIR)
@@ -370,15 +448,11 @@ $(OBJ_DIR)/boot/%.o: $(BOOT_DIR)/%.asm | dirs
 $(OBJ_DIR)/kernel/%.o: $(KERNEL_DIR)/%.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
-$(OBJ_DIR)/kernel/%.o: $(KERNEL_DIR)/%.c Makefile | dirs
+$(OBJ_DIR)/kernel/%.o: $(KERNEL_DIR)/%.c Makefile $(KERNEL_CONFIG_STAMP) | dirs
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(KERNEL_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
-$(OBJ_DIR)/kernel/%.o: $(KERNEL_CONFIG_STAMP)
-
-$(OBJ_DIR)/drivers/%.o: $(DRIVERS_DIR)/%.c Makefile | dirs
+$(OBJ_DIR)/drivers/%.o: $(DRIVERS_DIR)/%.c Makefile $(KERNEL_CONFIG_STAMP) | dirs
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(KERNEL_CFLAGS) $(DRIVER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
-
-$(OBJ_DIR)/drivers/%.o: $(KERNEL_CONFIG_STAMP)
 
 $(OBJ_DIR)/drivers/display.o \
 $(OBJ_DIR)/drivers/fb_console.o \
@@ -387,10 +461,8 @@ $(OBJ_DIR)/drivers/terminal.o: DRIVER_CFLAGS += $(DISPLAY_DRIVER_CFLAGS)
 
 $(OBJ_DIR)/drivers/usb.o: DRIVER_CFLAGS += -Os
 
-$(OBJ_DIR)/exec/%.o: $(EXEC_DIR)/%.c Makefile | dirs
+$(OBJ_DIR)/exec/%.o: $(EXEC_DIR)/%.c Makefile $(KERNEL_CONFIG_STAMP) | dirs
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(KERNEL_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
-
-$(OBJ_DIR)/exec/%.o: $(KERNEL_CONFIG_STAMP)
 
 $(OBJ_DIR)/user/%.o: $(USER_DIR)/%.c | dirs
 	$(CC) $(USER_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
@@ -468,6 +540,94 @@ $(USER_LIBM): $(USER_LIBM_OBJS) | dirs
 $(USER_LIBPOSIX): $(USER_POSIX_OBJS) | dirs
 	rm -f $@
 	$(AR) rcs $@ $^
+
+$(USER_DYN_OBJ_DIR)/%.pic.o: $(USER_DIR)/%.c | dirs
+	mkdir -p $(dir $@)
+	$(CC) $(USER_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) -fPIC -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(USER_DYN_OBJ_DIR)/%.pic.o: $(USER_DIR)/%.asm | dirs
+	mkdir -p $(dir $@)
+	$(ASM) -f elf32 $< -o $@
+
+$(LD_SMALLOS_OBJ): $(USER_DIR)/ld_smallos.c $(KERNEL_DIR)/elf.h $(KERNEL_DIR)/uapi_syscall.h | dirs
+	mkdir -p $(dir $@)
+	$(CC) $(USER_PUBLIC_CPPFLAGS) $(CFLAGS) -Os -ffunction-sections -fdata-sections -c $< -o $@
+
+$(LD_SMALLOS_BIN): $(LD_SMALLOS_OBJS) | dirs
+	$(LD) $(LD_SMALLOS_LDFLAGS) $^ -o $@
+
+$(USER_DYN_LIBC): $(USER_DYN_RUNTIME_OBJS) | dirs
+	$(LD) -m elf_i386 -shared -soname libc.so --hash-style=sysv -z now $^ $(LIBGCC_FILE) -o $@
+
+$(USER_DYN_FINI): $(USER_DYN_OBJ_DIR)/dynfini.pic.o | dirs
+	$(LD) -m elf_i386 -shared -soname libdynfini.so --hash-style=sysv -z now $^ -o $@
+
+$(USER_DYN_PATH): $(USER_DYN_OBJ_DIR)/dynpath.pic.o | dirs
+	$(LD) -m elf_i386 -shared -soname libdynpath.so --hash-style=sysv -z now $^ -o $@
+
+$(USER_DYN_DLOPEN_DEP): $(USER_DYN_OBJ_DIR)/dlopen_dep.pic.o | dirs
+	$(LD) -m elf_i386 -shared -soname libdlplugdep.so --hash-style=sysv -z now $^ -o $@
+
+$(USER_DYN_DLOPEN_PLUGIN): $(USER_DYN_OBJ_DIR)/dlopen_plugin.pic.o $(USER_DYN_DLOPEN_DEP) | dirs
+	$(LD) -m elf_i386 -shared -soname libdlplug.so --hash-style=sysv -z now -rpath /usr/lib $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -ldlplugdep -o $@
+
+$(USER_DYNAMIC_NO_CRT0_ELFS): $(BIN_DIR)/%.dyn.elf: $(OBJ_DIR)/user/%.o $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
+	$(LD) $(USER_DYN_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
+
+$(USER_DYNAMIC_WITH_CRT0_ELFS): $(BIN_DIR)/%.dyn.elf: $(OBJ_DIR)/user/%.o $(USER_CRT0_OBJ) $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
+	$(LD) $(USER_DYN_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
+
+$(BIN_DIR)/dynhello.elf: $(OBJ_DIR)/user/hello.o $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
+	$(LD) $(USER_DYN_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
+
+$(BIN_DIR)/dyncrtprobe.elf: $(OBJ_DIR)/user/crtprobe.o $(USER_CRT0_OBJ) $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
+	$(LD) $(USER_DYN_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
+
+$(BIN_DIR)/dynmathprobe.elf: $(OBJ_DIR)/user/mathprobe.o $(USER_CRT0_OBJ) $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
+	$(LD) $(USER_DYN_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
+
+$(BIN_DIR)/dynstdioprobe.elf: $(OBJ_DIR)/user/stdioprobe.o $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
+	$(LD) $(USER_DYN_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
+
+$(BIN_DIR)/dynlinkprobe.elf: $(OBJ_DIR)/user/dynlinkprobe.o $(USER_CRT0_OBJ) $(USER_DYN_LIBC) $(USER_DYN_FINI) $(LD_SMALLOS_BIN) | dirs
+	$(LD) $(USER_DYN_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -ldynfini -lc -o $@
+
+$(BIN_DIR)/dynpathprobe.elf: $(OBJ_DIR)/user/dynpathprobe.o $(USER_CRT0_OBJ) $(USER_DYN_LIBC) $(USER_DYN_PATH) $(LD_SMALLOS_BIN) | dirs
+	$(LD) $(USER_DYN_LDFLAGS) -rpath /usr/lib $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -ldynpath -lc -o $@
+
+$(BIN_DIR)/dynfiniprobe.elf: $(OBJ_DIR)/user/dynfiniprobe.o $(USER_CRT0_OBJ) $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
+	$(LD) $(USER_DYN_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
+
+$(BIN_DIR)/dlopenprobe.elf: $(OBJ_DIR)/user/dlopenprobe.o $(USER_CRT0_OBJ) $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
+	$(LD) $(USER_DYN_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
+
+$(DYNFAILPROBE_BIN): $(OBJ_DIR)/user/dynfailprobe.o $(USER_LIB_ARCHIVES) | dirs
+	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
+
+dyn-size-report: $(USER_DYNAMIC_STATIC_ELFS) $(USER_DYNAMIC_ELFS) $(USER_DYN_ELFS) $(USER_DYN_LIBC) $(USER_DYN_FINI) $(USER_DYN_PATH) $(USER_DYN_DLOPEN_DEP) $(USER_DYN_DLOPEN_PLUGIN) $(LD_SMALLOS_BIN)
+	@static_total=$$(wc -c $(USER_DYNAMIC_STATIC_ELFS) | awk 'END {print $$1}'); \
+	dyn_prog_total=$$(wc -c $(USER_DYNAMIC_ELFS) | awk 'END {print $$1}'); \
+	runtime_total=$$(wc -c $(USER_DYN_LIBC) $(USER_DYN_FINI) $(USER_DYN_PATH) $(USER_DYN_DLOPEN_DEP) $(USER_DYN_DLOPEN_PLUGIN) $(LD_SMALLOS_BIN) | awk 'END {print $$1}'); \
+	dyn_total=$$((dyn_prog_total + runtime_total)); \
+	printf '%-34s %10s\n' category bytes; \
+	printf '%-34s %10s\n' converted-static-total $$static_total; \
+	printf '%-34s %10s\n' converted-dynamic-programs $$dyn_prog_total; \
+	printf '%-34s %10s\n' shared-runtime $$runtime_total; \
+	printf '%-34s %10s\n' dynamic-programs-plus-runtime $$dyn_total; \
+	printf '%-34s %+10d\n' net-vs-static $$((dyn_total - static_total)); \
+	printf '\n%-34s %10s\n' artifact bytes; \
+	wc -c $(USER_DYNAMIC_ELFS) $(USER_DYN_LIBC) $(USER_DYN_FINI) $(USER_DYN_PATH) $(USER_DYN_DLOPEN_DEP) $(USER_DYN_DLOPEN_PLUGIN) $(LD_SMALLOS_BIN) | sed 's/^ *//'
+
+dynamic-link-check: $(USER_DYNAMIC_ELFS) $(USER_DYN_ELFS) $(USER_DYN_LIBC) $(USER_DYN_FINI) $(USER_DYN_PATH) $(USER_DYN_DLOPEN_DEP) $(USER_DYN_DLOPEN_PLUGIN) $(LD_SMALLOS_BIN)
+	$(PYTHON3) tools/verify_dynamic_link.py \
+		--interp /lib/ld-smallos.so \
+		--libc $(USER_DYN_LIBC) \
+		--loader $(LD_SMALLOS_BIN) \
+		--shared $(USER_DYN_FINI) \
+		--shared $(USER_DYN_PATH) \
+		--shared $(USER_DYN_DLOPEN_DEP) \
+		--shared $(USER_DYN_DLOPEN_PLUGIN) \
+		$(USER_DYNAMIC_ELFS) $(USER_DYN_ELFS)
 
 $(TINYCC_SMALOS_PATCH_STAMP): check-third-party patches/tinycc/smallos.patch | dirs
 	rm -rf $(TINYCC_SMALOS_SRC_DIR)
@@ -553,7 +713,7 @@ $(BIN_DIR)/fractint.elf: $(FRACTINT_OBJS) $(USER_CRT0_OBJ) $(OBJ_DIR)/user/gfx.o
 	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) $(LIBGCC_FILE) -o $@
 
 $(KERNEL_CONFIG_STAMP): FORCE | dirs
-	@cfg='NIC_DRIVER=$(NIC_DRIVER) DISPLAY_BACKEND=$(DISPLAY_BACKEND) SERIAL_CONSOLE=$(SERIAL_CONSOLE) BOOT_RAMDISK_FALLBACK=$(BOOT_RAMDISK_FALLBACK)'; \
+	@cfg='NIC_DRIVER=$(NIC_DRIVER) DISPLAY_BACKEND=$(DISPLAY_BACKEND) SERIAL_CONSOLE=$(SERIAL_CONSOLE) BOOT_RAMDISK_FALLBACK=$(BOOT_RAMDISK_FALLBACK) BOOT_SKIP_USB_STORAGE=$(BOOT_SKIP_USB_STORAGE)'; \
 	if [ ! -f $@ ] || [ "$$(cat $@)" != "$$cfg" ]; then \
 		printf '%s\n' "$$cfg" > $@; \
 	fi
@@ -577,6 +737,12 @@ $(TOOLS_DIR)/mkimage: tools/mkimage.c | dirs
 #
 $(BIN_DIR)/ext2.seed.img: $(USER_ELFS) $(CSERVER_BIN) $(WOLF3D_SOURCE_PROBE_BIN) $(TOOLS_DIR)/mkext2 $(EXT2_EXTRA_FILES) $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/fractint.hlp Makefile | dirs
 	$(TOOLS_DIR)/mkext2 $@ $(EXT2_APP_ENTRIES) $(EXT2_ALL_EXTRA_ENTRIES) $(EXT2_EXTRA_DIRS)
+
+$(DYN_NO_LOADER_EXT2): $(USER_ELFS) $(DYNFAILPROBE_BIN) $(CSERVER_BIN) $(WOLF3D_SOURCE_PROBE_BIN) $(TOOLS_DIR)/mkext2 $(DYN_NO_LOADER_EXTRA_FILES) $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/fractint.hlp Makefile | dirs
+	$(TOOLS_DIR)/mkext2 $@ $(DYN_NEG_APP_ENTRIES) $(DYN_NO_LOADER_ALL_EXTRA_ENTRIES) $(EXT2_EXTRA_DIRS)
+
+$(DYN_NO_LIBC_EXT2): $(USER_ELFS) $(DYNFAILPROBE_BIN) $(CSERVER_BIN) $(WOLF3D_SOURCE_PROBE_BIN) $(TOOLS_DIR)/mkext2 $(DYN_NO_LIBC_EXTRA_FILES) $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/fractint.hlp Makefile | dirs
+	$(TOOLS_DIR)/mkext2 $@ $(DYN_NEG_APP_ENTRIES) $(DYN_NO_LIBC_ALL_EXTRA_ENTRIES) $(EXT2_EXTRA_DIRS)
 
 $(STATE_EXT2_STAMP): $(BIN_DIR)/ext2.seed.img | dirs
 	cp $< $(STATE_EXT2_IMG)
@@ -656,6 +822,30 @@ $(IMG_FILE): boot-layout-check $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_
 		--boot-partition-table-offset $(BOOT_PARTITION_TABLE_OFFSET) \
 		--boot-partition-entry-size $(BOOT_PARTITION_ENTRY_SIZE)
 
+$(DYN_NO_LOADER_IMG): boot-layout-check $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(DYN_NO_LOADER_EXT2) $(TOOLS_DIR)/mkimage | dirs
+	$(TOOLS_DIR)/mkimage \
+		--boot $(BIN_DIR)/boot.bin \
+		--loader $(BIN_DIR)/loader2.bin \
+		--kernel $(BIN_DIR)/kernel.bin \
+		--fs $(DYN_NO_LOADER_EXT2) \
+		--out $@ \
+		--sector-size $(BOOT_SECTOR_SIZE) \
+		--loader-size $(LOADER2_SIZE_BYTES) \
+		--boot-partition-table-offset $(BOOT_PARTITION_TABLE_OFFSET) \
+		--boot-partition-entry-size $(BOOT_PARTITION_ENTRY_SIZE)
+
+$(DYN_NO_LIBC_IMG): boot-layout-check $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(DYN_NO_LIBC_EXT2) $(TOOLS_DIR)/mkimage | dirs
+	$(TOOLS_DIR)/mkimage \
+		--boot $(BIN_DIR)/boot.bin \
+		--loader $(BIN_DIR)/loader2.bin \
+		--kernel $(BIN_DIR)/kernel.bin \
+		--fs $(DYN_NO_LIBC_EXT2) \
+		--out $@ \
+		--sector-size $(BOOT_SECTOR_SIZE) \
+		--loader-size $(LOADER2_SIZE_BYTES) \
+		--boot-partition-table-offset $(BOOT_PARTITION_TABLE_OFFSET) \
+		--boot-partition-entry-size $(BOOT_PARTITION_ENTRY_SIZE)
+
 image-layout-check: $(IMG_FILE)
 	$(PYTHON3) tools/verify_image_layout.py \
 		--image $(IMG_FILE) \
@@ -674,7 +864,8 @@ qemu-image: image
 
 img: image
 
-usb-image usb-vbe-image run-usb-storage run-headless-usb-storage: BOOT_RAMDISK_FALLBACK=always
+usb-image usb-vbe-image run-usb-storage-fallback run-headless-usb-storage-fallback usb-ramdisk-fallback-smoke: BOOT_RAMDISK_FALLBACK=always
+run-usb-storage run-headless-usb-storage usb-storage-smoke: BOOT_RAMDISK_FALLBACK=never
 
 usb-image: image
 	@cp "$(IMG_FILE)" "$(USB_IMG_FILE)"
@@ -756,7 +947,7 @@ QEMU_USB_STORAGE_FLAGS=-drive if=none,id=stick,format=raw,file=$(IMG_FILE) \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all image img artifacts dirs deps fractint-source wolf3d-shareware-data wolf3d-source-probe check-third-party run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage usb-storage-smoke test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean FORCE
+.PHONY: all image img artifacts dirs deps fractint-source wolf3d-shareware-data wolf3d-source-probe check-third-party dyn-size-report dynamic-link-check dynlink-negative-smoke run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage run-usb-storage-fallback run-headless-usb-storage-fallback usb-storage-smoke usb-ramdisk-fallback-smoke test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean FORCE
 
 FORCE:
 
@@ -788,15 +979,61 @@ run-headless-usb-storage: image-layout-check
 	    -monitor unix:/tmp/smallos-monitor.sock,server,nowait \
 	    -daemonize -pidfile /tmp/smallos.pid
 
+run-usb-storage-fallback: image-layout-check
+	$(MAKE) run-usb-storage BOOT_RAMDISK_FALLBACK=always
+
+run-headless-usb-storage-fallback: image-layout-check
+	$(MAKE) run-headless-usb-storage BOOT_RAMDISK_FALLBACK=always
+
 usb-storage-smoke:
-	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1 BOOT_RAMDISK_FALLBACK=always
+	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1 BOOT_RAMDISK_FALLBACK=never
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
 	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
-	$(MAKE) run-headless-usb-storage SERIAL_CONSOLE=1 BOOT_RAMDISK_FALLBACK=always
+	$(MAKE) run-headless-usb-storage SERIAL_CONSOLE=1 BOOT_RAMDISK_FALLBACK=never
 	$(PYTHON3) tools/usb_storage_smoke.py \
 		--monitor $(MONITOR_SOCK) \
 		--serial $(SERIAL_LOG) \
 		--pidfile $(PIDFILE) \
+		--timeout $(SMOKE_TIMEOUT)
+
+usb-ramdisk-fallback-smoke:
+	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1 BOOT_RAMDISK_FALLBACK=always BOOT_SKIP_USB_STORAGE=1
+	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
+	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
+	$(MAKE) run-headless-usb-storage SERIAL_CONSOLE=1 BOOT_RAMDISK_FALLBACK=always BOOT_SKIP_USB_STORAGE=1
+	$(PYTHON3) tools/usb_storage_smoke.py \
+		--monitor $(MONITOR_SOCK) \
+		--serial $(SERIAL_LOG) \
+		--pidfile $(PIDFILE) \
+		--timeout $(SMOKE_TIMEOUT) \
+		--marker "Preloading ext2 fallback..." \
+		--marker "boot: PASS storage: boot ramdisk fallback" \
+		--marker "boot: PASS ext2: volume mounted" \
+		--marker "SmallOS ready" \
+		--marker "SmallOS user shell" \
+		--marker "/> "
+
+dynlink-negative-smoke: $(DYN_NO_LOADER_IMG) $(DYN_NO_LIBC_IMG)
+	@mkdir -p $(SMOKE_DIR)
+	$(PYTHON3) tools/dynlink_negative_smoke.py \
+		--scenario no-loader \
+		--image $(DYN_NO_LOADER_IMG) \
+		--qemu $(QEMU) \
+		--serial $(SMOKE_DIR)/dynlink-no-loader.serial.log \
+		--monitor $(SMOKE_DIR)/dynlink-no-loader.monitor.sock \
+		--pidfile $(SMOKE_DIR)/dynlink-no-loader.pid \
+		--memory $(QEMU_MEMORY_MB) \
+		--net-mac $(QEMU_NET_MAC) \
+		--timeout $(SMOKE_TIMEOUT)
+	$(PYTHON3) tools/dynlink_negative_smoke.py \
+		--scenario no-libc \
+		--image $(DYN_NO_LIBC_IMG) \
+		--qemu $(QEMU) \
+		--serial $(SMOKE_DIR)/dynlink-no-libc.serial.log \
+		--monitor $(SMOKE_DIR)/dynlink-no-libc.monitor.sock \
+		--pidfile $(SMOKE_DIR)/dynlink-no-libc.pid \
+		--memory $(QEMU_MEMORY_MB) \
+		--net-mac $(QEMU_NET_MAC) \
 		--timeout $(SMOKE_TIMEOUT)
 
 test:
@@ -952,6 +1189,8 @@ smoke-halt:
 verify:
 	$(MAKE) boot-layout-check
 	$(MAKE) image-layout-check
+	$(MAKE) dynamic-link-check
+	$(MAKE) dynlink-negative-smoke
 	$(MAKE) test
 	$(MAKE) smoke
 

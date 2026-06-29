@@ -5,6 +5,12 @@ import sys
 from pathlib import Path
 
 
+LOADER2_PATCH_KERNEL_LBA = 0x4B4C324C  # "L2LK"
+LOADER2_PATCH_KERNEL_SECTORS = 0x4B53324C  # "L2SK"
+LOADER2_PATCH_FS_LBA = 0x464C324C  # "L2LF"
+LOADER2_PATCH_FS_SECTORS = 0x4653324C  # "L2SF"
+
+
 def read_bytes(path: Path) -> bytes:
     return path.read_bytes()
 
@@ -44,6 +50,26 @@ def write_partition_entry(buf: bytearray, offset: int, bootable: int, ptype: int
     patch_u32_le(buf, offset + 12, sectors)
 
 
+def patch_loader2_layout(buf: bytearray, kernel_lba: int, kernel_sectors: int,
+                         fs_lba: int, fs_sectors: int) -> None:
+    matches = []
+    for off in range(0, len(buf) - 15):
+        if (
+            u32_le(buf, off + 0) == LOADER2_PATCH_KERNEL_LBA
+            and u32_le(buf, off + 4) == LOADER2_PATCH_KERNEL_SECTORS
+            and u32_le(buf, off + 8) == LOADER2_PATCH_FS_LBA
+            and u32_le(buf, off + 12) == LOADER2_PATCH_FS_SECTORS
+        ):
+            matches.append(off)
+
+    expect(len(matches) == 1, f"expected one loader2 layout patch slot, found {len(matches)}")
+    off = matches[0]
+    patch_u32_le(buf, off + 0, kernel_lba)
+    patch_u32_le(buf, off + 4, kernel_sectors)
+    patch_u32_le(buf, off + 8, fs_lba)
+    patch_u32_le(buf, off + 12, fs_sectors)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify the final bootable image layout.")
     parser.add_argument("--image", type=Path, required=True)
@@ -61,7 +87,7 @@ def main() -> int:
 
     image = read_bytes(args.image)
     boot = bytearray(read_bytes(args.boot))
-    loader2 = read_bytes(args.loader2)
+    loader2 = bytearray(read_bytes(args.loader2))
     kernel = read_bytes(args.kernel)
     fs = read_bytes(args.fs)
 
@@ -94,6 +120,7 @@ def main() -> int:
                           0x80, 0x83, kernel_lba, kernel_sectors)
     write_partition_entry(boot, args.boot_partition_table_offset + 1 * args.boot_partition_entry_size,
                           0x00, 0x83, fs_lba, fs_sectors)
+    patch_loader2_layout(loader2, kernel_lba, kernel_sectors, fs_lba, fs_sectors)
     expect(image[:len(boot)] == boot, "boot sector bytes do not match patched boot.bin")
     expect(image[args.sector_size:args.sector_size + len(loader2)] == loader2,
            "loader2 bytes do not match loader2.bin")

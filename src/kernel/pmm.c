@@ -21,6 +21,7 @@
  * usable RAM inside this fixed window, then re-marks SmallOS-owned ranges.
  */
 static unsigned char s_bitmap[PMM_NUM_FRAMES / 8];
+static unsigned short s_refcount[PMM_NUM_FRAMES];
 static u32           s_free_count = 0;
 static u32           s_total_count = 0;
 static u32           s_next_free  = 0;
@@ -56,6 +57,9 @@ static void pmm_mark_idx_used(u32 idx) {
             s_free_count--;
         }
     }
+    if (s_refcount[idx] == 0) {
+        s_refcount[idx] = 1;
+    }
 }
 
 static void pmm_mark_idx_free(u32 idx) {
@@ -66,6 +70,7 @@ static void pmm_mark_idx_free(u32 idx) {
             s_next_free = idx;
         }
     }
+    s_refcount[idx] = 0;
 }
 
 static u32 round_down_frame(u32 addr) {
@@ -178,6 +183,9 @@ void pmm_init(void) {
     for (u32 i = 0; i < sizeof(s_bitmap); i++) {
         s_bitmap[i] = 0xFFu;
     }
+    for (u32 i = 0; i < PMM_NUM_FRAMES; i++) {
+        s_refcount[i] = 1;
+    }
 
     s_free_count = 0;
     s_total_count = 0;
@@ -209,6 +217,7 @@ u32 pmm_alloc_frame(void) {
         u32 idx = (s_next_free + i) % PMM_NUM_FRAMES;
         if (!frame_is_used(idx)) {
             frame_mark_used(idx);
+            s_refcount[idx] = 1;
             s_free_count--;
             s_next_free = (idx + 1) % PMM_NUM_FRAMES;
             return idx_to_addr(idx);
@@ -241,6 +250,7 @@ u32 pmm_alloc_contiguous_frames(u32 count) {
 
         for (u32 off = 0; off < count; off++) {
             frame_mark_used(start + off);
+            s_refcount[start + off] = 1;
         }
         s_free_count -= count;
         s_next_free = (start + count) % PMM_NUM_FRAMES;
@@ -251,26 +261,56 @@ u32 pmm_alloc_contiguous_frames(u32 count) {
     return 0;
 }
 
-void pmm_free_frame(u32 addr) {
+int pmm_retain_frame(u32 addr) {
+    if (addr < PMM_BASE || addr >= PMM_BASE + PMM_SIZE) {
+        return 0;
+    }
+
+    u32 idx = addr_to_idx(addr);
+
+    if (!frame_is_used(idx)) {
+        terminal_puts("pmm: retain free frame at ");
+        terminal_put_hex(addr);
+        terminal_putc('\n');
+        return 0;
+    }
+    if (s_refcount[idx] == 0xFFFFu) {
+        terminal_puts("pmm: refcount overflow at ");
+        terminal_put_hex(addr);
+        terminal_putc('\n');
+        return 0;
+    }
+    s_refcount[idx]++;
+    return 1;
+}
+
+void pmm_release_frame(u32 addr) {
     if (addr < PMM_BASE || addr >= PMM_BASE + PMM_SIZE) {
         return;
     }
 
     u32 idx = addr_to_idx(addr);
 
-    if (!frame_is_used(idx)) {
+    if (!frame_is_used(idx) || s_refcount[idx] == 0) {
         terminal_puts("pmm: double free at ");
         terminal_put_hex(addr);
         terminal_putc('\n');
         return;
     }
 
-    frame_mark_free(idx);
-    s_free_count++;
+    s_refcount[idx]--;
+    if (s_refcount[idx] == 0) {
+        frame_mark_free(idx);
+        s_free_count++;
 
-    if (idx < s_next_free) {
-        s_next_free = idx;
+        if (idx < s_next_free) {
+            s_next_free = idx;
+        }
     }
+}
+
+void pmm_free_frame(u32 addr) {
+    pmm_release_frame(addr);
 }
 
 void pmm_free_contiguous_frames(u32 addr, u32 count) {
@@ -281,6 +321,13 @@ void pmm_free_contiguous_frames(u32 addr, u32 count) {
     for (u32 off = 0; off < count; off++) {
         pmm_free_frame(addr + off * PMM_FRAME_SIZE);
     }
+}
+
+u32 pmm_frame_refcount(u32 addr) {
+    if (addr < PMM_BASE || addr >= PMM_BASE + PMM_SIZE) {
+        return 0;
+    }
+    return s_refcount[addr_to_idx(addr)];
 }
 
 u32 pmm_free_count(void) {

@@ -156,9 +156,10 @@ to the disk image. The default `BOOT_RAMDISK_FALLBACK=never` build policy skips
 the loader2 fallback preload for normal VM/IDE boots. `BOOT_RAMDISK_FALLBACK=auto`
 preloads only when EDD does not identify the boot drive as USB or ATA.
 
-The explicit USB build/run targets force `BOOT_RAMDISK_FALLBACK=always` so real
-USB images still boot when protected-mode USB storage cannot validate ext2 on a
-specific controller.
+The USB image and explicit fallback targets force `BOOT_RAMDISK_FALLBACK=always`
+so real USB images still have a BIOS-stage preload option when protected-mode
+USB storage cannot validate ext2 on a specific controller. The direct QEMU USB
+storage run/smoke targets keep the preload disabled to exercise `usb0`.
 
 If the partition entry is missing or malformed, `ext2_init()` prints:
 

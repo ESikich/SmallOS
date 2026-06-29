@@ -770,6 +770,7 @@ static void boot_mount_ext2(int ata_ready) {
         boot_splash_warn("ext2: ATA mount failed");
     }
 
+#ifndef SMALLOS_BOOT_SKIP_USB_STORAGE
     if (usb_storage_init()) {
         block_device_t* usb_dev = usb_storage_block_device();
         if (usb_dev) {
@@ -786,6 +787,9 @@ static void boot_mount_ext2(int ata_ready) {
             boot_splash_warn("ext2: USB mount failed");
         }
     }
+#else
+    boot_splash_warn("storage: USB mount skipped");
+#endif
 
     if (boot_info_ramdisk_valid()) {
         ext2_use_boot_ramdisk(1);

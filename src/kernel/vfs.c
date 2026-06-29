@@ -8,6 +8,7 @@
 #include "uapi_errno.h"
 
 #define VFS_FILE_CACHE_MAX_BYTES (PROCESS_FD_CACHE_PAGES * 4096u)
+#define VFS_RO_MAP_CACHE_PAGES 128u
 
 typedef struct {
     fd_entry_t* ent;
@@ -30,8 +31,23 @@ typedef struct vfs_file_object {
     u32 cache_pages_frame;
 } vfs_file_object_t;
 
+typedef struct vfs_ro_map_entry {
+    int used;
+    char name[PROCESS_FD_NAME_MAX];
+    u32 ino;
+    u32 size;
+    u32 mtime;
+    u32 ctime;
+    u32 file_offset;
+    u32 frame;
+} vfs_ro_map_entry_t;
+
+static vfs_ro_map_entry_t s_ro_map_cache[VFS_RO_MAP_CACHE_PAGES];
+
 static int vfs_page_sink_write(void* ctx, u32 offset, const u8* data, u32 len);
 static int vfs_file_flush(fd_entry_t* ent);
+static unsigned int vfs_irq_save(void);
+static void vfs_irq_restore(unsigned int flags);
 
 static vfs_file_object_t* vfs_file_object(fd_entry_t* ent) {
     if (!ent || ent->kind != PROCESS_HANDLE_KIND_FILE || !ent->aux_frame) return 0;
@@ -53,6 +69,60 @@ static void vfs_file_sync_entry(fd_entry_t* ent) {
 
 static void vfs_zero_frame(u32 frame) {
     k_memset(paging_phys_to_kernel_virt(frame), 0, 4096u);
+}
+
+static void vfs_ro_map_drop_entry(vfs_ro_map_entry_t* ent) {
+    if (!ent || !ent->used) return;
+    if (ent->frame) {
+        pmm_release_frame(ent->frame);
+    }
+    k_memset(ent, 0, sizeof(*ent));
+}
+
+static void vfs_ro_map_invalidate_path(const char* path) {
+    if (!path) return;
+
+    unsigned int flags = vfs_irq_save();
+    for (unsigned int i = 0; i < VFS_RO_MAP_CACHE_PAGES; i++) {
+        if (s_ro_map_cache[i].used &&
+            k_strcmp(s_ro_map_cache[i].name, path) == 0) {
+            vfs_ro_map_drop_entry(&s_ro_map_cache[i]);
+        }
+    }
+    vfs_irq_restore(flags);
+}
+
+static vfs_ro_map_entry_t* vfs_ro_map_find(const char* path,
+                                           const sys_stat_info_t* st,
+                                           u32 file_offset) {
+    for (unsigned int i = 0; i < VFS_RO_MAP_CACHE_PAGES; i++) {
+        vfs_ro_map_entry_t* ent = &s_ro_map_cache[i];
+        if (!ent->used) continue;
+        if (ent->file_offset != file_offset) continue;
+        if (ent->ino != st->ino || ent->size != st->size ||
+            ent->mtime != st->mtime || ent->ctime != st->ctime) {
+            continue;
+        }
+        if (k_strcmp(ent->name, path) == 0) return ent;
+    }
+    return 0;
+}
+
+static vfs_ro_map_entry_t* vfs_ro_map_victim(void) {
+    vfs_ro_map_entry_t* first_free = 0;
+
+    for (unsigned int i = 0; i < VFS_RO_MAP_CACHE_PAGES; i++) {
+        vfs_ro_map_entry_t* ent = &s_ro_map_cache[i];
+        if (!ent->used) {
+            if (!first_free) first_free = ent;
+            continue;
+        }
+        if (ent->frame && pmm_frame_refcount(ent->frame) <= 1u) {
+            vfs_ro_map_drop_entry(ent);
+            return ent;
+        }
+    }
+    return first_free;
 }
 
 static int vfs_cache_page_frame(fd_entry_t* ent, u32 page_idx, u32* out_frame) {
@@ -304,6 +374,7 @@ static int vfs_file_write(fd_entry_t* ent, const char* buf, unsigned int len) {
     if (!ext2_write_at_path(obj->name, obj->offset, (const u8*)buf, len, &obj->size, 1)) {
         return -EIO;
     }
+    vfs_ro_map_invalidate_path(obj->name);
 
     obj->offset = end;
     vfs_file_cache_free(ent);
@@ -378,6 +449,7 @@ static int vfs_file_flush(fd_entry_t* ent) {
     if (!ext2_write_path_from_source(obj->name, &source, obj->size)) {
         return 0;
     }
+    vfs_ro_map_invalidate_path(obj->name);
     obj->dirty = 0;
     vfs_file_sync_entry(ent);
     return 1;
@@ -519,6 +591,106 @@ int vfs_file_stat_info_fd(fd_entry_t* ent, sys_stat_info_t* out) {
     return 0;
 }
 
+int vfs_file_map_ro_page(fd_entry_t* ent,
+                         u32 file_offset,
+                         u32* out_frame,
+                         u32* out_bytes) {
+    vfs_file_object_t* obj = vfs_file_object(ent);
+    sys_stat_info_t st;
+    vfs_ro_map_entry_t* cached;
+    vfs_ro_map_entry_t* slot;
+    u32 frame;
+    u32 bytes;
+    u32 read = 0;
+    unsigned int flags;
+
+    if (out_frame) *out_frame = 0;
+    if (out_bytes) *out_bytes = 0;
+    if (!ent || !ent->valid || !obj || !out_frame || !out_bytes) return -EBADF;
+    if (!obj->readable || obj->writable || obj->is_dir) return -EBADF;
+    if ((file_offset & (PAGE_SIZE - 1u)) != 0u) return -EINVAL;
+    if (vfs_file_stat_info_fd(ent, &st) < 0) return -EIO;
+    if (st.is_dir || file_offset >= st.size) return -EINVAL;
+
+    bytes = st.size - file_offset;
+    if (bytes > PAGE_SIZE) bytes = PAGE_SIZE;
+
+    flags = vfs_irq_save();
+    cached = vfs_ro_map_find(obj->name, &st, file_offset);
+    if (cached) {
+        if (!pmm_retain_frame(cached->frame)) {
+            vfs_irq_restore(flags);
+            return -EIO;
+        }
+        *out_frame = cached->frame;
+        *out_bytes = bytes;
+        vfs_irq_restore(flags);
+        return 0;
+    }
+
+    slot = vfs_ro_map_victim();
+    if (!slot) {
+        vfs_irq_restore(flags);
+        return -ENOMEM;
+    }
+
+    frame = pmm_alloc_frame();
+    if (!frame) {
+        vfs_irq_restore(flags);
+        return -ENOMEM;
+    }
+    vfs_zero_frame(frame);
+    if (!ext2_read_at_path(obj->name, file_offset,
+                           (u8*)paging_phys_to_kernel_virt(frame),
+                           bytes,
+                           &read) ||
+        read != bytes) {
+        pmm_release_frame(frame);
+        vfs_irq_restore(flags);
+        return -EIO;
+    }
+
+    k_memset(slot, 0, sizeof(*slot));
+    slot->used = 1;
+    k_strncpy(slot->name, obj->name, sizeof(slot->name));
+    slot->ino = st.ino;
+    slot->size = st.size;
+    slot->mtime = st.mtime;
+    slot->ctime = st.ctime;
+    slot->file_offset = file_offset;
+    slot->frame = frame;
+
+    if (!pmm_retain_frame(frame)) {
+        vfs_ro_map_drop_entry(slot);
+        vfs_irq_restore(flags);
+        return -EIO;
+    }
+
+    *out_frame = frame;
+    *out_bytes = bytes;
+    vfs_irq_restore(flags);
+    return 0;
+}
+
+void vfs_file_map_cache_stats(u32* out_pages, u32* out_mapped_refs) {
+    u32 pages = 0;
+    u32 refs = 0;
+    unsigned int flags = vfs_irq_save();
+
+    for (unsigned int i = 0; i < VFS_RO_MAP_CACHE_PAGES; i++) {
+        if (!s_ro_map_cache[i].used || !s_ro_map_cache[i].frame) continue;
+        pages++;
+        {
+            u32 refcount = pmm_frame_refcount(s_ro_map_cache[i].frame);
+            if (refcount > 1u) refs += refcount - 1u;
+        }
+    }
+
+    vfs_irq_restore(flags);
+    if (out_pages) *out_pages = pages;
+    if (out_mapped_refs) *out_mapped_refs = refs;
+}
+
 const u8* vfs_load_file(const char* path, u32* out_size) {
     return ext2_load(path, out_size);
 }
@@ -634,19 +806,29 @@ int vfs_is_dir(const char* path) {
 }
 
 int vfs_write_root(const char* name, const u8* data, u32 size) {
+    vfs_ro_map_invalidate_path(name);
     return ext2_write(name, data, size);
 }
 
 int vfs_write_path(const char* path, const u8* data, u32 size) {
-    return ext2_write_path(path, data, size);
+    int ok = ext2_write_path(path, data, size);
+    if (ok) vfs_ro_map_invalidate_path(path);
+    return ok;
 }
 
 int vfs_unlink(const char* path) {
-    return ext2_rm(path);
+    int ok = ext2_rm(path);
+    if (ok) vfs_ro_map_invalidate_path(path);
+    return ok;
 }
 
 int vfs_rename(const char* src, const char* dst) {
-    return ext2_move(src, dst);
+    int ok = ext2_move(src, dst);
+    if (ok) {
+        vfs_ro_map_invalidate_path(src);
+        vfs_ro_map_invalidate_path(dst);
+    }
+    return ok;
 }
 
 int vfs_mkdir(const char* path) {

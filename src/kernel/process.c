@@ -2299,6 +2299,20 @@ int process_set_env(process_t* proc, int envc, char** envp) {
     return 0;
 }
 
+int process_set_auxv(process_t* proc, int auxc, const unsigned int* auxv_pairs) {
+    if (!proc) return -EINVAL;
+    if (auxc < 0 || auxc > PROCESS_AUXV_MAX) return -EINVAL;
+    if (auxc > 0 && !auxv_pairs) return -EFAULT;
+
+    proc->user_auxc = auxc;
+    for (int i = 0; i < auxc * 2; i++) {
+        proc->user_auxv[i] = auxv_pairs[i];
+    }
+    proc->user_auxv[auxc * 2] = 0;
+    proc->user_auxv[auxc * 2 + 1] = 0;
+    return 0;
+}
+
 int process_set_default_env(process_t* proc) {
     char* envp[] = {
         "PATH=/bin:/usr/bin:/usr/sbin",
@@ -2361,6 +2375,8 @@ process_t* process_create(const char* name) {
     proc->state = PROCESS_STATE_UNUSED;
     proc->heap_base = USER_HEAP_BASE;
     proc->heap_brk = USER_HEAP_BASE;
+    proc->mmap_base = USER_MMAP_BASE;
+    proc->mmap_next = USER_MMAP_BASE;
     fd_rc = process_fd_table_init(proc, PROCESS_FD_LIMIT_DEFAULT);
     if (fd_rc < 0) {
         terminal_puts("process: out of frames for fd table\n");
@@ -2463,6 +2479,8 @@ process_t* process_fork_from_syscall(unsigned int regs_esp, unsigned int frame_t
 
     child->heap_base = parent->heap_base;
     child->heap_brk = parent->heap_brk;
+    child->mmap_base = parent->mmap_base;
+    child->mmap_next = parent->mmap_next;
     child->pgid = parent->pgid;
     child->user_entry = parent->user_entry;
     child->user_argc = parent->user_argc;
@@ -2485,6 +2503,8 @@ process_t* process_fork_from_syscall(unsigned int regs_esp, unsigned int frame_t
             child->user_envp[i] = 0;
         }
     }
+    child->user_auxc = parent->user_auxc;
+    k_memcpy(child->user_auxv, parent->user_auxv, sizeof(child->user_auxv));
     k_memcpy(child->cwd, parent->cwd, sizeof(child->cwd));
 
     if (process_copy_fd_table(child, parent) < 0) {

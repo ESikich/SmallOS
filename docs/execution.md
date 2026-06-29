@@ -64,6 +64,9 @@ Important current-state facts:
   keyboard/mouse event loops use `SYS_INPUT_READ`, and can sleep until input or
   an absolute frame deadline with `SYS_INPUT_WAIT_UNTIL`.
 - **ELF user programs** are loaded into their own page directory and do execute in ring 3
+- dynamic user ELFs with `PT_INTERP=/lib/ld-smallos.so` are supported; the
+  kernel loads both the main image and interpreter, then the user-space loader
+  maps `/lib/libc.so` through `mmap`
 - ELF launch and exit are now scheduler-owned: `elf_run_image()` seeds a bootstrap context, enqueues the task, and returns `process_t*`
 - the scheduler supports kernel tasks, ELF tasks, voluntary yielding, timer-driven sleeping, and timer-driven switching; foreground commands wait for children, and `bg` returns while keeping a reattachable shell job
 - user ELFs have a small freestanding runtime layer with a heap allocator,
@@ -227,7 +230,9 @@ hostfwd=tcp::2121-:2121,hostfwd=tcp::30000-:30000
 
 `make ftp-smoke` sets those forwards, uses the boot-started `ftpd`, and verifies
 login, negative path replies, directory listing, download, upload readback,
-delete, and `RMD` cleanup.
+delete, and `RMD` cleanup. If the shell prompt appears before the async boot
+DHCP task has acquired a lease, the harness runs the guest `dhcp` command
+before opening the host-forwarded FTP connection.
 
 `make ftp-loop-smoke` uses the same forwards and the same boot-started `ftpd`,
 then repeats fresh control sessions with passive `LIST`, `RETR`, `STOR`,
@@ -566,6 +571,59 @@ this way so its upstream `main` path can run normally. The seed image installs
 Direct `_start(argc, argv)` programs remain supported for low-level probes and
 freestanding tests; new hosted-ish programs should prefer
 `int main(int argc, char** argv, char** envp)` plus `crt0`.
+
+## Dynamic Executable Handoff
+
+When an executable has no `PT_INTERP`, the kernel follows the static path and
+enters the program directly. When `PT_INTERP` names `/lib/ld-smallos.so`, the
+kernel maps the main executable, maps the interpreter, builds the normal
+argv/envp stack plus a small auxv, and enters the interpreter instead.
+
+The auxv contract currently includes:
+
+```text
+AT_ENTRY  main executable entry point
+AT_PHDR   main executable program-header address
+AT_PHENT  program-header entry size
+AT_PHNUM  program-header count
+AT_BASE   interpreter load base
+AT_PAGESZ user page size
+```
+
+`ld-smallos.so` is a base-zero `ET_DYN` interpreter mapped by the kernel at
+`AT_BASE` (currently `USER_INTERP_BASE`). Its assembly bootstrap applies only
+its own `R_386_RELATIVE` self-relocations, then enters the C loader. The loader
+opens absolute `DT_NEEDED` paths directly, then searches the requesting
+object's absolute-only `DT_RUNPATH` or `DT_RPATH`, then `/lib`. It maps
+eligible page-aligned read-only `PT_LOAD` pages through the shared read-only
+file cache, keeps writable and relocation-bearing pages private, applies
+protections, resolves eager relocations, runs DSO initializers, and then calls
+the original executable entry with
+`(argc, argv, envp)`.
+
+After startup, dynamic programs can call `dlopen()`, `dlsym()`, `dlclose()`,
+and `dlerror()` through a loader service table installed into libc before
+program entry. Runtime loads reuse the same absolute-path, `RUNPATH`/`RPATH`,
+and `/lib` search rules as startup dependencies. `RTLD_NOW` and `RTLD_LAZY`
+both resolve eagerly; `RTLD_GLOBAL` is compatible with the current flat global
+symbol model, and `RTLD_LOCAL` does not add isolation yet. `dlclose()` is a
+lifecycle operation only in this slice: it drops runtime references and runs
+finalizers when the last reference closes, but leaves mappings and shared file
+cache pages in place.
+
+Dynamic-link failure paths are intentionally controlled. If the interpreter named by
+`PT_INTERP` is missing, the kernel prints `elf: missing interpreter:
+/lib/ld-smallos.so`, the launch syscall fails, and the shell prompt returns. If
+the interpreter starts but `/lib/libc.so` is missing, `ld-smallos.so` prints
+`ld-smallos: library not found: libc.so` and exits with status `127`. The
+`make dynlink-negative-smoke` target verifies both paths using temporary
+images. Runtime `dlopen()` failures instead return `NULL`, set the per-process
+`dlerror()` string, and do not kill the caller.
+
+V2 still intentionally supports dynamic applications rather than full Linux
+loader semantics. There is no lazy PLT binding, TLS, `RTLD_NEXT`, symbol
+versioning, environment search path, or aggressive DSO unload yet. Static ELFs
+remain a first-class fallback path.
 
 ---
 

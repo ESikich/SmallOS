@@ -21,6 +21,11 @@ static void check(const char* name, int ok, int* failures) {
     }
 }
 
+static int valid_probe_path(const char* path) {
+    return str_eq(path, "usr/libexec/tests/crtprobe") ||
+           str_eq(path, "usr/libexec/tests/dyncrtprobe");
+}
+
 /*
  * This program intentionally defines main(), not _start(), so the test covers
  * the crt0 adapter and verifies that main's return becomes exit status.
@@ -30,7 +35,7 @@ int main(int argc, char** argv, char** envp) {
 
     u_puts("=== crtprobe begin ===\n");
     check("crtprobe argc", argc == 4, &failures);
-    check("crtprobe argv[0]", argc > 0 && str_eq(argv[0], "usr/libexec/tests/crtprobe"), &failures);
+    check("crtprobe argv[0]", argc > 0 && valid_probe_path(argv[0]), &failures);
     check("crtprobe argv[1]", argc > 1 && str_eq(argv[1], "alpha"), &failures);
     check("crtprobe argv[2]", argc > 2 && str_eq(argv[2], "nested/path"), &failures);
     check("crtprobe long arg",

@@ -1,6 +1,8 @@
 #include "user_lib.h"
 
 extern char** environ;
+void __smallos_set_environ(char** envp);
+__attribute__((noreturn)) void exit(int code);
 int main(int argc, char** argv, char** envp);
 
 /*
@@ -10,5 +12,6 @@ int main(int argc, char** argv, char** envp);
  */
 void _start(int argc, char** argv, char** envp) {
     environ = envp;
-    sys_exit(main(argc, argv, envp));
+    __smallos_set_environ(envp);
+    exit(main(argc, argv, envp));
 }

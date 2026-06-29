@@ -78,7 +78,9 @@ for a lean image without game data.
 build/
 ├── bin/<profile>/ → final binaries (kernel.elf, kernel.bin,
 │                    user program *.elf artifacts,
-│                    ext2.seed.img, boot.bin, loader2.bin, tcc-smalos.elf)
+│                    dynamic *.dyn.elf artifacts, lib/ld-smallos.so,
+│                    lib/libc.so, ext2.seed.img, boot.bin, loader2.bin,
+│                    tcc-smalos.elf)
 ├── obj/<profile>/ → object files and depfiles (.o, .d), mirrored by source subtree
 ├── gen/<profile>/ → generated source (loader2.gen.asm)
 ├── img/           → final disk images and wrappers
@@ -242,18 +244,116 @@ to validate the current serial log, or `--display-backend vga` to smoke the
 forced VGA image.
 
 `make verify` is the standard preflight target: it runs both layout checks,
-then `make test`, then `make smoke`. The heavier suites are grouped
-separately: `make verify-display` runs the framebuffer/VGA visual smoke checks
-and the GUI launch smoke, `make verify-network` runs the socket, FTP, and
-cserve smoke matrix, and `make verify-full` runs all verification targets in
-sequence.
+`make dynamic-link-check`, `make dynlink-negative-smoke`, `make test`, and
+then `make smoke`. The heavier suites are grouped separately:
+`make verify-display` runs the framebuffer/VGA visual smoke checks and the GUI
+launch smoke, `make verify-network` runs the socket, FTP, and cserve smoke
+matrix, and `make verify-full` runs all verification targets in sequence.
 
-Most freestanding test ELFs define `_start(argc, argv)` directly and link
-against the SmallOS user libraries built under `build/obj/.../user/lib/`.
+Most freestanding test ELFs define `_start(argc, argv)` directly and can link
+either statically against the SmallOS user libraries built under
+`build/obj/.../user/lib/` or dynamically against the staged shared runtime.
 Hosted-ish programs also link `src/user/crt/crt0.c`, which supplies `_start`,
 sets `environ`, and exits with `main`'s return value. `usr/bin/tcc` and
 `usr/libexec/tests/crtprobe` use that CRT path; there is no TinyCC-specific
 startup wrapper.
+
+## Dynamic Linking
+
+SmallOS dynamic linking v2 is the supported path for ordinary dynamic user
+programs. Dynamic executables are still linked at the fixed user text base, but include
+`PT_INTERP=/lib/ld-smallos.so`. The kernel maps the executable and the
+`ET_DYN` interpreter, passes auxv entries such as `AT_ENTRY`, `AT_PHDR`,
+`AT_PHNUM`, `AT_BASE`, and `AT_PAGESZ`, and enters the SmallOS loader. The
+loader self-relocates before touching its C globals, then maps eligible
+page-aligned read-only DSO pages through the shared read-only file cache, keeps
+writable and relocation-bearing pages private, resolves eager relocations,
+runs initializers, and then calls the executable entry point with the normal
+`(argc, argv, envp)` launch frame.
+
+The Makefile names the current conversion wave explicitly:
+
+```make
+USER_DYNAMIC_NO_CRT0  # programs that provide _start directly
+USER_DYNAMIC_WITH_CRT0 # programs linked through crt0.o and main()
+USER_DYNAMIC_PROGS    # combined primary image conversion set
+USER_DYNAMIC_ELFS     # generated build/bin/<profile>/*.dyn.elf artifacts
+```
+
+Converted primary image entries are staged from `*.dyn.elf`; their static
+`*.elf` artifacts are still built for every `USER_PROGS` entry. The dynamic
+set currently covers core CLI tools, network diagnostics, power commands,
+ATA/USB/mouse/sound/display diagnostics, simple socket/FTP service binaries
+(`tcpecho`, `sockeof`, `ftpd`), and most probes. The shell, desktop/editor,
+framebuffer viewers/demos, games, large custom ports, and the multi-object
+`cserve` service remain staged as static ELFs for now. Existing explicit dynamic smoke
+aliases (`dynhello`, `dyncrtprobe`, `dynmathprobe`, `dynstdioprobe`,
+`dynlinkprobe`, `dynpathprobe`, `dynfiniprobe`, and `dlopenprobe`) and static
+fallbacks for `hello`, `crtprobe`, `mathprobe`, and `stdioprobe` stay under
+`/usr/libexec/tests/`.
+
+The shared runtime is intentionally coarse-grained: `/lib/libc.so` contains the
+current libc, POSIX, and libm runtime objects to avoid early dependency cycles.
+The focused finalizer test DSO is staged as `/lib/libdynfini.so`. Runtime
+loading probes stage `/usr/lib/libdlplug.so` and its dependency
+`/usr/lib/libdlplugdep.so`. Static guest build inputs remain under `/usr/lib`:
+`crt0.o`, `libc.a`, `libm.a`, and `libposix.a`.
+
+The loader understands `DT_SONAME`, `DT_RPATH`, and `DT_RUNPATH` for startup
+dependencies. Absolute `DT_NEEDED` paths are opened directly; otherwise the
+requesting object's `RUNPATH` or `RPATH` is searched before the default `/lib`.
+Only absolute search directories are supported in this slice. `$ORIGIN`,
+environment paths, and loader config files are intentionally unsupported.
+The same search rules are reused by `dlopen()`.
+
+The V2.4 runtime loading slice supports `dlopen()`, `dlsym()`, `dlclose()`,
+and `dlerror()` for dynamic programs through a loader-installed libc service
+table. `RTLD_NOW` is supported, `RTLD_LAZY` is accepted but still bound
+eagerly, `RTLD_GLOBAL` uses the current flat global namespace, and
+`RTLD_LOCAL` is the default no-op mode. `dlclose()` runs runtime finalizers
+when the last runtime reference closes, but DSO mappings and shared read-only
+file-cache pages are not reclaimed yet. Static programs keep returning a clear
+unsupported error for `dlfcn` calls.
+
+Use the size report when changing the conversion set:
+
+```bash
+make dyn-size-report SERIAL_CONSOLE=1
+```
+
+It prints the static total for converted programs, the dynamic program total,
+the shared runtime size, and the net comparison. The current small-program
+wave can be larger on disk because each tiny dynamic ELF pays interpreter,
+dynamic-section, and relocation overhead before shared-runtime savings dominate.
+
+Use the host-side dynamic-link verifier before running guest tests:
+
+```bash
+make dynamic-link-check SERIAL_CONSOLE=1
+```
+
+It checks converted dynamic executables and explicit dynamic smoke aliases for
+`PT_INTERP=/lib/ld-smallos.so`, verifies that the shared runtime is an `ET_DYN`
+object with `PT_DYNAMIC`, verifies additional shared-object probes, confirms
+the loader artifact is a base-zero `ET_DYN` image with no `PT_INTERP`, checks
+shared-object SONAMEs and supported dynamic search paths, and rejects
+relocations outside the supported i386 relocation sets.
+
+Use the negative dynamic-link smoke when changing loader, staging, or exec
+failure behavior:
+
+```bash
+make dynlink-negative-smoke SERIAL_CONSOLE=1
+```
+
+It boots two temporary images. `smallos-dyn-no-loader.img` omits
+`/lib/ld-smallos.so` and verifies the kernel-side missing-interpreter
+diagnostic plus prompt recovery. `smallos-dyn-no-libc.img` omits
+`/lib/libc.so` and uses the static `dynfailprobe` helper to verify
+`ld-smallos: library not found`, child exit status `127`, and prompt recovery.
+Those negative images omit boot-started dynamic service binaries so the smoke
+owns the failure under test; the canonical image still stages `ftpd`,
+`tcpecho`, and `sockeof` dynamically.
 
 ## Automated Guest Test
 
@@ -288,7 +388,9 @@ commands on their own.
 Use the aggregate targets as the normal verification ladder:
 
 ```bash
-make verify          # layout, guest selftest, reboot/halt smoke
+make verify          # layout, dynamic checks, guest selftest, reboot/halt smoke
+make dynamic-link-check # host-side dynamic ELF/interpreter/relocation checks
+make dynlink-negative-smoke # missing-loader/libc failure-path smoke
 make verify-display  # framebuffer/VGA screenshots plus GUI launch smoke
 make verify-network  # socket EOF/parallel, FTP, FTP loop, cserve
 make verify-full     # all of the above
@@ -330,7 +432,9 @@ during, and after the run. Override `SOCKET_PARALLEL_CLIENTS`,
 `make ftp-smoke` boots QEMU with user-network host forwarding for FTP control
 port `2121` and passive data port `30000`, then uses the boot-started `ftpd`
 to drive login, negative path checks, `LIST`, `RETR`, `STOR` readback,
-`DELE`, and `RMD` cleanup from the host.
+`DELE`, and `RMD` cleanup from the host. If the shell prompt appears before the
+async boot DHCP task has acquired a lease, the harness runs the guest `dhcp`
+command before opening the host-forwarded FTP connection.
 
 `make ftp-loop-smoke` uses the same FTP forwards and repeats fresh control
 sessions with passive `LIST`, `RETR`, `STOR`, uploaded-file readback, and
@@ -344,13 +448,52 @@ It holds 24 clients by default. Override `CSERVE_SMOKE_CLIENTS` or
 `CSERVE_SMOKE_PORT` when needed.
 
 `make usb-storage-smoke` boots the canonical raw image through QEMU OHCI USB
-mass storage (`-device pci-ohci` plus `-device usb-storage`). It verifies that
-ATA mount failure is tolerated, `usbms` reaches ready state, ext2 mounts from
-`dev=usb0`, and the user shell prompt appears. That path is read-only today,
-so boot log persistence is skipped with an informational boot message. The smoke
-fixture intentionally has no USB keyboard; `usb: WARN boot HID unavailable`
-followed by `usb: HID service task queued` means the retrying HID service is
-alive for real hardware.
+mass storage (`-device pci-ohci` plus `-device usb-storage`) with the loader2
+RAM fallback disabled. It verifies that ATA mount failure is tolerated, `usbms`
+reaches ready state, ext2 mounts from `dev=usb0`, and the user shell prompt
+appears. That path is read-only today, so boot log persistence is skipped with
+an informational boot message. The smoke fixture intentionally has no USB
+keyboard; `usb: WARN boot HID unavailable` followed by
+`usb: HID service task queued` means the retrying HID service is alive for real
+hardware. `make usb-ramdisk-fallback-smoke` is the separate BIOS-stage preload
+coverage target: it builds with `BOOT_RAMDISK_FALLBACK=always` and
+`BOOT_SKIP_USB_STORAGE=1` so the kernel proves it can boot from the loader2 RAM
+copy even when protected-mode USB storage is unavailable.
+
+## Current Handoff Baseline
+
+As of the dynamic-linking v2.4 runtime-loading pass on 2026-06-29, the handoff
+matrix is:
+
+```bash
+make image-layout-check SERIAL_CONSOLE=1
+make dynamic-link-check SERIAL_CONSOLE=1
+make dynlink-negative-smoke SERIAL_CONSOLE=1
+make dyn-size-report SERIAL_CONSOLE=1
+make test SERIAL_CONSOLE=1 QEMU_SELFTEST_FLAGS=--summary
+make usb-storage-smoke SERIAL_CONSOLE=1
+make usb-ramdisk-fallback-smoke SERIAL_CONSOLE=1
+make verify-network SERIAL_CONSOLE=1
+make verify-display SERIAL_CONSOLE=1
+git diff --check
+```
+
+The recorded baseline has `dynamic-link-check` passing for the converted
+dynamic executables, explicit dynamic smoke aliases, the runtime-loading probe,
+and staged shared objects. `dynlink-negative-smoke` passes
+missing-interpreter and missing-`libc.so` cases, and guest selftest passes all
+expected markers including shared-cache, fork-cache, finalizer, and
+`dlopenprobe` coverage. The broader local handoff also has TinyCC guest
+samples passing, Wolf3D source/data probes passing, direct OHCI USB storage
+mounting read-only as `usb0`, the loader2 RAM fallback boot path passing, the
+socket/FTP/cserve smoke matrix passing, and framebuffer/VGA/GUI display smoke
+passing. Re-run `make dyn-size-report` after changing the conversion set or
+shared libraries.
+
+The remaining dynamic-linking deferred list is TLS, lazy PLT binding,
+`RTLD_NEXT`, symbol versioning, environment/config search paths, aggressive
+DSO unmapping on `dlclose()`, and conversion of `shell`, `gui`, `edit`,
+framebuffer apps, games, `fractint`, `wolf3d`, and `cserve`.
 
 For networking, the default `run` and `test` targets keep using QEMU's
 user-network NAT so CI stays simple. The guest still uses DHCP in that mode,
@@ -618,7 +761,7 @@ SmallOS behavior. Normal programs should include public headers from
 `src/user/include/` and link the SmallOS user libraries. The public header set
 also carries the small BSD/Unix compatibility names needed by older ports,
 including `<strings.h>`, `<malloc.h>`, `<endian.h>`, `<sys/dir.h>`, and
-`<sys/file.h>`. There is still no dynamic linking.
+`<sys/file.h>`.
 
 Third-party source should stay unchanged. Port-specific glue belongs
 under `src/user/ports/`; for example, the Fractint framebuffer and keyboard
@@ -732,16 +875,16 @@ Shipped ext2 programs:
 - `bin/echo` - print command arguments
 - `bin/about` - print the OS version
 - `bin/uptime` - print tick and second counts
-- `bin/halt` - halt the machine
-- `bin/reboot` - reboot the machine
+- `bin/halt` - halt the machine; staged dynamically in the current image
+- `bin/reboot` - reboot the machine; staged dynamically in the current image
 - `bin/date` - print UTC realtime, or `date -s [server-ip]` to sync from NTP
 - `bin/pwd` - print the process cwd inherited from the shell
 - `bin/meminfo` / `bin/memmap` - inspect kernel memory accounting and BIOS E820 entries
 - `bin/cpuz` - print a CPU-Z-style hardware summary: CPUID vendor/brand/features/cache plus memory, display, USB, network, and boot-disk diagnostics
 - `bin/top` - live process CPU/RAM table backed by scheduler process snapshots; press `q` to exit
-- `bin/netinfo`, `bin/dhcp`, `bin/netsend`, `bin/netrecv`, `bin/arpgw`, `bin/ping`, `bin/pinggw`, `bin/pingpublic`, `bin/netcheck` - inspect or exercise runtime network diagnostics
-- `bin/ataread` - dump raw mounted-block sector diagnostics
-- `bin/usbinfo`, `bin/usbports`, `bin/usbdiag`, `bin/usbpeek`, `bin/usbpower`, `bin/usbmouse`, `bin/mousetest` - inspect or exercise USB controller/HID and mouse diagnostics through narrow kernel diagnostic syscalls; `usbports` and passive `usbdiag` output is formatted from userspace snapshots
+- `bin/netinfo`, `bin/dhcp`, `bin/netsend`, `bin/netrecv`, `bin/arpgw`, `bin/ping`, `bin/pinggw`, `bin/pingpublic`, `bin/netcheck` - inspect or exercise runtime network diagnostics; staged dynamically in the current image
+- `bin/ataread` - dump raw mounted-block sector diagnostics; staged dynamically in the current image
+- `bin/usbinfo`, `bin/usbports`, `bin/usbdiag`, `bin/usbpeek`, `bin/usbpower`, `bin/usbmouse`, `bin/mousetest` - inspect or exercise USB controller/HID and mouse diagnostics through narrow kernel diagnostic syscalls; `usbports` and passive `usbdiag` output is formatted from userspace snapshots; staged dynamically in the current image
 - `bin/cat` - print an ext2 file
 - `bin/more` - page an ext2 file or piped stdin
 - `bin/man` - show the seeded plain-text manual pages from `/usr/share/man`
@@ -760,7 +903,7 @@ Shipped ext2 programs:
 - `usr/bin/plasma` - animated framebuffer graphics demo using `src/user/gfx.c`
 - `usr/bin/mandel` - interactive Mandelbrot demo with arrow-key pan, +/- zoom, reset/quit keys, and mouse cursor movement
 - `usr/bin/fractint` - upstream Xfractint 20.04p17 port using the SmallOS indexed-color framebuffer adapter, Fractint's normal renderers, and `/usr/share/xfractint/fractint.hlp`
-- `bin/soundprobe` - PC speaker, PCM, and AdLib OPL2 diagnostic command
+- `bin/soundprobe` - PC speaker, PCM, and AdLib OPL2 diagnostic command; staged dynamically in the current image
 - `usr/libexec/tests/ticks` - print the current tick count
 - `usr/libexec/tests/args` - print argc and argv
 - `usr/libexec/tests/exec_args` - verify ELF loading, syscalls, and stack setup
@@ -791,6 +934,9 @@ Shipped ext2 programs:
   `src/user/crt/crt0.c`
 - `/usr/include` - public libc/POSIX/SmallOS headers and kernel UAPI headers
 - `/usr/lib` - `crt0.o`, `libc.a`, `libm.a`, and `libposix.a` for guest builds
+- `/lib/ld-smallos.so` - SmallOS dynamic loader used by dynamic executables
+- `/lib/libc.so` - combined shared libc/POSIX/libm runtime for dynamic executables
+- `/lib/libdynfini.so` - focused DSO lifecycle probe library
 - `usr/share/examples/tinycc/tccmath.c`, `usr/share/examples/tinycc/tccagg.c`, `usr/share/examples/tinycc/tcctree.c`, `usr/share/examples/tinycc/tccmini.c`, `usr/share/examples/tinycc/tccsysroot.c`, `usr/share/examples/tinycc/tccposix.c` - guest compiler test inputs used by the shell selftests
 
 ## Properties
@@ -799,9 +945,10 @@ Shipped ext2 programs:
 * root directory is intended to stay directory-only during normal use
 * `bin/` contains command-style app binaries found by bare shell command lookup
 * `usr/bin/` contains demos, development tools, and larger user-facing programs such as `hello`, `plasma`, `mandel`, `fractint`, and `tcc`
-* `usr/libexec/tests/` contains the remaining shipped test binaries
-* `usr/sbin/` contains guest service binaries
+* `usr/libexec/tests/` contains the remaining shipped test binaries; most probes, including `displayprobe`, are staged dynamically
+* `usr/sbin/` contains guest service binaries; `tcpecho`, `sockeof`, and `ftpd` are staged dynamically, while `cserve` remains static
 * `usr/include/` and `usr/lib/` contain the guest C build sysroot, including public SmallOS helpers such as `term_keys.h`
+* `lib/` contains the dynamic loader and shared runtime used by converted primary commands
 * `usr/share/man/` contains plain-text manual pages installed from repository `man/man*/`
 * `usr/share/xfractint/` contains the generated Fractint help database, `sstools.ini`, and upstream maps, parameter sets, formulas, L-system definitions, and IFS definitions staged both at the Fractint search root and in canonical upstream subdirectories
 * `usr/share/examples/tinycc/` contains the shipped TinyCC sample inputs
@@ -1055,10 +1202,18 @@ Cons: no relocation, no metadata, BSS must be zeroed manually.
 
 ## All User Programs at 0x400000
 
-All user ELFs are linked at the same virtual address. This is safe because each user program launch creates a new page directory with its own private mapping at PD index 1. The same virtual address maps to different physical frames for different processes.
+Static user ELFs and dynamic executable entry images are linked at the same
+virtual address. This is safe because each user program launch creates a new
+page directory with its own private mapping at PD index 1. The same virtual
+address maps to different physical frames for different processes. Dynamically
+loaded DSOs are mapped from the per-process mmap region above the executable
+and below the user heap.
 
-Pros: simple linking, no need for unique link addresses per program.
-Cons: no PIE, no dynamic linking, and all programs must currently fit the fixed loader / exec model even though a scheduler now exists.
+Pros: simple linking, no need for unique link addresses per program, and
+eligible DSO text pages can still be physically shared through the read-only
+file cache.
+Cons: no PIE, fixed-address executables, and writable or relocation-bearing
+DSO pages remain private per process.
 
 ## ext2 Image Instead of Embedded Programs
 
@@ -1089,6 +1244,7 @@ QEMU can also expose the raw image as OHCI USB storage:
 ```bash
 make run-usb-storage
 make usb-storage-smoke
+make usb-ramdisk-fallback-smoke
 ```
 
 The kernel uses the generic block layer to try writable ATA first, then
@@ -1098,10 +1254,14 @@ normal VM/IDE boots, avoiding a real-mode copy of the ext2 partition on every
 boot. When enabled, the fallback copies the ext2 partition to `0x800000`,
 publishes it through boot info, and lets ext2 treat that memory as a block
 device. `BOOT_RAMDISK_FALLBACK=auto` keeps the fallback available only when EDD
-does not identify the boot drive as USB or ATA; `always` forces it. The explicit
-`usb-image`, `run-usb-storage`, and `run-headless-usb-storage` targets force
-`BOOT_RAMDISK_FALLBACK=always`, which is the reliable setting for USB-specific
-images while the protected-mode USB storage path is still hardware-dependent.
+does not identify the boot drive as USB or ATA; `always` forces it. The direct
+QEMU USB run and smoke targets use `BOOT_RAMDISK_FALLBACK=never` so they cover
+the protected-mode `usb0` path. The `usb-image`, `usb-vbe-image`,
+`run-usb-storage-fallback`, `run-headless-usb-storage-fallback`, and
+`usb-ramdisk-fallback-smoke` targets force `BOOT_RAMDISK_FALLBACK=always` for
+BIOS preload coverage and hardware-oriented images. The
+`usb-ramdisk-fallback-smoke` target also sets `BOOT_SKIP_USB_STORAGE=1` so it
+proves the loader2 RAM copy is sufficient on its own.
 The USB storage driver implements enough BOT/SCSI to enumerate the device, read
 capacity, and issue READ(10) requests for ext2 blocks.
 
