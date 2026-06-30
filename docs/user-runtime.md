@@ -72,9 +72,12 @@ the default no-op mode. `dlsym(RTLD_DEFAULT, name)` searches the active global
 load order, while object handles search that object and its dependency
 closure. `dlclose()` drops runtime references and runs finalizers when the last
 runtime reference goes away, but it does not unmap or reclaim DSO pages yet.
-Static programs still report unsupported `dlfcn` operations. Lazy PLT binding,
-TLS, `RTLD_NEXT`, symbol versioning, and aggressive unload/reclamation remain
-out of scope.
+Inactive runtime objects are hidden from `RTLD_DEFAULT` lookup, stale handles
+fail while inactive, and runtime load failures are reported through
+`dlerror()` without killing the process. Runtime DSOs are placed in a bounded
+loader-owned mmap arena below the interpreter. Static programs still report
+unsupported `dlfcn` operations. Lazy PLT binding, TLS, `RTLD_NEXT`, symbol
+versioning, and aggressive unload/reclamation remain out of scope.
 
 ---
 

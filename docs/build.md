@@ -288,16 +288,18 @@ ATA/USB/mouse/sound/display diagnostics, simple socket/FTP service binaries
 framebuffer viewers/demos, games, large custom ports, and the multi-object
 `cserve` service remain staged as static ELFs for now. Existing explicit dynamic smoke
 aliases (`dynhello`, `dyncrtprobe`, `dynmathprobe`, `dynstdioprobe`,
-`dynlinkprobe`, `dynpathprobe`, `dynfiniprobe`, and `dlopenprobe`) and static
-fallbacks for `hello`, `crtprobe`, `mathprobe`, and `stdioprobe` stay under
-`/usr/libexec/tests/`.
+`dynlinkprobe`, `dynpathprobe`, `dynfiniprobe`, `dlopenprobe`, and
+`pluginhost`) and static fallbacks for `hello`, `crtprobe`, `mathprobe`, and
+`stdioprobe` stay under `/usr/libexec/tests/`.
 
 The shared runtime is intentionally coarse-grained: `/lib/libc.so` contains the
 current libc, POSIX, and libm runtime objects to avoid early dependency cycles.
 The focused finalizer test DSO is staged as `/lib/libdynfini.so`. Runtime
 loading probes stage `/usr/lib/libdlplug.so` and its dependency
-`/usr/lib/libdlplugdep.so`. Static guest build inputs remain under `/usr/lib`:
-`crt0.o`, `libc.a`, `libm.a`, and `libposix.a`.
+`/usr/lib/libdlplugdep.so`, a diamond dependency graph under `/usr/lib`, and
+the internal pluginhost DSOs under `/usr/lib/smallos/plugins`. Static guest
+build inputs remain under `/usr/lib`: `crt0.o`, `libc.a`, `libm.a`, and
+`libposix.a`.
 
 The loader understands `DT_SONAME`, `DT_RPATH`, and `DT_RUNPATH` for startup
 dependencies. Absolute `DT_NEEDED` paths are opened directly; otherwise the
@@ -306,13 +308,15 @@ Only absolute search directories are supported in this slice. `$ORIGIN`,
 environment paths, and loader config files are intentionally unsupported.
 The same search rules are reused by `dlopen()`.
 
-The V2.4 runtime loading slice supports `dlopen()`, `dlsym()`, `dlclose()`,
+The V2.5 runtime loading slice supports `dlopen()`, `dlsym()`, `dlclose()`,
 and `dlerror()` for dynamic programs through a loader-installed libc service
 table. `RTLD_NOW` is supported, `RTLD_LAZY` is accepted but still bound
 eagerly, `RTLD_GLOBAL` uses the current flat global namespace, and
 `RTLD_LOCAL` is the default no-op mode. `dlclose()` runs runtime finalizers
 when the last runtime reference closes, but DSO mappings and shared read-only
-file-cache pages are not reclaimed yet. Static programs keep returning a clear
+file-cache pages are not reclaimed yet. The loader tracks inactive objects,
+rolls back newly-created object records on failed runtime loads, and uses a
+bounded mmap arena for DSO placement. Static programs keep returning a clear
 unsupported error for `dlfcn` calls.
 
 Use the size report when changing the conversion set:
@@ -462,7 +466,7 @@ copy even when protected-mode USB storage is unavailable.
 
 ## Current Handoff Baseline
 
-As of the dynamic-linking v2.4 runtime-loading pass on 2026-06-29, the handoff
+As of the dynamic-linking v2.5 runtime-loader hardening pass on 2026-06-30, the handoff
 matrix is:
 
 ```bash
@@ -483,12 +487,8 @@ dynamic executables, explicit dynamic smoke aliases, the runtime-loading probe,
 and staged shared objects. `dynlink-negative-smoke` passes
 missing-interpreter and missing-`libc.so` cases, and guest selftest passes all
 expected markers including shared-cache, fork-cache, finalizer, and
-`dlopenprobe` coverage. The broader local handoff also has TinyCC guest
-samples passing, Wolf3D source/data probes passing, direct OHCI USB storage
-mounting read-only as `usb0`, the loader2 RAM fallback boot path passing, the
-socket/FTP/cserve smoke matrix passing, and framebuffer/VGA/GUI display smoke
-passing. Re-run `make dyn-size-report` after changing the conversion set or
-shared libraries.
+`dlopenprobe`/`pluginhost` coverage. Re-run `make dyn-size-report` after
+changing the conversion set or shared libraries.
 
 The remaining dynamic-linking deferred list is TLS, lazy PLT binding,
 `RTLD_NEXT`, symbol versioning, environment/config search paths, aggressive
@@ -937,6 +937,7 @@ Shipped ext2 programs:
 - `/lib/ld-smallos.so` - SmallOS dynamic loader used by dynamic executables
 - `/lib/libc.so` - combined shared libc/POSIX/libm runtime for dynamic executables
 - `/lib/libdynfini.so` - focused DSO lifecycle probe library
+- `/usr/lib/libdlplug*.so`, `/usr/lib/libdldiamond*.so`, and `/usr/lib/smallos/plugins/*.so` - internal runtime-loading probe libraries
 - `usr/share/examples/tinycc/tccmath.c`, `usr/share/examples/tinycc/tccagg.c`, `usr/share/examples/tinycc/tcctree.c`, `usr/share/examples/tinycc/tccmini.c`, `usr/share/examples/tinycc/tccsysroot.c`, `usr/share/examples/tinycc/tccposix.c` - guest compiler test inputs used by the shell selftests
 
 ## Properties

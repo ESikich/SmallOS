@@ -1453,6 +1453,7 @@ void sh_selftest(void) {
     sh_selftest_exec_expect("dynpathprobe", "usr/libexec/tests/dynpathprobe", 0);
     sh_selftest_exec_expect("dynfiniprobe", "usr/libexec/tests/dynfiniprobe", 0);
     sh_selftest_exec_expect("dlopenprobe", "usr/libexec/tests/dlopenprobe", 0);
+    sh_selftest_exec_expect("pluginhost", "usr/libexec/tests/pluginhost", 0);
     sh_selftest_exec("inputprobe", "usr/libexec/tests/inputprobe alpha beta");
     sh_selftest_exec("pipeprobe", "usr/libexec/tests/pipeprobe");
     sh_selftest_exec("dupprobe", "usr/libexec/tests/dupprobe");

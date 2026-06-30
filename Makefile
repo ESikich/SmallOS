@@ -300,6 +300,7 @@ EXT2_TEST_ENTRIES+=usr/libexec/tests/dynhello=$(BIN_DIR)/dynhello.elf \
                    usr/libexec/tests/dynpathprobe=$(BIN_DIR)/dynpathprobe.elf \
                    usr/libexec/tests/dynfiniprobe=$(BIN_DIR)/dynfiniprobe.elf \
                    usr/libexec/tests/dlopenprobe=$(BIN_DIR)/dlopenprobe.elf \
+                   usr/libexec/tests/pluginhost=$(BIN_DIR)/pluginhost.elf \
                    usr/libexec/tests/static/hello=$(BIN_DIR)/hello.elf \
                    usr/libexec/tests/static/crtprobe=$(BIN_DIR)/crtprobe.elf \
                    usr/libexec/tests/static/mathprobe=$(BIN_DIR)/mathprobe.elf \
@@ -318,8 +319,16 @@ USER_DYN_FINI_ENTRY=lib/libdynfini.so=$(USER_DYN_FINI)
 USER_DYN_PATH_ENTRY=usr/lib/libdynpath.so=$(USER_DYN_PATH)
 USER_DYN_DLOPEN_DEP_ENTRY=usr/lib/libdlplugdep.so=$(USER_DYN_DLOPEN_DEP)
 USER_DYN_DLOPEN_PLUGIN_ENTRY=usr/lib/libdlplug.so=$(USER_DYN_DLOPEN_PLUGIN)
-USER_LIB_ENTRIES=$(USER_STATIC_LIB_ENTRIES) $(USER_DYN_LOADER_ENTRY) $(USER_DYN_LIBC_ENTRY) $(USER_DYN_FINI_ENTRY) $(USER_DYN_PATH_ENTRY) $(USER_DYN_DLOPEN_DEP_ENTRY) $(USER_DYN_DLOPEN_PLUGIN_ENTRY)
-USER_LIB_ENTRIES_NO_LOADER=$(USER_STATIC_LIB_ENTRIES) $(USER_DYN_LIBC_ENTRY) $(USER_DYN_FINI_ENTRY) $(USER_DYN_PATH_ENTRY) $(USER_DYN_DLOPEN_DEP_ENTRY) $(USER_DYN_DLOPEN_PLUGIN_ENTRY)
+USER_DYN_DIAMOND_BASE_ENTRY=usr/lib/libdldiamondbase.so=$(USER_DYN_DIAMOND_BASE)
+USER_DYN_DIAMOND_LEFT_ENTRY=usr/lib/libdldiamondleft.so=$(USER_DYN_DIAMOND_LEFT)
+USER_DYN_DIAMOND_RIGHT_ENTRY=usr/lib/libdldiamondright.so=$(USER_DYN_DIAMOND_RIGHT)
+USER_DYN_DIAMOND_ENTRY=usr/lib/libdldiamond.so=$(USER_DYN_DIAMOND)
+USER_DYN_PLUGIN_HELPER_ENTRY=usr/lib/smallos/plugins/plugin_helper.so=$(USER_DYN_PLUGIN_HELPER)
+USER_DYN_PLUGIN_ALPHA_ENTRY=usr/lib/smallos/plugins/alpha.so=$(USER_DYN_PLUGIN_ALPHA)
+USER_DYN_PLUGIN_BETA_ENTRY=usr/lib/smallos/plugins/beta.so=$(USER_DYN_PLUGIN_BETA)
+USER_DYN_EXTRA_ENTRIES=$(USER_DYN_FINI_ENTRY) $(USER_DYN_PATH_ENTRY) $(USER_DYN_DLOPEN_DEP_ENTRY) $(USER_DYN_DLOPEN_PLUGIN_ENTRY) $(USER_DYN_DIAMOND_BASE_ENTRY) $(USER_DYN_DIAMOND_LEFT_ENTRY) $(USER_DYN_DIAMOND_RIGHT_ENTRY) $(USER_DYN_DIAMOND_ENTRY) $(USER_DYN_PLUGIN_HELPER_ENTRY) $(USER_DYN_PLUGIN_ALPHA_ENTRY) $(USER_DYN_PLUGIN_BETA_ENTRY)
+USER_LIB_ENTRIES=$(USER_STATIC_LIB_ENTRIES) $(USER_DYN_LOADER_ENTRY) $(USER_DYN_LIBC_ENTRY) $(USER_DYN_EXTRA_ENTRIES)
+USER_LIB_ENTRIES_NO_LOADER=$(USER_STATIC_LIB_ENTRIES) $(USER_DYN_LIBC_ENTRY) $(USER_DYN_EXTRA_ENTRIES)
 USER_LIB_ENTRIES_NO_LIBC=$(USER_STATIC_LIB_ENTRIES) $(USER_DYN_LOADER_ENTRY)
 WOLF3D_DATA_FILES=$(sort $(wildcard $(WOLF3D_DATA_DIR)/*.WL1) $(wildcard $(WOLF3D_DATA_DIR)/*.WL6) $(wildcard $(WOLF3D_DATA_DIR)/*.SOD) $(wildcard $(WOLF3D_DATA_DIR)/*.SDM))
 ifeq ($(WOLF3D_STAGE_DATA),1)
@@ -327,7 +336,7 @@ WOLF3D_DATA_ENTRIES=$(foreach file,$(WOLF3D_DATA_FILES),usr/share/wolf3d/$(notdi
 else
 WOLF3D_DATA_ENTRIES=
 endif
-EXT2_EXTRA_DIRS=tmp/ var/log/ lib/ usr/include/ usr/include/arpa/ usr/include/netinet/ usr/include/sys/ usr/lib/ usr/libexec/tests/static/ usr/share/examples/tinycc/ usr/share/man/man1/ usr/share/man/man2/ usr/share/man/man3/ usr/share/man/man4/ usr/share/man/man5/ usr/share/man/man6/ usr/share/man/man7/ usr/share/man/man8/ usr/share/wolf3d/
+EXT2_EXTRA_DIRS=tmp/ var/log/ lib/ usr/include/ usr/include/arpa/ usr/include/netinet/ usr/include/sys/ usr/lib/ usr/lib/smallos/ usr/lib/smallos/plugins/ usr/libexec/tests/static/ usr/share/examples/tinycc/ usr/share/man/man1/ usr/share/man/man2/ usr/share/man/man3/ usr/share/man/man4/ usr/share/man/man5/ usr/share/man/man6/ usr/share/man/man7/ usr/share/man/man8/ usr/share/wolf3d/
 EXT2_BASE_EXTRA_ENTRIES=usr/bin/tcc=$(TINYCC_SMALOS_BIN) $(USER_INCLUDE_ENTRIES) $(USER_UAPI_ENTRIES) usr/share/examples/tinycc/tccmath.c=$(CURDIR)/samples/tccmath.c usr/share/examples/tinycc/tccagg.c=$(CURDIR)/samples/tccagg.c usr/share/examples/tinycc/tcctree.c=$(CURDIR)/samples/tcctree.c usr/share/examples/tinycc/tccmini.c=$(CURDIR)/samples/tccmini.c usr/share/examples/tinycc/tccsysroot.c=$(CURDIR)/samples/tccsysroot.c usr/share/examples/tinycc/tccposix.c=$(CURDIR)/samples/tccposix.c etc/cserve.ini=$(CURDIR)/samples/cserve.ini var/www/index.html=$(CURDIR)/samples/cserve_index.html var/log/boot.txt=$(CURDIR)/samples/boot.txt boot/splash.bmp=$(CURDIR)/assets/boot_splash.bmp $(MAN_PAGE_ENTRIES)
 EXT2_EXTRA_ENTRIES=$(EXT2_BASE_EXTRA_ENTRIES) $(USER_LIB_ENTRIES)
 FRACTINT_EXTRA_ENTRIES=usr/share/xfractint/fractint.hlp=$(FRACTINT_DIR)/fractint.hlp usr/share/xfractint/sstools.ini=$(FRACTINT_DIR)/sstools.ini $(FRACTINT_DATA_ENTRIES)
@@ -367,7 +376,15 @@ USER_DYN_FINI=$(USER_DYN_LIB_DIR)/libdynfini.so
 USER_DYN_PATH=$(USER_DYN_LIB_DIR)/libdynpath.so
 USER_DYN_DLOPEN_DEP=$(USER_DYN_LIB_DIR)/libdlplugdep.so
 USER_DYN_DLOPEN_PLUGIN=$(USER_DYN_LIB_DIR)/libdlplug.so
-USER_DYN_PROGS=dynhello dyncrtprobe dynmathprobe dynstdioprobe dynlinkprobe dynpathprobe dynfiniprobe dlopenprobe
+USER_DYN_DIAMOND_BASE=$(USER_DYN_LIB_DIR)/libdldiamondbase.so
+USER_DYN_DIAMOND_LEFT=$(USER_DYN_LIB_DIR)/libdldiamondleft.so
+USER_DYN_DIAMOND_RIGHT=$(USER_DYN_LIB_DIR)/libdldiamondright.so
+USER_DYN_DIAMOND=$(USER_DYN_LIB_DIR)/libdldiamond.so
+USER_DYN_PLUGIN_HELPER=$(USER_DYN_LIB_DIR)/plugin_helper.so
+USER_DYN_PLUGIN_ALPHA=$(USER_DYN_LIB_DIR)/alpha.so
+USER_DYN_PLUGIN_BETA=$(USER_DYN_LIB_DIR)/beta.so
+USER_DYN_EXTRA_SHARED=$(USER_DYN_FINI) $(USER_DYN_PATH) $(USER_DYN_DLOPEN_DEP) $(USER_DYN_DLOPEN_PLUGIN) $(USER_DYN_DIAMOND_BASE) $(USER_DYN_DIAMOND_LEFT) $(USER_DYN_DIAMOND_RIGHT) $(USER_DYN_DIAMOND) $(USER_DYN_PLUGIN_HELPER) $(USER_DYN_PLUGIN_ALPHA) $(USER_DYN_PLUGIN_BETA)
+USER_DYN_PROGS=dynhello dyncrtprobe dynmathprobe dynstdioprobe dynlinkprobe dynpathprobe dynfiniprobe dlopenprobe pluginhost
 USER_DYN_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_DYN_PROGS)))
 DYNFAILPROBE_BIN=$(BIN_DIR)/dynfailprobe.elf
 DYN_NO_LOADER_EXT2=$(BIN_DIR)/ext2.dyn-no-loader.img
@@ -384,7 +401,7 @@ USER_DYNAMIC_NO_CRT0_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .dyn.elf,$(USER_DY
 USER_DYNAMIC_WITH_CRT0_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .dyn.elf,$(USER_DYNAMIC_WITH_CRT0)))
 USER_DYNAMIC_ELFS=$(USER_DYNAMIC_NO_CRT0_ELFS) $(USER_DYNAMIC_WITH_CRT0_ELFS)
 USER_DYNAMIC_STATIC_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_DYNAMIC_PROGS)))
-USER_ELFS+=$(USER_DYN_ELFS) $(USER_DYNAMIC_ELFS) $(USER_DYN_FINI) $(USER_DYN_DLOPEN_DEP) $(USER_DYN_DLOPEN_PLUGIN)
+USER_ELFS+=$(USER_DYN_ELFS) $(USER_DYNAMIC_ELFS) $(USER_DYN_EXTRA_SHARED)
 
 OBJ_SUBDIRS=$(sort \
 	$(dir $(KERNEL_OBJS)) \
@@ -571,6 +588,27 @@ $(USER_DYN_DLOPEN_DEP): $(USER_DYN_OBJ_DIR)/dlopen_dep.pic.o | dirs
 $(USER_DYN_DLOPEN_PLUGIN): $(USER_DYN_OBJ_DIR)/dlopen_plugin.pic.o $(USER_DYN_DLOPEN_DEP) | dirs
 	$(LD) -m elf_i386 -shared -soname libdlplug.so --hash-style=sysv -z now -rpath /usr/lib $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -ldlplugdep -o $@
 
+$(USER_DYN_DIAMOND_BASE): $(USER_DYN_OBJ_DIR)/dlopen_diamond_base.pic.o | dirs
+	$(LD) -m elf_i386 -shared -soname libdldiamondbase.so --hash-style=sysv -z now $^ -o $@
+
+$(USER_DYN_DIAMOND_LEFT): $(USER_DYN_OBJ_DIR)/dlopen_diamond_left.pic.o $(USER_DYN_DIAMOND_BASE) | dirs
+	$(LD) -m elf_i386 -shared -soname libdldiamondleft.so --hash-style=sysv -z now -rpath /usr/lib $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -ldldiamondbase -o $@
+
+$(USER_DYN_DIAMOND_RIGHT): $(USER_DYN_OBJ_DIR)/dlopen_diamond_right.pic.o $(USER_DYN_DIAMOND_BASE) | dirs
+	$(LD) -m elf_i386 -shared -soname libdldiamondright.so --hash-style=sysv -z now -rpath /usr/lib $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -ldldiamondbase -o $@
+
+$(USER_DYN_DIAMOND): $(USER_DYN_OBJ_DIR)/dlopen_diamond.pic.o $(USER_DYN_DIAMOND_LEFT) $(USER_DYN_DIAMOND_RIGHT) | dirs
+	$(LD) -m elf_i386 -shared -soname libdldiamond.so --hash-style=sysv -z now -rpath /usr/lib $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -ldldiamondleft -ldldiamondright -o $@
+
+$(USER_DYN_PLUGIN_HELPER): $(USER_DYN_OBJ_DIR)/plugin_helper.pic.o | dirs
+	$(LD) -m elf_i386 -shared -soname plugin_helper.so --hash-style=sysv -z now $^ -o $@
+
+$(USER_DYN_PLUGIN_ALPHA): $(USER_DYN_OBJ_DIR)/plugin_alpha.pic.o $(USER_DYN_PLUGIN_HELPER) | dirs
+	$(LD) -m elf_i386 -shared -soname alpha.so --hash-style=sysv -z now -rpath /usr/lib/smallos/plugins $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -l:plugin_helper.so -o $@
+
+$(USER_DYN_PLUGIN_BETA): $(USER_DYN_OBJ_DIR)/plugin_beta.pic.o $(USER_DYN_PLUGIN_HELPER) | dirs
+	$(LD) -m elf_i386 -shared -soname beta.so --hash-style=sysv -z now -rpath /usr/lib/smallos/plugins $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -l:plugin_helper.so -o $@
+
 $(USER_DYNAMIC_NO_CRT0_ELFS): $(BIN_DIR)/%.dyn.elf: $(OBJ_DIR)/user/%.o $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
 	$(LD) $(USER_DYN_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
 
@@ -601,13 +639,16 @@ $(BIN_DIR)/dynfiniprobe.elf: $(OBJ_DIR)/user/dynfiniprobe.o $(USER_CRT0_OBJ) $(U
 $(BIN_DIR)/dlopenprobe.elf: $(OBJ_DIR)/user/dlopenprobe.o $(USER_CRT0_OBJ) $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
 	$(LD) $(USER_DYN_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
 
+$(BIN_DIR)/pluginhost.elf: $(OBJ_DIR)/user/pluginhost.o $(USER_CRT0_OBJ) $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
+	$(LD) $(USER_DYN_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
+
 $(DYNFAILPROBE_BIN): $(OBJ_DIR)/user/dynfailprobe.o $(USER_LIB_ARCHIVES) | dirs
 	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
 
-dyn-size-report: $(USER_DYNAMIC_STATIC_ELFS) $(USER_DYNAMIC_ELFS) $(USER_DYN_ELFS) $(USER_DYN_LIBC) $(USER_DYN_FINI) $(USER_DYN_PATH) $(USER_DYN_DLOPEN_DEP) $(USER_DYN_DLOPEN_PLUGIN) $(LD_SMALLOS_BIN)
+dyn-size-report: $(USER_DYNAMIC_STATIC_ELFS) $(USER_DYNAMIC_ELFS) $(USER_DYN_ELFS) $(USER_DYN_LIBC) $(USER_DYN_EXTRA_SHARED) $(LD_SMALLOS_BIN)
 	@static_total=$$(wc -c $(USER_DYNAMIC_STATIC_ELFS) | awk 'END {print $$1}'); \
 	dyn_prog_total=$$(wc -c $(USER_DYNAMIC_ELFS) | awk 'END {print $$1}'); \
-	runtime_total=$$(wc -c $(USER_DYN_LIBC) $(USER_DYN_FINI) $(USER_DYN_PATH) $(USER_DYN_DLOPEN_DEP) $(USER_DYN_DLOPEN_PLUGIN) $(LD_SMALLOS_BIN) | awk 'END {print $$1}'); \
+	runtime_total=$$(wc -c $(USER_DYN_LIBC) $(USER_DYN_EXTRA_SHARED) $(LD_SMALLOS_BIN) | awk 'END {print $$1}'); \
 	dyn_total=$$((dyn_prog_total + runtime_total)); \
 	printf '%-34s %10s\n' category bytes; \
 	printf '%-34s %10s\n' converted-static-total $$static_total; \
@@ -616,17 +657,14 @@ dyn-size-report: $(USER_DYNAMIC_STATIC_ELFS) $(USER_DYNAMIC_ELFS) $(USER_DYN_ELF
 	printf '%-34s %10s\n' dynamic-programs-plus-runtime $$dyn_total; \
 	printf '%-34s %+10d\n' net-vs-static $$((dyn_total - static_total)); \
 	printf '\n%-34s %10s\n' artifact bytes; \
-	wc -c $(USER_DYNAMIC_ELFS) $(USER_DYN_LIBC) $(USER_DYN_FINI) $(USER_DYN_PATH) $(USER_DYN_DLOPEN_DEP) $(USER_DYN_DLOPEN_PLUGIN) $(LD_SMALLOS_BIN) | sed 's/^ *//'
+	wc -c $(USER_DYNAMIC_ELFS) $(USER_DYN_LIBC) $(USER_DYN_EXTRA_SHARED) $(LD_SMALLOS_BIN) | sed 's/^ *//'
 
-dynamic-link-check: $(USER_DYNAMIC_ELFS) $(USER_DYN_ELFS) $(USER_DYN_LIBC) $(USER_DYN_FINI) $(USER_DYN_PATH) $(USER_DYN_DLOPEN_DEP) $(USER_DYN_DLOPEN_PLUGIN) $(LD_SMALLOS_BIN)
+dynamic-link-check: $(USER_DYNAMIC_ELFS) $(USER_DYN_ELFS) $(USER_DYN_LIBC) $(USER_DYN_EXTRA_SHARED) $(LD_SMALLOS_BIN)
 	$(PYTHON3) tools/verify_dynamic_link.py \
 		--interp /lib/ld-smallos.so \
 		--libc $(USER_DYN_LIBC) \
 		--loader $(LD_SMALLOS_BIN) \
-		--shared $(USER_DYN_FINI) \
-		--shared $(USER_DYN_PATH) \
-		--shared $(USER_DYN_DLOPEN_DEP) \
-		--shared $(USER_DYN_DLOPEN_PLUGIN) \
+		$(foreach shared,$(USER_DYN_EXTRA_SHARED),--shared $(shared)) \
 		$(USER_DYNAMIC_ELFS) $(USER_DYN_ELFS)
 
 $(TINYCC_SMALOS_PATCH_STAMP): check-third-party patches/tinycc/smallos.patch | dirs

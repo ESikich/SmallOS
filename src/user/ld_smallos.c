@@ -13,6 +13,7 @@ typedef unsigned char u8;
 #define LD_ERROR_SIZE 160
 #define LD_PAGE_SIZE 4096u
 #define LD_MMAP_BASE 0x04000000u
+#define LD_MMAP_LIMIT 0x08000000u
 #define LD_PROT_READ 1
 #define LD_PROT_WRITE 2
 #define LD_PROT_EXEC 4
@@ -69,15 +70,18 @@ typedef struct ld_object {
     unsigned int deps[LD_MAX_DEPS];
     unsigned int dep_count;
     unsigned int refcount;
+    unsigned char loaded;
     unsigned char active;
     unsigned char pinned;
     unsigned char runtime_loaded;
+    unsigned char failed;
     unsigned char relocated;
     unsigned char protected;
     unsigned char deps_loaded;
     unsigned char deps_loading;
     unsigned char initialized;
     unsigned char fini_done;
+    unsigned char finalized;
     unsigned char init_visiting;
 } ld_object_t;
 
@@ -91,6 +95,7 @@ typedef struct smallos_dlfcn_services {
 static ld_object_t g_objs[LD_MAX_OBJECTS];
 static unsigned int g_obj_count;
 static unsigned int g_next_map = LD_MMAP_BASE;
+static unsigned int g_recover_obj_count;
 static int g_last_mmap_error;
 static char g_dl_error[LD_ERROR_SIZE];
 static int g_dl_error_pending;
@@ -313,6 +318,16 @@ static unsigned int align_up(unsigned int v) {
     return (v + LD_PAGE_SIZE - 1u) & ~(LD_PAGE_SIZE - 1u);
 }
 
+static unsigned int ld_alloc_dso_area(unsigned int size) {
+    unsigned int start = align_up(g_next_map);
+    unsigned int len = align_up(size);
+    if (len == 0 || start < LD_MMAP_BASE || start + len < start || start + len > LD_MMAP_LIMIT) {
+        ld_fail("DSO address arena exhausted");
+    }
+    g_next_map = start + len;
+    return start;
+}
+
 static void* ld_mmap(unsigned int addr, unsigned int len, unsigned int prot, unsigned int fixed) {
     int ret = sc6(SYS_MMAP,
                   addr,
@@ -429,6 +444,7 @@ static ld_object_t* object_from_phdr(const char* name,
     obj->load_bias = load_bias;
     obj->phdr = (const Elf32_Phdr*)phdr_addr;
     obj->phnum = phnum;
+    obj->loaded = 1;
     obj->active = 1;
     obj->pinned = 1;
     obj->refcount = 1;
@@ -491,6 +507,7 @@ static void make_lib_path(char* out,
                           unsigned int out_size,
                           ld_object_t* requester,
                           const char* name) {
+    if (ld_str_has_dollar(name)) ld_fail("unsupported dynamic library path token");
     if (name[0] == '/') {
         ld_strcpy(out, out_size, name);
         return;
@@ -501,6 +518,7 @@ static void make_lib_path(char* out,
 
 static ld_object_t* find_loaded(const char* name) {
     for (unsigned int i = 0; i < g_obj_count; i++) {
+        if (!g_objs[i].loaded || g_objs[i].failed) continue;
         if (g_objs[i].name[0] && ld_streq(g_objs[i].name, name)) return &g_objs[i];
         if (g_objs[i].path[0] && ld_streq(g_objs[i].path, name)) return &g_objs[i];
         if (g_objs[i].soname && ld_streq(g_objs[i].soname, name)) return &g_objs[i];
@@ -704,11 +722,10 @@ static ld_object_t* load_object(ld_object_t* requester, const char* soname) {
         if (e > max_v) max_v = e;
     }
     if (min_v == 0xFFFFFFFFu) ld_fail("library has no load segments");
-    map_start = align_up(g_next_map);
     map_size = max_v - min_v;
     page_count = align_up(map_size) / LD_PAGE_SIZE;
     if (page_count > LD_MAX_OBJECT_PAGES) ld_fail("library mapping too large");
-    g_next_map = map_start + align_up(map_size);
+    map_start = ld_alloc_dso_area(map_size);
     load_bias = map_start - min_v;
     ld_memset(mapped, 0, sizeof(mapped));
     ld_memset(shared, 0, sizeof(shared));
@@ -724,9 +741,11 @@ static ld_object_t* load_object(ld_object_t* requester, const char* soname) {
     obj->map_size = map_size;
     obj->phdr = (const Elf32_Phdr*)(load_bias + eh->e_phoff);
     obj->phnum = eh->e_phnum;
+    obj->loaded = 1;
     obj->active = 1;
     obj->pinned = g_recover_active ? 0 : 1;
     obj->runtime_loaded = g_recover_active ? 1 : 0;
+    obj->finalized = 0;
     obj->refcount = obj->pinned ? 1u : 0u;
 
     for (unsigned int i = 0; i < eh->e_phnum; i++) {
@@ -802,7 +821,8 @@ static ld_object_t* load_object(ld_object_t* requester, const char* soname) {
 
 static unsigned int find_symbol_in_object(ld_object_t* obj, const char* name) {
     unsigned int nchain;
-    if (!obj || !obj->active || !obj->symtab || !obj->strtab || !obj->hash) return 0;
+    if (!obj || !obj->loaded || obj->failed || !obj->active ||
+        !obj->symtab || !obj->strtab || !obj->hash) return 0;
     nchain = obj->hash[1];
     for (unsigned int s = 0; s < nchain; s++) {
         Elf32_Sym* sym = &obj->symtab[s];
@@ -957,7 +977,7 @@ static void protect_objects(void) {
 }
 
 static void run_object_initializer(ld_object_t* obj) {
-    if (!obj || !obj->active || obj->initialized) return;
+    if (!obj || !obj->loaded || obj->failed || !obj->active || obj->initialized) return;
     if (obj->init_visiting) return;
     obj->init_visiting = 1;
     for (unsigned int i = 0; i < obj->dep_count; i++) {
@@ -972,6 +992,7 @@ static void run_object_initializer(ld_object_t* obj) {
     }
     obj->initialized = 1;
     obj->fini_done = 0;
+    obj->finalized = 0;
     obj->init_visiting = 0;
 }
 
@@ -994,18 +1015,43 @@ static void run_finalizers(void) {
     ld_memset(visited, 0, sizeof(visited));
     g_process_finalizers = 1;
     for (unsigned int i = 1; i < g_obj_count; i++) {
-        run_object_finalizer_tree(&g_objs[i], visited);
+        if (g_objs[i].loaded && !g_objs[i].failed) visited[i] = 1;
     }
+    run_object_finalizer_tree(0, visited);
     g_process_finalizers = 0;
 }
 
-static void run_object_finalizer_tree(ld_object_t* obj, unsigned char* visited) {
+static int object_should_finalize(ld_object_t* obj) {
+    if (!obj || !obj->loaded || obj->failed) return 0;
+    if (g_process_finalizers) return 1;
+    if (obj->pinned || obj->refcount != 0) return 0;
+    return 1;
+}
+
+static void collect_object_tree(ld_object_t* obj, unsigned char* visited) {
     unsigned int idx;
     if (!obj) return;
     idx = object_index(obj);
     if (idx >= LD_MAX_OBJECTS || visited[idx]) return;
     visited[idx] = 1;
-    if (!g_process_finalizers && (obj->pinned || obj->refcount != 0)) return;
+    for (unsigned int i = 0; i < obj->dep_count; i++) {
+        if (obj->deps[i] < g_obj_count) collect_object_tree(&g_objs[obj->deps[i]], visited);
+    }
+}
+
+static int object_has_unfinalized_dependent(unsigned int idx, unsigned char* closure) {
+    for (unsigned int i = 1; i < g_obj_count && i < LD_MAX_OBJECTS; i++) {
+        if (!closure[i] || i == idx || !object_should_finalize(&g_objs[i])) continue;
+        if (!g_objs[i].active && !g_objs[i].initialized) continue;
+        for (unsigned int d = 0; d < g_objs[i].dep_count; d++) {
+            if (g_objs[i].deps[d] == idx) return 1;
+        }
+    }
+    return 0;
+}
+
+static int finalize_one_object(ld_object_t* obj) {
+    if (!object_should_finalize(obj)) return 0;
     if (obj->active && obj->initialized && !obj->fini_done) {
         if (obj->fini_array && obj->fini_arraysz) {
             unsigned int count = obj->fini_arraysz / sizeof(void (*)(void));
@@ -1016,11 +1062,30 @@ static void run_object_finalizer_tree(ld_object_t* obj, unsigned char* visited) 
         if (obj->fini) obj->fini();
         obj->fini_done = 1;
         obj->initialized = 0;
+        obj->finalized = 1;
     }
     obj->active = 0;
-    for (unsigned int i = 0; i < obj->dep_count; i++) {
-        if (obj->deps[i] < g_obj_count) run_object_finalizer_tree(&g_objs[obj->deps[i]], visited);
+    return 1;
+}
+
+static void run_finalizer_set(unsigned char* closure) {
+    int progress = 1;
+    while (progress) {
+        progress = 0;
+        for (unsigned int i = 1; i < g_obj_count && i < LD_MAX_OBJECTS; i++) {
+            if (!closure[i]) continue;
+            if (object_has_unfinalized_dependent(i, closure)) continue;
+            if (finalize_one_object(&g_objs[i])) {
+                closure[i] = 0;
+                progress = 1;
+            }
+        }
     }
+}
+
+static void run_object_finalizer_tree(ld_object_t* obj, unsigned char* visited) {
+    if (obj) collect_object_tree(obj, visited);
+    run_finalizer_set(visited);
 }
 
 static void retain_object_tree(ld_object_t* obj, unsigned char* visited) {
@@ -1028,8 +1093,10 @@ static void retain_object_tree(ld_object_t* obj, unsigned char* visited) {
     if (!obj) return;
     idx = object_index(obj);
     if (idx >= LD_MAX_OBJECTS || visited[idx]) return;
+    if (!obj->loaded || obj->failed) return;
     visited[idx] = 1;
     obj->active = 1;
+    obj->finalized = 0;
     obj->refcount++;
     for (unsigned int i = 0; i < obj->dep_count; i++) {
         if (obj->deps[i] < g_obj_count) retain_object_tree(&g_objs[obj->deps[i]], visited);
@@ -1041,8 +1108,10 @@ static void activate_object_tree(ld_object_t* obj, unsigned char* visited) {
     if (!obj) return;
     idx = object_index(obj);
     if (idx >= LD_MAX_OBJECTS || visited[idx]) return;
+    if (!obj->loaded || obj->failed) return;
     visited[idx] = 1;
     obj->active = 1;
+    obj->finalized = 0;
     for (unsigned int i = 0; i < obj->dep_count; i++) {
         if (obj->deps[i] < g_obj_count) activate_object_tree(&g_objs[obj->deps[i]], visited);
     }
@@ -1053,11 +1122,24 @@ static void release_object_tree(ld_object_t* obj, unsigned char* visited) {
     if (!obj) return;
     idx = object_index(obj);
     if (idx >= LD_MAX_OBJECTS || visited[idx]) return;
+    if (!obj->loaded || obj->failed) return;
     visited[idx] = 1;
     if (obj->refcount > 0) obj->refcount--;
     for (unsigned int i = 0; i < obj->dep_count; i++) {
         if (obj->deps[i] < g_obj_count) release_object_tree(&g_objs[obj->deps[i]], visited);
     }
+}
+
+static void rollback_runtime_objects(unsigned int start_count) {
+    for (unsigned int i = start_count; i < g_obj_count && i < LD_MAX_OBJECTS; i++) {
+        g_objs[i].active = 0;
+        g_objs[i].initialized = 0;
+        g_objs[i].fini_done = 1;
+        g_objs[i].finalized = 1;
+        g_objs[i].failed = 1;
+        g_objs[i].refcount = 0;
+    }
+    g_obj_count = start_count;
 }
 
 static unsigned int dlsym_in_tree(ld_object_t* obj, const char* name, unsigned char* visited) {
@@ -1066,6 +1148,7 @@ static unsigned int dlsym_in_tree(ld_object_t* obj, const char* name, unsigned c
     if (!obj || !name) return 0;
     idx = object_index(obj);
     if (idx >= LD_MAX_OBJECTS || visited[idx]) return 0;
+    if (!obj->loaded || obj->failed || !obj->active) return 0;
     visited[idx] = 1;
     value = find_symbol_in_object(obj, name);
     if (value) return value;
@@ -1082,6 +1165,7 @@ static void* ld_dlopen_service(const char* filename, int flag) {
     ld_object_t* obj;
     unsigned char visited[LD_MAX_OBJECTS];
     unsigned int valid_flags = RTLD_LAZY | RTLD_NOW | RTLD_GLOBAL;
+    unsigned int start_count;
 
     ld_clear_error();
     if ((flag & ~valid_flags) != 0) {
@@ -1094,8 +1178,11 @@ static void* ld_dlopen_service(const char* filename, int flag) {
     }
     if (!filename) return &g_objs[0];
 
+    start_count = g_obj_count;
+    g_recover_obj_count = start_count;
     if (ld_setjmp(&g_recover_env) != 0) {
         g_recover_active = 0;
+        rollback_runtime_objects(g_recover_obj_count);
         return 0;
     }
     g_recover_active = 1;
@@ -1129,7 +1216,8 @@ static void* ld_dlsym_service(void* handle, const char* symbol) {
         }
     } else {
         ld_object_t* obj = (ld_object_t*)handle;
-        if (obj < g_objs || obj >= g_objs + g_obj_count || !obj->active) {
+        if (obj < g_objs || obj >= g_objs + g_obj_count ||
+            !obj->loaded || obj->failed || !obj->active) {
             ld_set_error("invalid dlsym handle");
             return 0;
         }
@@ -1150,7 +1238,8 @@ static int ld_dlclose_service(void* handle) {
         ld_set_error("invalid dlclose handle");
         return -1;
     }
-    if (obj < g_objs || obj >= g_objs + g_obj_count) {
+    if (obj < g_objs || obj >= g_objs + g_obj_count ||
+        !obj->loaded || obj->failed || (!obj->pinned && !obj->active)) {
         ld_set_error("invalid dlclose handle");
         return -1;
     }

@@ -609,7 +609,9 @@ both resolve eagerly; `RTLD_GLOBAL` is compatible with the current flat global
 symbol model, and `RTLD_LOCAL` does not add isolation yet. `dlclose()` is a
 lifecycle operation only in this slice: it drops runtime references and runs
 finalizers when the last reference closes, but leaves mappings and shared file
-cache pages in place.
+cache pages in place. Runtime-loaded DSOs are allocated from a bounded
+page-aligned arena below `AT_BASE`; arena exhaustion is fatal during startup
+and becomes a `dlerror()` failure during runtime `dlopen()`.
 
 Dynamic-link failure paths are intentionally controlled. If the interpreter named by
 `PT_INTERP` is missing, the kernel prints `elf: missing interpreter:
@@ -618,7 +620,8 @@ the interpreter starts but `/lib/libc.so` is missing, `ld-smallos.so` prints
 `ld-smallos: library not found: libc.so` and exits with status `127`. The
 `make dynlink-negative-smoke` target verifies both paths using temporary
 images. Runtime `dlopen()` failures instead return `NULL`, set the per-process
-`dlerror()` string, and do not kill the caller.
+`dlerror()` string, roll back newly-created loader object records, and do not
+kill the caller.
 
 V2 still intentionally supports dynamic applications rather than full Linux
 loader semantics. There is no lazy PLT binding, TLS, `RTLD_NEXT`, symbol
