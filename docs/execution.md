@@ -629,8 +629,8 @@ kill the caller.
 
 V2 still intentionally supports dynamic applications rather than full Linux
 loader semantics. There is no lazy PLT binding, TLS, `RTLD_NEXT`, symbol
-versioning, environment search path, or aggressive DSO unload yet. Static ELFs
-remain a first-class fallback path.
+versioning, environment/config search path, ASLR, or aggressive DSO unload yet.
+Static ELFs remain a first-class fallback path.
 
 ---
 

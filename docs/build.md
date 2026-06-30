@@ -286,10 +286,14 @@ USER_DYNAMIC_ELFS     # generated build/bin/<profile>/*.dyn.elf and *.pie.elf ar
 
 Converted primary image entries are staged from `*.dyn.elf` or `*.pie.elf`;
 their static `*.elf` artifacts are still built for every `USER_PROGS` entry.
-The first PIE command wave stages `hello`, `pwd`, `cat`, `meminfo`, and `date`
-as PIE. The remaining dynamic set still covers core CLI tools, network
-diagnostics, power commands, ATA/USB/mouse/sound/display diagnostics, simple
-socket/FTP service binaries (`tcpecho`, `sockeof`, `ftpd`), and most probes.
+The current PIE command wave stages `hello`, `pwd`, `cat`, `meminfo`, `date`,
+`echo`, `about`, `uptime`, `more`, `man`, `fsread`, `ls`, `touch`, `rm`,
+`mkdir`, `rmdir`, `cp`, `mv`, `memmap`, and `cpuz` as PIE. The crt0
+probe wave also stages `crtprobe`, `mathprobe`, `pipeprobe`, `dupprobe`,
+`forkprobe`, `execveprobe`, and `envprobe` as PIE. The remaining dynamic set
+still covers `tree`, network diagnostics, power commands,
+ATA/USB/mouse/sound/display diagnostics, simple socket/FTP service binaries
+(`tcpecho`, `sockeof`, `ftpd`), and most probes.
 The shell, desktop/editor, framebuffer viewers/demos, games, large custom
 ports, and the multi-object `cserve` service remain staged as static ELFs for
 now. Existing explicit dynamic smoke aliases (`dynhello`, `dyncrtprobe`,
@@ -493,7 +497,9 @@ git diff --check
 
 The recorded baseline has `dynamic-link-check` passing for the converted
 dynamic executables, explicit dynamic smoke aliases, the runtime-loading probe,
-and staged shared objects. `dynlink-negative-smoke` passes
+and staged shared objects. Its PASS line reports separate legacy dynamic and
+PIE dynamic executable counts so accidental conversion drift is visible.
+`dynlink-negative-smoke` passes
 missing-interpreter and missing-`libc.so` cases, and guest selftest passes all
 expected markers including shared-cache, fork-cache, finalizer, and
 `dlopenprobe`/`pluginhost` coverage. Re-run `make dyn-size-report` after

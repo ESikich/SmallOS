@@ -57,12 +57,13 @@ should behave the same whether the program was staged from `foo.elf`,
 `foo.dyn.elf`, or `foo.pie.elf`.
 
 The v2 loader is a self-relocating `ET_DYN` interpreter. Legacy dynamic
-executables remain fixed-address `ET_EXEC`; selected dynamic commands and PIE
-probes are base-zero `ET_DYN` main executables mapped at deterministic
-`USER_PIE_BASE`. The loader derives the main load bias from auxv and program
-headers before relocating the main object. It maps eligible read-only DSO file
-pages through the kernel's shared read-only file cache, so `/lib/libc.so` text
-can share physical frames across dynamic processes.
+executables remain fixed-address `ET_EXEC`; selected command and crt0 probe
+waves plus the explicit PIE probes are base-zero `ET_DYN` main executables
+mapped at deterministic `USER_PIE_BASE`. The loader derives the main load bias
+from auxv and program headers before relocating the main object. It maps
+eligible read-only DSO file pages through the kernel's shared read-only file
+cache, so `/lib/libc.so` text can share physical frames across dynamic
+processes.
 Writable DSO data, BSS, GOT/relocation-bearing pages, and mixed tail pages
 remain private per process. Startup dependency lookup honors absolute
 `DT_NEEDED` paths, absolute-only `DT_RUNPATH`/`DT_RPATH`, and the default

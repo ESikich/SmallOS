@@ -285,17 +285,21 @@ def check_pie_executable(errors, path, expected_interp):
     try:
         elf = Elf32(path)
         if elf.e_type != ET_DYN:
-            fail(errors, f"{path}: expected ET_DYN PIE executable")
+            fail(errors, f"{path}: PIE executable must be ET_DYN, got e_type={elf.e_type}")
         interp = elf.interp()
-        if interp != expected_interp:
+        if interp is None:
+            fail(errors, f"{path}: PIE executable is missing PT_INTERP")
+        elif interp != expected_interp:
             fail(errors, f"{path}: expected PT_INTERP={expected_interp}, got {interp!r}")
         if not elf.has_dynamic_segment():
-            fail(errors, f"{path}: missing PT_DYNAMIC")
+            fail(errors, f"{path}: PIE executable is missing PT_DYNAMIC")
         load_vaddrs = [ph["vaddr"] for ph in elf.phdrs if ph["type"] == 1]
-        if not load_vaddrs or min(load_vaddrs) != 0:
-            fail(errors, f"{path}: PIE executable is not linked as a base-zero ET_DYN image")
+        if not load_vaddrs:
+            fail(errors, f"{path}: PIE executable has no PT_LOAD segments")
+        elif min(load_vaddrs) != 0:
+            fail(errors, f"{path}: PIE executable PT_LOAD minimum vaddr is 0x{min(load_vaddrs):x}, expected 0x0")
         if any(ph["vaddr"] == 0x00400000 for ph in elf.phdrs if ph["type"] == 1):
-            fail(errors, f"{path}: PIE executable still has fixed 0x400000 load placement")
+            fail(errors, f"{path}: PIE executable has accidental fixed 0x400000 PT_LOAD placement")
         check_relocs(errors, elf)
         check_dynamic_paths(errors, elf)
     except (OSError, ElfError) as exc:
@@ -373,7 +377,11 @@ def main():
     if errors:
         print(f"dynamic-link-check: FAIL ({len(errors)} issue(s))", file=sys.stderr)
         return 1
-    print(f"dynamic-link-check: PASS ({len(args.executables) + len(args.pie)} executables)")
+    print(
+        "dynamic-link-check: PASS "
+        f"({len(args.executables)} legacy dynamic, {len(args.pie)} PIE dynamic, "
+        f"{len(args.executables) + len(args.pie)} total executables)"
+    )
     return 0
 
 
