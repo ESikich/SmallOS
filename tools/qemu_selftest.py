@@ -704,7 +704,11 @@ def main():
             if not guest_pass:
                 print_transcript_tail("selftest", transcript)
 
-        case_pass, failures = verify_cases(cases, transcript, report=not args.summary)
+        try:
+            full_transcript = Path(args.serial).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            full_transcript = transcript
+        case_pass, failures = verify_cases(cases, full_transcript, report=not args.summary)
         if args.summary:
             report_cases(cases, failures)
             detail = f"{len(cases) - len(failures)}/{len(cases)} cases"

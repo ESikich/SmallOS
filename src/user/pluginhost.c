@@ -80,7 +80,10 @@ int main(void) {
     expect_true("pluginhost reopen-alpha: PASS", alpha2 != 0);
     if (alpha2) {
         alpha_run = (run_fn_t)need_sym(alpha2, "smallos_plugin_run");
-        helper_init_count = (count_fn_t)need_sym(RTLD_DEFAULT, "plugin_helper_init_count");
+        expect_true("pluginhost local-helper-hidden: PASS",
+                    dlsym(RTLD_DEFAULT, "plugin_helper_init_count") == 0 &&
+                        dlerror() != 0);
+        helper_init_count = (count_fn_t)need_sym(alpha2, "plugin_helper_init_count");
         if (alpha_run && helper_init_count) {
             expect_true("pluginhost rerun-alpha: PASS", alpha_run(1) == 104);
             expect_true("pluginhost helper-reinit: PASS", helper_init_count() == 2);

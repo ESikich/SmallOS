@@ -239,6 +239,44 @@ def check_relocs(errors, elf):
             )
 
 
+def reloc_name(reloc_type):
+    return R_386_NAMES.get(reloc_type, f"R_386_{reloc_type}")
+
+
+def print_reloc_inventory(paths):
+    unsupported = []
+    print(f"dynamic-reloc-inventory: {len(paths)} artifact(s)")
+    for path in paths:
+        try:
+            elf = Elf32(path)
+            counts = {}
+            for _offset, reloc_type in elf.relocs():
+                counts[reloc_type] = counts.get(reloc_type, 0) + 1
+            if counts:
+                summary = ", ".join(
+                    f"{reloc_name(reloc_type)}={counts[reloc_type]}"
+                    for reloc_type in sorted(counts)
+                )
+            else:
+                summary = "none"
+            bad = [reloc_type for reloc_type in sorted(counts) if reloc_type not in SUPPORTED_RELOCS]
+            if bad:
+                unsupported.append((path, bad))
+                summary += " [unsupported: " + ", ".join(reloc_name(reloc_type) for reloc_type in bad) + "]"
+            print(f"  {path}: {summary}")
+        except (OSError, ElfError) as exc:
+            unsupported.append((path, []))
+            print(f"  {path}: error: {exc}")
+    if unsupported:
+        print(
+            f"dynamic-reloc-inventory: FAIL ({len(unsupported)} artifact(s) with unsupported relocations)",
+            file=sys.stderr,
+        )
+        return 1
+    print("dynamic-reloc-inventory: PASS")
+    return 0
+
+
 def check_dynamic_paths(errors, elf):
     for tag, label in ((DT_RPATH, "DT_RPATH"), (DT_RUNPATH, "DT_RUNPATH")):
         try:
@@ -349,6 +387,8 @@ def main():
     parser.add_argument("--loader", required=True)
     parser.add_argument("--shared", action="append", default=[])
     parser.add_argument("--pie", action="append", default=[])
+    parser.add_argument("--legacy-name", action="append", default=[])
+    parser.add_argument("--reloc-inventory", action="store_true")
     parser.add_argument("executables", nargs="+")
     args = parser.parse_args()
 
@@ -382,6 +422,12 @@ def main():
         f"({len(args.executables)} legacy dynamic, {len(args.pie)} PIE dynamic, "
         f"{len(args.executables) + len(args.pie)} total executables)"
     )
+    if args.legacy_name:
+        print("dynamic-link-check: legacy dynamic: " + ", ".join(args.legacy_name))
+    if args.reloc_inventory:
+        inventory_paths = [args.libc, args.loader] + args.shared + args.pie + args.executables
+        if print_reloc_inventory(inventory_paths) != 0:
+            return 1
     return 0
 
 

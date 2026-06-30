@@ -88,6 +88,8 @@ int main(int argc, char** argv, char** envp) {
 
     h1 = dlopen("/usr/lib/libdlplug.so", RTLD_NOW | RTLD_GLOBAL);
     expect_true("dlopenprobe open1: PASS", h1 != 0);
+    expect_true("dlopenprobe global-default: PASS",
+                dlsym(RTLD_DEFAULT, "dlopen_plugin_value") != 0);
     h2 = dlopen("/usr/lib/libdlplug.so", RTLD_LAZY);
     expect_true("dlopenprobe open2: PASS", h2 != 0);
 
@@ -118,10 +120,16 @@ int main(int argc, char** argv, char** envp) {
         expect_true("dlopenprobe close-last: PASS", dlclose(h2) == 0);
         expect_true("dlopenprobe stale-handle: PASS",
                     dlsym(h1, "dlopen_plugin_value") == 0 && dlerror() != 0);
+        expect_true("dlopenprobe closed-default-hidden: PASS",
+                    dlsym(RTLD_DEFAULT, "dlopen_plugin_value") == 0 && dlerror() != 0);
     }
 
     h3 = dlopen("/usr/lib/libdlplug.so", RTLD_NOW);
     expect_true("dlopenprobe reopen: PASS", h3 != 0);
+    expect_true("dlopenprobe local-default-hidden: PASS",
+                h3 != 0 &&
+                    dlsym(RTLD_DEFAULT, "dlopen_plugin_value") == 0 &&
+                    dlerror() != 0);
     if (h3) {
         init_count_fn = need_sym(h3, "dlopen_plugin_init_count");
         fini_count_fn = need_sym(h3, "dlopen_plugin_fini_count");

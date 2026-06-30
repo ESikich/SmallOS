@@ -609,11 +609,12 @@ After startup, dynamic programs can call `dlopen()`, `dlsym()`, `dlclose()`,
 and `dlerror()` through a loader service table installed into libc before
 program entry. Runtime loads reuse the same absolute-path, `RUNPATH`/`RPATH`,
 and `/lib` search rules as startup dependencies. `RTLD_NOW` and `RTLD_LAZY`
-both resolve eagerly; `RTLD_GLOBAL` is compatible with the current flat global
-symbol model, and `RTLD_LOCAL` does not add isolation yet. `dlclose()` is a
-lifecycle operation only in this slice: it drops runtime references and runs
-finalizers when the last reference closes, but leaves mappings and shared file
-cache pages in place. Runtime-loaded DSOs are allocated from a bounded
+both resolve eagerly; `RTLD_GLOBAL` exposes active runtime objects through
+`RTLD_DEFAULT`, while `RTLD_LOCAL` keeps runtime objects visible through only
+their own handles and dependency closures. `dlclose()` is a lifecycle
+operation in V2: it drops runtime references and runs finalizers when the last
+reference closes, but intentionally leaves mappings and shared file cache pages
+in place. Runtime-loaded DSOs are allocated from a bounded
 page-aligned arena below `AT_BASE`; arena exhaustion is fatal during startup
 and becomes a `dlerror()` failure during runtime `dlopen()`.
 

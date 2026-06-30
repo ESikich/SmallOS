@@ -281,7 +281,7 @@ EXT2_TEST_PROGS=ticks args exec_args readline exec_test waitprobe fileread compi
 USER_DYNAMIC_NO_CRT0=echo about uptime date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv meminfo memmap cpuz top hello args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe dirprobe errnoprobe badptrprobe sleep_test timerfdprobe ptrguard preempt_test inputprobe stdioprobe ip ipconfig netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ticks fault signalfdprobe connectprobe spinwkr pgrpprobe tcpecho sockeof ftpd halt reboot ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest soundprobe displayprobe
 USER_DYNAMIC_WITH_CRT0=crtprobe mathprobe pipeprobe dupprobe forkprobe execveprobe envprobe
 USER_DYNAMIC_PROGS=$(USER_DYNAMIC_NO_CRT0) $(USER_DYNAMIC_WITH_CRT0)
-USER_DYNAMIC_PIE_NO_CRT0=hello pwd cat meminfo date echo about uptime more man fsread ls touch rm mkdir rmdir cp mv memmap cpuz
+USER_DYNAMIC_PIE_NO_CRT0=hello pwd cat meminfo date echo about uptime more man fsread ls tree touch rm mkdir rmdir cp mv memmap cpuz args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe dirprobe errnoprobe badptrprobe sleep_test timerfdprobe ptrguard preempt_test inputprobe stdioprobe ticks fault signalfdprobe connectprobe spinwkr pgrpprobe ip ipconfig netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck tcpecho sockeof ftpd top halt reboot ataread
 USER_DYNAMIC_PIE_WITH_CRT0=crtprobe mathprobe pipeprobe dupprobe forkprobe execveprobe envprobe
 USER_DYNAMIC_PIE_PROGS=$(USER_DYNAMIC_PIE_NO_CRT0) $(USER_DYNAMIC_PIE_WITH_CRT0)
 USER_DYNAMIC_LEGACY_NO_CRT0=$(filter-out $(USER_DYNAMIC_PIE_NO_CRT0),$(USER_DYNAMIC_NO_CRT0))
@@ -424,6 +424,14 @@ USER_DYNAMIC_PIE_ELFS=$(USER_DYNAMIC_PIE_NO_CRT0_ELFS) $(USER_DYNAMIC_PIE_WITH_C
 USER_DYNAMIC_ELFS=$(USER_DYNAMIC_LEGACY_ELFS) $(USER_DYNAMIC_PIE_ELFS)
 USER_DYNAMIC_STATIC_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_DYNAMIC_PROGS)))
 USER_ELFS+=$(USER_DYN_ELFS) $(USER_DYNAMIC_ELFS) $(USER_DYN_EXTRA_SHARED)
+DYNAMIC_LINK_VERIFY_ARGS= \
+	--interp /lib/ld-smallos.so \
+	--libc $(USER_DYN_LIBC) \
+	--loader $(LD_SMALLOS_BIN) \
+	$(foreach prog,$(USER_DYNAMIC_LEGACY_PROGS),--legacy-name $(prog)) \
+	$(foreach shared,$(USER_DYN_EXTRA_SHARED),--shared $(shared)) \
+	$(foreach pie,$(USER_DYNAMIC_PIE_ELFS),--pie $(pie)) \
+	$(USER_DYNAMIC_LEGACY_ELFS) $(USER_DYN_ELFS)
 
 OBJ_SUBDIRS=$(sort \
 	$(dir $(KERNEL_OBJS)) \
@@ -707,13 +715,10 @@ dyn-size-report: $(USER_DYNAMIC_STATIC_ELFS) $(USER_DYNAMIC_ELFS) $(USER_DYN_ELF
 	wc -c $(USER_DYNAMIC_ELFS) $(USER_DYN_LIBC) $(USER_DYN_EXTRA_SHARED) $(LD_SMALLOS_BIN) | sed 's/^ *//'
 
 dynamic-link-check: $(USER_DYNAMIC_ELFS) $(USER_DYN_ELFS) $(USER_DYN_LIBC) $(USER_DYN_EXTRA_SHARED) $(LD_SMALLOS_BIN)
-	$(PYTHON3) tools/verify_dynamic_link.py \
-		--interp /lib/ld-smallos.so \
-		--libc $(USER_DYN_LIBC) \
-		--loader $(LD_SMALLOS_BIN) \
-		$(foreach shared,$(USER_DYN_EXTRA_SHARED),--shared $(shared)) \
-		$(foreach pie,$(USER_DYNAMIC_PIE_ELFS),--pie $(pie)) \
-		$(USER_DYNAMIC_LEGACY_ELFS) $(USER_DYN_ELFS)
+	$(PYTHON3) tools/verify_dynamic_link.py $(DYNAMIC_LINK_VERIFY_ARGS)
+
+dyn-reloc-inventory: $(USER_DYNAMIC_ELFS) $(USER_DYN_ELFS) $(USER_DYN_LIBC) $(USER_DYN_EXTRA_SHARED) $(LD_SMALLOS_BIN)
+	$(PYTHON3) tools/verify_dynamic_link.py --reloc-inventory $(DYNAMIC_LINK_VERIFY_ARGS)
 
 $(TINYCC_SMALOS_PATCH_STAMP): check-third-party patches/tinycc/smallos.patch | dirs
 	rm -rf $(TINYCC_SMALOS_SRC_DIR)
@@ -1033,7 +1038,7 @@ QEMU_USB_STORAGE_FLAGS=-drive if=none,id=stick,format=raw,file=$(IMG_FILE) \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all image img artifacts dirs deps fractint-source wolf3d-shareware-data wolf3d-source-probe check-third-party dyn-size-report dynamic-link-check dynlink-negative-smoke run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage run-usb-storage-fallback run-headless-usb-storage-fallback usb-storage-smoke usb-ramdisk-fallback-smoke test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean FORCE
+.PHONY: all image img artifacts dirs deps fractint-source wolf3d-shareware-data wolf3d-source-probe check-third-party dyn-size-report dynamic-link-check dyn-reloc-inventory dynlink-negative-smoke run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage run-usb-storage-fallback run-headless-usb-storage-fallback usb-storage-smoke usb-ramdisk-fallback-smoke test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean FORCE
 
 FORCE:
 
@@ -1276,6 +1281,7 @@ verify:
 	$(MAKE) boot-layout-check
 	$(MAKE) image-layout-check
 	$(MAKE) dynamic-link-check
+	$(MAKE) dyn-reloc-inventory
 	$(MAKE) dynlink-negative-smoke
 	$(MAKE) test
 	$(MAKE) smoke

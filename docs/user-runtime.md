@@ -72,11 +72,13 @@ remain private per process. Startup dependency lookup honors absolute
 Dynamic programs also get the public `<dlfcn.h>` surface through a loader
 service table installed into `/lib/libc.so` before program entry. `dlopen()`
 supports `RTLD_NOW`, treats `RTLD_LAZY` as eager binding, accepts
-`RTLD_GLOBAL` in the current flat global namespace, and keeps `RTLD_LOCAL` as
-the default no-op mode. `dlsym(RTLD_DEFAULT, name)` searches the active global
+`RTLD_GLOBAL` by adding active runtime objects to `RTLD_DEFAULT` lookup, and
+keeps `RTLD_LOCAL` runtime objects visible only through their own handle and
+dependency closure. `dlsym(RTLD_DEFAULT, name)` searches the active global
 load order, while object handles search that object and its dependency
 closure. `dlclose()` drops runtime references and runs finalizers when the last
-runtime reference goes away, but it does not unmap or reclaim DSO pages yet.
+runtime reference goes away, but V2 intentionally does not unmap or reclaim DSO
+pages.
 Inactive runtime objects are hidden from `RTLD_DEFAULT` lookup, stale handles
 fail while inactive, and runtime load failures are reported through
 `dlerror()` without killing the process. Runtime DSOs are placed in a bounded

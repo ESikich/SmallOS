@@ -72,6 +72,7 @@ typedef struct ld_object {
     unsigned int refcount;
     unsigned char loaded;
     unsigned char active;
+    unsigned char global;
     unsigned char pinned;
     unsigned char runtime_loaded;
     unsigned char failed;
@@ -446,6 +447,7 @@ static ld_object_t* object_from_phdr(const char* name,
     obj->phnum = phnum;
     obj->loaded = 1;
     obj->active = 1;
+    obj->global = 1;
     obj->pinned = 1;
     obj->refcount = 1;
     obj->protected = 1;
@@ -761,6 +763,7 @@ static ld_object_t* load_object(ld_object_t* requester, const char* soname) {
     obj->phnum = eh->e_phnum;
     obj->loaded = 1;
     obj->active = 1;
+    obj->global = g_recover_active ? 0 : 1;
     obj->pinned = g_recover_active ? 0 : 1;
     obj->runtime_loaded = g_recover_active ? 1 : 0;
     obj->finalized = 0;
@@ -1083,6 +1086,7 @@ static int finalize_one_object(ld_object_t* obj) {
         obj->finalized = 1;
     }
     obj->active = 0;
+    obj->global = obj->pinned ? 1u : 0u;
     return 1;
 }
 
@@ -1113,6 +1117,7 @@ static void retain_object_tree(ld_object_t* obj, unsigned char* visited) {
     if (idx >= LD_MAX_OBJECTS || visited[idx]) return;
     if (!obj->loaded || obj->failed) return;
     visited[idx] = 1;
+    if (!obj->active) obj->global = obj->pinned ? 1u : 0u;
     obj->active = 1;
     obj->finalized = 0;
     obj->refcount++;
@@ -1128,10 +1133,24 @@ static void activate_object_tree(ld_object_t* obj, unsigned char* visited) {
     if (idx >= LD_MAX_OBJECTS || visited[idx]) return;
     if (!obj->loaded || obj->failed) return;
     visited[idx] = 1;
+    if (!obj->active) obj->global = obj->pinned ? 1u : 0u;
     obj->active = 1;
     obj->finalized = 0;
     for (unsigned int i = 0; i < obj->dep_count; i++) {
         if (obj->deps[i] < g_obj_count) activate_object_tree(&g_objs[obj->deps[i]], visited);
+    }
+}
+
+static void globalize_object_tree(ld_object_t* obj, unsigned char* visited) {
+    unsigned int idx;
+    if (!obj) return;
+    idx = object_index(obj);
+    if (idx >= LD_MAX_OBJECTS || visited[idx]) return;
+    if (!obj->loaded || obj->failed) return;
+    visited[idx] = 1;
+    obj->global = 1;
+    for (unsigned int i = 0; i < obj->dep_count; i++) {
+        if (obj->deps[i] < g_obj_count) globalize_object_tree(&g_objs[obj->deps[i]], visited);
     }
 }
 
@@ -1151,6 +1170,7 @@ static void release_object_tree(ld_object_t* obj, unsigned char* visited) {
 static void rollback_runtime_objects(unsigned int start_count) {
     for (unsigned int i = start_count; i < g_obj_count && i < LD_MAX_OBJECTS; i++) {
         g_objs[i].active = 0;
+        g_objs[i].global = 0;
         g_objs[i].initialized = 0;
         g_objs[i].fini_done = 1;
         g_objs[i].finalized = 1;
@@ -1205,10 +1225,15 @@ static void* ld_dlopen_service(const char* filename, int flag) {
     }
     g_recover_active = 1;
     obj = load_object(&g_objs[0], filename);
+    if (!obj->active) obj->global = obj->pinned ? 1u : 0u;
     obj->active = 1;
     load_object_dependencies(obj);
     ld_memset(visited, 0, sizeof(visited));
     activate_object_tree(obj, visited);
+    if (flag & RTLD_GLOBAL) {
+        ld_memset(visited, 0, sizeof(visited));
+        globalize_object_tree(obj, visited);
+    }
     for (unsigned int i = 1; i < g_obj_count; i++) relocate_object(&g_objs[i], 0);
     for (unsigned int i = 1; i < g_obj_count; i++) protect_object(&g_objs[i]);
     run_object_initializer(obj);
@@ -1229,6 +1254,7 @@ static void* ld_dlsym_service(void* handle, const char* symbol) {
     }
     if (!handle) {
         for (unsigned int i = 0; i < g_obj_count; i++) {
+            if (!g_objs[i].global) continue;
             value = find_symbol_in_object(&g_objs[i], symbol);
             if (value) return (void*)value;
         }

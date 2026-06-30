@@ -286,14 +286,14 @@ USER_DYNAMIC_ELFS     # generated build/bin/<profile>/*.dyn.elf and *.pie.elf ar
 
 Converted primary image entries are staged from `*.dyn.elf` or `*.pie.elf`;
 their static `*.elf` artifacts are still built for every `USER_PROGS` entry.
-The current PIE command wave stages `hello`, `pwd`, `cat`, `meminfo`, `date`,
-`echo`, `about`, `uptime`, `more`, `man`, `fsread`, `ls`, `touch`, `rm`,
-`mkdir`, `rmdir`, `cp`, `mv`, `memmap`, and `cpuz` as PIE. The crt0
-probe wave also stages `crtprobe`, `mathprobe`, `pipeprobe`, `dupprobe`,
-`forkprobe`, `execveprobe`, and `envprobe` as PIE. The remaining dynamic set
-still covers `tree`, network diagnostics, power commands,
-ATA/USB/mouse/sound/display diagnostics, simple socket/FTP service binaries
-(`tcpecho`, `sockeof`, `ftpd`), and most probes.
+The current PIE wave stages ordinary command, network/client, service, and
+probe binaries as deterministic PIE, including `tree`, `top`, `halt`,
+`reboot`, `ataread`, `tcpecho`, `sockeof`, `ftpd`, and the low-level ELF
+probes. The crt0 probe wave stages `crtprobe`, `mathprobe`, `pipeprobe`,
+`dupprobe`, `forkprobe`, `execveprobe`, and `envprobe` as PIE. The remaining
+primary legacy dynamic set is intentionally limited to hardware/display
+diagnostics: `usbinfo`, `usbports`, `usbdiag`, `usbpeek`, `usbpower`,
+`usbmouse`, `mousetest`, `soundprobe`, and `displayprobe`.
 The shell, desktop/editor, framebuffer viewers/demos, games, large custom
 ports, and the multi-object `cserve` service remain staged as static ELFs for
 now. Existing explicit dynamic smoke aliases (`dynhello`, `dyncrtprobe`,
@@ -319,16 +319,17 @@ Only absolute search directories are supported in this slice. `$ORIGIN`,
 environment paths, and loader config files are intentionally unsupported.
 The same search rules are reused by `dlopen()`.
 
-The V2.5 runtime loading slice supports `dlopen()`, `dlsym()`, `dlclose()`,
+The completed V2 runtime loading path supports `dlopen()`, `dlsym()`, `dlclose()`,
 and `dlerror()` for dynamic programs through a loader-installed libc service
 table. `RTLD_NOW` is supported, `RTLD_LAZY` is accepted but still bound
-eagerly, `RTLD_GLOBAL` uses the current flat global namespace, and
-`RTLD_LOCAL` is the default no-op mode. `dlclose()` runs runtime finalizers
+eagerly, `RTLD_GLOBAL` exposes active runtime objects through
+`RTLD_DEFAULT`, and `RTLD_LOCAL` keeps runtime objects visible only through
+their own handle and dependency closure. `dlclose()` runs runtime finalizers
 when the last runtime reference closes, but DSO mappings and shared read-only
-file-cache pages are not reclaimed yet. The loader tracks inactive objects,
-rolls back newly-created object records on failed runtime loads, and uses a
-bounded mmap arena for DSO placement. Static programs keep returning a clear
-unsupported error for `dlfcn` calls.
+file-cache pages are intentionally not reclaimed in V2. The loader tracks
+inactive objects, rolls back newly-created object records on failed runtime
+loads, and uses a bounded mmap arena for DSO placement. Static programs keep
+returning a clear unsupported error for `dlfcn` calls.
 
 Use the size report when changing the conversion set:
 
@@ -353,8 +354,17 @@ executables for base-zero `ET_DYN` plus `PT_INTERP`, verifies that the shared
 runtime is an `ET_DYN` object with `PT_DYNAMIC`, verifies additional
 shared-object probes, confirms the loader artifact is a base-zero `ET_DYN`
 image with no `PT_INTERP`, checks shared-object SONAMEs and supported dynamic
-search paths, and rejects relocations outside the supported i386 relocation
-sets.
+search paths, rejects relocations outside the supported i386 relocation sets,
+and prints the remaining primary legacy dynamic program names.
+
+Use the relocation inventory when checking toolchain or conversion changes:
+
+```bash
+make dyn-reloc-inventory SERIAL_CONSOLE=1
+```
+
+It scans every staged dynamic artifact, prints relocation-type counts by
+artifact, and fails if unsupported relocation types appear.
 
 Use the negative dynamic-link smoke when changing loader, staging, or exec
 failure behavior:
@@ -505,10 +515,15 @@ expected markers including shared-cache, fork-cache, finalizer, and
 `dlopenprobe`/`pluginhost` coverage. Re-run `make dyn-size-report` after
 changing the conversion set or shared libraries.
 
-The remaining dynamic-linking deferred list is TLS, lazy PLT binding,
-`RTLD_NEXT`, symbol versioning, environment/config search paths, aggressive
-DSO unmapping on `dlclose()`, and conversion of `shell`, `gui`, `edit`,
-framebuffer apps, games, `fractint`, `wolf3d`, and `cserve`.
+Dynamic linking V2 is considered complete for the SmallOS runtime when the
+normal verifier, relocation inventory, negative dynamic-link smoke, guest
+selftest, smoke, and size report pass. Static ELFs remain supported,
+ordinary dynamic commands and probes are PIE, shared read-only DSO pages are
+observable and tested, and `dlopen()`/`dlsym()`/`dlclose()` are supported with
+eager binding. The remaining deferred list is TLS, lazy PLT binding,
+`RTLD_NEXT`, symbol versioning, environment/config search paths, ASLR,
+aggressive DSO unmapping on `dlclose()`, and conversion of `shell`, `gui`,
+`edit`, framebuffer apps, games, `fractint`, `wolf3d`, and `cserve`.
 
 For networking, the default `run` and `test` targets keep using QEMU's
 user-network NAT so CI stays simple. The guest still uses DHCP in that mode,
