@@ -363,12 +363,38 @@ static int process_fd_table_alloc(unsigned int capacity,
     return 0;
 }
 
+static int process_fd_table_is_valid(process_t* proc) {
+    u32 expected_virt;
+
+    if (!proc || !proc->fds) return 0;
+    if (proc->fd_capacity == 0u ||
+        proc->fd_capacity > PROCESS_FD_LIMIT_HARD ||
+        proc->fd_limit == 0u ||
+        proc->fd_limit > PROCESS_FD_LIMIT_HARD ||
+        proc->fd_capacity > proc->fd_limit) {
+        return 0;
+    }
+    if (!proc->fd_table_frame || !proc->fd_table_frames) {
+        return 0;
+    }
+    if (!paging_phys_is_pmm_frame(proc->fd_table_frame)) {
+        return 0;
+    }
+    if (proc->fd_table_frames < process_fd_frame_count(proc->fd_capacity)) {
+        return 0;
+    }
+
+    expected_virt = KERNEL_PMM_MAP_BASE + (proc->fd_table_frame - PMM_BASE);
+    return (u32)proc->fds == expected_virt;
+}
+
 static void process_fd_table_free(process_t* proc) {
     if (!proc || !proc->fd_table_frame || !proc->fd_table_frames) return;
 
-    pmm_free_contiguous_frames(proc->fd_table_frame, proc->fd_table_frames);
     proc->fds = 0;
     proc->fd_capacity = 0;
+    proc->fd_limit = 0;
+    pmm_free_contiguous_frames(proc->fd_table_frame, proc->fd_table_frames);
     proc->fd_table_frame = 0;
     proc->fd_table_frames = 0;
 }
@@ -406,6 +432,8 @@ static int process_fd_table_grow(process_t* proc, unsigned int min_capacity) {
     fd_entry_t* new_fds = 0;
     u32 new_frame = 0;
     u32 new_frames = 0;
+    u32 old_frame;
+    u32 old_frames;
     unsigned int new_capacity;
     int rc;
 
@@ -426,12 +454,14 @@ static int process_fd_table_grow(process_t* proc, unsigned int min_capacity) {
     if (rc < 0) return rc;
 
     k_memcpy(new_fds, proc->fds, proc->fd_capacity * (unsigned int)sizeof(fd_entry_t));
-    pmm_free_contiguous_frames(proc->fd_table_frame, proc->fd_table_frames);
+    old_frame = proc->fd_table_frame;
+    old_frames = proc->fd_table_frames;
 
     proc->fds = new_fds;
-    proc->fd_capacity = new_capacity;
     proc->fd_table_frame = new_frame;
     proc->fd_table_frames = new_frames;
+    proc->fd_capacity = new_capacity;
+    pmm_free_contiguous_frames(old_frame, old_frames);
     return 0;
 }
 
@@ -929,6 +959,8 @@ int process_fd_dup(process_t* proc, int oldfd, int minfd, unsigned int fd_flags)
         while ((unsigned int)minfd >= proc->fd_capacity) {
             int rc = process_fd_table_grow(proc, (unsigned int)minfd + 1u);
             if (rc < 0) return rc;
+            old_ent = process_fd_get(proc, oldfd);
+            if (!old_ent) return -EBADF;
         }
         for (unsigned int fd = (unsigned int)minfd; fd < proc->fd_capacity; fd++) {
             if (!proc->fds[fd].valid) {
@@ -961,6 +993,8 @@ int process_fd_dup2(process_t* proc, int oldfd, int newfd, unsigned int fd_flags
 
     rc = process_fd_alloc_exact(proc, newfd, &new_ent);
     if (rc < 0) return rc;
+    old_ent = process_fd_get(proc, oldfd);
+    if (!old_ent) return -EBADF;
     *new_ent = *old_ent;
     new_ent->fd_flags = fd_flags;
     process_fd_share_ref(new_ent);
@@ -980,6 +1014,10 @@ int process_fd_dup_from(process_t* dst, int newfd, process_t* src, int oldfd, un
 
     rc = process_fd_alloc_exact(dst, newfd, &new_ent);
     if (rc < 0) return rc;
+    if (dst == src) {
+        old_ent = process_fd_get(src, oldfd);
+        if (!old_ent) return -EBADF;
+    }
     *new_ent = *old_ent;
     new_ent->fd_flags = fd_flags;
     process_fd_share_ref(new_ent);
@@ -2124,7 +2162,7 @@ int process_fd_set_signalfd_mask(fd_entry_t* ent, unsigned int mask) {
 }
 
 void process_wake_timerfds(process_t* proc, unsigned int now) {
-    if (!proc || !proc->fds) return;
+    if (!process_fd_table_is_valid(proc)) return;
 
     for (unsigned int i = 0; i < proc->fd_capacity; i++) {
         fd_entry_t* ent = &proc->fds[i];

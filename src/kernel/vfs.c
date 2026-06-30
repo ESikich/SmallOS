@@ -601,7 +601,6 @@ int vfs_file_map_ro_page(fd_entry_t* ent,
     vfs_ro_map_entry_t* slot;
     u32 frame;
     u32 bytes;
-    u32 read = 0;
     unsigned int flags;
 
     if (out_frame) *out_frame = 0;
@@ -627,27 +626,38 @@ int vfs_file_map_ro_page(fd_entry_t* ent,
         vfs_irq_restore(flags);
         return 0;
     }
-
-    slot = vfs_ro_map_victim();
-    if (!slot) {
-        vfs_irq_restore(flags);
-        return -ENOMEM;
-    }
+    vfs_irq_restore(flags);
 
     frame = pmm_alloc_frame();
-    if (!frame) {
-        vfs_irq_restore(flags);
-        return -ENOMEM;
-    }
+    if (!frame) return -ENOMEM;
     vfs_zero_frame(frame);
-    if (!ext2_read_at_path(obj->name, file_offset,
-                           (u8*)paging_phys_to_kernel_virt(frame),
-                           bytes,
-                           &read) ||
-        read != bytes) {
+    if (!vfs_file_load_cache(ent) ||
+        !vfs_copy_from_cache(ent,
+                             file_offset,
+                             (u8*)paging_phys_to_kernel_virt(frame),
+                             bytes)) {
+        pmm_release_frame(frame);
+        return -EIO;
+    }
+
+    flags = vfs_irq_save();
+    cached = vfs_ro_map_find(obj->name, &st, file_offset);
+    if (cached) {
+        pmm_release_frame(frame);
+        if (!pmm_retain_frame(cached->frame)) {
+            vfs_irq_restore(flags);
+            return -EIO;
+        }
+        *out_frame = cached->frame;
+        *out_bytes = bytes;
+        vfs_irq_restore(flags);
+        return 0;
+    }
+    slot = vfs_ro_map_victim();
+    if (!slot) {
         pmm_release_frame(frame);
         vfs_irq_restore(flags);
-        return -EIO;
+        return -ENOMEM;
     }
 
     k_memset(slot, 0, sizeof(*slot));

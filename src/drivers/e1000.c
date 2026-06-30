@@ -110,12 +110,13 @@ static inline void e1000_reg_write(u32 reg, u32 value) {
     s_regs[reg / 4u] = value;
 }
 
-static void e1000_wait_for_reset(void) {
-    for (unsigned int i = 0; i < 1000000u; i++) {
+static int e1000_wait_for_reset(void) {
+    for (unsigned int i = 0; i < 10000u; i++) {
         if (!(e1000_reg_read(E1000_CTRL) & E1000_CTRL_RST)) {
-            return;
+            return 1;
         }
     }
+    return 0;
 }
 
 static void e1000_read_mac(void) {
@@ -256,6 +257,7 @@ static int e1000_find_and_map(void) {
         !pci_find_device(E1000_VENDOR_ID, E1000_DEVICE_ID_82545EM, &dev)) {
         return 0;
     }
+    terminal_puts("e1000: pci device found\n");
 
     cmd = pci_read_config_word(dev.bus, dev.slot, dev.func, 0x04);
     cmd |= 0x0006u; /* memory + bus mastering */
@@ -265,14 +267,18 @@ static int e1000_find_and_map(void) {
     if (bar0 == 0) {
         return 0;
     }
+    terminal_puts("e1000: bar0=");
+    terminal_put_hex(bar0);
+    terminal_putc('\n');
 
     /*
      * The BAR sits above the identity-mapped low memory window, so map
      * the MMIO pages into the kernel page table before touching them.
      */
+    terminal_puts("e1000: mapping mmio\n");
     pd = paging_get_kernel_pd();
     for (u32 off = 0; off < E1000_MMIO_MAP_SIZE; off += PAGE_SIZE) {
-        paging_map_page(pd, bar0 + off, bar0 + off, PAGE_WRITE);
+        paging_map_page(pd, bar0 + off, bar0 + off, PAGE_WRITE | PAGE_PCD);
     }
 
     s_regs = (volatile u32*)(unsigned int)bar0;
@@ -280,11 +286,13 @@ static int e1000_find_and_map(void) {
 }
 
 int e1000_init(void) {
+    terminal_puts("e1000: init\n");
     if (!e1000_find_and_map()) {
         terminal_puts("e1000: not found\n");
         s_present = 0;
         return 0;
     }
+    terminal_puts("e1000: mmio mapped\n");
 
     s_present = 1;
     if (!e1000_alloc_rings()) {
@@ -292,11 +300,14 @@ int e1000_init(void) {
         s_present = 0;
         return 0;
     }
+    terminal_puts("e1000: rings allocated\n");
 
     /* Reset the controller before programming the rings. */
     e1000_reg_write(E1000_IMC, 0xFFFFFFFFu);
     e1000_reg_write(E1000_CTRL, E1000_CTRL_RST);
-    e1000_wait_for_reset();
+    if (!e1000_wait_for_reset()) {
+        terminal_puts("e1000: WARN reset poll timed out; continuing\n");
+    }
 
     e1000_read_mac();
     e1000_setup_rings();

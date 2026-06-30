@@ -12,6 +12,7 @@ typedef unsigned int   u32;
 #define PT_LOAD    1
 #define PT_DYNAMIC 2
 #define PT_INTERP  3
+#define PT_PHDR    6
 
 #define PF_X 1
 #define PF_W 2

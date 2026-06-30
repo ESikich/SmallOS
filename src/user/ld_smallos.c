@@ -458,6 +458,24 @@ static ld_object_t* object_from_phdr(const char* name,
     return obj;
 }
 
+static unsigned int main_load_bias_from_phdr(unsigned int phdr_addr, unsigned int phnum) {
+    const Elf32_Phdr* phdr = (const Elf32_Phdr*)phdr_addr;
+
+    for (unsigned int i = 0; i < phnum; i++) {
+        if (phdr[i].p_type == PT_PHDR) {
+            return phdr_addr - phdr[i].p_vaddr;
+        }
+    }
+    for (unsigned int i = 0; i < phnum; i++) {
+        if (phdr[i].p_type == PT_LOAD && phdr[i].p_offset == 0) {
+            unsigned int page = phdr_addr & ~0xFFFu;
+            unsigned int seg_page = phdr[i].p_vaddr & ~0xFFFu;
+            return page - seg_page;
+        }
+    }
+    return 0;
+}
+
 static void path_join(char* out, unsigned int out_size, const char* dir, const char* name) {
     unsigned int pos = 0;
     if (!out || out_size == 0) return;
@@ -1288,6 +1306,7 @@ void ld_smallos_main(int argc, char** argv, char** envp, unsigned int* auxv) {
     unsigned int at_phnum = 0;
     unsigned int at_entry = 0;
     unsigned int at_base = 0;
+    unsigned int main_load_bias;
 
     (void)at_base;
     for (unsigned int* p = auxv; p && p[0] != AT_NULL; p += 2) {
@@ -1298,7 +1317,8 @@ void ld_smallos_main(int argc, char** argv, char** envp, unsigned int* auxv) {
     }
     if (!at_phdr || !at_phnum || !at_entry) ld_fail("missing auxv");
 
-    object_from_phdr("<main>", at_phdr, at_phnum, 0);
+    main_load_bias = main_load_bias_from_phdr(at_phdr, at_phnum);
+    object_from_phdr("<main>", at_phdr, at_phnum, main_load_bias);
     load_dependencies();
     relocate_objects();
     protect_objects();

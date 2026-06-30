@@ -616,7 +616,11 @@ Direct `_start(argc, argv)` programs remain supported for low-level probes and
 freestanding tests; the extra cdecl argument is ignored by two-argument
 callees.
 
-Programs are linked at fixed virtual address `0x400000`, loaded into private user mappings, and entered through `iret` into CPL=3. They use the `int 0x80` syscall ABI for kernel services.
+Static and legacy dynamic programs are linked at fixed virtual address
+`0x400000`; selected PIE dynamic programs are linked as base-zero `ET_DYN`
+images and loaded at `USER_PIE_BASE` (`0x01000000`). All user mappings are
+process-private below `USER_STACK_TOP`, and programs enter CPL=3 through
+`iret`. They use the `int 0x80` syscall ABI for kernel services.
 
 ---
 
@@ -644,6 +648,10 @@ PAGE_ALIGN(bss_end)
                                    per-process kernel stack frames
 0x08000000   PMM ceiling (128 MB cap; default 64 MB guests expose less via E820)
 0x00400000   USER_CODE_BASE — user ELF virtual address (per-process mapping)
+0x01000000   USER_PIE_BASE — deterministic PIE main executable base
+0x04000000   USER_MMAP_BASE — loader DSO / mmap arena base
+0x08000000   USER_INTERP_BASE — dynamic interpreter base
+0x10000000   USER_HEAP_BASE — user heap base
 0xBFFFF000   user stack virtual address (per-process mapping)
 ```
 
@@ -859,7 +867,7 @@ build/obj/<profile>/kernel/sched_switch.o
 
 # Known Limitations
 
-* ELF link address fixed at 0x400000 — no PIE/relocation support
+* PIE executable placement is deterministic; ASLR/randomized bases are not implemented yet
 * `SYS_EXEC` is legacy async spawn; userland receives a pid and can collect it with `waitpid()`
 * `SYS_FORK` uses eager address-space copying; copy-on-write is not implemented yet
 

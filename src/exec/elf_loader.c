@@ -340,6 +340,44 @@ static int elf_copy_interp_path(const unsigned char* image, char* out, unsigned 
     return 0;
 }
 
+static unsigned int elf_main_load_base(const Elf32_Ehdr* eh, int has_interp) {
+    if (!eh || eh->e_type != ET_DYN) return 0;
+    return has_interp ? USER_PIE_BASE : 0;
+}
+
+static int elf_validate_main_layout(const Elf32_Ehdr* eh,
+                                    const elf_map_info_t* main_info,
+                                    int has_interp) {
+    if (!eh || !main_info) return 0;
+    if (eh->e_type == ET_DYN && !has_interp) {
+        terminal_puts("elf: unsupported ET_DYN without interpreter\n");
+        return 0;
+    }
+    if (has_interp && main_info->low < USER_INTERP_BASE && main_info->high > USER_MMAP_BASE) {
+        terminal_puts("elf: executable overlaps dynamic mmap arena\n");
+        return 0;
+    }
+    if (has_interp && main_info->high > USER_HEAP_BASE) {
+        terminal_puts("elf: executable overlaps user heap\n");
+        return 0;
+    }
+    return 1;
+}
+
+static int elf_validate_interp_layout(const elf_map_info_t* main_info,
+                                      const elf_map_info_t* interp_info) {
+    if (!main_info || !interp_info) return 0;
+    if (interp_info->low < USER_INTERP_BASE || interp_info->high > USER_HEAP_BASE) {
+        terminal_puts("elf: interpreter outside reserved range\n");
+        return 0;
+    }
+    if (main_info->high > interp_info->low && main_info->low < interp_info->high) {
+        terminal_puts("elf: executable overlaps interpreter\n");
+        return 0;
+    }
+    return 1;
+}
+
 static int elf_map_image_into_process(process_t* proc,
                                       const unsigned char* image,
                                       unsigned int dyn_base,
@@ -424,11 +462,19 @@ static process_t* elf_run_image_with_group(const unsigned char* image,
     unsigned int auxv[PROCESS_AUXV_MAX * 2];
     int auxc = 0;
     char interp_path[PROCESS_FD_NAME_MAX];
+    int has_interp;
+    unsigned int main_base;
 
     if (!elf_valid_header(eh)) {
         terminal_puts("elf: bad magic\n");
         return 0;
     }
+    has_interp = elf_copy_interp_path(image, interp_path, sizeof(interp_path));
+    if (eh->e_type == ET_DYN && !has_interp) {
+        terminal_puts("elf: unsupported ET_DYN without interpreter\n");
+        return 0;
+    }
+    main_base = elf_main_load_base(eh, has_interp);
 
     process_t* proc = process_create("elf");
     if (!proc) return 0;
@@ -445,13 +491,14 @@ static process_t* elf_run_image_with_group(const unsigned char* image,
         return 0;
     }
 
-    if (!elf_map_image_into_process(proc, image, 0, &main_info)) {
+    if (!elf_map_image_into_process(proc, image, main_base, &main_info) ||
+        !elf_validate_main_layout(eh, &main_info, has_interp)) {
         process_destroy(proc);
         return 0;
     }
     entry = main_info.entry;
 
-    if (elf_copy_interp_path(image, interp_path, sizeof(interp_path))) {
+    if (has_interp) {
         u32 interp_size = 0;
         u32 interp_frame = 0;
         u32 interp_frames = 0;
@@ -465,7 +512,8 @@ static process_t* elf_run_image_with_group(const unsigned char* image,
             process_destroy(proc);
             return 0;
         }
-        if (!elf_map_image_into_process(proc, interp, USER_INTERP_BASE, &interp_info)) {
+        if (!elf_map_image_into_process(proc, interp, USER_INTERP_BASE, &interp_info) ||
+            !elf_validate_interp_layout(&main_info, &interp_info)) {
             vfs_free_file_owned(interp_frame, interp_frames);
             process_destroy(proc);
             return 0;
@@ -546,6 +594,8 @@ int elf_exec_image_into(process_t* proc,
     unsigned int auxv[PROCESS_AUXV_MAX * 2];
     int auxc = 0;
     char interp_path[PROCESS_FD_NAME_MAX];
+    int has_interp;
+    unsigned int main_base;
 
     if (!proc || !image || !out_entry || !out_user_esp) return 0;
     eh = (const Elf32_Ehdr*)image;
@@ -554,20 +604,24 @@ int elf_exec_image_into(process_t* proc,
     }
     if (argc < 0 || argc > PROCESS_MAX_ARGS) return 0;
     if (envc < 0 || envc > PROCESS_MAX_ENVS) return 0;
+    has_interp = elf_copy_interp_path(image, interp_path, sizeof(interp_path));
+    if (eh->e_type == ET_DYN && !has_interp) return 0;
+    main_base = elf_main_load_base(eh, has_interp);
 
     old_pd = proc->pd;
     new_pd = process_pd_create();
     if (!new_pd) return 0;
     proc->pd = new_pd;
 
-    if (!elf_map_image_into_process(proc, image, 0, &main_info)) {
+    if (!elf_map_image_into_process(proc, image, main_base, &main_info) ||
+        !elf_validate_main_layout(eh, &main_info, has_interp)) {
         process_pd_destroy(new_pd);
         proc->pd = old_pd;
         return 0;
     }
     entry = main_info.entry;
 
-    if (elf_copy_interp_path(image, interp_path, sizeof(interp_path))) {
+    if (has_interp) {
         u32 interp_size = 0;
         u32 interp_frame = 0;
         u32 interp_frames = 0;
@@ -575,7 +629,8 @@ int elf_exec_image_into(process_t* proc,
                                          &interp_frame, &interp_frames);
         (void)interp_size;
         if (!interp ||
-            !elf_map_image_into_process(proc, interp, USER_INTERP_BASE, &interp_info)) {
+            !elf_map_image_into_process(proc, interp, USER_INTERP_BASE, &interp_info) ||
+            !elf_validate_interp_layout(&main_info, &interp_info)) {
             if (interp) vfs_free_file_owned(interp_frame, interp_frames);
             process_pd_destroy(new_pd);
             proc->pd = old_pd;

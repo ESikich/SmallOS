@@ -78,7 +78,7 @@ for a lean image without game data.
 build/
 ├── bin/<profile>/ → final binaries (kernel.elf, kernel.bin,
 │                    user program *.elf artifacts,
-│                    dynamic *.dyn.elf artifacts, lib/ld-smallos.so,
+│                    dynamic *.dyn.elf / *.pie.elf artifacts, lib/ld-smallos.so,
 │                    lib/libc.so, ext2.seed.img, boot.bin, loader2.bin,
 │                    tcc-smalos.elf)
 ├── obj/<profile>/ → object files and depfiles (.o, .d), mirrored by source subtree
@@ -261,10 +261,13 @@ startup wrapper.
 ## Dynamic Linking
 
 SmallOS dynamic linking v2 is the supported path for ordinary dynamic user
-programs. Dynamic executables are still linked at the fixed user text base, but include
-`PT_INTERP=/lib/ld-smallos.so`. The kernel maps the executable and the
-`ET_DYN` interpreter, passes auxv entries such as `AT_ENTRY`, `AT_PHDR`,
-`AT_PHNUM`, `AT_BASE`, and `AT_PAGESZ`, and enters the SmallOS loader. The
+programs. Legacy dynamic executables are fixed-address `ET_EXEC` images, while
+PIE executables are base-zero `ET_DYN` images with
+`PT_INTERP=/lib/ld-smallos.so`. The kernel maps fixed executables at
+`USER_CODE_BASE`, maps PIE main executables at deterministic `USER_PIE_BASE`,
+maps the `ET_DYN` interpreter at `USER_INTERP_BASE`, passes auxv entries such
+as `AT_ENTRY`, `AT_PHDR`, `AT_PHNUM`, `AT_BASE`, and `AT_PAGESZ`, and enters
+the SmallOS loader. The
 loader self-relocates before touching its C globals, then maps eligible
 page-aligned read-only DSO pages through the shared read-only file cache, keeps
 writable and relocation-bearing pages private, resolves eager relocations,
@@ -276,21 +279,25 @@ The Makefile names the current conversion wave explicitly:
 ```make
 USER_DYNAMIC_NO_CRT0  # programs that provide _start directly
 USER_DYNAMIC_WITH_CRT0 # programs linked through crt0.o and main()
+USER_DYNAMIC_PIE_NO_CRT0 # converted programs staged as ET_DYN PIE
 USER_DYNAMIC_PROGS    # combined primary image conversion set
-USER_DYNAMIC_ELFS     # generated build/bin/<profile>/*.dyn.elf artifacts
+USER_DYNAMIC_ELFS     # generated build/bin/<profile>/*.dyn.elf and *.pie.elf artifacts
 ```
 
-Converted primary image entries are staged from `*.dyn.elf`; their static
-`*.elf` artifacts are still built for every `USER_PROGS` entry. The dynamic
-set currently covers core CLI tools, network diagnostics, power commands,
-ATA/USB/mouse/sound/display diagnostics, simple socket/FTP service binaries
-(`tcpecho`, `sockeof`, `ftpd`), and most probes. The shell, desktop/editor,
-framebuffer viewers/demos, games, large custom ports, and the multi-object
-`cserve` service remain staged as static ELFs for now. Existing explicit dynamic smoke
-aliases (`dynhello`, `dyncrtprobe`, `dynmathprobe`, `dynstdioprobe`,
-`dynlinkprobe`, `dynpathprobe`, `dynfiniprobe`, `dlopenprobe`, and
-`pluginhost`) and static fallbacks for `hello`, `crtprobe`, `mathprobe`, and
-`stdioprobe` stay under `/usr/libexec/tests/`.
+Converted primary image entries are staged from `*.dyn.elf` or `*.pie.elf`;
+their static `*.elf` artifacts are still built for every `USER_PROGS` entry.
+The first PIE command wave stages `hello`, `pwd`, `cat`, `meminfo`, and `date`
+as PIE. The remaining dynamic set still covers core CLI tools, network
+diagnostics, power commands, ATA/USB/mouse/sound/display diagnostics, simple
+socket/FTP service binaries (`tcpecho`, `sockeof`, `ftpd`), and most probes.
+The shell, desktop/editor, framebuffer viewers/demos, games, large custom
+ports, and the multi-object `cserve` service remain staged as static ELFs for
+now. Existing explicit dynamic smoke aliases (`dynhello`, `dyncrtprobe`,
+`dynmathprobe`, `dynstdioprobe`, `dynlinkprobe`, `dynpathprobe`,
+`dynfiniprobe`, `dlopenprobe`, and `pluginhost`), PIE smoke aliases
+(`piehello`, `piecrtprobe`, and `piedlopenprobe`), and static fallbacks for
+`hello`, `crtprobe`, `mathprobe`, and `stdioprobe` stay under
+`/usr/libexec/tests/`.
 
 The shared runtime is intentionally coarse-grained: `/lib/libc.so` contains the
 current libc, POSIX, and libm runtime objects to avoid early dependency cycles.
@@ -336,12 +343,14 @@ Use the host-side dynamic-link verifier before running guest tests:
 make dynamic-link-check SERIAL_CONSOLE=1
 ```
 
-It checks converted dynamic executables and explicit dynamic smoke aliases for
-`PT_INTERP=/lib/ld-smallos.so`, verifies that the shared runtime is an `ET_DYN`
-object with `PT_DYNAMIC`, verifies additional shared-object probes, confirms
-the loader artifact is a base-zero `ET_DYN` image with no `PT_INTERP`, checks
-shared-object SONAMEs and supported dynamic search paths, and rejects
-relocations outside the supported i386 relocation sets.
+It checks legacy dynamic executables and explicit dynamic smoke aliases for
+`ET_EXEC` plus `PT_INTERP=/lib/ld-smallos.so`, checks explicitly listed PIE
+executables for base-zero `ET_DYN` plus `PT_INTERP`, verifies that the shared
+runtime is an `ET_DYN` object with `PT_DYNAMIC`, verifies additional
+shared-object probes, confirms the loader artifact is a base-zero `ET_DYN`
+image with no `PT_INTERP`, checks shared-object SONAMEs and supported dynamic
+search paths, and rejects relocations outside the supported i386 relocation
+sets.
 
 Use the negative dynamic-link smoke when changing loader, staging, or exec
 failure behavior:
@@ -1201,20 +1210,20 @@ Removes the entire `build/` directory. Always use `make clean && make` when maki
 Pros: simple loader (no ELF parser in loader2), predictable layout, no runtime dependency.
 Cons: no relocation, no metadata, BSS must be zeroed manually.
 
-## All User Programs at 0x400000
+## User Program Placement
 
-Static user ELFs and dynamic executable entry images are linked at the same
-virtual address. This is safe because each user program launch creates a new
-page directory with its own private mapping at PD index 1. The same virtual
-address maps to different physical frames for different processes. Dynamically
-loaded DSOs are mapped from the per-process mmap region above the executable
-and below the user heap.
+Static user ELFs and legacy dynamic `ET_EXEC` images are linked at
+`USER_CODE_BASE` (`0x400000`). PIE dynamic executables are linked as base-zero
+`ET_DYN` images and loaded by the kernel at deterministic `USER_PIE_BASE`
+(`0x01000000`). This is safe because each user program launch creates a new
+page directory with private user mappings. Dynamically loaded DSOs are mapped
+from the per-process mmap region above the PIE area and below the interpreter.
 
-Pros: simple linking, no need for unique link addresses per program, and
-eligible DSO text pages can still be physically shared through the read-only
-file cache.
-Cons: no PIE, fixed-address executables, and writable or relocation-bearing
-DSO pages remain private per process.
+Pros: fixed-address programs stay simple, PIE support no longer requires a
+fixed main executable address, and eligible DSO text pages can still be
+physically shared through the read-only file cache.
+Cons: PIE placement is deterministic rather than randomized, and writable or
+relocation-bearing DSO pages remain private per process.
 
 ## ext2 Image Instead of Embedded Programs
 

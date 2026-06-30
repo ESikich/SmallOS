@@ -23,7 +23,8 @@ static void check(const char* name, int ok, int* failures) {
 
 static int valid_probe_path(const char* path) {
     return str_eq(path, "usr/libexec/tests/crtprobe") ||
-           str_eq(path, "usr/libexec/tests/dyncrtprobe");
+           str_eq(path, "usr/libexec/tests/dyncrtprobe") ||
+           str_eq(path, "usr/libexec/tests/piecrtprobe");
 }
 
 /*

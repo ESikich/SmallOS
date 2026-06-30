@@ -9,6 +9,10 @@
 #define PCI_CLASS_NETWORK 0x02
 #define PCI_CLASS_SERIAL_BUS 0x0C
 #define PCI_SUBCLASS_USB     0x03
+#define PCI_MAX_CACHED_DEVICES 64u
+
+static pci_device_t s_devices[PCI_MAX_CACHED_DEVICES];
+static unsigned int s_device_count = 0;
 
 static void pci_put_byte_hex(unsigned char value) {
     static const char hex[] = "0123456789ABCDEF";
@@ -121,6 +125,7 @@ void pci_init(void) {
     unsigned int network_count = 0;
 
     terminal_puts("pci: scan\n");
+    s_device_count = 0;
 
     /* Walk the conventional PCI bus space and report anything present. */
     for (unsigned int bus = 0; bus < 256; bus++) {
@@ -152,6 +157,9 @@ void pci_init(void) {
                 }
 
                 device_count++;
+                if (s_device_count < PCI_MAX_CACHED_DEVICES) {
+                    s_devices[s_device_count++] = dev;
+                }
 
                 if (dev.class_code == PCI_CLASS_NETWORK) {
                     network_count++;
@@ -205,6 +213,16 @@ void pci_init(void) {
 int pci_find_device(unsigned short vendor_id,
                     unsigned short device_id,
                     pci_device_t* out) {
+    for (unsigned int i = 0; i < s_device_count; i++) {
+        if (s_devices[i].vendor_id == vendor_id &&
+            s_devices[i].device_id == device_id) {
+            if (out) {
+                *out = s_devices[i];
+            }
+            return 1;
+        }
+    }
+
     /* Helper for specific drivers that know their vendor/device IDs. */
     for (unsigned int bus = 0; bus < 256; bus++) {
         for (unsigned int slot = 0; slot < 32; slot++) {

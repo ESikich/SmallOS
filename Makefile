@@ -164,6 +164,7 @@ LIBGCC_FILE ?= $(shell $(CC) -m32 -print-libgcc-file-name)
 LDFLAGS=-T linker.ld -m elf_i386
 USER_LDFLAGS=-m elf_i386 -Ttext-segment 0x400000 -e _start --gc-sections
 USER_DYN_LDFLAGS=-m elf_i386 -Ttext-segment 0x400000 -e _start --dynamic-linker /lib/ld-smallos.so --hash-style=sysv -z now
+USER_PIE_LDFLAGS=-m elf_i386 -pie -e _start --dynamic-linker /lib/ld-smallos.so --hash-style=sysv -z now --gc-sections
 LD_SMALLOS_LDFLAGS=-m elf_i386 -shared -e _start --gc-sections --hash-style=sysv -z now -z notext
 
 KERNEL_ASM_SRCS=\
@@ -280,19 +281,31 @@ EXT2_TEST_PROGS=ticks args exec_args readline exec_test waitprobe fileread compi
 USER_DYNAMIC_NO_CRT0=echo about uptime date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv meminfo memmap cpuz top hello args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe dirprobe errnoprobe badptrprobe sleep_test timerfdprobe ptrguard preempt_test inputprobe stdioprobe ip ipconfig netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ticks fault signalfdprobe connectprobe spinwkr pgrpprobe tcpecho sockeof ftpd halt reboot ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest soundprobe displayprobe
 USER_DYNAMIC_WITH_CRT0=crtprobe mathprobe pipeprobe dupprobe forkprobe execveprobe envprobe
 USER_DYNAMIC_PROGS=$(USER_DYNAMIC_NO_CRT0) $(USER_DYNAMIC_WITH_CRT0)
+USER_DYNAMIC_PIE_NO_CRT0=hello pwd cat meminfo date
+USER_DYNAMIC_PIE_WITH_CRT0=
+USER_DYNAMIC_PIE_PROGS=$(USER_DYNAMIC_PIE_NO_CRT0) $(USER_DYNAMIC_PIE_WITH_CRT0)
+USER_DYNAMIC_LEGACY_NO_CRT0=$(filter-out $(USER_DYNAMIC_PIE_NO_CRT0),$(USER_DYNAMIC_NO_CRT0))
+USER_DYNAMIC_LEGACY_WITH_CRT0=$(filter-out $(USER_DYNAMIC_PIE_WITH_CRT0),$(USER_DYNAMIC_WITH_CRT0))
+USER_DYNAMIC_LEGACY_PROGS=$(USER_DYNAMIC_LEGACY_NO_CRT0) $(USER_DYNAMIC_LEGACY_WITH_CRT0)
 EXT2_BIN_STATIC_PROGS=$(filter-out $(USER_DYNAMIC_PROGS),$(EXT2_BIN_PROGS))
 EXT2_DEMO_STATIC_PROGS=$(filter-out $(USER_DYNAMIC_PROGS),$(EXT2_DEMO_PROGS))
 EXT2_TEST_STATIC_PROGS=$(filter-out $(USER_DYNAMIC_PROGS),$(EXT2_TEST_PROGS))
 EXT2_SBIN_PROGS=tcpecho sockeof ftpd
 EXT2_SBIN_STATIC_PROGS=$(filter-out $(USER_DYNAMIC_PROGS),$(EXT2_SBIN_PROGS))
 EXT2_BIN_ENTRIES=$(foreach prog,$(EXT2_BIN_STATIC_PROGS),bin/$(prog)=$(BIN_DIR)/$(prog).elf) \
-                 $(foreach prog,$(filter $(USER_DYNAMIC_PROGS),$(EXT2_BIN_PROGS)),bin/$(prog)=$(BIN_DIR)/$(prog).dyn.elf)
+                 $(foreach prog,$(filter $(USER_DYNAMIC_LEGACY_PROGS),$(EXT2_BIN_PROGS)),bin/$(prog)=$(BIN_DIR)/$(prog).dyn.elf) \
+                 $(foreach prog,$(filter $(USER_DYNAMIC_PIE_PROGS),$(EXT2_BIN_PROGS)),bin/$(prog)=$(BIN_DIR)/$(prog).pie.elf)
 EXT2_DEMO_ENTRIES=$(foreach prog,$(EXT2_DEMO_STATIC_PROGS),usr/bin/$(prog)=$(BIN_DIR)/$(prog).elf) \
-                  $(foreach prog,$(filter $(USER_DYNAMIC_PROGS),$(EXT2_DEMO_PROGS)),usr/bin/$(prog)=$(BIN_DIR)/$(prog).dyn.elf)
+                  $(foreach prog,$(filter $(USER_DYNAMIC_LEGACY_PROGS),$(EXT2_DEMO_PROGS)),usr/bin/$(prog)=$(BIN_DIR)/$(prog).dyn.elf) \
+                  $(foreach prog,$(filter $(USER_DYNAMIC_PIE_PROGS),$(EXT2_DEMO_PROGS)),usr/bin/$(prog)=$(BIN_DIR)/$(prog).pie.elf)
 EXT2_TEST_ENTRIES=$(foreach prog,$(EXT2_TEST_STATIC_PROGS),usr/libexec/tests/$(prog)=$(BIN_DIR)/$(prog).elf) \
-                  $(foreach prog,$(filter $(USER_DYNAMIC_PROGS),$(EXT2_TEST_PROGS)),usr/libexec/tests/$(prog)=$(BIN_DIR)/$(prog).dyn.elf) \
+                  $(foreach prog,$(filter $(USER_DYNAMIC_LEGACY_PROGS),$(EXT2_TEST_PROGS)),usr/libexec/tests/$(prog)=$(BIN_DIR)/$(prog).dyn.elf) \
+                  $(foreach prog,$(filter $(USER_DYNAMIC_PIE_PROGS),$(EXT2_TEST_PROGS)),usr/libexec/tests/$(prog)=$(BIN_DIR)/$(prog).pie.elf) \
                   usr/libexec/tests/wolf3d-srcprobe=$(WOLF3D_SOURCE_PROBE_BIN)
 EXT2_TEST_ENTRIES+=usr/libexec/tests/dynhello=$(BIN_DIR)/dynhello.elf \
+                   usr/libexec/tests/piehello=$(BIN_DIR)/piehello.elf \
+                   usr/libexec/tests/piecrtprobe=$(BIN_DIR)/piecrtprobe.elf \
+                   usr/libexec/tests/piedlopenprobe=$(BIN_DIR)/piedlopenprobe.elf \
                    usr/libexec/tests/dyncrtprobe=$(BIN_DIR)/dyncrtprobe.elf \
                    usr/libexec/tests/dynmathprobe=$(BIN_DIR)/dynmathprobe.elf \
                    usr/libexec/tests/dynstdioprobe=$(BIN_DIR)/dynstdioprobe.elf \
@@ -306,7 +319,8 @@ EXT2_TEST_ENTRIES+=usr/libexec/tests/dynhello=$(BIN_DIR)/dynhello.elf \
                    usr/libexec/tests/static/mathprobe=$(BIN_DIR)/mathprobe.elf \
                    usr/libexec/tests/static/stdioprobe=$(BIN_DIR)/stdioprobe.elf
 EXT2_SBIN_ENTRIES=$(foreach prog,$(EXT2_SBIN_STATIC_PROGS),usr/sbin/$(prog)=$(BIN_DIR)/$(prog).elf) \
-                  $(foreach prog,$(filter $(USER_DYNAMIC_PROGS),$(EXT2_SBIN_PROGS)),usr/sbin/$(prog)=$(BIN_DIR)/$(prog).dyn.elf) \
+                  $(foreach prog,$(filter $(USER_DYNAMIC_LEGACY_PROGS),$(EXT2_SBIN_PROGS)),usr/sbin/$(prog)=$(BIN_DIR)/$(prog).dyn.elf) \
+                  $(foreach prog,$(filter $(USER_DYNAMIC_PIE_PROGS),$(EXT2_SBIN_PROGS)),usr/sbin/$(prog)=$(BIN_DIR)/$(prog).pie.elf) \
                   usr/sbin/cserve=$(CSERVER_BIN)
 EXT2_APP_ENTRIES=$(EXT2_BIN_ENTRIES) $(EXT2_DEMO_ENTRIES) $(EXT2_TEST_ENTRIES)
 EXT2_APP_ENTRIES+= $(EXT2_SBIN_ENTRIES)
@@ -356,6 +370,8 @@ USER_LIBM_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(filter $(USER_DI
 USER_POSIX_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(filter $(USER_DIR)/%.c,$(USER_POSIX_SRCS)))
 USER_RUNTIME_OBJS=$(USER_LIBC_OBJS) $(USER_LIBM_OBJS) $(USER_POSIX_OBJS)
 USER_CRT0_OBJ=$(OBJ_DIR)/user/crt/crt0.o
+USER_PIE_OBJ_DIR=$(OBJ_DIR)/user-pie
+USER_PIE_CRT0_OBJ=$(USER_PIE_OBJ_DIR)/crt/crt0.pic.o
 USER_LIB_DIR=$(OBJ_DIR)/user/lib
 USER_LIBC=$(USER_LIB_DIR)/libc.a
 USER_LIBM=$(USER_LIB_DIR)/libm.a
@@ -386,6 +402,8 @@ USER_DYN_PLUGIN_BETA=$(USER_DYN_LIB_DIR)/beta.so
 USER_DYN_EXTRA_SHARED=$(USER_DYN_FINI) $(USER_DYN_PATH) $(USER_DYN_DLOPEN_DEP) $(USER_DYN_DLOPEN_PLUGIN) $(USER_DYN_DIAMOND_BASE) $(USER_DYN_DIAMOND_LEFT) $(USER_DYN_DIAMOND_RIGHT) $(USER_DYN_DIAMOND) $(USER_DYN_PLUGIN_HELPER) $(USER_DYN_PLUGIN_ALPHA) $(USER_DYN_PLUGIN_BETA)
 USER_DYN_PROGS=dynhello dyncrtprobe dynmathprobe dynstdioprobe dynlinkprobe dynpathprobe dynfiniprobe dlopenprobe pluginhost
 USER_DYN_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_DYN_PROGS)))
+USER_PIE_PROBE_PROGS=piehello piecrtprobe piedlopenprobe
+USER_PIE_PROBE_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_PIE_PROBE_PROGS)))
 DYNFAILPROBE_BIN=$(BIN_DIR)/dynfailprobe.elf
 DYN_NO_LOADER_EXT2=$(BIN_DIR)/ext2.dyn-no-loader.img
 DYN_NO_LIBC_EXT2=$(BIN_DIR)/ext2.dyn-no-libc.img
@@ -397,9 +415,13 @@ DYN_NO_LOADER_ALL_EXTRA_ENTRIES=$(EXT2_BASE_EXTRA_ENTRIES) $(USER_LIB_ENTRIES_NO
 DYN_NO_LIBC_ALL_EXTRA_ENTRIES=$(EXT2_BASE_EXTRA_ENTRIES) $(USER_LIB_ENTRIES_NO_LIBC) $(FRACTINT_EXTRA_ENTRIES) $(WOLF3D_DATA_ENTRIES)
 DYN_NO_LOADER_EXTRA_FILES=$(foreach entry,$(DYN_NO_LOADER_ALL_EXTRA_ENTRIES),$(word 2,$(subst =, ,$(entry))))
 DYN_NO_LIBC_EXTRA_FILES=$(foreach entry,$(DYN_NO_LIBC_ALL_EXTRA_ENTRIES),$(word 2,$(subst =, ,$(entry))))
-USER_DYNAMIC_NO_CRT0_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .dyn.elf,$(USER_DYNAMIC_NO_CRT0)))
-USER_DYNAMIC_WITH_CRT0_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .dyn.elf,$(USER_DYNAMIC_WITH_CRT0)))
-USER_DYNAMIC_ELFS=$(USER_DYNAMIC_NO_CRT0_ELFS) $(USER_DYNAMIC_WITH_CRT0_ELFS)
+USER_DYNAMIC_NO_CRT0_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .dyn.elf,$(USER_DYNAMIC_LEGACY_NO_CRT0)))
+USER_DYNAMIC_WITH_CRT0_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .dyn.elf,$(USER_DYNAMIC_LEGACY_WITH_CRT0)))
+USER_DYNAMIC_LEGACY_ELFS=$(USER_DYNAMIC_NO_CRT0_ELFS) $(USER_DYNAMIC_WITH_CRT0_ELFS)
+USER_DYNAMIC_PIE_NO_CRT0_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .pie.elf,$(USER_DYNAMIC_PIE_NO_CRT0)))
+USER_DYNAMIC_PIE_WITH_CRT0_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .pie.elf,$(USER_DYNAMIC_PIE_WITH_CRT0)))
+USER_DYNAMIC_PIE_ELFS=$(USER_DYNAMIC_PIE_NO_CRT0_ELFS) $(USER_DYNAMIC_PIE_WITH_CRT0_ELFS) $(USER_PIE_PROBE_ELFS)
+USER_DYNAMIC_ELFS=$(USER_DYNAMIC_LEGACY_ELFS) $(USER_DYNAMIC_PIE_ELFS)
 USER_DYNAMIC_STATIC_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_DYNAMIC_PROGS)))
 USER_ELFS+=$(USER_DYN_ELFS) $(USER_DYNAMIC_ELFS) $(USER_DYN_EXTRA_SHARED)
 
@@ -408,6 +430,8 @@ OBJ_SUBDIRS=$(sort \
 	$(dir $(USER_OBJS)) \
 	$(dir $(USER_RUNTIME_OBJS)) \
 	$(dir $(USER_DYN_RUNTIME_OBJS)) \
+	$(dir $(USER_PIE_CRT0_OBJ)) \
+	$(USER_PIE_OBJ_DIR) \
 	$(USER_DYN_OBJ_DIR) \
 	$(dir $(USER_CRT0_OBJ)) \
 	$(USER_LIB_DIR) \
@@ -566,6 +590,14 @@ $(USER_DYN_OBJ_DIR)/%.pic.o: $(USER_DIR)/%.asm | dirs
 	mkdir -p $(dir $@)
 	$(ASM) -f elf32 $< -o $@
 
+$(USER_PIE_OBJ_DIR)/%.pic.o: $(USER_DIR)/%.c | dirs
+	mkdir -p $(dir $@)
+	$(CC) $(USER_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) -fPIC -ffunction-sections -fdata-sections $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(USER_PIE_OBJ_DIR)/%.pic.o: $(USER_DIR)/%.asm | dirs
+	mkdir -p $(dir $@)
+	$(ASM) -f elf32 $< -o $@
+
 $(LD_SMALLOS_OBJ): $(USER_DIR)/ld_smallos.c $(KERNEL_DIR)/elf.h $(KERNEL_DIR)/uapi_syscall.h | dirs
 	mkdir -p $(dir $@)
 	$(CC) $(USER_PUBLIC_CPPFLAGS) $(CFLAGS) -Os -ffunction-sections -fdata-sections -c $< -o $@
@@ -615,8 +647,23 @@ $(USER_DYNAMIC_NO_CRT0_ELFS): $(BIN_DIR)/%.dyn.elf: $(OBJ_DIR)/user/%.o $(USER_D
 $(USER_DYNAMIC_WITH_CRT0_ELFS): $(BIN_DIR)/%.dyn.elf: $(OBJ_DIR)/user/%.o $(USER_CRT0_OBJ) $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
 	$(LD) $(USER_DYN_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
 
+$(USER_DYNAMIC_PIE_NO_CRT0_ELFS): $(BIN_DIR)/%.pie.elf: $(USER_PIE_OBJ_DIR)/%.pic.o $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
+	$(LD) $(USER_PIE_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
+
+$(USER_DYNAMIC_PIE_WITH_CRT0_ELFS): $(BIN_DIR)/%.pie.elf: $(USER_PIE_OBJ_DIR)/%.pic.o $(USER_PIE_CRT0_OBJ) $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
+	$(LD) $(USER_PIE_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
+
 $(BIN_DIR)/dynhello.elf: $(OBJ_DIR)/user/hello.o $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
 	$(LD) $(USER_DYN_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
+
+$(BIN_DIR)/piehello.elf: $(USER_PIE_OBJ_DIR)/hello.pic.o $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
+	$(LD) $(USER_PIE_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
+
+$(BIN_DIR)/piecrtprobe.elf: $(USER_PIE_OBJ_DIR)/crtprobe.pic.o $(USER_PIE_CRT0_OBJ) $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
+	$(LD) $(USER_PIE_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
+
+$(BIN_DIR)/piedlopenprobe.elf: $(USER_PIE_OBJ_DIR)/dlopenprobe.pic.o $(USER_PIE_CRT0_OBJ) $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
+	$(LD) $(USER_PIE_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
 
 $(BIN_DIR)/dyncrtprobe.elf: $(OBJ_DIR)/user/crtprobe.o $(USER_CRT0_OBJ) $(USER_DYN_LIBC) $(LD_SMALLOS_BIN) | dirs
 	$(LD) $(USER_DYN_LDFLAGS) $(filter %.o,$^) -L$(USER_DYN_LIB_DIR) -lc -o $@
@@ -665,7 +712,8 @@ dynamic-link-check: $(USER_DYNAMIC_ELFS) $(USER_DYN_ELFS) $(USER_DYN_LIBC) $(USE
 		--libc $(USER_DYN_LIBC) \
 		--loader $(LD_SMALLOS_BIN) \
 		$(foreach shared,$(USER_DYN_EXTRA_SHARED),--shared $(shared)) \
-		$(USER_DYNAMIC_ELFS) $(USER_DYN_ELFS)
+		$(foreach pie,$(USER_DYNAMIC_PIE_ELFS),--pie $(pie)) \
+		$(USER_DYNAMIC_LEGACY_ELFS) $(USER_DYN_ELFS)
 
 $(TINYCC_SMALOS_PATCH_STAMP): check-third-party patches/tinycc/smallos.patch | dirs
 	rm -rf $(TINYCC_SMALOS_SRC_DIR)

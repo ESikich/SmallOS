@@ -17,12 +17,15 @@
  * Per-process page directories
  * ----------------------------
  * Each process gets a fresh physical page directory from pmm_alloc_frame().
- * Kernel PD entries (indices 0 and 2–1023) are copied in so that kernel
- * code, VGA, heap, and stack remain accessible after CR3 switch.
+ * Kernel PD entries outside the user range are copied in so that kernel
+ * code, VGA, heap, and high device mappings remain accessible after CR3
+ * switch.
  *
- * PD index 1 (virtual 0x400000–0x7FFFFF) is left empty — this is the
- * private ELF region. Its page table is allocated from the PMM so that
- * process_pd_destroy() can free it and the frames it points to.
+ * PD indices covering [USER_CODE_BASE, USER_STACK_TOP) are left empty.
+ * These cover the fixed ELF slot, PIE main slot, mmap/DSO arena, heap,
+ * optional user display mappings, and user stack. Their page tables are
+ * allocated from the PMM so process_pd_destroy() can free them and the
+ * frames they point to.
  *
  * The user stack lives at 0xBFFFF000 (PD index 767). Its page table is
  * allocated from pmm_alloc_frame() so process_pd_destroy() can free it
@@ -39,13 +42,19 @@
 #define PT_ENTRIES  1024
 #define KERNEL_PMM_MAP_PD_INDEX (KERNEL_PMM_MAP_BASE >> 22)
 #define KERNEL_PMM_MAP_TABLES   ((KERNEL_PMM_MAP_SIZE + 0x3FFFFFu) >> 22)
+#define KERNEL_FB_MAP_PD_INDEX  (0xD0000000u >> 22)
+#define KERNEL_HIGH_MMIO_PD_INDEX (0xFE000000u >> 22)
+#define KERNEL_HIGH_MMIO_TABLES 8u
 
-/* PD index 1 covers 0x400000–0x7FFFFF — the private ELF region. */
-#define USER_PD_INDEX   1
+#define USER_PD_FIRST_INDEX (USER_CODE_BASE >> 22)
+#define USER_PD_LIMIT_INDEX (USER_STACK_TOP >> 22)
 
 static u32 kernel_page_directory[PD_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
 static u32 low_page_table_0[PT_ENTRIES]      __attribute__((aligned(PAGE_SIZE)));
 static u32 low_page_table_1[PT_ENTRIES]      __attribute__((aligned(PAGE_SIZE)));
+static u32 framebuffer_page_table[PT_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
+static u32 high_mmio_page_tables[KERNEL_HIGH_MMIO_TABLES][PT_ENTRIES]
+    __attribute__((aligned(PAGE_SIZE)));
 static u32 pmm_map_page_tables[KERNEL_PMM_MAP_TABLES][PT_ENTRIES]
     __attribute__((aligned(PAGE_SIZE)));
 
@@ -89,6 +98,10 @@ static u32* paging_pt_virt(u32 phys) {
     return (u32*)phys;
 }
 
+static int paging_pd_index_is_user(u32 index) {
+    return index >= USER_PD_FIRST_INDEX && index < USER_PD_LIMIT_INDEX;
+}
+
 /* ------------------------------------------------------------------ */
 /* Public API                                                           */
 /* ------------------------------------------------------------------ */
@@ -105,6 +118,22 @@ void paging_init(void) {
         low_page_table_1[i] = (0x400000 + i * PAGE_SIZE) | PAGE_PRESENT | PAGE_WRITE;
     }
     kernel_page_directory[1] = (u32)low_page_table_1 | PAGE_PRESENT | PAGE_WRITE;
+
+    /*
+     * Permanent empty page tables for late-filled kernel device windows.
+     *
+     * These PDEs are copied into every process page directory and all copies
+     * share the same backing page tables, so later framebuffer/e1000 mappings
+     * become visible regardless of the CR3 active during a kernel syscall or
+     * interrupt. They also avoid allocating kernel page tables from the bump
+     * allocator after PMM is live.
+     */
+    kernel_page_directory[KERNEL_FB_MAP_PD_INDEX] =
+        (u32)framebuffer_page_table | PAGE_PRESENT | PAGE_WRITE;
+    for (u32 t = 0; t < KERNEL_HIGH_MMIO_TABLES; t++) {
+        kernel_page_directory[KERNEL_HIGH_MMIO_PD_INDEX + t] =
+            (u32)high_mmio_page_tables[t] | PAGE_PRESENT | PAGE_WRITE;
+    }
 
     /*
      * High kernel alias for all PMM-managed frames. The low identity map
@@ -172,17 +201,28 @@ void paging_map_page(u32* pd, u32 virt, u32 phys, u32 flags) {
     if (pd_virt[pd_index] & PAGE_PRESENT) {
         pt = paging_pt_virt(pd_virt[pd_index] & ~0xFFFu);
     } else {
+        u32 pt_phys;
+
         if (pd == kernel_page_directory) {
             pt = (u32*)kmalloc_page();
             if (!pt) paging_panic();
+            pt_phys = (u32)pt;
         } else {
             u32 frame = pmm_alloc_frame();
             if (!frame) paging_panic();
+            pt_phys = frame;
             pt = (u32*)paging_phys_to_kernel_virt(frame);
         }
         k_memset(pt, 0, PAGE_SIZE);
-        pd_virt[pd_index] = (pd == kernel_page_directory ? (u32)pt : paging_kernel_virt_to_phys(pt)) |
-                            PAGE_PRESENT | PAGE_WRITE | PAGE_USER;
+        pd_virt[pd_index] = pt_phys | PAGE_PRESENT | PAGE_WRITE | PAGE_USER;
+    }
+
+    if (pd != kernel_page_directory &&
+        (pt[pt_index] & (PAGE_PRESENT | PAGE_USER)) == (PAGE_PRESENT | PAGE_USER)) {
+        u32 old_phys = pt[pt_index] & ~0xFFFu;
+        if (paging_phys_is_pmm_frame(old_phys)) {
+            pmm_free_frame(old_phys);
+        }
     }
 
     pt[pt_index] = (phys & ~0xFFFu) | flags;
@@ -227,13 +267,12 @@ u32* process_pd_create(void) {
     k_memset(pd, 0, PAGE_SIZE);
 
     /*
-     * Copy kernel PD entries into the process directory so that kernel
-     * code, VGA, heap, and stack remain accessible after CR3
-     * switch. We skip PD index USER_PD_INDEX (1) — that's the private
-     * ELF region and each process gets its own mapping there.
+     * Copy only kernel-space entries into the process directory. User-space
+     * PDEs stay empty until exec, mmap, brk, display mapping, or stack setup
+     * installs process-owned mappings.
      */
     for (u32 i = 0; i < PD_ENTRIES; i++) {
-        if (i == USER_PD_INDEX) continue;
+        if (paging_pd_index_is_user(i)) continue;
         pd[i] = kernel_page_directory[i];
     }
 
@@ -248,7 +287,7 @@ u32* process_pd_clone_user(u32* src_pd) {
 
     u32* src = paging_pd_virt(src_pd);
 
-    for (u32 i = 0; i < PD_ENTRIES; i++) {
+    for (u32 i = USER_PD_FIRST_INDEX; i < USER_PD_LIMIT_INDEX; i++) {
         if (src[i] == kernel_page_directory[i]) continue;
         if (!(src[i] & PAGE_PRESENT)) continue;
 
@@ -328,7 +367,7 @@ void process_pd_destroy(u32* pd) {
     if (!pd) return;
     u32* pd_virt = paging_pd_virt(pd);
 
-    for (u32 i = 0; i < PD_ENTRIES; i++) {
+    for (u32 i = USER_PD_FIRST_INDEX; i < USER_PD_LIMIT_INDEX; i++) {
         /* Skip entries shared from the kernel PD. */
         if (pd_virt[i] == kernel_page_directory[i]) continue;
 

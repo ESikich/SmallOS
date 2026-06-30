@@ -13,8 +13,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEST_PACKAGES = ("tests.shell", "tests.elfs")
-TRANSCRIPT_LIMIT = 262144
-TRANSCRIPT_TRIM = 131072
+TRANSCRIPT_LIMIT = 16 * 1024 * 1024
+TRANSCRIPT_TRIM = 12 * 1024 * 1024
 STATUS_WIDTH = 38
 BOOT_SPLASH_MARKERS = (
     "SmallOS boot diagnostics",

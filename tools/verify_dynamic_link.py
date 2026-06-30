@@ -281,6 +281,27 @@ def check_executable(errors, path, expected_interp):
         fail(errors, str(exc))
 
 
+def check_pie_executable(errors, path, expected_interp):
+    try:
+        elf = Elf32(path)
+        if elf.e_type != ET_DYN:
+            fail(errors, f"{path}: expected ET_DYN PIE executable")
+        interp = elf.interp()
+        if interp != expected_interp:
+            fail(errors, f"{path}: expected PT_INTERP={expected_interp}, got {interp!r}")
+        if not elf.has_dynamic_segment():
+            fail(errors, f"{path}: missing PT_DYNAMIC")
+        load_vaddrs = [ph["vaddr"] for ph in elf.phdrs if ph["type"] == 1]
+        if not load_vaddrs or min(load_vaddrs) != 0:
+            fail(errors, f"{path}: PIE executable is not linked as a base-zero ET_DYN image")
+        if any(ph["vaddr"] == 0x00400000 for ph in elf.phdrs if ph["type"] == 1):
+            fail(errors, f"{path}: PIE executable still has fixed 0x400000 load placement")
+        check_relocs(errors, elf)
+        check_dynamic_paths(errors, elf)
+    except (OSError, ElfError) as exc:
+        fail(errors, str(exc))
+
+
 def check_shared(errors, path):
     try:
         elf = Elf32(path)
@@ -323,6 +344,7 @@ def main():
     parser.add_argument("--libc", required=True)
     parser.add_argument("--loader", required=True)
     parser.add_argument("--shared", action="append", default=[])
+    parser.add_argument("--pie", action="append", default=[])
     parser.add_argument("executables", nargs="+")
     args = parser.parse_args()
 
@@ -340,13 +362,18 @@ def main():
             fail(errors, f"{shared}: missing shared object")
         else:
             check_shared(errors, shared)
+    for pie in args.pie:
+        if not os.path.exists(pie):
+            fail(errors, f"{pie}: missing PIE executable")
+        else:
+            check_pie_executable(errors, pie, args.interp)
     for exe in args.executables:
         check_executable(errors, exe, args.interp)
 
     if errors:
         print(f"dynamic-link-check: FAIL ({len(errors)} issue(s))", file=sys.stderr)
         return 1
-    print(f"dynamic-link-check: PASS ({len(args.executables)} executables)")
+    print(f"dynamic-link-check: PASS ({len(args.executables) + len(args.pie)} executables)")
     return 0
 
 

@@ -37,14 +37,15 @@
 /*
  * Canonical virtual addresses for user processes.
  *
- * Every user ELF is linked at USER_CODE_BASE regardless of which process
- * is running. The process page directory maps that virtual address to the
- * physical pages allocated for this specific ELF.
+ * Fixed-address user ELFs are linked at USER_CODE_BASE. Interpreted ET_DYN
+ * main executables are loaded at USER_PIE_BASE while the dynamic loader and
+ * DSO mmap arena remain below USER_INTERP_BASE.
  *
  * USER_STACK_TOP is the top of the user stack page. The stack grows down
  * from there.
  */
 #define USER_CODE_BASE  0x400000u
+#define USER_PIE_BASE   0x01000000u
 #define USER_MMAP_BASE  0x04000000u
 #define USER_INTERP_BASE 0x08000000u
 #define USER_HEAP_BASE  0x10000000u
@@ -111,10 +112,10 @@ u32* paging_get_kernel_pd(void);
  * Allocation is from pmm_alloc_frame() so that process_pd_destroy() can
  * free the directory itself on exit (no heap leak per user program launch).
  *
- * The kernel's identity-mapped entries (PD indices 0 and 2–1023) are
- * copied in so that kernel code, heap, and VGA remain accessible
- * after switching CR3. PD index 1 (0x400000–0x7FFFFF) is left empty so
- * the process gets a private mapping there for its ELF.
+ * Kernel mappings outside [USER_CODE_BASE, USER_STACK_TOP) are copied so
+ * kernel code, heap, VGA/framebuffer aliases, and high device mappings remain
+ * accessible after switching CR3. User-space PDEs are left empty so each
+ * process owns its fixed ELF, PIE, mmap/DSO, heap, display, and stack mappings.
  *
  * Returns the physical frame address of the new page directory cast to u32*.
  * The value is suitable for CR3/page-table storage; translate before direct

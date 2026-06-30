@@ -1446,13 +1446,16 @@ void sh_selftest(void) {
     sh_selftest_exec("preempt_test", "usr/libexec/tests/preempt_test alpha beta");
     sh_selftest_exec("crtprobe", "usr/libexec/tests/crtprobe alpha nested/path longish-argument-0123456789abcdef");
     sh_selftest_exec_expect("dynhello", "usr/libexec/tests/dynhello alpha beta", 0);
+    sh_selftest_exec_expect("piehello", "usr/libexec/tests/piehello alpha beta", 0);
     sh_selftest_exec_expect("dyncrtprobe", "usr/libexec/tests/dyncrtprobe alpha nested/path longish-argument-0123456789abcdef", 7);
+    sh_selftest_exec_expect("piecrtprobe", "usr/libexec/tests/piecrtprobe alpha nested/path longish-argument-0123456789abcdef", 7);
     sh_selftest_exec_expect("dynmathprobe", "usr/libexec/tests/dynmathprobe", 0);
     sh_selftest_exec_expect("dynstdioprobe", "usr/libexec/tests/dynstdioprobe", 0);
     sh_selftest_exec_expect("dynlinkprobe", "usr/libexec/tests/dynlinkprobe", 0);
     sh_selftest_exec_expect("dynpathprobe", "usr/libexec/tests/dynpathprobe", 0);
     sh_selftest_exec_expect("dynfiniprobe", "usr/libexec/tests/dynfiniprobe", 0);
     sh_selftest_exec_expect("dlopenprobe", "usr/libexec/tests/dlopenprobe", 0);
+    sh_selftest_exec_expect("piedlopenprobe", "usr/libexec/tests/piedlopenprobe", 0);
     sh_selftest_exec_expect("pluginhost", "usr/libexec/tests/pluginhost", 0);
     sh_selftest_exec("inputprobe", "usr/libexec/tests/inputprobe alpha beta");
     sh_selftest_exec("pipeprobe", "usr/libexec/tests/pipeprobe");

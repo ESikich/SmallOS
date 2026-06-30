@@ -575,9 +575,11 @@ freestanding tests; new hosted-ish programs should prefer
 ## Dynamic Executable Handoff
 
 When an executable has no `PT_INTERP`, the kernel follows the static path and
-enters the program directly. When `PT_INTERP` names `/lib/ld-smallos.so`, the
-kernel maps the main executable, maps the interpreter, builds the normal
-argv/envp stack plus a small auxv, and enters the interpreter instead.
+enters the program directly. Non-interpreted `ET_DYN` images are rejected for
+now. When `PT_INTERP` names `/lib/ld-smallos.so`, the kernel maps a legacy
+`ET_EXEC` main executable at its fixed address or a PIE `ET_DYN` main
+executable at deterministic `USER_PIE_BASE`, maps the interpreter, builds the
+normal argv/envp stack plus a small auxv, and enters the interpreter instead.
 
 The auxv contract currently includes:
 
@@ -593,6 +595,8 @@ AT_PAGESZ user page size
 `ld-smallos.so` is a base-zero `ET_DYN` interpreter mapped by the kernel at
 `AT_BASE` (currently `USER_INTERP_BASE`). Its assembly bootstrap applies only
 its own `R_386_RELATIVE` self-relocations, then enters the C loader. The loader
+derives the main executable load bias from `AT_PHDR` and `PT_PHDR`, so both
+fixed `ET_EXEC` and PIE `ET_DYN` main programs use the same relocation path. It
 opens absolute `DT_NEEDED` paths directly, then searches the requesting
 object's absolute-only `DT_RUNPATH` or `DT_RPATH`, then `/lib`. It maps
 eligible page-aligned read-only `PT_LOAD` pages through the shared read-only
