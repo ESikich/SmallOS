@@ -9,6 +9,8 @@ struct winsize {
 };
 
 #define TIOCGWINSZ 0x5413
+#define TIOCGPGRP  0x540F
+#define TIOCSPGRP  0x5410
 
 int ioctl(int fd, unsigned long request, ...);
 

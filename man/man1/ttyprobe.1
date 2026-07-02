@@ -1,0 +1,12 @@
+.TH TTYPROBE 1
+.SH NAME
+ttyprobe \- exercise terminal attribute and ioctl behavior
+.SH SYNOPSIS
+.B ttyprobe
+.SH DESCRIPTION
+.B ttyprobe
+is a guest regression probe for kernel-backed terminal state. It opens a
+pseudo-terminal and checks default termios flags, echo control, raw reads,
+Ctrl-C data delivery when ISIG is disabled, Ctrl-D EOF handling, window-size
+ioctl behavior, foreground process-group ioctls, and ENOTTY failures on
+non-terminal descriptors.

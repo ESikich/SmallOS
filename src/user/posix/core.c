@@ -1030,15 +1030,9 @@ int truncate(const char* path, off_t length) {
 }
 
 int isatty(int fd) {
-    uint32_t rows = 0;
-    uint32_t cols = 0;
+    struct termios tio;
 
-    if (fd < 0 || fd > 2) {
-        set_errno(ENOTTY);
-        return 0;
-    }
-    if (sys_terminal_size(&rows, &cols) < 0 || rows == 0 || cols == 0) {
-        set_errno(ENOTTY);
+    if (errno_from_raw(sys_tcgetattr(fd, (sys_termios_t*)&tio)) < 0) {
         return 0;
     }
     return 1;
@@ -1052,24 +1046,8 @@ int ioctl(int fd, unsigned long request, ...) {
     arg = __builtin_va_arg(ap, void*);
     __builtin_va_end(ap);
 
-    if (request == TIOCGWINSZ) {
-        struct winsize* ws = (struct winsize*)arg;
-        uint32_t rows = 0;
-        uint32_t cols = 0;
-
-        if (!ws) {
-            set_errno(EFAULT);
-            return -1;
-        }
-        if (fd < 0 || fd > 2 || sys_terminal_size(&rows, &cols) < 0 ||
-            rows == 0 || cols == 0) {
-            set_errno(ENOTTY);
-            return -1;
-        }
-        memset(ws, 0, sizeof(*ws));
-        ws->ws_row = (unsigned short)rows;
-        ws->ws_col = (unsigned short)cols;
-        return 0;
+    if (request == TIOCGWINSZ || request == TIOCGPGRP || request == TIOCSPGRP) {
+        return errno_from_raw(sys_tty_ioctl(fd, (uint32_t)request, arg));
     }
 
     set_errno(ENOTTY);
@@ -1998,27 +1976,20 @@ int tcgetattr(int fd, struct termios* termios_p) {
         set_errno(EFAULT);
         return -1;
     }
-    if (!isatty(fd)) {
-        set_errno(ENOTTY);
-        return -1;
-    }
-    memset(termios_p, 0, sizeof(*termios_p));
-    termios_p->c_lflag = ECHO | ICANON | ISIG;
-    termios_p->c_oflag = OPOST;
-    return 0;
+    return errno_from_raw(sys_tcgetattr(fd, (sys_termios_t*)termios_p));
 }
 
 int tcsetattr(int fd, int optional_actions, const struct termios* termios_p) {
-    (void)optional_actions;
     if (!termios_p) {
         set_errno(EFAULT);
         return -1;
     }
-    if (!isatty(fd)) {
-        set_errno(ENOTTY);
+    if (optional_actions != TCSANOW && optional_actions != TCSADRAIN &&
+        optional_actions != TCSAFLUSH) {
+        set_errno(EINVAL);
         return -1;
     }
-    return 0;
+    return errno_from_raw(sys_tcsetattr(fd, (const sys_termios_t*)termios_p));
 }
 
 int tcflush(int fd, int queue_selector) {

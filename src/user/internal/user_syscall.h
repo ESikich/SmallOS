@@ -733,6 +733,18 @@ static inline int sys_pty_set_size(int fd, uint32_t rows, uint32_t cols) {
     return syscall3(SYS_PTY_SET_SIZE, (uint32_t)fd, rows, cols);
 }
 
+static inline int sys_tcgetattr(int fd, sys_termios_t* termios_p) {
+    return syscall2(SYS_TCGETATTR, (uint32_t)fd, (uint32_t)termios_p);
+}
+
+static inline int sys_tcsetattr(int fd, const sys_termios_t* termios_p) {
+    return syscall2(SYS_TCSETATTR, (uint32_t)fd, (uint32_t)termios_p);
+}
+
+static inline int sys_tty_ioctl(int fd, uint32_t request, void* arg) {
+    return syscall3(SYS_TTY_IOCTL, (uint32_t)fd, request, (uint32_t)arg);
+}
+
 static inline int sys_dup(int oldfd) {
     return syscall1(SYS_DUP, (uint32_t)oldfd);
 }

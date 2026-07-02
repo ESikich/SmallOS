@@ -1240,6 +1240,19 @@ Updates the terminal dimensions associated with a PTY master or slave. Programs
 that call `SYS_TERMINAL_SIZE` through the PTY slave observe these rows and
 columns.
 
+### Terminal Attribute and Ioctl Syscalls (129-131)
+
+```c
+int sys_tcgetattr(int fd, sys_termios_t* out);
+int sys_tcsetattr(int fd, const sys_termios_t* in);
+int sys_tty_ioctl(int fd, uint32_t request, void* arg);
+```
+
+Terminal attributes live in kernel terminal state. PTYs carry their own
+termios data and console-like descriptors use a default console terminal
+state. `sys_tty_ioctl` currently supports `TIOCGWINSZ`, `TIOCGPGRP`, and
+`TIOCSPGRP`; non-terminal descriptors fail with `-ENOTTY`.
+
 ### SYS_USB_MOUSE_OP (87)
 
 ```c
@@ -1880,6 +1893,9 @@ sys_block_read_sector(lba, buf)
 sys_exec_foreground(name, argc, argv)
 sys_pty_open(fds, master_flags)
 sys_pty_set_size(fd, rows, cols)
+sys_tcgetattr(fd, out)
+sys_tcsetattr(fd, in)
+sys_tty_ioctl(fd, request, arg)
 sys_stat_full(path, out_info)
 sys_fstat_full(fd, out_info)
 sys_sound_op(op, arg1, arg2)

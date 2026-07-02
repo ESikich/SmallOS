@@ -291,7 +291,7 @@ The runtime provides a small POSIX-shaped surface:
 - `getcwd`, `chdir`
 - `getpid`, `fork`, `execve`, `execv`, `execvp`, `waitpid`, `kill`
 - `getuid`, `geteuid`, `getgid`, `getegid`, `setuid`, `setgid`, and `umask`
-- `sysinfo`, `times`, `uname`, `ioctl`, and termios-shaped stubs
+- `sysinfo`, `times`, `uname`, `ioctl`, and kernel-backed termios wrappers
 - `popen` / `pclose` and `mntent` helpers for compatibility-oriented ports
 - `system`, implemented through `shell -c command`
 - `environ`, `getenv`, and `main(argc, argv, envp)` through `crt/crt0.c`
@@ -479,8 +479,10 @@ interfaces, not complete Linux procfs or devfs implementations.
 
 These nodes are intentionally narrow. They support the common reads, writes,
 stats, and directory listings needed by tools such as `cat`, `ps`, `free`,
-`df`, shell redirection, and compatibility probes, while real mount tables,
-procfs write knobs, authentication devices, and full terminal ioctls remain out
+`df`, shell redirection, and compatibility probes. The terminal layer now
+supports fd-backed `tcgetattr`, `tcsetattr`, `TIOCGWINSZ`, `TIOCSPGRP`, and
+`TIOCGPGRP` for console/PTY descriptors, while real mount tables, procfs write
+knobs, authentication devices, and full shell job-control semantics remain out
 of scope for now.
 
 ---
@@ -566,6 +568,8 @@ Runtime coverage currently lives in guest ELF probes:
   non-root access denial
 - `atprobe` - directory-fd `*at()` syscalls, absolute path override,
   non-directory base errors, and no-follow symlink stat/timestamp behavior
+- `ttyprobe` - kernel-backed termios state, PTY echo/raw/EOF behavior,
+  foreground process-group ioctls, and non-terminal `ENOTTY` failures
 - `stdioprobe` - EOF/error state, `clearerr`, `fflush`, invalid stdio ops
 - `dirprobe` - root and nested directory iteration, EOF, invalid/missing dirs
 - `errnoprobe` - wrapper `errno` behavior

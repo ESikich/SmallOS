@@ -54,6 +54,9 @@
 #define SYS_AT_SYMLINK_NOFOLLOW 0x100u
 #define SYS_AT_REMOVEDIR      0x200u
 #define SYS_AT_SYMLINK_FOLLOW 0x400u
+#define SYS_IOCTL_TIOCGPGRP   0x540Fu
+#define SYS_IOCTL_TIOCSPGRP   0x5410u
+#define SYS_IOCTL_TIOCGWINSZ  0x5413u
 
 static unsigned char s_sys_block_sector[512] __attribute__((aligned(16)));
 static volatile int s_sys_block_sector_locked = 0;
@@ -3754,6 +3757,86 @@ static int sys_terminal_size_impl(unsigned int* out_rows, unsigned int* out_cols
     return 0;
 }
 
+static int sys_tcgetattr_impl(int fd, sys_termios_t* out) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+    sys_termios_t ktio;
+    int rc;
+
+    if (!out) return -EFAULT;
+    if (!user_buf_ok((unsigned int)out, sizeof(*out))) return -EFAULT;
+    if (!proc) return -EINVAL;
+    ent = process_fd_get(proc, fd);
+    if (!ent) return -EBADF;
+    rc = process_fd_terminal_getattr(ent, &ktio);
+    if (rc < 0) return rc;
+    if (copy_to_user(out, &ktio, sizeof(ktio)) < 0) return -EFAULT;
+    return 0;
+}
+
+static int sys_tcsetattr_impl(int fd, const sys_termios_t* in) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+    sys_termios_t ktio;
+
+    if (!in) return -EFAULT;
+    if (!user_buf_ok((unsigned int)in, sizeof(*in))) return -EFAULT;
+    if (!proc) return -EINVAL;
+    ent = process_fd_get(proc, fd);
+    if (!ent) return -EBADF;
+    if (copy_from_user(&ktio, in, sizeof(ktio)) < 0) return -EFAULT;
+    return process_fd_terminal_setattr(ent, &ktio);
+}
+
+static int sys_tty_ioctl_impl(int fd, unsigned int request, void* arg) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+
+    if (!proc) return -EINVAL;
+    ent = process_fd_get(proc, fd);
+    if (!ent) return -EBADF;
+    if (!process_fd_is_terminal(ent)) return -ENOTTY;
+
+    if (request == SYS_IOCTL_TIOCGWINSZ) {
+        sys_winsize_t ws;
+        unsigned int rows = 0;
+        unsigned int cols = 0;
+        int rc;
+
+        if (!arg || !user_buf_ok((unsigned int)arg, sizeof(ws))) return -EFAULT;
+        rc = process_fd_terminal_size(ent, &rows, &cols);
+        if (rc < 0) return rc;
+        k_memset(&ws, 0, sizeof(ws));
+        ws.ws_row = (unsigned short)rows;
+        ws.ws_col = (unsigned short)cols;
+        if (copy_to_user(arg, &ws, sizeof(ws)) < 0) return -EFAULT;
+        return 0;
+    }
+
+    if (request == SYS_IOCTL_TIOCGPGRP) {
+        u32 pgid = 0;
+        int rc;
+
+        if (!arg || !user_buf_ok((unsigned int)arg, sizeof(int))) return -EFAULT;
+        rc = process_fd_terminal_get_pgrp(ent, proc->pgid, &pgid);
+        if (rc < 0) return rc;
+        if (copy_to_user(arg, &pgid, sizeof(int)) < 0) return -EFAULT;
+        return 0;
+    }
+
+    if (request == SYS_IOCTL_TIOCSPGRP) {
+        u32 pgid = 0;
+        int rc;
+
+        if (!arg || !user_buf_ok((unsigned int)arg, sizeof(int))) return -EFAULT;
+        if (copy_from_user(&pgid, arg, sizeof(int)) < 0) return -EFAULT;
+        rc = process_fd_terminal_set_pgrp(ent, pgid);
+        return rc;
+    }
+
+    return -ENOTTY;
+}
+
 static int sys_display_info_impl(sys_display_info_t* out_info) {
     display_info_t info;
 
@@ -4859,6 +4942,22 @@ void syscall_handler_main(syscall_regs_t* regs) {
             regs->eax = (unsigned int)sys_pty_set_size_impl((int)regs->ebx,
                                                             regs->ecx,
                                                             regs->edx);
+            break;
+
+        case SYS_TCGETATTR:
+            regs->eax = (unsigned int)sys_tcgetattr_impl((int)regs->ebx,
+                                                         (sys_termios_t*)regs->ecx);
+            break;
+
+        case SYS_TCSETATTR:
+            regs->eax = (unsigned int)sys_tcsetattr_impl((int)regs->ebx,
+                                                         (const sys_termios_t*)regs->ecx);
+            break;
+
+        case SYS_TTY_IOCTL:
+            regs->eax = (unsigned int)sys_tty_ioctl_impl((int)regs->ebx,
+                                                         regs->ecx,
+                                                         (void*)regs->edx);
             break;
 
         case SYS_STAT_FULL:

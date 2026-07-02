@@ -2,6 +2,7 @@
 #define PROCESS_H
 
 #include "paging.h"
+#include "uapi_syscall.h"
 
 /* ------------------------------------------------------------------ */
 /* Process state                                                      */
@@ -189,6 +190,11 @@ int        process_fd_pty_set_size(fd_entry_t* ent, unsigned int rows, unsigned 
 int        process_fd_terminal_size(fd_entry_t* ent, unsigned int* out_rows, unsigned int* out_cols);
 int        process_fd_pty_set_foreground(fd_entry_t* ent, u32 pgid);
 u32        process_fd_pty_get_foreground(fd_entry_t* ent);
+int        process_fd_is_terminal(fd_entry_t* ent);
+int        process_fd_terminal_getattr(fd_entry_t* ent, sys_termios_t* out);
+int        process_fd_terminal_setattr(fd_entry_t* ent, const sys_termios_t* in);
+int        process_fd_terminal_get_pgrp(fd_entry_t* ent, u32 fallback_pgid, u32* out_pgid);
+int        process_fd_terminal_set_pgrp(fd_entry_t* ent, u32 pgid);
 int        process_fd_dup(process_t* proc, int oldfd, int minfd, unsigned int fd_flags);
 int        process_fd_dup2(process_t* proc, int oldfd, int newfd, unsigned int fd_flags, int reject_same);
 int        process_fd_dup_from(process_t* dst, int newfd, process_t* src, int oldfd, unsigned int fd_flags);

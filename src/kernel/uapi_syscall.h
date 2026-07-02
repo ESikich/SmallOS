@@ -282,6 +282,23 @@ typedef struct sys_stat_info {
     unsigned int is_dir;
 } sys_stat_info_t;
 
+#define SYS_NCCS 32
+
+typedef struct sys_termios {
+    unsigned int c_iflag;
+    unsigned int c_oflag;
+    unsigned int c_cflag;
+    unsigned int c_lflag;
+    unsigned char c_cc[SYS_NCCS];
+} sys_termios_t;
+
+typedef struct sys_winsize {
+    unsigned short ws_row;
+    unsigned short ws_col;
+    unsigned short ws_xpixel;
+    unsigned short ws_ypixel;
+} sys_winsize_t;
+
 enum {
     SYS_WRITE     = 1,
     SYS_EXIT      = 2,
@@ -420,7 +437,10 @@ enum {
     SYS_LINKAT          = 125, /* dirfd-relative hard link */
     SYS_SYMLINKAT       = 126, /* dirfd-relative symlink */
     SYS_READLINKAT      = 127, /* dirfd-relative readlink */
-    SYS_UTIMENSAT       = 128  /* dirfd-relative utimens */
+    SYS_UTIMENSAT       = 128, /* dirfd-relative utimens */
+    SYS_TCGETATTR       = 129, /* copy terminal attributes for fd */
+    SYS_TCSETATTR       = 130, /* update terminal attributes for fd */
+    SYS_TTY_IOCTL       = 131  /* terminal ioctl by fd */
 };
 
 #endif

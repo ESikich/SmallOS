@@ -39,6 +39,16 @@ static volatile int s_detach_allowed = 0;
 #define PROCESS_SIGPIPE 13
 #define PROCESS_SIGTERM 15
 
+#define TERM_VINTR  0
+#define TERM_VERASE 2
+#define TERM_VEOF   4
+#define TERM_VTIME  5
+#define TERM_VMIN   6
+#define TERM_LFLAG_ISIG   0000001u
+#define TERM_LFLAG_ICANON 0000002u
+#define TERM_LFLAG_ECHO   0000010u
+#define TERM_OFLAG_OPOST  0000001u
+
 typedef struct special_wait_object {
     wait_queue_t read_waiters;
     unsigned int signal_mask;
@@ -75,6 +85,7 @@ typedef struct pty_object {
     unsigned int rows;
     unsigned int cols;
     u32 foreground_pgid;
+    sys_termios_t termios;
 } pty_object_t;
 
 typedef struct virtual_object {
@@ -108,6 +119,29 @@ static int process_group_force_exit(u32 pgid,
                                     int status,
                                     process_t* defer_current,
                                     int mark_terminal_interrupt);
+
+static sys_termios_t s_console_termios;
+static int s_console_termios_init = 0;
+
+static void terminal_attr_init_default(sys_termios_t* tio) {
+    if (!tio) return;
+    k_memset(tio, 0, sizeof(*tio));
+    tio->c_lflag = TERM_LFLAG_ECHO | TERM_LFLAG_ICANON | TERM_LFLAG_ISIG;
+    tio->c_oflag = TERM_OFLAG_OPOST;
+    tio->c_cc[TERM_VINTR] = 3u;
+    tio->c_cc[TERM_VERASE] = 8u;
+    tio->c_cc[TERM_VEOF] = 4u;
+    tio->c_cc[TERM_VMIN] = 1u;
+    tio->c_cc[TERM_VTIME] = 0u;
+}
+
+static sys_termios_t* console_termios(void) {
+    if (!s_console_termios_init) {
+        terminal_attr_init_default(&s_console_termios);
+        s_console_termios_init = 1;
+    }
+    return &s_console_termios;
+}
 
 static int process_registry_add(process_t* proc) {
     if (!proc) return 0;
@@ -236,10 +270,12 @@ static void process_key_consumer(key_event_t ev) {
     if (ev.ctrl && ev.key == KEY_C) {
         u32 pgid = s_foreground_pgid;
         int defaulted;
+        sys_termios_t* tio = console_termios();
 
-        if (s_raw_console_reader && s_raw_console_reader == s_foreground_reader) {
+        if ((tio->c_lflag & TERM_LFLAG_ISIG) == 0u ||
+            (s_raw_console_reader && s_raw_console_reader == s_foreground_reader)) {
             process_t* waiter;
-            keyboard_buf_push_char(3);
+            keyboard_buf_push_char((char)(tio->c_cc[TERM_VINTR] ? tio->c_cc[TERM_VINTR] : 3u));
             waiter = (process_t*)keyboard_get_waiting_process();
             if (waiter && waiter->state == PROCESS_STATE_WAITING) {
                 waiter->state = PROCESS_STATE_RUNNING;
@@ -718,6 +754,11 @@ static virtual_object_t* virtual_object_from_ent(fd_entry_t* ent) {
     return (virtual_object_t*)paging_phys_to_kernel_virt(ent->aux_frame);
 }
 
+static int virtual_entry_is_tty(fd_entry_t* ent) {
+    virtual_object_t* obj = virtual_object_from_ent(ent);
+    return obj && obj->type == PROCESS_VIRTUAL_TTY;
+}
+
 int process_fd_open_virtual(process_t* proc,
                             const char* name,
                             unsigned int type,
@@ -960,6 +1001,7 @@ int process_fd_pty(process_t* proc, int fds[2], unsigned int master_flags) {
     pty->slave_refs = 1;
     pty->rows = 25;
     pty->cols = 80;
+    terminal_attr_init_default(&pty->termios);
 
     master_fd = process_fd_alloc_entry(proc, &master_ent);
     if (master_fd < 0) {
@@ -1015,9 +1057,52 @@ int process_fd_pty_set_size(fd_entry_t* ent, unsigned int rows, unsigned int col
 
 int process_fd_terminal_size(fd_entry_t* ent, unsigned int* out_rows, unsigned int* out_cols) {
     pty_object_t* pty = pty_object_from_ent(ent);
-    if (!pty || !out_rows || !out_cols) return -ENOTTY;
-    *out_rows = pty->rows ? pty->rows : 25u;
-    *out_cols = pty->cols ? pty->cols : 80u;
+    if (!out_rows || !out_cols) return -EFAULT;
+    if (pty) {
+        *out_rows = pty->rows ? pty->rows : 25u;
+        *out_cols = pty->cols ? pty->cols : 80u;
+        return 0;
+    }
+    if (!ent || !ent->valid) return -ENOTTY;
+    if (ent->kind == PROCESS_HANDLE_KIND_CONSOLE || virtual_entry_is_tty(ent)) {
+        *out_rows = (unsigned int)terminal_rows();
+        *out_cols = (unsigned int)terminal_cols();
+        return 0;
+    }
+    return -ENOTTY;
+}
+
+int process_fd_is_terminal(fd_entry_t* ent) {
+    if (!ent || !ent->valid) return 0;
+    if (ent->kind == PROCESS_HANDLE_KIND_CONSOLE) return 1;
+    if (ent->kind == PROCESS_HANDLE_KIND_PTY_MASTER ||
+        ent->kind == PROCESS_HANDLE_KIND_PTY_SLAVE) return 1;
+    return virtual_entry_is_tty(ent);
+}
+
+int process_fd_terminal_getattr(fd_entry_t* ent, sys_termios_t* out) {
+    pty_object_t* pty;
+    if (!out) return -EFAULT;
+    if (!process_fd_is_terminal(ent)) return -ENOTTY;
+    pty = pty_object_from_ent(ent);
+    if (pty) {
+        k_memcpy(out, &pty->termios, sizeof(*out));
+    } else {
+        k_memcpy(out, console_termios(), sizeof(*out));
+    }
+    return 0;
+}
+
+int process_fd_terminal_setattr(fd_entry_t* ent, const sys_termios_t* in) {
+    pty_object_t* pty;
+    if (!in) return -EFAULT;
+    if (!process_fd_is_terminal(ent)) return -ENOTTY;
+    pty = pty_object_from_ent(ent);
+    if (pty) {
+        k_memcpy(&pty->termios, in, sizeof(*in));
+    } else {
+        k_memcpy(console_termios(), in, sizeof(*in));
+    }
     return 0;
 }
 
@@ -1031,6 +1116,28 @@ int process_fd_pty_set_foreground(fd_entry_t* ent, u32 pgid) {
 u32 process_fd_pty_get_foreground(fd_entry_t* ent) {
     pty_object_t* pty = pty_object_from_ent(ent);
     return pty ? pty->foreground_pgid : 0u;
+}
+
+int process_fd_terminal_get_pgrp(fd_entry_t* ent, u32 fallback_pgid, u32* out_pgid) {
+    pty_object_t* pty;
+    if (!out_pgid) return -EFAULT;
+    if (!process_fd_is_terminal(ent)) return -ENOTTY;
+    pty = pty_object_from_ent(ent);
+    *out_pgid = pty && pty->foreground_pgid ? pty->foreground_pgid : fallback_pgid;
+    return 0;
+}
+
+int process_fd_terminal_set_pgrp(fd_entry_t* ent, u32 pgid) {
+    pty_object_t* pty;
+    if (pgid == 0u) return -EINVAL;
+    if (!process_fd_is_terminal(ent)) return -ENOTTY;
+    pty = pty_object_from_ent(ent);
+    if (pty) {
+        pty->foreground_pgid = pgid;
+    } else {
+        s_foreground_pgid = pgid;
+    }
+    return 0;
 }
 
 int process_fd_dup(process_t* proc, int oldfd, int minfd, unsigned int fd_flags) {
@@ -1294,6 +1401,9 @@ static short process_handle_socket_poll(fd_entry_t* ent, short events) {
 
 static int process_handle_console_read_common(fd_entry_t* ent, char* buf, unsigned int len, int echo) {
     process_t* proc = sched_current();
+    sys_termios_t* tio = console_termios();
+    int canonical = echo && ((tio->c_lflag & TERM_LFLAG_ICANON) != 0u);
+    int do_echo = echo && ((tio->c_lflag & TERM_LFLAG_ECHO) != 0u);
     unsigned int n = 0;
 
     if (!ent || !ent->valid || !ent->readable) return -EBADF;
@@ -1316,11 +1426,22 @@ static int process_handle_console_read_common(fd_entry_t* ent, char* buf, unsign
 
         char c = keyboard_buf_pop();
         if (s_raw_console_reader == proc) s_raw_console_reader = 0;
-        if (echo) {
+        if (canonical && (unsigned char)c == tio->c_cc[TERM_VEOF]) {
+            if (n == 0u) {
+                __asm__ volatile ("cli");
+                return 0;
+            }
+            break;
+        }
+        if (do_echo) {
             terminal_putc(c);
         }
         buf[n++] = c;
-        if (c == '\n') break;
+        if (canonical) {
+            if (c == '\n') break;
+        } else {
+            break;
+        }
     }
 
     __asm__ volatile ("cli");
@@ -1689,12 +1810,22 @@ static int process_handle_pty_read_common(fd_entry_t* ent,
     out = &pty->slave_to_master;
     while (done < len) {
         int rc = pty_buffer_read(in, &buf[done], 1u, &pty->master_refs, ent->flags);
+        int canonical = echo && ((pty->termios.c_lflag & TERM_LFLAG_ICANON) != 0u);
+        int do_echo = echo && ((pty->termios.c_lflag & TERM_LFLAG_ECHO) != 0u);
         if (rc <= 0) return done ? (int)done : rc;
-        if (echo) {
+        if (canonical && (unsigned char)buf[done] == pty->termios.c_cc[TERM_VEOF]) {
+            if (done == 0u) return 0;
+            break;
+        }
+        if (do_echo) {
             (void)pty_buffer_write(out, &buf[done], 1u, &pty->master_refs, 0);
         }
         done++;
-        if (buf[done - 1] == '\n') break;
+        if (canonical) {
+            if (buf[done - 1] == '\n') break;
+        } else {
+            break;
+        }
     }
     return (int)done;
 }
@@ -1717,17 +1848,24 @@ static int process_handle_pty_write(fd_entry_t* ent, const char* buf, unsigned i
             u32 interrupt_pgid = pty->foreground_pgid
                                ? pty->foreground_pgid
                                : s_foreground_pgid;
-            if ((unsigned char)buf[i] == 3u && interrupt_pgid != 0u) {
+            unsigned char vintr = pty->termios.c_cc[TERM_VINTR]
+                                ? pty->termios.c_cc[TERM_VINTR]
+                                : 3u;
+            if ((pty->termios.c_lflag & TERM_LFLAG_ISIG) != 0u &&
+                (unsigned char)buf[i] == vintr &&
+                interrupt_pgid != 0u) {
                 char interrupt_text[] = "^C\n";
                 if (!process_group_signal_deliver(interrupt_pgid, PROCESS_SIGINT)) {
                     (void)process_group_kill(interrupt_pgid,
                                              PROCESS_TERMINATED_BY_CTRL_C);
                 }
-                (void)pty_buffer_write(&pty->slave_to_master,
-                                       interrupt_text,
-                                       sizeof(interrupt_text) - 1u,
-                                       &pty->master_refs,
-                                       0);
+                if ((pty->termios.c_lflag & TERM_LFLAG_ECHO) != 0u) {
+                    (void)pty_buffer_write(&pty->slave_to_master,
+                                           interrupt_text,
+                                           sizeof(interrupt_text) - 1u,
+                                           &pty->master_refs,
+                                           0);
+                }
                 if (i > 0) {
                     return (int)i;
                 }

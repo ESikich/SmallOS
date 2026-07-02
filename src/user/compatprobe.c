@@ -57,13 +57,19 @@ static void probe_fnmatch(void) {
 
 static void probe_terminal(void) {
     struct winsize ws;
+    int nullfd;
 
     check("isatty stdout", isatty(STDOUT_FILENO) == 1);
     memset(&ws, 0, sizeof(ws));
     check("ioctl winsize", ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 &&
                              ws.ws_row > 0 && ws.ws_col > 0);
-    errno = 0;
-    check("ioctl enotty", ioctl(99, TIOCGWINSZ, &ws) < 0 && errno == ENOTTY);
+    nullfd = open("/dev/null", O_RDONLY);
+    check("open null tty negative", nullfd >= 0);
+    if (nullfd >= 0) {
+        errno = 0;
+        check("ioctl enotty", ioctl(nullfd, TIOCGWINSZ, &ws) < 0 && errno == ENOTTY);
+        close(nullfd);
+    }
 }
 
 static void probe_metadata(void) {

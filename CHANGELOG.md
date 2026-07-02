@@ -57,6 +57,7 @@ wrappers in `src/user/posix`.
   * Added BusyBox/POSIX-facing ext2 metadata support: hard links, symbolic links, `readlink`, final-component `lstat`, symlink-aware traversal, `truncate`/`ftruncate`, chmod/chown/utimens-style updates, and stat-visible FIFO, character, block, and socket nodes.
   * Added kernel-owned process uid/gid/euid/egid and `umask`, enforced ext2 mode bits for path traversal/open/create/remove/link/exec/metadata paths, and added `usr/libexec/tests/permprobe` coverage for root/non-root permission behavior.
   * Added directory-fd `*at()` syscalls and wrappers for open/stat/unlink/mkdir/rename/link/symlink/readlink/utimens, plus `usr/libexec/tests/atprobe` coverage for relative dirfd resolution and no-follow symlink behavior.
+  * Added kernel-backed termios and terminal ioctl syscalls for console/PTY fds, including `tcgetattr`, `tcsetattr`, `TIOCGWINSZ`, `TIOCSPGRP`, `TIOCGPGRP`, PTY echo/raw/EOF behavior, and `usr/libexec/tests/ttyprobe` coverage.
   * Batched buffered file flushes into 64 KiB ext2 writes so large FTP uploads no longer fall off a 4 KiB-per-inode-update cliff when they grow past the VFS write cache.
   * Switched ext2 block I/O to single 8-sector ATA commands instead of issuing one ATA command per 512-byte sector.
   * Cached ext2 block/inode bitmaps in memory after the first read to avoid repeated bitmap rereads during block-heavy writes.
