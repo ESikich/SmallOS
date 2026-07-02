@@ -11,6 +11,7 @@
 #define O_NOCTTY 0x0100
 #define O_TRUNC  0x0200
 #define O_APPEND 0x0400
+#define O_DIRECTORY 0x10000
 #define O_NONBLOCK SYS_FD_FLAG_NONBLOCK
 #define O_CLOEXEC 0x00080000u
 #define O_BINARY 0
@@ -18,7 +19,9 @@
 #define FD_CLOEXEC SYS_FD_FLAG_CLOEXEC
 
 #define AT_FDCWD (-100)
+#define AT_REMOVEDIR 0x200
 #define AT_SYMLINK_NOFOLLOW 0x100
+#define AT_SYMLINK_FOLLOW 0x400
 
 #define F_DUPFD SYS_FCNTL_DUPFD
 #define F_GETFD SYS_FCNTL_GETFD
@@ -28,6 +31,7 @@
 #define F_DUPFD_CLOEXEC SYS_FCNTL_DUPFD_CLOEXEC
 
 int open(const char* path, int flags, ...);
+int openat(int dirfd, const char* path, int flags, ...);
 int creat(const char* path, unsigned mode);
 int fcntl(int fd, int cmd, ...);
 

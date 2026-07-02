@@ -220,6 +220,12 @@ static inline int sys_open_mode_create(const char* name, uint32_t mode, uint32_t
     return syscall3(SYS_OPEN_CREATE_MODE, (uint32_t)name, mode, create_mode);
 }
 
+static inline int sys_openat_mode_create(int dirfd, const char* name,
+                                         uint32_t mode, uint32_t create_mode) {
+    return syscall4(SYS_OPENAT_CREATE_MODE, (uint32_t)dirfd,
+                    (uint32_t)name, mode, create_mode);
+}
+
 static inline int sys_getcwd(char* buf, uint32_t size) {
     return syscall2(SYS_GETCWD, (uint32_t)buf, size);
 }
@@ -285,16 +291,37 @@ static inline int sys_unlink(const char* path) {
     return syscall1(SYS_UNLINK, (uint32_t)path);
 }
 
+static inline int sys_unlinkat(int dirfd, const char* path, uint32_t flags) {
+    return syscall3(SYS_UNLINKAT, (uint32_t)dirfd, (uint32_t)path, flags);
+}
+
 static inline int sys_link(const char* oldpath, const char* newpath) {
     return syscall2(SYS_LINK, (uint32_t)oldpath, (uint32_t)newpath);
+}
+
+static inline int sys_linkat(int olddirfd, const char* oldpath,
+                             int newdirfd, const char* newpath,
+                             uint32_t flags) {
+    return syscall6(SYS_LINKAT, (uint32_t)olddirfd, (uint32_t)oldpath,
+                    (uint32_t)newdirfd, (uint32_t)newpath, flags, 0);
 }
 
 static inline int sys_symlink(const char* target, const char* linkpath) {
     return syscall2(SYS_SYMLINK, (uint32_t)target, (uint32_t)linkpath);
 }
 
+static inline int sys_symlinkat(const char* target, int newdirfd, const char* linkpath) {
+    return syscall3(SYS_SYMLINKAT, (uint32_t)target, (uint32_t)newdirfd,
+                    (uint32_t)linkpath);
+}
+
 static inline int sys_readlink(const char* path, char* out, uint32_t out_size) {
     return syscall3(SYS_READLINK, (uint32_t)path, (uint32_t)out, out_size);
+}
+
+static inline int sys_readlinkat(int dirfd, const char* path, char* out, uint32_t out_size) {
+    return syscall4(SYS_READLINKAT, (uint32_t)dirfd, (uint32_t)path,
+                    (uint32_t)out, out_size);
 }
 
 /*
@@ -304,6 +331,12 @@ static inline int sys_readlink(const char* path, char* out, uint32_t out_size) {
  */
 static inline int sys_rename(const char* src, const char* dst) {
     return syscall2(SYS_RENAME, (uint32_t)src, (uint32_t)dst);
+}
+
+static inline int sys_renameat(int olddirfd, const char* oldpath,
+                               int newdirfd, const char* newpath) {
+    return syscall4(SYS_RENAMEAT, (uint32_t)olddirfd, (uint32_t)oldpath,
+                    (uint32_t)newdirfd, (uint32_t)newpath);
 }
 
 /*
@@ -325,6 +358,12 @@ static inline int sys_stat_full(const char* path, sys_stat_info_t* out) {
     return syscall2(SYS_STAT_FULL, (uint32_t)path, (uint32_t)out);
 }
 
+static inline int sys_fstatat_full(int dirfd, const char* path,
+                                   sys_stat_info_t* out, uint32_t flags) {
+    return syscall4(SYS_FSTATAT_FULL, (uint32_t)dirfd, (uint32_t)path,
+                    (uint32_t)out, flags);
+}
+
 static inline int sys_lstat_full(const char* path, sys_stat_info_t* out) {
     return syscall2(SYS_LSTAT_FULL, (uint32_t)path, (uint32_t)out);
 }
@@ -343,6 +382,15 @@ static inline int sys_chown(const char* path, uint32_t uid, uint32_t gid) {
 
 static inline int sys_utimens(const char* path, const void* times) {
     return syscall2(SYS_UTIMENS, (uint32_t)path, (uint32_t)times);
+}
+
+static inline int sys_utimensat(int dirfd, const char* path, const void* times, uint32_t flags) {
+    return syscall4(SYS_UTIMENSAT, (uint32_t)dirfd, (uint32_t)path,
+                    (uint32_t)times, flags);
+}
+
+static inline int sys_mkdirat(int dirfd, const char* path, uint32_t mode) {
+    return syscall3(SYS_MKDIRAT, (uint32_t)dirfd, (uint32_t)path, mode);
 }
 
 static inline int sys_mknod(const char* path, uint32_t mode, uint32_t dev) {

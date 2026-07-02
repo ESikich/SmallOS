@@ -257,6 +257,8 @@ The current ext2 driver is intentionally narrow.
 - nested-path file creation and overwrite via `ext2_write_path(path, ...)`
 - VFS-backed writable file handles with streaming ext2 writes via `SYS_OPEN_WRITE`, `SYS_WRITEFD`, `SYS_LSEEK`, and `SYS_FSYNC`
 - file removal and rename/move through `SYS_UNLINK` and `SYS_RENAME`
+- directory-fd filesystem operations through `openat`, `fstatat`, `unlinkat`,
+  `mkdirat`, `renameat`, `linkat`, `symlinkat`, `readlinkat`, and `utimensat`
 - fd-backed console handles for stdin/stdout/stderr
 - socket-backed handles for the current passive TCP stream path via `SYS_SOCKET`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_ACCEPT4`, `SYS_SEND`, `SYS_RECV`, `SYS_POLL`, `SYS_SETSOCKOPT`, `SYS_SHUTDOWN`, `SYS_GETSOCKNAME`, and `SYS_GETPEERNAME`
 - long, case-sensitive native ext2 names

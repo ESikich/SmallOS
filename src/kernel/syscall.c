@@ -50,6 +50,10 @@
 #define SYS_MAP_PRIVATE       0x02u
 #define SYS_MAP_FIXED         0x10u
 #define SYS_MAP_ANON          0x20u
+#define SYS_AT_FDCWD          (-100)
+#define SYS_AT_SYMLINK_NOFOLLOW 0x100u
+#define SYS_AT_REMOVEDIR      0x200u
+#define SYS_AT_SYMLINK_FOLLOW 0x400u
 
 static unsigned char s_sys_block_sector[512] __attribute__((aligned(16)));
 static volatile int s_sys_block_sector_locked = 0;
@@ -86,6 +90,9 @@ typedef struct syscall_iret_frame {
 } syscall_iret_frame_t;
 
 static int sys_close_impl(int fd);
+static int sys_utimens_kpath_impl(const char* kpath,
+                                  const struct user_timespec* times,
+                                  int nofollow);
 
 static int path_is_sep(char c) {
     return c == '/' || c == '\\';
@@ -324,6 +331,34 @@ static int copy_user_path_resolved(char* dst, unsigned int dst_size, const char*
     if (copied <= 1) return -EINVAL;
     if (!proc) return -EINVAL;
     if (!path_build_from(proc->cwd, raw, dst, dst_size)) return -ENAMETOOLONG;
+    return 1;
+}
+
+static int copy_user_path_at_resolved(char* dst,
+                                      unsigned int dst_size,
+                                      int dirfd,
+                                      const char* src) {
+    char raw[PROCESS_FD_NAME_MAX];
+    const char* base = 0;
+    process_t* proc = (process_t*)sched_current();
+    int copied = copy_user_cstr(raw, sizeof(raw), src);
+
+    if (copied < 0) return copied;
+    if (copied <= 1) return -EINVAL;
+    if (!proc) return -EINVAL;
+
+    if (path_is_sep(raw[0])) {
+        base = 0;
+    } else if (dirfd == SYS_AT_FDCWD) {
+        base = proc->cwd;
+    } else {
+        fd_entry_t* ent = process_fd_get(proc, dirfd);
+        if (!ent) return -EBADF;
+        if (ent->kind != PROCESS_HANDLE_KIND_FILE || !ent->is_dir) return -ENOTDIR;
+        base = ent->name;
+    }
+
+    if (!path_build_from(base, raw, dst, dst_size)) return -ENAMETOOLONG;
     return 1;
 }
 
@@ -1736,10 +1771,9 @@ static int sys_open_write_impl(const char* name) {
     return fd;
 }
 
-static int sys_open_mode_create_impl(const char* name,
-                                     unsigned int mode,
-                                     unsigned int create_mode) {
-    char kname[PROCESS_FD_NAME_MAX];
+static int sys_open_mode_create_kpath_impl(const char* kname,
+                                           unsigned int mode,
+                                           unsigned int create_mode) {
     unsigned int supported = SYS_OPEN_MODE_READ | SYS_OPEN_MODE_WRITE |
                              SYS_OPEN_MODE_CREATE | SYS_OPEN_MODE_TRUNC |
                              SYS_OPEN_MODE_APPEND | SYS_OPEN_MODE_EXCL;
@@ -1758,8 +1792,6 @@ static int sys_open_mode_create_impl(const char* name,
     if ((mode & ~supported) != 0) return -EINVAL;
     if (!readable && !writable) return -EINVAL;
     if ((trunc || append || create) && !writable) return -EINVAL;
-    int path_rc = copy_user_path_resolved(kname, sizeof(kname), name);
-    if (path_rc < 0) return path_rc;
 
     {
         unsigned int vsize = 0;
@@ -1838,6 +1870,25 @@ static int sys_open_mode_create_impl(const char* name,
     }
 
     return fd;
+}
+
+static int sys_open_mode_create_impl(const char* name,
+                                     unsigned int mode,
+                                     unsigned int create_mode) {
+    char kname[PROCESS_FD_NAME_MAX];
+    int path_rc = copy_user_path_resolved(kname, sizeof(kname), name);
+    if (path_rc < 0) return path_rc;
+    return sys_open_mode_create_kpath_impl(kname, mode, create_mode);
+}
+
+static int sys_openat_mode_create_impl(int dirfd,
+                                       const char* name,
+                                       unsigned int mode,
+                                       unsigned int create_mode) {
+    char kname[PROCESS_FD_NAME_MAX];
+    int path_rc = copy_user_path_at_resolved(kname, sizeof(kname), dirfd, name);
+    if (path_rc < 0) return path_rc;
+    return sys_open_mode_create_kpath_impl(kname, mode, create_mode);
 }
 
 static int sys_open_mode_impl(const char* name, unsigned int mode) {
@@ -2785,6 +2836,22 @@ static int sys_mkdir_impl(const char* path, unsigned int mode) {
     return 0;
 }
 
+static int sys_mkdirat_impl(int dirfd, const char* path, unsigned int mode) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    int path_rc = copy_user_path_at_resolved(kpath, sizeof(kpath), dirfd, path);
+    process_t* proc = (process_t*)sched_current();
+    int perm_rc;
+
+    if (path_rc < 0) return path_rc;
+    if (!proc) return -EINVAL;
+    perm_rc = check_parent_permission(proc, kpath, SYS_PERM_W | SYS_PERM_X);
+    if (perm_rc < 0) return perm_rc;
+    if (!vfs_mkdir(kpath)) return -EIO;
+    (void)vfs_chmod(kpath, (u16)mode_after_umask(proc, SYS_MODE_IFDIR, mode));
+    (void)vfs_chown(kpath, (u16)proc->euid, (u16)proc->egid);
+    return 0;
+}
+
 static int sys_rmdir_impl(const char* path) {
     char kpath[PROCESS_FD_NAME_MAX];
     int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
@@ -3056,6 +3123,26 @@ static int sys_unlink_impl(const char* path) {
     return vfs_unlink(kpath) ? 0 : path_lookup_errno(kpath);
 }
 
+static int sys_unlinkat_impl(int dirfd, const char* path, unsigned int flags) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    int path_rc = copy_user_path_at_resolved(kpath, sizeof(kpath), dirfd, path);
+    process_t* proc = (process_t*)sched_current();
+    int perm_rc;
+
+    if ((flags & ~SYS_AT_REMOVEDIR) != 0u) return -EINVAL;
+    if (path_rc < 0) return path_rc;
+    if (!proc) return -EINVAL;
+    if (flags & SYS_AT_REMOVEDIR) {
+        perm_rc = check_parent_permission(proc, kpath, SYS_PERM_W | SYS_PERM_X);
+        if (perm_rc < 0) return perm_rc;
+        return vfs_rmdir(kpath) ? 0 : path_lookup_errno(kpath);
+    }
+    if (vfs_is_dir(kpath)) return -EISDIR;
+    perm_rc = check_parent_permission(proc, kpath, SYS_PERM_W | SYS_PERM_X);
+    if (perm_rc < 0) return perm_rc;
+    return vfs_unlink(kpath) ? 0 : path_lookup_errno(kpath);
+}
+
 static int sys_link_impl(const char* oldpath, const char* newpath) {
     char kold[PROCESS_FD_NAME_MAX];
     char knew[PROCESS_FD_NAME_MAX];
@@ -3078,6 +3165,35 @@ static int sys_link_impl(const char* oldpath, const char* newpath) {
     return path_lookup_errno(kold);
 }
 
+static int sys_linkat_impl(int olddirfd,
+                           const char* oldpath,
+                           int newdirfd,
+                           const char* newpath,
+                           unsigned int flags) {
+    char kold[PROCESS_FD_NAME_MAX];
+    char knew[PROCESS_FD_NAME_MAX];
+    sys_stat_info_t info;
+    int old_rc = copy_user_path_at_resolved(kold, sizeof(kold), olddirfd, oldpath);
+    process_t* proc = (process_t*)sched_current();
+    int perm_rc;
+
+    if ((flags & ~SYS_AT_SYMLINK_FOLLOW) != 0u) return -EINVAL;
+    if (old_rc < 0) return old_rc;
+    {
+        int new_rc = copy_user_path_at_resolved(knew, sizeof(knew), newdirfd, newpath);
+        if (new_rc < 0) return new_rc;
+    }
+    if (!proc) return -EINVAL;
+    perm_rc = check_path_permission(proc, kold, 0, 0);
+    if (perm_rc < 0) return perm_rc;
+    perm_rc = check_parent_permission(proc, knew, SYS_PERM_W | SYS_PERM_X);
+    if (perm_rc < 0) return perm_rc;
+    if (vfs_is_dir(kold)) return -EPERM;
+    if (vfs_link(kold, knew)) return 0;
+    if (vfs_lstat_info(knew, &info)) return -EEXIST;
+    return path_lookup_errno(kold);
+}
+
 static int sys_symlink_impl(const char* target, const char* linkpath) {
     char ktarget[PROCESS_FD_NAME_MAX];
     char klink[PROCESS_FD_NAME_MAX];
@@ -3089,6 +3205,30 @@ static int sys_symlink_impl(const char* target, const char* linkpath) {
     if (target_rc <= 1) return -EINVAL;
     int link_rc = copy_user_path_resolved(klink, sizeof(klink), linkpath);
     if (link_rc < 0) return link_rc;
+    if (!proc) return -EINVAL;
+    perm_rc = check_parent_permission(proc, klink, SYS_PERM_W | SYS_PERM_X);
+    if (perm_rc < 0) return perm_rc;
+    if (vfs_symlink(ktarget, klink)) return 0;
+    {
+        sys_stat_info_t info;
+        if (vfs_lstat_info(klink, &info)) return -EEXIST;
+    }
+    return path_lookup_errno(klink);
+}
+
+static int sys_symlinkat_impl(const char* target, int newdirfd, const char* linkpath) {
+    char ktarget[PROCESS_FD_NAME_MAX];
+    char klink[PROCESS_FD_NAME_MAX];
+    int target_rc = copy_user_cstr(ktarget, sizeof(ktarget), target);
+    process_t* proc = (process_t*)sched_current();
+    int perm_rc;
+
+    if (target_rc < 0) return target_rc;
+    if (target_rc <= 1) return -EINVAL;
+    {
+        int link_rc = copy_user_path_at_resolved(klink, sizeof(klink), newdirfd, linkpath);
+        if (link_rc < 0) return link_rc;
+    }
     if (!proc) return -EINVAL;
     perm_rc = check_parent_permission(proc, klink, SYS_PERM_W | SYS_PERM_X);
     if (perm_rc < 0) return perm_rc;
@@ -3126,6 +3266,32 @@ static int sys_readlink_impl(const char* path, char* out, unsigned int out_size)
     return (int)copied;
 }
 
+static int sys_readlinkat_impl(int dirfd, const char* path, char* out, unsigned int out_size) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    char target[PROCESS_FD_NAME_MAX];
+    u32 len = 0;
+    u32 copied;
+    int path_rc;
+
+    if (!out || out_size == 0u) return -EINVAL;
+    path_rc = copy_user_path_at_resolved(kpath, sizeof(kpath), dirfd, path);
+    if (path_rc < 0) return path_rc;
+    {
+        process_t* proc = (process_t*)sched_current();
+        int perm_rc = check_path_prefix_execute(proc, kpath);
+        if (perm_rc < 0) return perm_rc;
+    }
+    if (!vfs_readlink(kpath, target, sizeof(target), &len)) {
+        sys_stat_info_t info;
+        if (vfs_lstat_info(kpath, &info)) return -EINVAL;
+        return path_lookup_errno(kpath);
+    }
+    copied = len;
+    if (copied > out_size) copied = out_size;
+    if (copy_to_user(out, target, copied) < 0) return -EFAULT;
+    return (int)copied;
+}
+
 static int sys_rename_impl(const char* src, const char* dst) {
     char ksrc[PROCESS_FD_NAME_MAX];
     char kdst[PROCESS_FD_NAME_MAX];
@@ -3136,6 +3302,29 @@ static int sys_rename_impl(const char* src, const char* dst) {
     if (src_rc < 0) return src_rc;
     int dst_rc = copy_user_path_resolved(kdst, sizeof(kdst), dst);
     if (dst_rc < 0) return dst_rc;
+    if (!proc) return -EINVAL;
+    perm_rc = check_parent_permission(proc, ksrc, SYS_PERM_W | SYS_PERM_X);
+    if (perm_rc < 0) return perm_rc;
+    perm_rc = check_parent_permission(proc, kdst, SYS_PERM_W | SYS_PERM_X);
+    if (perm_rc < 0) return perm_rc;
+    return vfs_rename(ksrc, kdst) ? 0 : path_lookup_errno(ksrc);
+}
+
+static int sys_renameat_impl(int olddirfd,
+                             const char* oldpath,
+                             int newdirfd,
+                             const char* newpath) {
+    char ksrc[PROCESS_FD_NAME_MAX];
+    char kdst[PROCESS_FD_NAME_MAX];
+    int src_rc = copy_user_path_at_resolved(ksrc, sizeof(ksrc), olddirfd, oldpath);
+    process_t* proc = (process_t*)sched_current();
+    int perm_rc;
+
+    if (src_rc < 0) return src_rc;
+    {
+        int dst_rc = copy_user_path_at_resolved(kdst, sizeof(kdst), newdirfd, newpath);
+        if (dst_rc < 0) return dst_rc;
+    }
     if (!proc) return -EINVAL;
     perm_rc = check_parent_permission(proc, ksrc, SYS_PERM_W | SYS_PERM_X);
     if (perm_rc < 0) return perm_rc;
@@ -3175,18 +3364,30 @@ static int sys_chown_impl(const char* path, unsigned int uid, unsigned int gid) 
 
 static int sys_utimens_impl(const char* path, const struct user_timespec* times) {
     char kpath[PROCESS_FD_NAME_MAX];
+    int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    if (path_rc < 0) return path_rc;
+    return sys_utimens_kpath_impl(kpath, times, 0);
+}
+
+static int sys_utimens_kpath_impl(const char* kpath,
+                                  const struct user_timespec* times,
+                                  int nofollow) {
     struct user_timespec in[2];
     u32 atime;
     u32 mtime;
-    int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
     process_t* proc = (process_t*)sched_current();
     sys_stat_info_t info;
     int perm_rc;
 
-    if (path_rc < 0) return path_rc;
     if (!proc) return -EINVAL;
-    perm_rc = check_path_permission(proc, kpath, 0, &info);
-    if (perm_rc < 0) return perm_rc;
+    if (nofollow) {
+        perm_rc = check_path_prefix_execute(proc, kpath);
+        if (perm_rc < 0) return perm_rc;
+        if (!vfs_lstat_info(kpath, &info)) return path_lookup_errno(kpath);
+    } else {
+        perm_rc = check_path_permission(proc, kpath, 0, &info);
+        if (perm_rc < 0) return perm_rc;
+    }
     if (!process_is_root(proc) && proc->euid != info.uid &&
         !permission_allows(proc, &info, SYS_PERM_W)) {
         return -EACCES;
@@ -3203,7 +3404,24 @@ static int sys_utimens_impl(const char* path, const struct user_timespec* times)
         atime = timer_get_realtime_seconds();
         mtime = atime;
     }
+    if (nofollow) {
+        return vfs_lutimes(kpath, atime, mtime) ? 0 : path_lookup_errno(kpath);
+    }
     return vfs_utimes(kpath, atime, mtime) ? 0 : path_lookup_errno(kpath);
+}
+
+static int sys_utimensat_impl(int dirfd,
+                              const char* path,
+                              const struct user_timespec* times,
+                              unsigned int flags) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    int path_rc;
+
+    if ((flags & ~SYS_AT_SYMLINK_NOFOLLOW) != 0u) return -EINVAL;
+    path_rc = copy_user_path_at_resolved(kpath, sizeof(kpath), dirfd, path);
+    if (path_rc < 0) return path_rc;
+    return sys_utimens_kpath_impl(kpath, times,
+                                  (flags & SYS_AT_SYMLINK_NOFOLLOW) != 0u);
 }
 
 static int sys_mknod_impl(const char* path, unsigned int mode, unsigned int dev) {
@@ -3450,6 +3668,36 @@ static int sys_lstat_full_impl(const char* path, sys_stat_info_t* out) {
     }
     if (!virtual_stat_info(kpath, &info) && !vfs_lstat_info(kpath, &info)) {
         return path_lookup_errno(kpath);
+    }
+    if (copy_to_user(out, &info, sizeof(info)) < 0) return -EFAULT;
+    return 0;
+}
+
+static int sys_fstatat_full_impl(int dirfd,
+                                 const char* path,
+                                 sys_stat_info_t* out,
+                                 unsigned int flags) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    sys_stat_info_t info;
+    int path_rc;
+
+    if ((flags & ~SYS_AT_SYMLINK_NOFOLLOW) != 0u) return -EINVAL;
+    path_rc = copy_user_path_at_resolved(kpath, sizeof(kpath), dirfd, path);
+    if (path_rc < 0) return path_rc;
+    if (!out) return -EFAULT;
+    {
+        process_t* proc = (process_t*)sched_current();
+        int perm_rc = check_path_prefix_execute(proc, kpath);
+        if (perm_rc < 0) return perm_rc;
+    }
+    if (flags & SYS_AT_SYMLINK_NOFOLLOW) {
+        if (!virtual_stat_info(kpath, &info) && !vfs_lstat_info(kpath, &info)) {
+            return path_lookup_errno(kpath);
+        }
+    } else {
+        if (!virtual_stat_info(kpath, &info) && !vfs_stat_info(kpath, &info)) {
+            return path_lookup_errno(kpath);
+        }
     }
     if (copy_to_user(out, &info, sizeof(info)) < 0) return -EFAULT;
     return 0;
@@ -4424,6 +4672,14 @@ void syscall_handler_main(syscall_regs_t* regs) {
                             (unsigned int)regs->edx);
             break;
 
+        case SYS_OPENAT_CREATE_MODE:
+            regs->eax = (unsigned int)sys_openat_mode_create_impl(
+                            (int)regs->ebx,
+                            (const char*)regs->ecx,
+                            (unsigned int)regs->edx,
+                            (unsigned int)regs->esi);
+            break;
+
         case SYS_CLOSE:
         {
             int fd = (int)regs->ebx;
@@ -4531,6 +4787,12 @@ void syscall_handler_main(syscall_regs_t* regs) {
         case SYS_MKDIR:
             regs->eax = (unsigned int)sys_mkdir_impl((const char*)regs->ebx,
                                                      regs->ecx);
+            break;
+
+        case SYS_MKDIRAT:
+            regs->eax = (unsigned int)sys_mkdirat_impl((int)regs->ebx,
+                                                       (const char*)regs->ecx,
+                                                       regs->edx);
             break;
 
         case SYS_RMDIR:
@@ -4875,9 +5137,23 @@ void syscall_handler_main(syscall_regs_t* regs) {
                                                     (const char*)regs->ecx);
             break;
 
+        case SYS_LINKAT:
+            regs->eax = (unsigned int)sys_linkat_impl((int)regs->ebx,
+                                                      (const char*)regs->ecx,
+                                                      (int)regs->edx,
+                                                      (const char*)regs->esi,
+                                                      regs->edi);
+            break;
+
         case SYS_SYMLINK:
             regs->eax = (unsigned int)sys_symlink_impl((const char*)regs->ebx,
                                                        (const char*)regs->ecx);
+            break;
+
+        case SYS_SYMLINKAT:
+            regs->eax = (unsigned int)sys_symlinkat_impl((const char*)regs->ebx,
+                                                         (int)regs->ecx,
+                                                         (const char*)regs->edx);
             break;
 
         case SYS_READLINK:
@@ -4886,10 +5162,25 @@ void syscall_handler_main(syscall_regs_t* regs) {
                                                         regs->edx);
             break;
 
+        case SYS_READLINKAT:
+            regs->eax = (unsigned int)sys_readlinkat_impl((int)regs->ebx,
+                                                          (const char*)regs->ecx,
+                                                          (char*)regs->edx,
+                                                          regs->esi);
+            break;
+
         case SYS_LSTAT_FULL:
             regs->eax = (unsigned int)sys_lstat_full_impl(
                             (const char*)regs->ebx,
                             (sys_stat_info_t*)regs->ecx);
+            break;
+
+        case SYS_FSTATAT_FULL:
+            regs->eax = (unsigned int)sys_fstatat_full_impl(
+                            (int)regs->ebx,
+                            (const char*)regs->ecx,
+                            (sys_stat_info_t*)regs->edx,
+                            regs->esi);
             break;
 
         case SYS_CHMOD:
@@ -4907,6 +5198,14 @@ void syscall_handler_main(syscall_regs_t* regs) {
             regs->eax = (unsigned int)sys_utimens_impl(
                             (const char*)regs->ebx,
                             (const struct user_timespec*)regs->ecx);
+            break;
+
+        case SYS_UTIMENSAT:
+            regs->eax = (unsigned int)sys_utimensat_impl(
+                            (int)regs->ebx,
+                            (const char*)regs->ecx,
+                            (const struct user_timespec*)regs->edx,
+                            regs->esi);
             break;
 
         case SYS_MKNOD:
@@ -4963,6 +5262,19 @@ void syscall_handler_main(syscall_regs_t* regs) {
 
         case SYS_UMASK:
             regs->eax = sys_umask_impl(regs->ebx);
+            break;
+
+        case SYS_UNLINKAT:
+            regs->eax = (unsigned int)sys_unlinkat_impl((int)regs->ebx,
+                                                        (const char*)regs->ecx,
+                                                        regs->edx);
+            break;
+
+        case SYS_RENAMEAT:
+            regs->eax = (unsigned int)sys_renameat_impl((int)regs->ebx,
+                                                        (const char*)regs->ecx,
+                                                        (int)regs->edx,
+                                                        (const char*)regs->esi);
             break;
 
         default:

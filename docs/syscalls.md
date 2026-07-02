@@ -1684,6 +1684,36 @@ require write+execute permission on the parent directory, receive
 
 ---
 
+### Directory-Fd Syscalls (120-128)
+
+```c
+int sys_openat_mode_create(int dirfd, const char* path,
+                           uint32_t flags, uint32_t create_mode);
+int sys_fstatat_full(int dirfd, const char* path,
+                     sys_stat_info_t* out, uint32_t flags);
+int sys_unlinkat(int dirfd, const char* path, uint32_t flags);
+int sys_mkdirat(int dirfd, const char* path, uint32_t mode);
+int sys_renameat(int olddirfd, const char* oldpath,
+                 int newdirfd, const char* newpath);
+int sys_linkat(int olddirfd, const char* oldpath,
+               int newdirfd, const char* newpath, uint32_t flags);
+int sys_symlinkat(const char* target, int newdirfd, const char* linkpath);
+int sys_readlinkat(int dirfd, const char* path, char* out, uint32_t out_size);
+int sys_utimensat(int dirfd, const char* path,
+                  const struct timespec times[2], uint32_t flags);
+```
+
+These syscalls resolve relative paths against `dirfd`, or against the caller's
+cwd when `dirfd == AT_FDCWD`. Absolute paths ignore `dirfd`. Non-directory base
+fds fail with `ENOTDIR`; invalid fds fail with `EBADF`.
+
+`SYS_FSTATAT_FULL` and `SYS_UTIMENSAT` support `AT_SYMLINK_NOFOLLOW`.
+`SYS_UNLINKAT` supports `AT_REMOVEDIR`. `SYS_LINKAT` accepts
+`AT_SYMLINK_FOLLOW` for BusyBox/POSIX-shaped callers; unsupported flag bits
+return `EINVAL`.
+
+---
+
 ### SYS_MKNOD (107)
 
 ```c

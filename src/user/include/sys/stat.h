@@ -64,8 +64,10 @@ typedef unsigned int mode_t;
 
 int stat(const char* path, struct stat* st);
 int fstat(int fd, struct stat* st);
+int fstatat(int dirfd, const char* path, struct stat* st, int flags);
 int lstat(const char* path, struct stat* st);
 int mkdir(const char* path, mode_t mode);
+int mkdirat(int dirfd, const char* path, mode_t mode);
 int rmdir(const char* path);
 int chmod(const char* path, mode_t mode);
 int chown(const char* path, uid_t owner, gid_t group);

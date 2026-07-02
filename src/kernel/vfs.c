@@ -998,6 +998,15 @@ int vfs_utimes(const char* path, u32 atime, u32 mtime) {
     return ok;
 }
 
+int vfs_lutimes(const char* path, u32 atime, u32 mtime) {
+    int ok;
+    unsigned int flags = vfs_irq_save();
+    ok = ext2_lutimes(path, atime, mtime);
+    vfs_irq_restore(flags);
+    if (ok) vfs_ro_map_invalidate_path(path);
+    return ok;
+}
+
 int vfs_mknod(const char* path, u16 mode, u32 rdev) {
     int ok;
     unsigned int flags = vfs_irq_save();

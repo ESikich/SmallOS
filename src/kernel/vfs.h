@@ -38,6 +38,7 @@ int vfs_readlink(const char* path, char* out, u32 out_size, u32* out_len);
 int vfs_chmod(const char* path, u16 mode);
 int vfs_chown(const char* path, u16 uid, u16 gid);
 int vfs_utimes(const char* path, u32 atime, u32 mtime);
+int vfs_lutimes(const char* path, u32 atime, u32 mtime);
 int vfs_mknod(const char* path, u16 mode, u32 rdev);
 int vfs_resize(const char* path, u32 size);
 int vfs_mkdir(const char* path);

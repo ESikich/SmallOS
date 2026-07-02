@@ -282,6 +282,8 @@ The runtime provides a small POSIX-shaped surface:
 - `lseek`
 - `stat`, `lstat`, `fstat`, `statfs`, `fstatfs`, and `statvfs`
 - `access`
+- `openat`, `fstatat`, `unlinkat`, `mkdirat`, `renameat`, `linkat`,
+  `symlinkat`, `readlinkat`, and `utimensat`
 - `unlink`, `remove`
 - `rename`
 - `mkdir`, `rmdir`
@@ -302,6 +304,11 @@ mode bits reported by `stat`. Kernel syscalls enforce execute permission for
 path traversal and exec, read/write permission for opens, write+execute on
 parent directories for create/unlink/rename/link operations, and owner/root
 rules for metadata mutation.
+
+Directory-fd wrappers resolve relative paths against directory file
+descriptors, reject non-directory base fds with `ENOTDIR`, and let absolute
+paths override the supplied base fd. `fstatat` and `utimensat` honor
+`AT_SYMLINK_NOFOLLOW`; `unlinkat` honors `AT_REMOVEDIR`.
 
 The runtime is also where SmallOS grows its hosted C surface. Older ports such
 as Fractint are useful completeness tests: when they need a normal libc, libm,
@@ -557,6 +564,8 @@ Runtime coverage currently lives in guest ELF probes:
 - `statprobe` - `SYS_STAT`, POSIX `stat`, `access`
 - `permprobe` - kernel-owned credentials, `umask`, mode-bit enforcement, and
   non-root access denial
+- `atprobe` - directory-fd `*at()` syscalls, absolute path override,
+  non-directory base errors, and no-follow symlink stat/timestamp behavior
 - `stdioprobe` - EOF/error state, `clearerr`, `fflush`, invalid stdio ops
 - `dirprobe` - root and nested directory iteration, EOF, invalid/missing dirs
 - `errnoprobe` - wrapper `errno` behavior

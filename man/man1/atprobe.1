@@ -1,0 +1,20 @@
+.TH ATPROBE 1
+.SH NAME
+atprobe \- exercise directory-fd filesystem syscalls
+.SH SYNOPSIS
+.B atprobe
+.SH DESCRIPTION
+.B atprobe
+is a regression probe for SmallOS directory-fd and POSIX-style
+.BR *at ()
+filesystem behavior. It verifies relative operations against directory file
+descriptors, absolute-path override, non-directory base failures, hard links,
+symbolic links, no-follow stat and timestamp updates, and
+.BR unlinkat ()
+directory removal.
+.PP
+The probe is installed under
+.I /usr/libexec/tests
+and is normally run by the shell selftest and host ELF regression harness.
+.SH EXIT STATUS
+Exits 0 when every check passes, or 1 after printing failed check names.

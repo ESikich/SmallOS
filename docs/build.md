@@ -982,6 +982,9 @@ Shipped ext2 programs:
 - `usr/libexec/tests/permprobe` - exercise kernel-owned credentials, `umask`,
   ext2 mode-bit enforcement, `access`, owner/root metadata checks, and
   non-root denial paths
+- `usr/libexec/tests/atprobe` - exercise directory-fd `*at()` operations,
+  absolute path override, non-directory base errors, hard/symlink handling, and
+  no-follow symlink stat/timestamp behavior
 - `usr/libexec/tests/badptrprobe` - exercise unmapped user pointers, page-crossing buffers/structs, and wrapped syscall byte counts
 - `usr/libexec/tests/sleep_test` - exercise SYS_SLEEP semantics
 - `usr/libexec/tests/ptrguard` - exercise syscall pointer validation

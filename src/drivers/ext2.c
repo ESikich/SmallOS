@@ -2218,6 +2218,18 @@ int ext2_utimes(const char* path, u32 atime, u32 mtime) {
     return write_inode(resolved.ino, &resolved.inode);
 }
 
+int ext2_lutimes(const char* path, u32 atime, u32 mtime) {
+    resolved_path_t resolved;
+
+    if (!s_initialised || !path) return 0;
+    if (ext2_read_only()) return 0;
+    if (!resolve_lpath(path, &resolved) || !resolved.has_entry) return 0;
+    resolved.inode.atime = atime;
+    resolved.inode.mtime = mtime;
+    resolved.inode.ctime = ext2_now();
+    return write_inode(resolved.ino, &resolved.inode);
+}
+
 int ext2_mknod(const char* path, u16 mode, u32 rdev) {
     create_path_t create;
     u32 ino = 0;

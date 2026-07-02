@@ -341,8 +341,27 @@ static uint32_t open_flags_to_mode(int flags) {
     return mode;
 }
 
+static int open_fd_check_directory(int fd, int flags) {
+    struct stat st;
+
+    if (fd < 0 || !(flags & O_DIRECTORY)) return fd;
+    if (fstat(fd, &st) < 0) {
+        int saved = errno;
+        close(fd);
+        set_errno(saved);
+        return -1;
+    }
+    if (!S_ISDIR(st.st_mode)) {
+        close(fd);
+        set_errno(ENOTDIR);
+        return -1;
+    }
+    return fd;
+}
+
 int open(const char* path, int flags, ...) {
     unsigned int create_mode = 0666;
+    int fd;
 
     if (flags & O_CREAT) {
         __builtin_va_list ap;
@@ -350,9 +369,27 @@ int open(const char* path, int flags, ...) {
         create_mode = (unsigned int)__builtin_va_arg(ap, int);
         __builtin_va_end(ap);
     }
-    return errno_from_raw(sys_open_mode_create(path,
+    fd = errno_from_raw(sys_open_mode_create(path,
+                                             open_flags_to_mode(flags),
+                                             create_mode));
+    return open_fd_check_directory(fd, flags);
+}
+
+int openat(int dirfd, const char* path, int flags, ...) {
+    unsigned int create_mode = 0666;
+    int fd;
+
+    if (flags & O_CREAT) {
+        __builtin_va_list ap;
+        __builtin_va_start(ap, flags);
+        create_mode = (unsigned int)__builtin_va_arg(ap, int);
+        __builtin_va_end(ap);
+    }
+    fd = errno_from_raw(sys_openat_mode_create(dirfd,
+                                               path,
                                                open_flags_to_mode(flags),
                                                create_mode));
+    return open_fd_check_directory(fd, flags);
 }
 
 int creat(const char* path, unsigned mode) {
@@ -399,12 +436,24 @@ int unlink(const char* path) {
     return errno_from_raw(sys_unlink(path));
 }
 
+int unlinkat(int dirfd, const char* path, int flags) {
+    return errno_from_raw(sys_unlinkat(dirfd, path, (uint32_t)flags));
+}
+
 int link(const char* oldpath, const char* newpath) {
     return errno_from_raw(sys_link(oldpath, newpath));
 }
 
+int linkat(int olddirfd, const char* oldpath, int newdirfd, const char* newpath, int flags) {
+    return errno_from_raw(sys_linkat(olddirfd, oldpath, newdirfd, newpath, (uint32_t)flags));
+}
+
 int symlink(const char* target, const char* linkpath) {
     return errno_from_raw(sys_symlink(target, linkpath));
+}
+
+int symlinkat(const char* target, int newdirfd, const char* linkpath) {
+    return errno_from_raw(sys_symlinkat(target, newdirfd, linkpath));
 }
 
 ssize_t readlink(const char* path, char* buf, size_t bufsiz) {
@@ -415,12 +464,28 @@ ssize_t readlink(const char* path, char* buf, size_t bufsiz) {
     return (ssize_t)errno_from_raw(sys_readlink(path, buf, (uint32_t)bufsiz));
 }
 
+ssize_t readlinkat(int dirfd, const char* path, char* buf, size_t bufsiz) {
+    if (!path || !buf || bufsiz == 0u) {
+        set_errno(EINVAL);
+        return -1;
+    }
+    return (ssize_t)errno_from_raw(sys_readlinkat(dirfd, path, buf, (uint32_t)bufsiz));
+}
+
 int rename(const char* src, const char* dst) {
     return errno_from_raw(sys_rename(src, dst));
 }
 
+int renameat(int olddirfd, const char* oldpath, int newdirfd, const char* newpath) {
+    return errno_from_raw(sys_renameat(olddirfd, oldpath, newdirfd, newpath));
+}
+
 int mkdir(const char* path, unsigned int mode) {
     return errno_from_raw(sys_mkdir(path, mode));
+}
+
+int mkdirat(int dirfd, const char* path, mode_t mode) {
+    return errno_from_raw(sys_mkdirat(dirfd, path, mode));
 }
 
 int rmdir(const char* path) {
@@ -473,15 +538,11 @@ int utimes(const char* path, const struct timeval times[2]) {
 }
 
 int utimensat(int dirfd, const char* pathname, const struct timespec times[2], int flags) {
-    if (dirfd != AT_FDCWD) {
-        set_errno(ENOSYS);
-        return -1;
-    }
     if ((flags & ~AT_SYMLINK_NOFOLLOW) != 0) {
         set_errno(EINVAL);
         return -1;
     }
-    return errno_from_raw(sys_utimens(pathname, times));
+    return errno_from_raw(sys_utimensat(dirfd, pathname, times, (uint32_t)flags));
 }
 
 int futimens(int fd, const struct timespec times[2]) {
@@ -535,6 +596,23 @@ int fstat(int fd, struct stat* st) {
         return -1;
     }
     if (errno_from_raw(sys_fstat_full(fd, &info)) < 0) {
+        return -1;
+    }
+    stat_from_info(st, &info);
+    return 0;
+}
+
+int fstatat(int dirfd, const char* path, struct stat* st, int flags) {
+    sys_stat_info_t info;
+    if (!st) {
+        set_errno(EFAULT);
+        return -1;
+    }
+    if ((flags & ~AT_SYMLINK_NOFOLLOW) != 0) {
+        set_errno(EINVAL);
+        return -1;
+    }
+    if (errno_from_raw(sys_fstatat_full(dirfd, path, &info, (uint32_t)flags)) < 0) {
         return -1;
     }
     stat_from_info(st, &info);

@@ -411,7 +411,16 @@ enum {
     SYS_SETUID         = 116,
     SYS_SETGID         = 117,
     SYS_UMASK          = 118,
-    SYS_OPEN_CREATE_MODE = 119 /* mode-aware open with create mode */
+    SYS_OPEN_CREATE_MODE = 119, /* mode-aware open with create mode */
+    SYS_OPENAT_CREATE_MODE = 120, /* dirfd-relative open with create mode */
+    SYS_FSTATAT_FULL    = 121, /* dirfd-relative stat/lstat */
+    SYS_UNLINKAT        = 122, /* dirfd-relative unlink/rmdir */
+    SYS_MKDIRAT         = 123, /* dirfd-relative mkdir */
+    SYS_RENAMEAT        = 124, /* dirfd-relative rename */
+    SYS_LINKAT          = 125, /* dirfd-relative hard link */
+    SYS_SYMLINKAT       = 126, /* dirfd-relative symlink */
+    SYS_READLINKAT      = 127, /* dirfd-relative readlink */
+    SYS_UTIMENSAT       = 128  /* dirfd-relative utimens */
 };
 
 #endif

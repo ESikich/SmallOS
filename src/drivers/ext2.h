@@ -98,6 +98,7 @@ int ext2_readlink(const char* path, char* out, u32 out_size, u32* out_len);
 int ext2_chmod(const char* path, u16 mode);
 int ext2_chown(const char* path, u16 uid, u16 gid);
 int ext2_utimes(const char* path, u32 atime, u32 mtime);
+int ext2_lutimes(const char* path, u32 atime, u32 mtime);
 int ext2_mknod(const char* path, u16 mode, u32 rdev);
 int ext2_is_dir(const char* path);
 int ext2_dirent_at(const char* path,
