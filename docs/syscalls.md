@@ -1284,6 +1284,28 @@ children into a valid same-session process group, or create a new group whose
 id is the target pid. Terminal foreground process-group ioctls validate that
 the requested group exists in the caller's session.
 
+### Mount and Filesystem Statistics Syscalls (139-142)
+
+```c
+int sys_mount(const char* source,
+              const char* target,
+              const char* fstype,
+              unsigned int flags,
+              const void* data);
+int sys_umount2(const char* target, unsigned int flags);
+int sys_statfs(const char* path, sys_statfs_t* out);
+int sys_fstatfs(int fd, sys_statfs_t* out);
+```
+
+The kernel owns a static mount table for the ext2 root, `/proc`, and `/dev`.
+`/proc/mounts` is rendered from that table, and `statfs`/`fstatfs` report
+per-mount filesystem identities: ext2 for `/`, proc for `/proc`, and devtmpfs
+for `/dev`. `sys_mount` validates requests but dynamic VFS stacking is not
+enabled yet; already-mounted static targets fail with `-EBUSY`, unsupported
+types or flags fail with `-EINVAL`, and otherwise valid dynamic mount requests
+fail with `-ENOSYS`. Static mounts are pinned, so `sys_umount2` reports
+`-EBUSY` for `/`, `/proc`, and `/dev`.
+
 ### SYS_USB_MOUSE_OP (87)
 
 ```c
@@ -1934,6 +1956,10 @@ sys_setsid()
 sys_getsid(pid)
 sys_setpgid(pid, pgid)
 sys_getpgid(pid)
+sys_mount(source, target, fstype, flags, data)
+sys_umount2(target, flags)
+sys_statfs(path, out)
+sys_fstatfs(fd, out)
 sys_stat_full(path, out_info)
 sys_fstat_full(fd, out_info)
 sys_sound_op(op, arg1, arg2)

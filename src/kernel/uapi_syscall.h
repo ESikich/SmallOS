@@ -328,6 +328,20 @@ typedef struct sys_rusage {
     long ru_nivcsw;
 } sys_rusage_t;
 
+typedef struct sys_statfs {
+    long f_type;
+    long f_bsize;
+    long f_blocks;
+    long f_bfree;
+    long f_bavail;
+    long f_files;
+    long f_ffree;
+    long f_fsid;
+    long f_namelen;
+    long f_frsize;
+    long f_flags;
+} sys_statfs_t;
+
 enum {
     SYS_WRITE     = 1,
     SYS_EXIT      = 2,
@@ -476,7 +490,11 @@ enum {
     SYS_SETSID          = 135, /* create a new session */
     SYS_GETSID          = 136, /* query process session id */
     SYS_SETPGID         = 137, /* update process group id */
-    SYS_GETPGID         = 138  /* query process group id */
+    SYS_GETPGID         = 138, /* query process group id */
+    SYS_MOUNT           = 139, /* mount filesystem at target path */
+    SYS_UMOUNT2         = 140, /* unmount target path with flags */
+    SYS_STATFS          = 141, /* copy filesystem stats for path */
+    SYS_FSTATFS         = 142  /* copy filesystem stats for fd */
 };
 
 #endif

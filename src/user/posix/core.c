@@ -18,6 +18,7 @@
 #include "sys/prctl.h"
 #include "sys/utsname.h"
 #include "sys/vfs.h"
+#include "sys/mount.h"
 #include "sys/statvfs.h"
 #include "sys/sysinfo.h"
 #include "libgen.h"
@@ -2026,50 +2027,67 @@ int tcsetpgrp(int fd, pid_t pgrp) {
     return ioctl(fd, TIOCSPGRP, &pgid);
 }
 
-static int fill_statfs(struct statfs* buf) {
-    sys_fsinfo_t fs;
-
-    if (!buf) {
-        set_errno(EFAULT);
-        return -1;
-    }
-    if (sys_fsinfo(&fs) < 0) {
-        set_errno(EIO);
-        return -1;
-    }
-    memset(buf, 0, sizeof(*buf));
-    buf->f_type = 0xEF53;
-    buf->f_bsize = fs.cluster_bytes ? (long)fs.cluster_bytes : 1024L;
-    buf->f_frsize = buf->f_bsize;
-    buf->f_blocks = (fs.cluster_bytes ? fs.total_clusters : fs.total_bytes / 1024u);
-    buf->f_bfree = (fs.cluster_bytes ? fs.free_clusters : fs.free_bytes / 1024u);
-    buf->f_bavail = buf->f_bfree;
-    buf->f_files = 1024;
-    buf->f_ffree = 512;
-    buf->f_namelen = 255;
-    return 0;
+static void copy_statfs_from_sys(struct statfs* dst, const sys_statfs_t* src) {
+    memset(dst, 0, sizeof(*dst));
+    dst->f_type = src->f_type;
+    dst->f_bsize = src->f_bsize;
+    dst->f_blocks = src->f_blocks;
+    dst->f_bfree = src->f_bfree;
+    dst->f_bavail = src->f_bavail;
+    dst->f_files = src->f_files;
+    dst->f_ffree = src->f_ffree;
+    dst->f_fsid = src->f_fsid;
+    dst->f_namelen = src->f_namelen;
+    dst->f_frsize = src->f_frsize;
+    dst->f_flags = src->f_flags;
 }
 
 int statfs(const char* path, struct statfs* buf) {
-    struct stat st;
+    sys_statfs_t sys;
 
     if (!path) {
         set_errno(EFAULT);
         return -1;
     }
-    if (stat(path, &st) < 0) {
+    if (!buf) {
+        set_errno(EFAULT);
         return -1;
     }
-    return fill_statfs(buf);
+    if (errno_from_raw(sys_statfs(path, &sys)) < 0) return -1;
+    copy_statfs_from_sys(buf, &sys);
+    return 0;
 }
 
 int fstatfs(int fd, struct statfs* buf) {
-    struct stat st;
+    sys_statfs_t sys;
 
-    if (fstat(fd, &st) < 0) {
+    if (!buf) {
+        set_errno(EFAULT);
         return -1;
     }
-    return fill_statfs(buf);
+    if (errno_from_raw(sys_fstatfs(fd, &sys)) < 0) return -1;
+    copy_statfs_from_sys(buf, &sys);
+    return 0;
+}
+
+int mount(const char* source,
+          const char* target,
+          const char* filesystemtype,
+          unsigned long mountflags,
+          const void* data) {
+    return errno_from_raw(sys_mount(source,
+                                    target,
+                                    filesystemtype,
+                                    (uint32_t)mountflags,
+                                    data));
+}
+
+int umount2(const char* target, int flags) {
+    return errno_from_raw(sys_umount2(target, (uint32_t)flags));
+}
+
+int umount(const char* target) {
+    return umount2(target, 0);
 }
 
 static void statfs_to_statvfs(const struct statfs* src, struct statvfs* dst) {

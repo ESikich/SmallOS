@@ -67,6 +67,12 @@
 #define SYS_RLIM_INFINITY     0xFFFFFFFFu
 #define SYS_RUSAGE_SELF       0
 #define SYS_RUSAGE_CHILDREN  (-1)
+#define SYS_MOUNT_MS_RDONLY   1u
+#define SYS_UMOUNT_MNT_FORCE  1u
+#define SYS_UMOUNT_MNT_DETACH 2u
+#define SYS_STATFS_EXT2_MAGIC 0xEF53L
+#define SYS_STATFS_PROC_MAGIC 0x9FA0L
+#define SYS_STATFS_DEV_MAGIC  0x01021994L
 
 static unsigned char s_sys_block_sector[512] __attribute__((aligned(16)));
 static volatile int s_sys_block_sector_locked = 0;
@@ -77,6 +83,24 @@ typedef struct epoll_watch {
     unsigned int events;
     unsigned int data_u32;
 } epoll_watch_t;
+
+typedef struct kernel_mount {
+    const char* source;
+    const char* target;
+    const char* fstype;
+    const char* options;
+    unsigned int flags;
+    long magic;
+    unsigned int pseudo;
+} kernel_mount_t;
+
+static kernel_mount_t s_mounts[] = {
+    { "rootfs", "",     "ext2",     "rw", 0u, SYS_STATFS_EXT2_MAGIC, 0u },
+    { "proc",   "proc", "proc",     "rw", 0u, SYS_STATFS_PROC_MAGIC, 1u },
+    { "dev",    "dev",  "devtmpfs", "rw", 0u, SYS_STATFS_DEV_MAGIC,  1u },
+};
+
+#define SYS_MOUNT_COUNT ((unsigned int)(sizeof(s_mounts) / sizeof(s_mounts[0])))
 
 struct user_itimerspec {
     struct {
@@ -485,6 +509,64 @@ static int path_child(const char* path, const char* prefix, const char** child) 
     return 1;
 }
 
+static int mount_path_matches(const char* path, const char* target) {
+    unsigned int len;
+
+    if (!path || !target) return 0;
+    if (target[0] == '\0') return 1;
+    len = (unsigned int)k_strlen(target);
+    if (!k_starts_with(path, target)) return 0;
+    return path[len] == '\0' || path[len] == '/';
+}
+
+static const kernel_mount_t* mount_find_for_path(const char* path) {
+    const kernel_mount_t* best = &s_mounts[0];
+    unsigned int best_len = 0u;
+
+    if (!path) return best;
+    for (unsigned int i = 0; i < SYS_MOUNT_COUNT; i++) {
+        unsigned int len;
+        if (!mount_path_matches(path, s_mounts[i].target)) continue;
+        len = (unsigned int)k_strlen(s_mounts[i].target);
+        if (!best || len >= best_len) {
+            best = &s_mounts[i];
+            best_len = len;
+        }
+    }
+    return best;
+}
+
+static const kernel_mount_t* mount_find_exact(const char* path) {
+    if (!path) return 0;
+    for (unsigned int i = 0; i < SYS_MOUNT_COUNT; i++) {
+        if (path_eq(path, s_mounts[i].target)) return &s_mounts[i];
+    }
+    return 0;
+}
+
+static unsigned int mount_build_proc_content(char* out, unsigned int cap) {
+    unsigned int pos = 0;
+
+    if (!out || cap == 0u) return 0;
+    out[0] = '\0';
+    for (unsigned int i = 0; i < SYS_MOUNT_COUNT; i++) {
+        vbuf_puts(out, cap, &pos, s_mounts[i].source);
+        vbuf_putc(out, cap, &pos, ' ');
+        if (s_mounts[i].target[0] == '\0') {
+            vbuf_putc(out, cap, &pos, '/');
+        } else {
+            vbuf_putc(out, cap, &pos, '/');
+            vbuf_puts(out, cap, &pos, s_mounts[i].target);
+        }
+        vbuf_putc(out, cap, &pos, ' ');
+        vbuf_puts(out, cap, &pos, s_mounts[i].fstype);
+        vbuf_putc(out, cap, &pos, ' ');
+        vbuf_puts(out, cap, &pos, s_mounts[i].options);
+        vbuf_puts(out, cap, &pos, " 0 0\n");
+    }
+    return pos;
+}
+
 static int virtual_proc_pid_path(const char* path,
                                  process_t** out_proc,
                                  const char** out_leaf) {
@@ -594,10 +676,7 @@ static unsigned int virtual_build_proc_content(const char* path,
         return pos;
     }
     if (path_eq(path, "proc/mounts")) {
-        vbuf_puts(out, cap, &pos, "rootfs / ext2 rw 0 0\n");
-        vbuf_puts(out, cap, &pos, "proc /proc proc rw 0 0\n");
-        vbuf_puts(out, cap, &pos, "dev /dev devtmpfs rw 0 0\n");
-        return pos;
+        return mount_build_proc_content(out, cap);
     }
     if (path_eq(path, "proc/filesystems")) {
         vbuf_puts(out, cap, &pos, "nodev\tproc\nnodev\tdevtmpfs\next2\n");
@@ -3973,6 +4052,163 @@ static int sys_getrusage_impl(int who, sys_rusage_t* out) {
     return 0;
 }
 
+static void statfs_fill_pseudo(const kernel_mount_t* mnt, sys_statfs_t* out) {
+    k_memset(out, 0, sizeof(*out));
+    out->f_type = mnt ? mnt->magic : 0;
+    out->f_bsize = PAGE_SIZE;
+    out->f_frsize = PAGE_SIZE;
+    out->f_files = 1024;
+    out->f_ffree = 1024;
+    out->f_namelen = 255;
+    out->f_flags = mnt ? (long)mnt->flags : 0;
+}
+
+static int statfs_fill_ext2(const kernel_mount_t* mnt, sys_statfs_t* out) {
+    ext2_fsinfo_t info;
+
+    if (!ext2_fsinfo(&info)) return -EIO;
+    k_memset(out, 0, sizeof(*out));
+    out->f_type = mnt ? mnt->magic : SYS_STATFS_EXT2_MAGIC;
+    out->f_bsize = info.cluster_bytes ? (long)info.cluster_bytes : 1024L;
+    out->f_frsize = out->f_bsize;
+    out->f_blocks = info.cluster_bytes
+                        ? (long)info.total_clusters
+                        : (long)(info.total_bytes / 1024u);
+    out->f_bfree = info.cluster_bytes
+                       ? (long)info.free_clusters
+                       : (long)(info.free_bytes / 1024u);
+    out->f_bavail = out->f_bfree;
+    out->f_files = 1024;
+    out->f_ffree = 512;
+    out->f_namelen = 255;
+    out->f_flags = mnt ? (long)mnt->flags : 0;
+    return 0;
+}
+
+static int statfs_fill_for_mount(const kernel_mount_t* mnt, sys_statfs_t* out) {
+    if (!mnt || !out) return -EINVAL;
+    if (mnt->magic == SYS_STATFS_EXT2_MAGIC) {
+        return statfs_fill_ext2(mnt, out);
+    }
+    statfs_fill_pseudo(mnt, out);
+    return 0;
+}
+
+static int sys_statfs_kpath_impl(const char* kpath, sys_statfs_t* out) {
+    sys_stat_info_t info;
+    sys_statfs_t stfs;
+    const kernel_mount_t* mnt;
+    process_t* proc = (process_t*)sched_current();
+    int perm_rc;
+    int rc;
+
+    if (!kpath || !out) return -EFAULT;
+    if (!user_buf_ok((unsigned int)out, sizeof(*out))) return -EFAULT;
+
+    perm_rc = check_path_prefix_execute(proc, kpath);
+    if (perm_rc < 0) return perm_rc;
+    if (!virtual_stat_info(kpath, &info) && !vfs_stat_info(kpath, &info)) {
+        return path_lookup_errno(kpath);
+    }
+
+    mnt = mount_find_for_path(kpath);
+    rc = statfs_fill_for_mount(mnt, &stfs);
+    if (rc < 0) return rc;
+    if (copy_to_user(out, &stfs, sizeof(stfs)) < 0) return -EFAULT;
+    return 0;
+}
+
+static int sys_statfs_impl(const char* path, sys_statfs_t* out) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    if (path_rc < 0) return path_rc;
+    return sys_statfs_kpath_impl(kpath, out);
+}
+
+static int sys_fstatfs_impl(int fd, sys_statfs_t* out) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+    sys_statfs_t stfs;
+    const kernel_mount_t* mnt;
+    int rc;
+
+    if (!out) return -EFAULT;
+    if (!user_buf_ok((unsigned int)out, sizeof(*out))) return -EFAULT;
+    if (!proc) return -EINVAL;
+    ent = process_fd_get(proc, fd);
+    if (!ent) return -EBADF;
+
+    if (ent->name[0] != '\0') {
+        mnt = mount_find_for_path(ent->name);
+    } else if (ent->kind == PROCESS_HANDLE_KIND_CONSOLE ||
+               ent->kind == PROCESS_HANDLE_KIND_PTY_MASTER ||
+               ent->kind == PROCESS_HANDLE_KIND_PTY_SLAVE) {
+        mnt = mount_find_for_path("dev");
+    } else {
+        mnt = mount_find_for_path("");
+    }
+
+    rc = statfs_fill_for_mount(mnt, &stfs);
+    if (rc < 0) return rc;
+    if (copy_to_user(out, &stfs, sizeof(stfs)) < 0) return -EFAULT;
+    return 0;
+}
+
+static int mount_fstype_supported(const char* fstype) {
+    if (!fstype || fstype[0] == '\0') return 0;
+    return path_eq(fstype, "ext2") || path_eq(fstype, "proc") ||
+           path_eq(fstype, "devtmpfs");
+}
+
+static int sys_mount_impl(const char* source,
+                          const char* target,
+                          const char* fstype,
+                          unsigned int flags,
+                          const void* data) {
+    char ksource[PROCESS_FD_NAME_MAX];
+    char ktarget[PROCESS_FD_NAME_MAX];
+    char kfstype[32];
+    sys_stat_info_t info;
+    int rc;
+
+    (void)data;
+    if (!target || !fstype) return -EFAULT;
+    if ((flags & ~SYS_MOUNT_MS_RDONLY) != 0u) return -EINVAL;
+    if (source) {
+        rc = copy_user_cstr(ksource, sizeof(ksource), source);
+        if (rc < 0) return rc;
+        if (ksource[0] == '\0') return -EINVAL;
+    }
+    rc = copy_user_path_resolved(ktarget, sizeof(ktarget), target);
+    if (rc < 0) return rc;
+    rc = copy_user_cstr(kfstype, sizeof(kfstype), fstype);
+    if (rc < 0) return rc;
+
+    if (!mount_fstype_supported(kfstype)) return -EINVAL;
+    if (!virtual_stat_info(ktarget, &info) && !vfs_stat_info(ktarget, &info)) {
+        return path_lookup_errno(ktarget);
+    }
+    if (!info.is_dir) return -ENOTDIR;
+    if (mount_find_exact(ktarget)) return -EBUSY;
+
+    return -ENOSYS;
+}
+
+static int sys_umount2_impl(const char* target, unsigned int flags) {
+    char ktarget[PROCESS_FD_NAME_MAX];
+    int rc;
+
+    if (!target) return -EFAULT;
+    if ((flags & ~(SYS_UMOUNT_MNT_FORCE | SYS_UMOUNT_MNT_DETACH)) != 0u) {
+        return -EINVAL;
+    }
+    rc = copy_user_path_resolved(ktarget, sizeof(ktarget), target);
+    if (rc < 0) return rc;
+
+    if (mount_find_exact(ktarget)) return -EBUSY;
+    return -EINVAL;
+}
+
 static int sys_display_info_impl(sys_display_info_t* out_info) {
     display_info_t info;
 
@@ -5126,6 +5362,29 @@ void syscall_handler_main(syscall_regs_t* regs) {
 
         case SYS_GETPGID:
             regs->eax = (unsigned int)sys_getpgid_impl((int)regs->ebx);
+            break;
+
+        case SYS_MOUNT:
+            regs->eax = (unsigned int)sys_mount_impl((const char*)regs->ebx,
+                                                     (const char*)regs->ecx,
+                                                     (const char*)regs->edx,
+                                                     regs->esi,
+                                                     (const void*)regs->edi);
+            break;
+
+        case SYS_UMOUNT2:
+            regs->eax = (unsigned int)sys_umount2_impl((const char*)regs->ebx,
+                                                       regs->ecx);
+            break;
+
+        case SYS_STATFS:
+            regs->eax = (unsigned int)sys_statfs_impl((const char*)regs->ebx,
+                                                      (sys_statfs_t*)regs->ecx);
+            break;
+
+        case SYS_FSTATFS:
+            regs->eax = (unsigned int)sys_fstatfs_impl((int)regs->ebx,
+                                                       (sys_statfs_t*)regs->ecx);
             break;
 
         case SYS_STAT_FULL:

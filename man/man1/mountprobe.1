@@ -1,0 +1,17 @@
+MOUNTPROBE(1)
+
+NAME
+    mountprobe - exercise SmallOS mount-table and statfs compatibility
+
+SYNOPSIS
+    mountprobe
+
+DESCRIPTION
+    mountprobe validates the kernel-backed static mount table for the ext2
+    root filesystem, /proc, and /dev. It checks /proc/mounts output, statfs
+    and fstatfs filesystem identities, unsupported mount failures, and busy
+    unmount failures for the pinned static mounts.
+
+    This probe intentionally documents the current mount milestone boundary:
+    dynamic VFS stacking is not enabled yet, so supported filesystem types on
+    otherwise valid new mount points fail with ENOSYS.

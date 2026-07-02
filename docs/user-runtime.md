@@ -328,7 +328,7 @@ that boundary:
   `<endian.h>`, `<sys/dir.h>`, `<sys/file.h>`, `<dos.h>`, `<dir.h>`,
   `<conio.h>`, `<bios.h>`, `<fnmatch.h>`, `<libgen.h>`, `<pwd.h>`,
   `<grp.h>`, `<regex.h>`, `<termios.h>`, `<mntent.h>`, `<sys/vfs.h>`,
-  `<sys/statvfs.h>`, `<sys/sysinfo.h>`, and `<sys/times.h>`
+  `<sys/mount.h>`, `<sys/statvfs.h>`, `<sys/sysinfo.h>`, and `<sys/times.h>`
 - `src/user/internal/` owns raw syscall and native runtime helper headers
 - `src/user/posix/core.c` owns the broader syscall-backed descriptor and
   process wrappers
@@ -483,9 +483,11 @@ These nodes are intentionally narrow. They support the common reads, writes,
 stats, and directory listings needed by tools such as `cat`, `ps`, `free`,
 `df`, shell redirection, and compatibility probes. The terminal layer now
 supports fd-backed `tcgetattr`, `tcsetattr`, `TIOCGWINSZ`, `TIOCSPGRP`, and
-`TIOCGPGRP` for console/PTY descriptors, while real mount tables, procfs write
-knobs, authentication devices, and full shell job-control semantics remain out
-of scope for now.
+`TIOCGPGRP` for console/PTY descriptors. The mount table is kernel-backed for
+the static ext2 root, `/proc`, and `/dev` mounts; `/proc/mounts`,
+`statfs`, `fstatfs`, `statvfs`, and `fstatvfs` report that state. Dynamic VFS
+stacking, procfs write knobs, authentication devices, and full shell
+job-control semantics remain out of scope for now.
 
 ---
 
@@ -576,6 +578,8 @@ Runtime coverage currently lives in guest ELF probes:
   `getrusage` self/children accounting behavior
 - `sessprobe` - session ids, process groups, terminal foreground pgrp wrappers,
   child inheritance, and invalid process/session failures
+- `mountprobe` - state-backed mount listings, per-mount `statfs`/`fstatfs`,
+  gated dynamic mount attempts, and busy static unmount failures
 - `stdioprobe` - EOF/error state, `clearerr`, `fflush`, invalid stdio ops
 - `dirprobe` - root and nested directory iteration, EOF, invalid/missing dirs
 - `errnoprobe` - wrapper `errno` behavior

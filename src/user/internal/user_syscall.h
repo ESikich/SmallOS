@@ -773,6 +773,32 @@ static inline int sys_getrusage(int who, sys_rusage_t* usage) {
     return syscall2(SYS_GETRUSAGE, (uint32_t)who, (uint32_t)usage);
 }
 
+static inline int sys_mount(const char* source,
+                            const char* target,
+                            const char* fstype,
+                            uint32_t flags,
+                            const void* data) {
+    return syscall6(SYS_MOUNT,
+                    (uint32_t)source,
+                    (uint32_t)target,
+                    (uint32_t)fstype,
+                    flags,
+                    (uint32_t)data,
+                    0);
+}
+
+static inline int sys_umount2(const char* target, uint32_t flags) {
+    return syscall2(SYS_UMOUNT2, (uint32_t)target, flags);
+}
+
+static inline int sys_statfs(const char* path, sys_statfs_t* stfs) {
+    return syscall2(SYS_STATFS, (uint32_t)path, (uint32_t)stfs);
+}
+
+static inline int sys_fstatfs(int fd, sys_statfs_t* stfs) {
+    return syscall2(SYS_FSTATFS, (uint32_t)fd, (uint32_t)stfs);
+}
+
 static inline int sys_dup(int oldfd) {
     return syscall1(SYS_DUP, (uint32_t)oldfd);
 }
