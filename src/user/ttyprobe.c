@@ -94,7 +94,7 @@ int main(void) {
     check("ioctl winsize fd", ioctl(slave, TIOCGWINSZ, &ws) == 0 &&
                               ws.ws_row == 33 && ws.ws_col == 101);
 
-    pgid = getpid();
+    pgid = getpgrp();
     check("ioctl set pgrp", ioctl(slave, TIOCSPGRP, &pgid) == 0);
     check("ioctl get pgrp", ioctl(slave, TIOCGPGRP, &got_pgid) == 0 &&
                             got_pgid == pgid);

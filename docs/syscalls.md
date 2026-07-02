@@ -1268,6 +1268,22 @@ and `RLIMIT_CPU` reports infinity. `getrusage(RUSAGE_SELF)` reports CPU ticks
 as an approximate user time and task-owned RAM as `ru_maxrss`; child usage is
 currently a valid zeroed structure.
 
+### Session and Process-Group Syscalls (135-138)
+
+```c
+int sys_setsid(void);
+int sys_getsid(int pid);
+int sys_setpgid(int pid, int pgid);
+int sys_getpgid(int pid);
+```
+
+Sessions and process groups live in kernel process state. Children inherit the
+parent session and process group; `setsid` creates a new session and process
+group for non-group-leaders. `setpgid` can move the caller or one of its
+children into a valid same-session process group, or create a new group whose
+id is the target pid. Terminal foreground process-group ioctls validate that
+the requested group exists in the caller's session.
+
 ### SYS_USB_MOUSE_OP (87)
 
 ```c
@@ -1914,6 +1930,10 @@ sys_tty_ioctl(fd, request, arg)
 sys_getrlimit(resource, out)
 sys_setrlimit(resource, in)
 sys_getrusage(who, out)
+sys_setsid()
+sys_getsid(pid)
+sys_setpgid(pid, pgid)
+sys_getpgid(pid)
 sys_stat_full(path, out_info)
 sys_fstat_full(fd, out_info)
 sys_sound_op(op, arg1, arg2)

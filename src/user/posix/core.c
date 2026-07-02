@@ -1219,22 +1219,27 @@ pid_t getppid(void) {
 }
 
 pid_t setsid(void) {
-    return getpid();
+    return (pid_t)errno_from_raw(sys_setsid());
 }
 
 pid_t getsid(pid_t pid) {
-    if (pid < 0) {
-        set_errno(ESRCH);
-        return -1;
-    }
-    if (pid == 0 || pid == getpid()) {
-        return getpid();
-    }
-    if (pid == 1 || pid == getppid()) {
-        return pid;
-    }
-    set_errno(ESRCH);
-    return -1;
+    return (pid_t)errno_from_raw(sys_getsid((int)pid));
+}
+
+int setpgid(pid_t pid, pid_t pgid) {
+    return errno_from_raw(sys_setpgid((int)pid, (int)pgid));
+}
+
+pid_t getpgid(pid_t pid) {
+    return (pid_t)errno_from_raw(sys_getpgid((int)pid));
+}
+
+pid_t getpgrp(void) {
+    return getpgid(0);
+}
+
+int setpgrp(void) {
+    return setpgid(0, 0);
 }
 
 int getgroups(int size, gid_t list[]) {
@@ -2006,6 +2011,19 @@ int tcflush(int fd, int queue_selector) {
         return -1;
     }
     return 0;
+}
+
+pid_t tcgetpgrp(int fd) {
+    int pgid = 0;
+    if (ioctl(fd, TIOCGPGRP, &pgid) < 0) {
+        return -1;
+    }
+    return (pid_t)pgid;
+}
+
+int tcsetpgrp(int fd, pid_t pgrp) {
+    int pgid = (int)pgrp;
+    return ioctl(fd, TIOCSPGRP, &pgid);
 }
 
 static int fill_statfs(struct statfs* buf) {

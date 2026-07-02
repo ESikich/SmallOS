@@ -315,7 +315,7 @@ static void probe_stubs(void) {
     check("getgrouplist root", getgrouplist("root", 0, groups, &ngroups) == 1 &&
                                 ngroups == 1 && groups[0] == 0);
 
-    check("getsid self", getsid(0) == getpid());
+    check("getsid self", getsid(0) > 0 && getsid(0) == getsid(getpid()));
     sync();
     check("sync noop", 1);
     check("sigfillset", sigfillset(&set) == 0 && (set & (1u << SIGTERM)) != 0);

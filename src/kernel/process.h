@@ -121,6 +121,8 @@ typedef struct process {
     u32             pid;                /* kernel process id, unique until wrap */
     u32             parent_pid;         /* process that spawned this task, if any */
     u32             pgid;               /* lightweight process group id */
+    u32             sid;                /* session id */
+    u32             session_leader;     /* nonzero when pid == sid */
     u32             uid;
     u32             gid;
     u32             euid;
@@ -217,6 +219,7 @@ int        process_fd_set_signalfd_mask(fd_entry_t* ent, unsigned int mask);
 void       process_wake_timerfds(process_t* proc, unsigned int now);
 void       process_claim_for_wait(process_t* proc);
 process_t* process_find_by_pid(u32 pid);
+process_t* process_find_by_pgid(u32 pgid);
 void       process_wake_parent_waiter(process_t* child);
 int        process_wait_pid(process_t* parent,
                             int pid,
@@ -246,6 +249,10 @@ void       process_set_foreground_preserve_input(process_t* proc);
 void       process_set_display_input_owner(process_t* proc, int enabled);
 process_t* process_get_foreground(void);
 u32        process_get_foreground_group(void);
+int        process_getsid(process_t* caller, int pid);
+int        process_setsid(process_t* proc);
+int        process_getpgid(process_t* caller, int pid);
+int        process_setpgid(process_t* caller, int pid, int pgid);
 int        process_signal_deliver(process_t* proc, int signum);
 int        process_group_signal_deliver(u32 pgid, int signum);
 int        process_group_kill(u32 pgid, int status);

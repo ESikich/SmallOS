@@ -289,7 +289,8 @@ The runtime provides a small POSIX-shaped surface:
 - `mkdir`, `rmdir`
 - `fsync`, `ftruncate`, `fchmod`, `fchown`
 - `getcwd`, `chdir`
-- `getpid`, `fork`, `execve`, `execv`, `execvp`, `waitpid`, `kill`
+- `getpid`, `fork`, `execve`, `execv`, `execvp`, `waitpid`, `kill`,
+  `setsid`, `getsid`, `setpgid`, `getpgid`, `getpgrp`, and `setpgrp`
 - `getuid`, `geteuid`, `getgid`, `getegid`, `setuid`, `setgid`, and `umask`
 - `getrlimit`, `setrlimit`, and `getrusage`
 - `sysinfo`, `times`, `uname`, `ioctl`, and kernel-backed termios wrappers
@@ -573,6 +574,8 @@ Runtime coverage currently lives in guest ELF probes:
   foreground process-group ioctls, and non-terminal `ENOTTY` failures
 - `rsrcprobe` - resource limits, `RLIMIT_NOFILE` enforcement, and
   `getrusage` self/children behavior
+- `sessprobe` - session ids, process groups, terminal foreground pgrp wrappers,
+  child inheritance, and invalid process/session failures
 - `stdioprobe` - EOF/error state, `clearerr`, `fflush`, invalid stdio ops
 - `dirprobe` - root and nested directory iteration, EOF, invalid/missing dirs
 - `errnoprobe` - wrapper `errno` behavior

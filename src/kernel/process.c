@@ -181,6 +181,19 @@ process_t* process_find_by_pid(u32 pid) {
     return 0;
 }
 
+process_t* process_find_by_pgid(u32 pgid) {
+    if (pgid == 0) return 0;
+
+    for (unsigned int i = 0; i < PROCESS_REGISTRY_MAX; i++) {
+        process_t* proc = s_process_registry[i];
+        if (proc && proc->pgid == pgid) {
+            return proc;
+        }
+    }
+
+    return 0;
+}
+
 void process_wake_parent_waiter(process_t* child) {
     process_t* parent;
 
@@ -2736,6 +2749,8 @@ process_t* process_create(const char* name) {
         process_t* parent = sched_current();
         proc->parent_pid = parent ? parent->pid : 0;
         if (parent) {
+            proc->sid = parent->sid ? parent->sid : parent->pid;
+            proc->session_leader = 0;
             proc->uid = parent->uid;
             proc->gid = parent->gid;
             proc->euid = parent->euid;
@@ -2744,6 +2759,8 @@ process_t* process_create(const char* name) {
             proc->supp_gid_count = parent->supp_gid_count;
             proc->umask = parent->umask;
         } else {
+            proc->sid = proc->pid;
+            proc->session_leader = 1;
             proc->uid = 0;
             proc->gid = 0;
             proc->euid = 0;
@@ -2863,6 +2880,8 @@ process_t* process_fork_from_syscall(unsigned int regs_esp, unsigned int frame_t
     child->mmap_base = parent->mmap_base;
     child->mmap_next = parent->mmap_next;
     child->pgid = parent->pgid;
+    child->sid = parent->sid;
+    child->session_leader = 0;
     child->uid = parent->uid;
     child->gid = parent->gid;
     child->euid = parent->euid;
@@ -3003,6 +3022,13 @@ void process_init_user_group(process_t* proc) {
     if (!proc) return;
 
     parent = sched_current();
+    if (parent && parent->sid != 0) {
+        proc->sid = parent->sid;
+        proc->session_leader = 0;
+    } else if (proc->sid == 0) {
+        proc->sid = proc->pid;
+        proc->session_leader = 1;
+    }
     if (parent && parent->pgid != 0) {
         proc->pgid = parent->pgid;
     } else {
@@ -3050,6 +3076,65 @@ process_t* process_get_foreground(void) {
 
 u32 process_get_foreground_group(void) {
     return s_foreground_pgid;
+}
+
+int process_getsid(process_t* caller, int pid) {
+    process_t* target;
+
+    if (!caller) return -EINVAL;
+    if (pid < 0) return -ESRCH;
+    target = (pid == 0) ? caller : process_find_by_pid((u32)pid);
+    if (!target) return -ESRCH;
+    return (int)(target->sid ? target->sid : target->pid);
+}
+
+int process_setsid(process_t* proc) {
+    if (!proc) return -EINVAL;
+    if (proc->pgid == proc->pid) return -EPERM;
+
+    proc->sid = proc->pid;
+    proc->pgid = proc->pid;
+    proc->session_leader = 1;
+    if (s_foreground_reader == proc) {
+        s_foreground_pgid = proc->pgid;
+    }
+    return (int)proc->sid;
+}
+
+int process_getpgid(process_t* caller, int pid) {
+    process_t* target;
+
+    if (!caller) return -EINVAL;
+    if (pid < 0) return -ESRCH;
+    target = (pid == 0) ? caller : process_find_by_pid((u32)pid);
+    if (!target) return -ESRCH;
+    return (int)target->pgid;
+}
+
+int process_setpgid(process_t* caller, int pid, int pgid) {
+    process_t* target;
+    process_t* group_member;
+    u32 new_pgid;
+
+    if (!caller) return -EINVAL;
+    if (pid < 0 || pgid < 0) return -EINVAL;
+
+    target = (pid == 0) ? caller : process_find_by_pid((u32)pid);
+    if (!target) return -ESRCH;
+    if (target != caller && target->parent_pid != caller->pid) return -ESRCH;
+    if (target->sid != caller->sid) return -EPERM;
+    if (target->session_leader) return -EPERM;
+
+    new_pgid = (pgid == 0) ? target->pid : (u32)pgid;
+    group_member = process_find_by_pgid(new_pgid);
+    if (group_member && group_member->sid != caller->sid) return -EPERM;
+    if (!group_member && new_pgid != target->pid) return -EPERM;
+
+    target->pgid = new_pgid;
+    if (s_foreground_reader == target) {
+        s_foreground_pgid = target->pgid;
+    }
+    return 0;
 }
 
 int process_signal_deliver(process_t* proc, int signum) {

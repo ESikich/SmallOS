@@ -472,7 +472,11 @@ enum {
     SYS_TTY_IOCTL       = 131, /* terminal ioctl by fd */
     SYS_GETRLIMIT       = 132, /* copy process resource limit */
     SYS_SETRLIMIT       = 133, /* update process resource limit */
-    SYS_GETRUSAGE       = 134  /* copy process resource accounting */
+    SYS_GETRUSAGE       = 134, /* copy process resource accounting */
+    SYS_SETSID          = 135, /* create a new session */
+    SYS_GETSID          = 136, /* query process session id */
+    SYS_SETPGID         = 137, /* update process group id */
+    SYS_GETPGID         = 138  /* query process group id */
 };
 
 #endif

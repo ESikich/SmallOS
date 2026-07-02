@@ -173,6 +173,22 @@ static inline int sys_getpid(void) {
     return syscall0(SYS_GETPID);
 }
 
+static inline int sys_setsid(void) {
+    return syscall0(SYS_SETSID);
+}
+
+static inline int sys_getsid(int pid) {
+    return syscall1(SYS_GETSID, (uint32_t)pid);
+}
+
+static inline int sys_setpgid(int pid, int pgid) {
+    return syscall2(SYS_SETPGID, (uint32_t)pid, (uint32_t)pgid);
+}
+
+static inline int sys_getpgid(int pid) {
+    return syscall1(SYS_GETPGID, (uint32_t)pid);
+}
+
 static inline int sys_waitpid(int pid, int* status, int options) {
     return syscall3(SYS_WAITPID, (uint32_t)pid, (uint32_t)status, (uint32_t)options);
 }

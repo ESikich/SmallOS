@@ -1,0 +1,10 @@
+.TH SESSPROBE 1
+.SH NAME
+sessprobe \- exercise session and process-group syscalls
+.SH SYNOPSIS
+.B sessprobe
+.SH DESCRIPTION
+.B sessprobe
+is a guest regression probe for POSIX-shaped session and process-group
+behavior. It checks getsid, setsid, getpgid, setpgid, tcgetpgrp, tcsetpgrp,
+child inheritance, terminal foreground groups, and invalid-argument failures.

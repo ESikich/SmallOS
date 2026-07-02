@@ -990,6 +990,8 @@ Shipped ext2 programs:
   `ENOTTY` failures
 - `usr/libexec/tests/rsrcprobe` - exercise resource limits, `RLIMIT_NOFILE`
   enforcement, fixed address-space limits, and `getrusage`
+- `usr/libexec/tests/sessprobe` - exercise session ids, process groups,
+  terminal foreground process-group wrappers, and child inheritance
 - `usr/libexec/tests/badptrprobe` - exercise unmapped user pointers, page-crossing buffers/structs, and wrapped syscall byte counts
 - `usr/libexec/tests/sleep_test` - exercise SYS_SLEEP semantics
 - `usr/libexec/tests/ptrguard` - exercise syscall pointer validation

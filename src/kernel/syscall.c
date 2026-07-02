@@ -1264,6 +1264,26 @@ static int sys_getpid_impl(void) {
     return (int)proc->pid;
 }
 
+static int sys_setsid_impl(void) {
+    process_t* proc = (process_t*)sched_current();
+    return process_setsid(proc);
+}
+
+static int sys_getsid_impl(int pid) {
+    process_t* proc = (process_t*)sched_current();
+    return process_getsid(proc, pid);
+}
+
+static int sys_setpgid_impl(int pid, int pgid) {
+    process_t* proc = (process_t*)sched_current();
+    return process_setpgid(proc, pid, pgid);
+}
+
+static int sys_getpgid_impl(int pid) {
+    process_t* proc = (process_t*)sched_current();
+    return process_getpgid(proc, pid);
+}
+
 static int sys_waitpid_impl(int pid, int* user_status, int options) {
     process_t* proc = (process_t*)sched_current();
     int out_pid = 0;
@@ -3837,10 +3857,14 @@ static int sys_tty_ioctl_impl(int fd, unsigned int request, void* arg) {
 
     if (request == SYS_IOCTL_TIOCSPGRP) {
         u32 pgid = 0;
+        process_t* group_proc;
         int rc;
 
         if (!arg || !user_buf_ok((unsigned int)arg, sizeof(int))) return -EFAULT;
         if (copy_from_user(&pgid, arg, sizeof(int)) < 0) return -EFAULT;
+        group_proc = process_find_by_pgid(pgid);
+        if (!group_proc) return -ESRCH;
+        if (group_proc->sid != proc->sid) return -EPERM;
         rc = process_fd_terminal_set_pgrp(ent, pgid);
         return rc;
     }
@@ -5080,6 +5104,23 @@ void syscall_handler_main(syscall_regs_t* regs) {
         case SYS_GETRUSAGE:
             regs->eax = (unsigned int)sys_getrusage_impl((int)regs->ebx,
                                                          (sys_rusage_t*)regs->ecx);
+            break;
+
+        case SYS_SETSID:
+            regs->eax = (unsigned int)sys_setsid_impl();
+            break;
+
+        case SYS_GETSID:
+            regs->eax = (unsigned int)sys_getsid_impl((int)regs->ebx);
+            break;
+
+        case SYS_SETPGID:
+            regs->eax = (unsigned int)sys_setpgid_impl((int)regs->ebx,
+                                                       (int)regs->ecx);
+            break;
+
+        case SYS_GETPGID:
+            regs->eax = (unsigned int)sys_getpgid_impl((int)regs->ebx);
             break;
 
         case SYS_STAT_FULL:

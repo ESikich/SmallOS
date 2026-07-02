@@ -1,6 +1,8 @@
 #ifndef USER_TERMIOS_H
 #define USER_TERMIOS_H
 
+#include "sys/types.h"
+
 typedef unsigned int tcflag_t;
 typedef unsigned char cc_t;
 typedef unsigned int speed_t;
@@ -81,5 +83,7 @@ struct termios {
 int tcgetattr(int fd, struct termios* termios_p);
 int tcsetattr(int fd, int optional_actions, const struct termios* termios_p);
 int tcflush(int fd, int queue_selector);
+pid_t tcgetpgrp(int fd);
+int tcsetpgrp(int fd, pid_t pgrp);
 
 #endif /* USER_TERMIOS_H */
