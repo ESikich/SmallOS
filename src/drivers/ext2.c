@@ -4,6 +4,7 @@
 #include "../kernel/klib.h"
 #include "../kernel/paging.h"
 #include "../kernel/pmm.h"
+#include "../kernel/timer.h"
 
 #define SECTOR_SIZE          512u
 #define EXT2_BLOCK_SIZE      4096u
@@ -32,13 +33,26 @@
 
 #define EXT2_S_IFREG 0x8000u
 #define EXT2_S_IFDIR 0x4000u
+#define EXT2_S_IFCHR 0x2000u
+#define EXT2_S_IFBLK 0x6000u
+#define EXT2_S_IFIFO 0x1000u
+#define EXT2_S_IFLNK 0xA000u
+#define EXT2_S_IFSOCK 0xC000u
+#define EXT2_S_IFMT  0xF000u
 #define EXT2_FT_REG_FILE 1u
 #define EXT2_FT_DIR      2u
+#define EXT2_FT_CHRDEV   3u
+#define EXT2_FT_BLKDEV   4u
+#define EXT2_FT_FIFO     5u
+#define EXT2_FT_SOCK     6u
+#define EXT2_FT_SYMLINK  7u
 
 #define EXT2_N_BLOCKS 15u
 #define EXT2_DIRECT_BLOCKS 12u
 #define EXT2_PTRS_PER_BLOCK (EXT2_BLOCK_SIZE / 4u)
 #define EXT2_WRITE_CHUNK_SIZE (16u * EXT2_BLOCK_SIZE)
+#define EXT2_SYMLINK_LIMIT 255u
+#define EXT2_SYMLINK_DEPTH_MAX 8u
 
 #define INODE_MODE      0u
 #define INODE_UID       2u
@@ -94,6 +108,13 @@ typedef struct {
 typedef struct {
     u8* data;
 } mem_sink_t;
+
+static int mem_sink_write(void* ctx, u32 offset, const u8* data, u32 len);
+static int file_read_to_sink(u32 ino,
+                             ext2_inode_t* inode,
+                             u32 start,
+                             u32 len,
+                             const ext2_data_sink_t* sink);
 
 static int s_initialised = 0;
 static int s_bitmaps_loaded = 0;
@@ -382,11 +403,38 @@ static int write_inode(u32 ino, const ext2_inode_t* in) {
 }
 
 static int inode_is_dir(const ext2_inode_t* inode) {
-    return inode && ((inode->mode & 0xF000u) == EXT2_S_IFDIR);
+    return inode && ((inode->mode & EXT2_S_IFMT) == EXT2_S_IFDIR);
 }
 
 static int inode_is_file(const ext2_inode_t* inode) {
-    return inode && ((inode->mode & 0xF000u) == EXT2_S_IFREG);
+    return inode && ((inode->mode & EXT2_S_IFMT) == EXT2_S_IFREG);
+}
+
+static int inode_is_symlink(const ext2_inode_t* inode) {
+    return inode && ((inode->mode & EXT2_S_IFMT) == EXT2_S_IFLNK);
+}
+
+static int inode_is_special(const ext2_inode_t* inode) {
+    u16 type = inode ? (u16)(inode->mode & EXT2_S_IFMT) : 0;
+    return type == EXT2_S_IFCHR || type == EXT2_S_IFBLK ||
+           type == EXT2_S_IFIFO || type == EXT2_S_IFSOCK;
+}
+
+static u8 dir_type_for_mode(u16 mode) {
+    switch (mode & EXT2_S_IFMT) {
+        case EXT2_S_IFDIR: return EXT2_FT_DIR;
+        case EXT2_S_IFCHR: return EXT2_FT_CHRDEV;
+        case EXT2_S_IFBLK: return EXT2_FT_BLKDEV;
+        case EXT2_S_IFIFO: return EXT2_FT_FIFO;
+        case EXT2_S_IFSOCK: return EXT2_FT_SOCK;
+        case EXT2_S_IFLNK: return EXT2_FT_SYMLINK;
+        case EXT2_S_IFREG:
+        default: return EXT2_FT_REG_FILE;
+    }
+}
+
+static u32 ext2_now(void) {
+    return timer_get_realtime_seconds();
 }
 
 static int alloc_block_with_zero(u32* out_block, int zero_block) {
@@ -826,8 +874,77 @@ static int dir_find_entry(u32 dir_ino,
     return 0;
 }
 
-static int resolve_path(const char* path, resolved_path_t* out) {
+static int path_append_part(char* out, u32 out_size, const char* part) {
+    u32 pos;
+    u32 len;
+
+    if (!out || !part || out_size == 0u) return 0;
+    pos = (u32)k_strlen(out);
+    len = (u32)k_strlen(part);
+    if (len == 0u) return 1;
+    if (pos != 0u && !is_sep(out[pos - 1u])) {
+        if (pos + 1u >= out_size) return 0;
+        out[pos++] = '/';
+    }
+    if (pos + len >= out_size) return 0;
+    k_memcpy(out + pos, part, len);
+    out[pos + len] = '\0';
+    return 1;
+}
+
+static int path_parent_pop(char* path) {
+    u32 len;
+
+    if (!path) return 0;
+    len = (u32)k_strlen(path);
+    while (len > 0u && is_sep(path[len - 1u])) len--;
+    while (len > 0u && !is_sep(path[len - 1u])) len--;
+    while (len > 0u && is_sep(path[len - 1u])) len--;
+    path[len] = '\0';
+    return 1;
+}
+
+static int path_dir_join(char* out,
+                         u32 out_size,
+                         const char* dir,
+                         const char* name,
+                         const char* tail) {
+    if (!out || out_size == 0u || !name) return 0;
+    out[0] = '\0';
+    if (name[0] == '/') {
+        if (!path_append_part(out, out_size, name)) return 0;
+    } else {
+        if (dir && dir[0] && !path_append_part(out, out_size, dir)) return 0;
+        if (!path_append_part(out, out_size, name)) return 0;
+    }
+    if (tail && tail[0] && !path_append_part(out, out_size, tail)) return 0;
+    return 1;
+}
+
+static int read_symlink_inode(ext2_inode_t* inode,
+                              char* out,
+                              u32 out_size,
+                              u32* out_len) {
+    mem_sink_t mem;
+    ext2_data_sink_t sink;
+
+    if (!inode || !out || out_size == 0u || !inode_is_symlink(inode)) return 0;
+    if (inode->size >= out_size) return 0;
+    mem.data = (u8*)out;
+    sink.ctx = &mem;
+    sink.write = mem_sink_write;
+    if (!file_read_to_sink(0, inode, 0, inode->size, &sink)) return 0;
+    out[inode->size] = '\0';
+    if (out_len) *out_len = inode->size;
+    return 1;
+}
+
+static int resolve_path_ex(const char* path,
+                           resolved_path_t* out,
+                           int follow_final,
+                           u32 depth) {
     if (!out) return 0;
+    if (depth > EXT2_SYMLINK_DEPTH_MAX) return 0;
 
     out->parent_ino = 0;
     out->ino = EXT2_ROOT_INO;
@@ -840,16 +957,29 @@ static int resolve_path(const char* path, resolved_path_t* out) {
     }
 
     const char* cursor = path;
+    char dir_path[256];
     char component[256];
     u32 cur_ino = EXT2_ROOT_INO;
     ext2_inode_t cur;
     if (!read_inode(cur_ino, &cur)) return 0;
+    dir_path[0] = '\0';
 
     while (1) {
         int is_last = 0;
         int r = path_next_component(&cursor, component, sizeof(component), &is_last);
         if (r < 0) return 0;
         if (r == 0) break;
+
+        if (k_strcmp(component, ".")) {
+            if (is_last) {
+                out->parent_ino = 0;
+                out->ino = cur_ino;
+                out->inode = cur;
+                out->has_entry = 1;
+                return 1;
+            }
+            continue;
+        }
 
         u32 next_ino = 0;
         u8 type = 0;
@@ -859,6 +989,17 @@ static int resolve_path(const char* path, resolved_path_t* out) {
 
         ext2_inode_t next;
         if (!read_inode(next_ino, &next)) return 0;
+
+        if (inode_is_symlink(&next) && (!is_last || follow_final)) {
+            char target[EXT2_SYMLINK_LIMIT + 1u];
+            char redirected[256];
+
+            if (!read_symlink_inode(&next, target, sizeof(target), 0)) return 0;
+            if (!path_dir_join(redirected, sizeof(redirected), dir_path, target, cursor)) {
+                return 0;
+            }
+            return resolve_path_ex(redirected, out, follow_final, depth + 1u);
+        }
 
         if (is_last) {
             out->parent_ino = cur_ino;
@@ -871,6 +1012,11 @@ static int resolve_path(const char* path, resolved_path_t* out) {
         if (!inode_is_dir(&next)) return 0;
         cur_ino = next_ino;
         cur = next;
+        if (k_strcmp(component, "..")) {
+            path_parent_pop(dir_path);
+        } else if (!k_strcmp(component, ".")) {
+            if (!path_append_part(dir_path, sizeof(dir_path), component)) return 0;
+        }
     }
 
     out->parent_ino = 0;
@@ -880,40 +1026,49 @@ static int resolve_path(const char* path, resolved_path_t* out) {
     return 1;
 }
 
+static int resolve_path(const char* path, resolved_path_t* out) {
+    return resolve_path_ex(path, out, 1, 0);
+}
+
+static int resolve_lpath(const char* path, resolved_path_t* out) {
+    return resolve_path_ex(path, out, 0, 0);
+}
+
 static int resolve_create_path(const char* path, create_path_t* out) {
+    char parent_path[256];
+    char leaf[256];
+    u32 len;
+    u32 end;
+    u32 start;
+    resolved_path_t parent;
+
     if (!path || !out) return 0;
+    len = (u32)k_strlen(path);
+    while (len > 0u && is_sep(path[len - 1u])) len--;
+    if (len == 0u) return 0;
+    end = len;
+    start = end;
+    while (start > 0u && !is_sep(path[start - 1u])) start--;
+    if (end - start == 0u || end - start >= sizeof(leaf)) return 0;
+    k_memcpy(leaf, path + start, end - start);
+    leaf[end - start] = '\0';
+    if (k_strcmp(leaf, ".") || k_strcmp(leaf, "..")) return 0;
 
-    const char* cursor = path;
-    char component[256];
-    u32 cur_ino = EXT2_ROOT_INO;
-    ext2_inode_t cur;
-    if (!read_inode(cur_ino, &cur)) return 0;
-
-    int saw = 0;
-    while (1) {
-        int is_last = 0;
-        int r = path_next_component(&cursor, component, sizeof(component), &is_last);
-        if (r < 0) return 0;
-        if (r == 0) break;
-        saw = 1;
-
-        if (is_last) {
-            out->parent_ino = cur_ino;
-            out->parent = cur;
-            k_strncpy(out->leaf, component, sizeof(out->leaf));
-            return out->leaf[0] != '\0';
-        }
-
-        u32 next_ino = 0;
-        if (!dir_find_entry(cur_ino, &cur, component, &next_ino, 0)) return 0;
-        ext2_inode_t next;
-        if (!read_inode(next_ino, &next) || !inode_is_dir(&next)) return 0;
-        cur_ino = next_ino;
-        cur = next;
+    if (start == 0u) {
+        parent_path[0] = '\0';
+    } else {
+        u32 parent_len = start;
+        while (parent_len > 0u && is_sep(path[parent_len - 1u])) parent_len--;
+        if (parent_len >= sizeof(parent_path)) return 0;
+        k_memcpy(parent_path, path, parent_len);
+        parent_path[parent_len] = '\0';
     }
 
-    (void)saw;
-    return 0;
+    if (!resolve_path(parent_path, &parent) || !inode_is_dir(&parent.inode)) return 0;
+    out->parent_ino = parent.ino;
+    out->parent = parent.inode;
+    k_strncpy(out->leaf, leaf, sizeof(out->leaf));
+    return out->leaf[0] != '\0';
 }
 
 static int dir_write_entry(u8* buf,
@@ -1198,6 +1353,8 @@ static int write_file_range(u32 ino,
     if (!ok) return 0;
 
     if (offset + len > inode->size) inode->size = offset + len;
+    inode->mtime = ext2_now();
+    inode->ctime = inode->mtime;
     return write_inode(ino, inode);
 }
 
@@ -1211,6 +1368,157 @@ static int truncate_file(u32 ino, ext2_inode_t* inode) {
     if (!bitmap_write_defer_end()) return 0;
     inode->size = 0;
     inode->blocks_512 = 0;
+    inode->mtime = ext2_now();
+    inode->ctime = inode->mtime;
+    return write_inode(ino, inode);
+}
+
+static int free_logical_block(ext2_inode_t* inode, u32 logical) {
+    if (!inode) return 0;
+
+    if (logical < EXT2_DIRECT_BLOCKS) {
+        if (inode->block[logical]) {
+            if (!free_block(inode->block[logical])) return 0;
+            inode->block[logical] = 0;
+            if (inode->blocks_512 >= EXT2_SECTORS_PER_BLOCK) {
+                inode->blocks_512 -= EXT2_SECTORS_PER_BLOCK;
+            }
+        }
+        return 1;
+    }
+
+    logical -= EXT2_DIRECT_BLOCKS;
+    if (logical < EXT2_PTRS_PER_BLOCK) {
+        u32 block;
+        if (!inode->block[12]) return 1;
+        if (!read_block(inode->block[12], s_block2)) return 0;
+        block = read_u32_le(s_block2, logical * 4u);
+        if (block) {
+            if (!free_block(block)) return 0;
+            write_u32_le(s_block2, logical * 4u, 0);
+            if (!write_block(inode->block[12], s_block2)) return 0;
+            if (inode->blocks_512 >= EXT2_SECTORS_PER_BLOCK) {
+                inode->blocks_512 -= EXT2_SECTORS_PER_BLOCK;
+            }
+        }
+        return 1;
+    }
+
+    logical -= EXT2_PTRS_PER_BLOCK;
+    u32 outer = logical / EXT2_PTRS_PER_BLOCK;
+    u32 inner = logical % EXT2_PTRS_PER_BLOCK;
+    if (outer >= EXT2_PTRS_PER_BLOCK || !inode->block[13]) return 1;
+    if (!read_block(inode->block[13], s_block)) return 0;
+    u32 indirect = read_u32_le(s_block, outer * 4u);
+    if (!indirect) return 1;
+    if (!read_block(indirect, s_block2)) return 0;
+    u32 block = read_u32_le(s_block2, inner * 4u);
+    if (block) {
+        if (!free_block(block)) return 0;
+        write_u32_le(s_block2, inner * 4u, 0);
+        if (!write_block(indirect, s_block2)) return 0;
+        if (inode->blocks_512 >= EXT2_SECTORS_PER_BLOCK) {
+            inode->blocks_512 -= EXT2_SECTORS_PER_BLOCK;
+        }
+    }
+    return 1;
+}
+
+static int ptr_block_empty(u32 block) {
+    if (!block) return 1;
+    if (!read_block(block, s_block2)) return 0;
+    for (u32 i = 0; i < EXT2_PTRS_PER_BLOCK; i++) {
+        if (read_u32_le(s_block2, i * 4u) != 0u) return 0;
+    }
+    return 1;
+}
+
+static int free_empty_indirect_blocks(ext2_inode_t* inode) {
+    if (!inode) return 0;
+    if (inode->block[12] && ptr_block_empty(inode->block[12])) {
+        if (!free_block(inode->block[12])) return 0;
+        inode->block[12] = 0;
+        if (inode->blocks_512 >= EXT2_SECTORS_PER_BLOCK) {
+            inode->blocks_512 -= EXT2_SECTORS_PER_BLOCK;
+        }
+    }
+    if (inode->block[13]) {
+        int any_outer = 0;
+        if (!read_block(inode->block[13], s_block)) return 0;
+        for (u32 i = 0; i < EXT2_PTRS_PER_BLOCK; i++) {
+            u32 indirect = read_u32_le(s_block, i * 4u);
+            if (!indirect) continue;
+            if (ptr_block_empty(indirect)) {
+                if (!free_block(indirect)) return 0;
+                write_u32_le(s_block, i * 4u, 0);
+                if (inode->blocks_512 >= EXT2_SECTORS_PER_BLOCK) {
+                    inode->blocks_512 -= EXT2_SECTORS_PER_BLOCK;
+                }
+            } else {
+                any_outer = 1;
+            }
+        }
+        if (!write_block(inode->block[13], s_block)) return 0;
+        if (!any_outer && ptr_block_empty(inode->block[13])) {
+            if (!free_block(inode->block[13])) return 0;
+            inode->block[13] = 0;
+            if (inode->blocks_512 >= EXT2_SECTORS_PER_BLOCK) {
+                inode->blocks_512 -= EXT2_SECTORS_PER_BLOCK;
+            }
+        }
+    }
+    return 1;
+}
+
+static int resize_file(u32 ino, ext2_inode_t* inode, u32 size) {
+    static const u8 zero = 0;
+    u32 old_size;
+    u32 old_blocks;
+    u32 new_blocks;
+
+    if (!inode || !inode_is_file(inode)) return 0;
+    if (size > EXT2_MAX_WRITE_FILE_BYTES) return 0;
+    old_size = inode->size;
+    if (size == old_size) return 1;
+    if (size == 0u) return truncate_file(ino, inode);
+
+    if (size > old_size) {
+        if (!write_file_range(ino, inode, size - 1u, &zero, 1u)) return 0;
+        inode->size = size;
+        inode->mtime = ext2_now();
+        inode->ctime = inode->mtime;
+        return write_inode(ino, inode);
+    }
+
+    old_blocks = inode_block_count(inode);
+    new_blocks = (size + EXT2_BLOCK_SIZE - 1u) / EXT2_BLOCK_SIZE;
+    bitmap_write_defer_begin();
+    for (u32 logical = new_blocks; logical < old_blocks; logical++) {
+        if (!free_logical_block(inode, logical)) {
+            (void)bitmap_write_defer_end();
+            return 0;
+        }
+    }
+    if (!free_empty_indirect_blocks(inode)) {
+        (void)bitmap_write_defer_end();
+        return 0;
+    }
+    if (!bitmap_write_defer_end()) return 0;
+
+    if ((size % EXT2_BLOCK_SIZE) != 0u) {
+        u32 block = 0;
+        u32 off = size % EXT2_BLOCK_SIZE;
+        if (!inode_get_data_block(inode, size / EXT2_BLOCK_SIZE, 0, &block)) return 0;
+        if (block) {
+            if (!read_block(block, s_block)) return 0;
+            k_memset(s_block + off, 0, EXT2_BLOCK_SIZE - off);
+            if (!write_block(block, s_block)) return 0;
+        }
+    }
+
+    inode->size = size;
+    inode->mtime = ext2_now();
+    inode->ctime = inode->mtime;
     return write_inode(ino, inode);
 }
 
@@ -1233,6 +1541,9 @@ static int create_file_in_parent(create_path_t* create,
     inode.links_count = 1;
     inode.size = 0;
     inode.blocks_512 = 0;
+    inode.atime = ext2_now();
+    inode.mtime = inode.atime;
+    inode.ctime = inode.atime;
     if (!write_inode(ino, &inode)) return 0;
     if (!dir_add_entry(create->parent_ino, &create->parent, create->leaf,
                        ino, EXT2_FT_REG_FILE)) {
@@ -1550,10 +1861,34 @@ void ext2_ls(void) {
 int ext2_stat(const char* path, u32* out_size) {
     resolved_path_t resolved;
     if (!s_initialised || !resolve_path(path, &resolved) ||
-        !resolved.has_entry || !inode_is_file(&resolved.inode)) {
+        !resolved.has_entry || inode_is_dir(&resolved.inode)) {
         return 0;
     }
     if (out_size) *out_size = resolved.inode.size;
+    return 1;
+}
+
+static int stat_info_from_resolved(const resolved_path_t* resolved, ext2_stat_info_t* out) {
+    if (!resolved || !out || !resolved->has_entry) return 0;
+    if (!inode_is_file(&resolved->inode) &&
+        !inode_is_dir(&resolved->inode) &&
+        !inode_is_symlink(&resolved->inode) &&
+        !inode_is_special(&resolved->inode)) {
+        return 0;
+    }
+    k_memset(out, 0, sizeof(*out));
+    out->ino = resolved->ino;
+    out->mode = resolved->inode.mode;
+    out->uid = resolved->inode.uid;
+    out->gid = resolved->inode.gid;
+    out->links_count = resolved->inode.links_count;
+    out->rdev = resolved->inode.block[0];
+    out->size = resolved->inode.size;
+    out->blocks_512 = resolved->inode.blocks_512;
+    out->atime = resolved->inode.atime;
+    out->ctime = resolved->inode.ctime;
+    out->mtime = resolved->inode.mtime;
+    out->is_dir = inode_is_dir(&resolved->inode) ? 1 : 0;
     return 1;
 }
 
@@ -1563,21 +1898,16 @@ int ext2_stat_info(const char* path, ext2_stat_info_t* out) {
     if (!s_initialised || !out) return 0;
     if (!path || path[0] == '\0') path = "/";
     if (!resolve_path(path, &resolved) || !resolved.has_entry) return 0;
-    if (!inode_is_file(&resolved.inode) && !inode_is_dir(&resolved.inode)) return 0;
+    return stat_info_from_resolved(&resolved, out);
+}
 
-    k_memset(out, 0, sizeof(*out));
-    out->ino = resolved.ino;
-    out->mode = resolved.inode.mode;
-    out->uid = resolved.inode.uid;
-    out->gid = resolved.inode.gid;
-    out->links_count = resolved.inode.links_count;
-    out->size = resolved.inode.size;
-    out->blocks_512 = resolved.inode.blocks_512;
-    out->atime = resolved.inode.atime;
-    out->ctime = resolved.inode.ctime;
-    out->mtime = resolved.inode.mtime;
-    out->is_dir = inode_is_dir(&resolved.inode) ? 1 : 0;
-    return 1;
+int ext2_lstat_info(const char* path, ext2_stat_info_t* out) {
+    resolved_path_t resolved;
+
+    if (!s_initialised || !out) return 0;
+    if (!path || path[0] == '\0') path = "/";
+    if (!resolve_lpath(path, &resolved) || !resolved.has_entry) return 0;
+    return stat_info_from_resolved(&resolved, out);
 }
 
 int ext2_is_dir(const char* path) {
@@ -1696,6 +2026,15 @@ int ext2_write_at_path(const char* path,
     return 1;
 }
 
+int ext2_resize_path(const char* path, u32 size) {
+    resolved_path_t resolved;
+
+    if (!s_initialised || !path) return 0;
+    if (ext2_read_only()) return 0;
+    if (!resolve_path(path, &resolved) || !inode_is_file(&resolved.inode)) return 0;
+    return resize_file(resolved.ino, &resolved.inode, size);
+}
+
 int ext2_mkdir(const char* path) {
     if (!s_initialised) return 0;
     if (ext2_read_only()) return 0;
@@ -1714,6 +2053,9 @@ int ext2_mkdir(const char* path) {
     inode.size = EXT2_BLOCK_SIZE;
     inode.blocks_512 = EXT2_SECTORS_PER_BLOCK;
     inode.block[0] = block;
+    inode.atime = ext2_now();
+    inode.mtime = inode.atime;
+    inode.ctime = inode.atime;
     if (!write_inode(ino, &inode)) return 0;
 
     k_memset(s_block, 0, EXT2_BLOCK_SIZE);
@@ -1734,9 +2076,14 @@ int ext2_rm(const char* path) {
     u32 ino = 0;
     if (!dir_find_entry(create.parent_ino, &create.parent, create.leaf, &ino, 0)) return 0;
     ext2_inode_t inode;
-    if (!read_inode(ino, &inode) || !inode_is_file(&inode)) return 0;
-    if (!truncate_file(ino, &inode)) return 0;
+    if (!read_inode(ino, &inode) || inode_is_dir(&inode)) return 0;
     if (!dir_remove_entry(create.parent_ino, &create.parent, create.leaf)) return 0;
+    if (inode.links_count > 1u) {
+        inode.links_count--;
+        inode.ctime = ext2_now();
+        return write_inode(ino, &inode);
+    }
+    if (!free_inode_blocks(&inode)) return 0;
     k_memset(&inode, 0, sizeof(inode));
     if (!write_inode(ino, &inode)) return 0;
     return free_inode(ino);
@@ -1759,6 +2106,153 @@ int ext2_rmdir(const char* path) {
     k_memset(&inode, 0, sizeof(inode));
     if (!write_inode(ino, &inode)) return 0;
     return free_inode(ino);
+}
+
+int ext2_link(const char* oldpath, const char* newpath) {
+    resolved_path_t old;
+    create_path_t create;
+    ext2_inode_t inode;
+
+    if (!s_initialised || !oldpath || !newpath) return 0;
+    if (ext2_read_only()) return 0;
+    if (!resolve_path(oldpath, &old) || !old.has_entry) return 0;
+    if (inode_is_dir(&old.inode)) return 0;
+    if (!resolve_create_path(newpath, &create)) return 0;
+    if (dir_find_entry(create.parent_ino, &create.parent, create.leaf, 0, 0)) return 0;
+    inode = old.inode;
+    if (inode.links_count == 0xFFFFu) return 0;
+    if (!dir_add_entry(create.parent_ino, &create.parent, create.leaf,
+                       old.ino, dir_type_for_mode(inode.mode))) {
+        return 0;
+    }
+    inode.links_count++;
+    inode.ctime = ext2_now();
+    return write_inode(old.ino, &inode);
+}
+
+int ext2_symlink(const char* target, const char* linkpath) {
+    create_path_t create;
+    u32 ino = 0;
+    ext2_inode_t inode;
+    u32 len;
+
+    if (!s_initialised || !target || !linkpath) return 0;
+    if (ext2_read_only()) return 0;
+    len = (u32)k_strlen(target);
+    if (len == 0u || len > EXT2_SYMLINK_LIMIT) return 0;
+    if (!resolve_create_path(linkpath, &create)) return 0;
+    if (dir_find_entry(create.parent_ino, &create.parent, create.leaf, 0, 0)) return 0;
+    if (!alloc_inode(&ino)) return 0;
+
+    k_memset(&inode, 0, sizeof(inode));
+    inode.mode = EXT2_S_IFLNK | 0777u;
+    inode.links_count = 1;
+    inode.atime = ext2_now();
+    inode.mtime = inode.atime;
+    inode.ctime = inode.atime;
+    if (!write_inode(ino, &inode)) {
+        free_inode(ino);
+        return 0;
+    }
+    if (!write_file_range(ino, &inode, 0, (const u8*)target, len)) {
+        k_memset(&inode, 0, sizeof(inode));
+        (void)write_inode(ino, &inode);
+        free_inode(ino);
+        return 0;
+    }
+    if (!dir_add_entry(create.parent_ino, &create.parent, create.leaf,
+                       ino, EXT2_FT_SYMLINK)) {
+        (void)truncate_file(ino, &inode);
+        k_memset(&inode, 0, sizeof(inode));
+        (void)write_inode(ino, &inode);
+        free_inode(ino);
+        return 0;
+    }
+    return 1;
+}
+
+int ext2_readlink(const char* path, char* out, u32 out_size, u32* out_len) {
+    resolved_path_t resolved;
+    u32 len = 0;
+
+    if (out_len) *out_len = 0;
+    if (!s_initialised || !path || !out || out_size == 0u) return 0;
+    if (!resolve_lpath(path, &resolved) || !inode_is_symlink(&resolved.inode)) return 0;
+    if (!read_symlink_inode(&resolved.inode, out, out_size, &len)) return 0;
+    if (out_len) *out_len = len;
+    return 1;
+}
+
+int ext2_chmod(const char* path, u16 mode) {
+    resolved_path_t resolved;
+
+    if (!s_initialised || !path) return 0;
+    if (ext2_read_only()) return 0;
+    if (!resolve_path(path, &resolved) || !resolved.has_entry) return 0;
+    resolved.inode.mode = (u16)((resolved.inode.mode & EXT2_S_IFMT) | (mode & 07777u));
+    resolved.inode.ctime = ext2_now();
+    return write_inode(resolved.ino, &resolved.inode);
+}
+
+int ext2_chown(const char* path, u16 uid, u16 gid) {
+    resolved_path_t resolved;
+
+    if (!s_initialised || !path) return 0;
+    if (ext2_read_only()) return 0;
+    if (!resolve_path(path, &resolved) || !resolved.has_entry) return 0;
+    resolved.inode.uid = uid;
+    resolved.inode.gid = gid;
+    resolved.inode.ctime = ext2_now();
+    return write_inode(resolved.ino, &resolved.inode);
+}
+
+int ext2_utimes(const char* path, u32 atime, u32 mtime) {
+    resolved_path_t resolved;
+
+    if (!s_initialised || !path) return 0;
+    if (ext2_read_only()) return 0;
+    if (!resolve_path(path, &resolved) || !resolved.has_entry) return 0;
+    resolved.inode.atime = atime;
+    resolved.inode.mtime = mtime;
+    resolved.inode.ctime = ext2_now();
+    return write_inode(resolved.ino, &resolved.inode);
+}
+
+int ext2_mknod(const char* path, u16 mode, u32 rdev) {
+    create_path_t create;
+    u32 ino = 0;
+    ext2_inode_t inode;
+    u16 type = (u16)(mode & EXT2_S_IFMT);
+
+    if (!s_initialised || !path) return 0;
+    if (ext2_read_only()) return 0;
+    if (type != EXT2_S_IFCHR && type != EXT2_S_IFBLK &&
+        type != EXT2_S_IFIFO && type != EXT2_S_IFSOCK &&
+        type != EXT2_S_IFREG) {
+        return 0;
+    }
+    if (!resolve_create_path(path, &create)) return 0;
+    if (dir_find_entry(create.parent_ino, &create.parent, create.leaf, 0, 0)) return 0;
+    if (!alloc_inode(&ino)) return 0;
+    k_memset(&inode, 0, sizeof(inode));
+    inode.mode = mode;
+    inode.links_count = 1;
+    inode.block[0] = rdev;
+    inode.atime = ext2_now();
+    inode.mtime = inode.atime;
+    inode.ctime = inode.atime;
+    if (!write_inode(ino, &inode)) {
+        free_inode(ino);
+        return 0;
+    }
+    if (!dir_add_entry(create.parent_ino, &create.parent, create.leaf,
+                       ino, dir_type_for_mode(mode))) {
+        k_memset(&inode, 0, sizeof(inode));
+        (void)write_inode(ino, &inode);
+        free_inode(ino);
+        return 0;
+    }
+    return 1;
 }
 
 int ext2_dirent_at(const char* path,

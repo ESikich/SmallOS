@@ -45,6 +45,7 @@ int fchdir(int fd);
 int chroot(const char* path);
 int fsync(int fd);
 int ftruncate(int fd, off_t length);
+int truncate(const char* path, off_t length);
 int remove(const char* path);
 int pipe(int fds[2]);
 int pipe2(int fds[2], int flags);

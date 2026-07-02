@@ -10,7 +10,8 @@ DESCRIPTION
     compatprobe is a guest regression probe for the Unix compatibility layer.
     It checks the pieces that BusyBox and POSIX-shaped programs commonly touch:
     /bin/sh, /proc directory and file reads, /dev/null, /dev/zero, statfs,
-    sysinfo, and related libc wrappers.
+    sysinfo, metadata updates, truncate, hard links, symbolic links, readlink,
+    lstat, mknod, mkfifo, and related libc wrappers.
 
     The probe is installed under /usr/libexec/tests and is normally run by the
     host-driven selftest suite rather than by hand.

@@ -390,17 +390,11 @@ int unlink(const char* path) {
 }
 
 int link(const char* oldpath, const char* newpath) {
-    (void)oldpath;
-    (void)newpath;
-    set_errno(ENOSYS);
-    return -1;
+    return errno_from_raw(sys_link(oldpath, newpath));
 }
 
 int symlink(const char* target, const char* linkpath) {
-    (void)target;
-    (void)linkpath;
-    set_errno(ENOSYS);
-    return -1;
+    return errno_from_raw(sys_symlink(target, linkpath));
 }
 
 ssize_t readlink(const char* path, char* buf, size_t bufsiz) {
@@ -408,8 +402,7 @@ ssize_t readlink(const char* path, char* buf, size_t bufsiz) {
         set_errno(EINVAL);
         return -1;
     }
-    set_errno(ENOSYS);
-    return -1;
+    return (ssize_t)errno_from_raw(sys_readlink(path, buf, (uint32_t)bufsiz));
 }
 
 int rename(const char* src, const char* dst) {
@@ -424,11 +417,6 @@ int rmdir(const char* path) {
     return errno_from_raw(sys_rmdir(path));
 }
 
-static int path_exists_for_metadata(const char* path) {
-    struct stat st;
-    return stat(path, &st);
-}
-
 static void stat_fill_timespecs(struct stat* st) {
     st->st_atim.tv_sec = st->st_atime;
     st->st_atim.tv_nsec = 0;
@@ -439,14 +427,11 @@ static void stat_fill_timespecs(struct stat* st) {
 }
 
 int chmod(const char* path, mode_t mode) {
-    (void)mode;
-    return path_exists_for_metadata(path);
+    return errno_from_raw(sys_chmod(path, mode));
 }
 
 int chown(const char* path, uid_t owner, gid_t group) {
-    (void)owner;
-    (void)group;
-    return path_exists_for_metadata(path);
+    return errno_from_raw(sys_chown(path, owner, group));
 }
 
 int lchown(const char* path, uid_t owner, gid_t group) {
@@ -454,16 +439,11 @@ int lchown(const char* path, uid_t owner, gid_t group) {
 }
 
 int fchmod(int fd, mode_t mode) {
-    struct stat st;
-    (void)mode;
-    return fstat(fd, &st);
+    return errno_from_raw(sys_fchmod(fd, mode));
 }
 
 int fchown(int fd, uid_t owner, gid_t group) {
-    struct stat st;
-    (void)owner;
-    (void)group;
-    return fstat(fd, &st);
+    return errno_from_raw(sys_fchown(fd, owner, group));
 }
 
 mode_t umask(mode_t mask) {
@@ -475,12 +455,18 @@ mode_t umask(mode_t mask) {
 }
 
 int utimes(const char* path, const struct timeval times[2]) {
-    (void)times;
-    return path_exists_for_metadata(path);
+    struct timespec ts[2];
+    if (times) {
+        ts[0].tv_sec = times[0].tv_sec;
+        ts[0].tv_nsec = times[0].tv_usec * 1000;
+        ts[1].tv_sec = times[1].tv_sec;
+        ts[1].tv_nsec = times[1].tv_usec * 1000;
+        return errno_from_raw(sys_utimens(path, ts));
+    }
+    return errno_from_raw(sys_utimens(path, 0));
 }
 
 int utimensat(int dirfd, const char* pathname, const struct timespec times[2], int flags) {
-    (void)times;
     if (dirfd != AT_FDCWD) {
         set_errno(ENOSYS);
         return -1;
@@ -489,28 +475,37 @@ int utimensat(int dirfd, const char* pathname, const struct timespec times[2], i
         set_errno(EINVAL);
         return -1;
     }
-    return path_exists_for_metadata(pathname);
+    return errno_from_raw(sys_utimens(pathname, times));
 }
 
 int futimens(int fd, const struct timespec times[2]) {
-    struct stat st;
-    (void)times;
-    return fstat(fd, &st);
+    return errno_from_raw(sys_futimens(fd, times));
 }
 
 int mknod(const char* path, mode_t mode, dev_t dev) {
-    (void)path;
-    (void)mode;
-    (void)dev;
-    set_errno(ENOSYS);
-    return -1;
+    return errno_from_raw(sys_mknod(path, mode, dev));
 }
 
 int mkfifo(const char* path, mode_t mode) {
-    (void)path;
-    (void)mode;
-    set_errno(ENOSYS);
-    return -1;
+    return mknod(path, S_IFIFO | (mode & 0777), 0);
+}
+
+static void stat_from_info(struct stat* st, const sys_stat_info_t* info) {
+    memset(st, 0, sizeof(*st));
+    st->st_dev = info->dev;
+    st->st_ino = info->ino;
+    st->st_nlink = info->nlink;
+    st->st_mode = info->mode;
+    st->st_uid = info->uid;
+    st->st_gid = info->gid;
+    st->st_rdev = info->rdev;
+    st->st_size = (long)info->size;
+    st->st_blksize = (long)info->blksize;
+    st->st_blocks = (long)info->blocks;
+    st->st_atime = (time_t)info->atime;
+    st->st_mtime = (time_t)info->mtime;
+    st->st_ctime = (time_t)info->ctime;
+    stat_fill_timespecs(st);
 }
 
 int stat(const char* path, struct stat* st) {
@@ -522,21 +517,7 @@ int stat(const char* path, struct stat* st) {
     if (errno_from_raw(sys_stat_full(path, &info)) < 0) {
         return -1;
     }
-    memset(st, 0, sizeof(*st));
-    st->st_dev = info.dev;
-    st->st_ino = info.ino;
-    st->st_nlink = info.nlink;
-    st->st_mode = info.mode;
-    st->st_uid = info.uid;
-    st->st_gid = info.gid;
-    st->st_rdev = info.rdev;
-    st->st_size = (long)info.size;
-    st->st_blksize = (long)info.blksize;
-    st->st_blocks = (long)info.blocks;
-    st->st_atime = (time_t)info.atime;
-    st->st_mtime = (time_t)info.mtime;
-    st->st_ctime = (time_t)info.ctime;
-    stat_fill_timespecs(st);
+    stat_from_info(st, &info);
     return 0;
 }
 
@@ -547,29 +528,24 @@ int fstat(int fd, struct stat* st) {
         set_errno(EFAULT);
         return -1;
     }
-    memset(st, 0, sizeof(*st));
     if (errno_from_raw(sys_fstat_full(fd, &info)) < 0) {
         return -1;
     }
-    st->st_dev = info.dev;
-    st->st_ino = info.ino;
-    st->st_nlink = info.nlink;
-    st->st_mode = info.mode;
-    st->st_uid = info.uid;
-    st->st_gid = info.gid;
-    st->st_rdev = info.rdev;
-    st->st_size = (long)info.size;
-    st->st_blksize = (long)info.blksize;
-    st->st_blocks = (long)info.blocks;
-    st->st_atime = (time_t)info.atime;
-    st->st_mtime = (time_t)info.mtime;
-    st->st_ctime = (time_t)info.ctime;
-    stat_fill_timespecs(st);
+    stat_from_info(st, &info);
     return 0;
 }
 
 int lstat(const char* path, struct stat* st) {
-    return stat(path, st);
+    sys_stat_info_t info;
+    if (!st) {
+        set_errno(EFAULT);
+        return -1;
+    }
+    if (errno_from_raw(sys_lstat_full(path, &info)) < 0) {
+        return -1;
+    }
+    stat_from_info(st, &info);
+    return 0;
 }
 
 int access(const char* path, int mode) {
@@ -925,20 +901,26 @@ int fsync(int fd) {
 }
 
 int ftruncate(int fd, off_t length) {
-    struct stat st;
+    if (length < 0) {
+        set_errno(EINVAL);
+        return -1;
+    }
+    return errno_from_raw(sys_ftruncate(fd, (uint32_t)length));
+}
+
+int truncate(const char* path, off_t length) {
+    int fd;
+    int rc;
 
     if (length < 0) {
         set_errno(EINVAL);
         return -1;
     }
-    if (fstat(fd, &st) < 0) {
-        return -1;
-    }
-    if (length > st.st_size) {
-        set_errno(ENOSYS);
-        return -1;
-    }
-    return 0;
+    fd = open(path, O_WRONLY);
+    if (fd < 0) return -1;
+    rc = ftruncate(fd, length);
+    close(fd);
+    return rc;
 }
 
 int isatty(int fd) {

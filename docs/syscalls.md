@@ -1435,6 +1435,39 @@ divisor, buffer length, sample rate, divisor scale, or OPL register/value.
 
 ---
 
+### SYS_STAT_FULL (85)
+
+```c
+int sys_stat_full(const char* path, sys_stat_info_t* out_info);
+```
+
+Copies POSIX-shaped metadata for a path, following the final symbolic link.
+The result includes device id, inode, mode/type bits, link count, uid/gid,
+special-device id, size, block size, block count, timestamps, and the legacy
+`is_dir` convenience flag. Virtual `/proc` and `/dev` entries also report
+metadata through this shape.
+
+Returns `0` on success, `-ENOENT` or another lookup errno for missing paths,
+`-EFAULT` for invalid pointers, or `-ENAMETOOLONG` for paths that cannot be
+normalized into the kernel path buffer.
+
+---
+
+### SYS_FSTAT_FULL (86)
+
+```c
+int sys_fstat_full(int fd, sys_stat_info_t* out_info);
+```
+
+Copies the same metadata shape for an open descriptor. ext2 file descriptors
+report backing inode metadata; virtual, console, pipe, and socket-like handles
+report their best available descriptor metadata.
+
+Returns `0` on success, `-EBADF` for invalid descriptors, or `-EFAULT` for an
+invalid output pointer.
+
+---
+
 ### SYS_DISPLAY_MAP (95)
 
 ```c
@@ -1508,6 +1541,111 @@ int sys_mprotect(void* addr, uint32_t length, uint32_t prot);
 
 Updates read/write protection on user mapping pages. Execute permission is
 accepted but not separately enforced on current paging hardware.
+
+---
+
+### SYS_LINK (100)
+
+```c
+int sys_link(const char* oldpath, const char* newpath);
+```
+
+Creates a hard link to an existing non-directory ext2 inode and increments its
+link count. Existing destinations fail with `-EEXIST`.
+
+---
+
+### SYS_SYMLINK (101)
+
+```c
+int sys_symlink(const char* target, const char* linkpath);
+```
+
+Creates a symbolic link inode whose payload is `target`. The target string is
+stored as given and is not required to exist at creation time.
+
+---
+
+### SYS_READLINK (102)
+
+```c
+int sys_readlink(const char* path, char* out, uint32_t out_size);
+```
+
+Reads the target of a symbolic link without following the final component.
+Like POSIX `readlink`, the returned byte count is not a promise of a trailing
+NUL in the caller's buffer.
+
+---
+
+### SYS_LSTAT_FULL (103)
+
+```c
+int sys_lstat_full(const char* path, sys_stat_info_t* out_info);
+```
+
+Copies full metadata without following the final symbolic link. Intermediate
+symlinks are still resolved during path traversal.
+
+---
+
+### SYS_CHMOD (104), SYS_FCHMOD (109)
+
+```c
+int sys_chmod(const char* path, uint32_t mode);
+int sys_fchmod(int fd, uint32_t mode);
+```
+
+Updates stored ext2 permission bits while preserving the inode type bits.
+SmallOS currently stores this metadata for compatibility and reporting; it
+does not enforce full Unix permission checks.
+
+---
+
+### SYS_CHOWN (105), SYS_FCHOWN (110)
+
+```c
+int sys_chown(const char* path, uint32_t uid, uint32_t gid);
+int sys_fchown(int fd, uint32_t uid, uint32_t gid);
+```
+
+Updates stored ext2 owner and group ids.
+
+---
+
+### SYS_UTIMENS (106), SYS_FUTIMENS (111)
+
+```c
+int sys_utimens(const char* path, const struct timespec times[2]);
+int sys_futimens(int fd, const struct timespec times[2]);
+```
+
+Updates access and modification timestamps in seconds. Passing `NULL` uses the
+current realtime value for both fields. Nanoseconds are validated for POSIX
+shape but ext2 stores whole seconds.
+
+---
+
+### SYS_MKNOD (107)
+
+```c
+int sys_mknod(const char* path, uint32_t mode, uint32_t dev);
+```
+
+Creates an ext2 regular or special inode. FIFO, character, block, and socket
+nodes are stat-visible for BusyBox/POSIX compatibility; character and block
+nodes store `dev` as their reported special-device id.
+
+---
+
+### SYS_FTRUNCATE (108)
+
+```c
+int sys_ftruncate(int fd, uint32_t size);
+```
+
+Resizes a writable regular ext2 file descriptor. Shrinking frees blocks beyond
+the new end; growing zero-fills the newly exposed range.
 
 ---
 
@@ -1669,6 +1807,18 @@ sys_sound_stop()
 sys_mmap(addr, length, prot, flags)
 sys_munmap(addr, length)
 sys_mprotect(addr, length, prot)
+sys_link(oldpath, newpath)
+sys_symlink(target, linkpath)
+sys_readlink(path, out, out_size)
+sys_lstat_full(path, out_info)
+sys_chmod(path, mode)
+sys_chown(path, uid, gid)
+sys_utimens(path, times)
+sys_mknod(path, mode, dev)
+sys_ftruncate(fd, size)
+sys_fchmod(fd, mode)
+sys_fchown(fd, uid, gid)
+sys_futimens(fd, times)
 ```
 
 `src/user/internal/user_lib.h` higher-level wrappers:

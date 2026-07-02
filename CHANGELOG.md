@@ -54,6 +54,7 @@ wrappers in `src/user/posix`.
 * **Writable ext2 filesystem** (`src/drivers/ext2.*`, `tools/mkext2.c`, `Makefile`)
   * Replaced the FAT16 runtime and seed image builder with a 16 MB ext2 volume using 4 KiB blocks, native case-sensitive names, direct/single-indirect/double-indirect block mapping, and MBR partition type `0x83`.
   * Preserved the VFS/syscall ABI while routing ELF loading, directory iteration, file writes, mkdir/rmdir, unlink, rename, usage reporting, and allocation maps through the ext2 driver.
+  * Added BusyBox/POSIX-facing ext2 metadata support: hard links, symbolic links, `readlink`, final-component `lstat`, symlink-aware traversal, `truncate`/`ftruncate`, chmod/chown/utimens-style updates, and stat-visible FIFO, character, block, and socket nodes.
   * Batched buffered file flushes into 64 KiB ext2 writes so large FTP uploads no longer fall off a 4 KiB-per-inode-update cliff when they grow past the VFS write cache.
   * Switched ext2 block I/O to single 8-sector ATA commands instead of issuing one ATA command per 512-byte sector.
   * Cached ext2 block/inode bitmaps in memory after the first read to avoid repeated bitmap rereads during block-heavy writes.

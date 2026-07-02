@@ -335,9 +335,13 @@ then links user ELFs with `--gc-sections` so unused runtime functions do not
 have to stay in each binary.
 
 `stat`, `lstat`, and `fstat` use the full stat syscalls and fill inode number,
-mode bits, link count, uid/gid, size, block size, block count, and ext2
-timestamps. Newly created ext2 files and directories currently default to
-`0644` and `0755` respectively.
+mode bits, link count, uid/gid, device id, size, block size, block count, and
+ext2 timestamps. `stat` follows symbolic links, while `lstat` reports the link
+inode itself. `chmod`, `chown`, `utimes`, `utimensat`, `fchmod`, `fchown`, and
+`futimens` update ext2 metadata; `truncate` and `ftruncate` resize regular
+files and zero-fill grown ranges. Newly created ext2 files and directories
+default to `0644` and `0755` respectively, and `mknod`/`mkfifo` can create
+stat-visible special nodes for BusyBox/POSIX compatibility.
 
 `execve(path, argv, envp)` copies both argument and environment vectors into
 kernel-owned storage before replacing the image. Passing `NULL` for `envp`
@@ -476,9 +480,11 @@ of scope for now.
 keeps the native SmallOS command set intact and enables BusyBox where it fills
 compatibility gaps: `ash` as `/bin/sh`, standalone applets, core file tools,
 text filters, gzip/archive/hexdump tools, checksum helpers, and lightweight
-process/filesystem diagnostics. Native `/bin` tools stay first in command
-lookup; if a bare command is missing, the shell runs
-`/usr/bin/busybox <command> ...`.
+process/filesystem diagnostics. Filesystem-facing applets such as `ln`,
+`link`, `readlink`, `mkfifo`, `mknod`, `chmod`, `chown`, `chgrp`, `touch`,
+`stat`, and `find -type` exercise the real ext2 metadata and node support.
+Native `/bin` tools stay first in command lookup; if a bare command is missing,
+the shell runs `/usr/bin/busybox <command> ...`.
 
 The current compatibility wave deliberately leaves mount management, init,
 login/getty, raw-socket-heavy tools, authentication semantics, and complete
@@ -548,7 +554,8 @@ Runtime coverage currently lives in guest ELF probes:
 - `stdioprobe` - EOF/error state, `clearerr`, `fflush`, invalid stdio ops
 - `dirprobe` - root and nested directory iteration, EOF, invalid/missing dirs
 - `errnoprobe` - wrapper `errno` behavior
-- `compatprobe` - BusyBox-facing `statfs`, `/proc`, `/dev`, `/bin/sh`, and
+- `compatprobe` - BusyBox-facing `statfs`, `/proc`, `/dev`, `/bin/sh`,
+  metadata mutation, links/symlinks, special nodes, truncate, and
   compatibility wrappers
 - `crtprobe` - `main(argc, argv)` via `crt0`, argv terminator, and return status
 - `waitprobe` - `SYS_EXEC` pid return, `waitpid`, `WNOHANG`, `kill`, and wait status macros

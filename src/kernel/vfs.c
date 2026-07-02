@@ -85,7 +85,7 @@ static void vfs_ro_map_invalidate_path(const char* path) {
     unsigned int flags = vfs_irq_save();
     for (unsigned int i = 0; i < VFS_RO_MAP_CACHE_PAGES; i++) {
         if (s_ro_map_cache[i].used &&
-            k_strcmp(s_ro_map_cache[i].name, path) == 0) {
+            k_strcmp(s_ro_map_cache[i].name, path)) {
             vfs_ro_map_drop_entry(&s_ro_map_cache[i]);
         }
     }
@@ -103,7 +103,7 @@ static vfs_ro_map_entry_t* vfs_ro_map_find(const char* path,
             ent->mtime != st->mtime || ent->ctime != st->ctime) {
             continue;
         }
-        if (k_strcmp(ent->name, path) == 0) return ent;
+        if (k_strcmp(ent->name, path)) return ent;
     }
     return 0;
 }
@@ -282,8 +282,13 @@ static int vfs_file_load_cache(fd_entry_t* ent) {
     u32 loaded_size = 0;
     vfs_page_sink_t page_sink = { ent };
     ext2_data_sink_t sink = { &page_sink, vfs_page_sink_write };
+    unsigned int flags;
+    int ok;
 
-    if (!ext2_read_path_to_sink(obj->name, &sink, &loaded_size)) {
+    flags = vfs_irq_save();
+    ok = ext2_read_path_to_sink(obj->name, &sink, &loaded_size);
+    vfs_irq_restore(flags);
+    if (!ok) {
         vfs_file_cache_free(ent);
         return 0;
     }
@@ -330,8 +335,13 @@ static int vfs_file_read(fd_entry_t* ent, char* buf, unsigned int len) {
         return (int)to_copy;
     }
 
-    if (!ext2_read_at_path(obj->name, obj->offset, (u8*)buf, len, &read_len)) {
-        return -EIO;
+    {
+        unsigned int flags = vfs_irq_save();
+        int ok = ext2_read_at_path(obj->name, obj->offset, (u8*)buf, len, &read_len);
+        vfs_irq_restore(flags);
+        if (!ok) {
+            return -EIO;
+        }
     }
 
     obj->offset += read_len;
@@ -371,8 +381,13 @@ static int vfs_file_write(fd_entry_t* ent, const char* buf, unsigned int len) {
     if (obj->dirty && !vfs_file_flush(ent)) {
         return -EIO;
     }
-    if (!ext2_write_at_path(obj->name, obj->offset, (const u8*)buf, len, &obj->size, 1)) {
-        return -EIO;
+    {
+        unsigned int flags = vfs_irq_save();
+        int ok = ext2_write_at_path(obj->name, obj->offset, (const u8*)buf, len, &obj->size, 1);
+        vfs_irq_restore(flags);
+        if (!ok) {
+            return -EIO;
+        }
     }
     vfs_ro_map_invalidate_path(obj->name);
 
@@ -446,7 +461,10 @@ static int vfs_file_flush(fd_entry_t* ent) {
     vfs_page_source_t page_source = { ent };
     ext2_data_source_t source = { &page_source, vfs_page_source_read };
 
-    if (!ext2_write_path_from_source(obj->name, &source, obj->size)) {
+    unsigned int flags = vfs_irq_save();
+    int ok = ext2_write_path_from_source(obj->name, &source, obj->size);
+    vfs_irq_restore(flags);
+    if (!ok) {
         return 0;
     }
     vfs_ro_map_invalidate_path(obj->name);
@@ -560,6 +578,7 @@ static void vfs_copy_ext2_stat(sys_stat_info_t* out, const ext2_stat_info_t* in)
     out->nlink = in->links_count;
     out->uid = in->uid;
     out->gid = in->gid;
+    out->rdev = in->rdev;
     out->size = in->size;
     out->blksize = 4096u;
     out->blocks = in->blocks_512;
@@ -572,11 +591,16 @@ static void vfs_copy_ext2_stat(sys_stat_info_t* out, const ext2_stat_info_t* in)
 int vfs_file_stat_info_fd(fd_entry_t* ent, sys_stat_info_t* out) {
     vfs_file_object_t* obj = vfs_file_object(ent);
     ext2_stat_info_t info;
+    int ok;
+    unsigned int flags;
 
     if (!ent || !ent->valid || ent->kind != PROCESS_HANDLE_KIND_FILE || !obj || !out) {
         return -EBADF;
     }
-    if (ext2_stat_info(obj->name, &info)) {
+    flags = vfs_irq_save();
+    ok = ext2_stat_info(obj->name, &info);
+    vfs_irq_restore(flags);
+    if (ok) {
         vfs_copy_ext2_stat(out, &info);
         return 0;
     }
@@ -588,6 +612,30 @@ int vfs_file_stat_info_fd(fd_entry_t* ent, sys_stat_info_t* out) {
     out->blksize = 4096u;
     out->blocks = (out->size + 511u) / 512u;
     out->is_dir = obj->is_dir ? 1u : 0u;
+    return 0;
+}
+
+int vfs_file_truncate_fd(fd_entry_t* ent, u32 size) {
+    vfs_file_object_t* obj = vfs_file_object(ent);
+
+    if (!ent || !ent->valid || ent->kind != PROCESS_HANDLE_KIND_FILE || !obj) {
+        return -EBADF;
+    }
+    if (!obj->writable) return -EBADF;
+    if (obj->is_dir) return -EISDIR;
+    if (obj->dirty && !vfs_file_flush(ent)) return -EIO;
+    {
+        unsigned int flags = vfs_irq_save();
+        int ok = ext2_resize_path(obj->name, size);
+        vfs_irq_restore(flags);
+        if (!ok) return -EIO;
+    }
+    vfs_ro_map_invalidate_path(obj->name);
+    vfs_file_cache_free(ent);
+    obj->size = size;
+    if (obj->offset > size) obj->offset = size;
+    obj->dirty = 0;
+    vfs_file_sync_entry(ent);
     return 0;
 }
 
@@ -702,12 +750,21 @@ void vfs_file_map_cache_stats(u32* out_pages, u32* out_mapped_refs) {
 }
 
 const u8* vfs_load_file(const char* path, u32* out_size) {
-    return ext2_load(path, out_size);
+    const u8* data;
+    unsigned int flags = vfs_irq_save();
+    data = ext2_load(path, out_size);
+    vfs_irq_restore(flags);
+    return data;
 }
 
 static unsigned int vfs_irq_save(void) {
     unsigned int flags;
 
+    /*
+     * ext2 still keeps per-operation scratch state in driver globals. Keep
+     * individual ext2 calls non-preemptible until that state moves onto the
+     * stack or into an explicit filesystem lock.
+     */
     __asm__ __volatile__("pushf; pop %0; cli" : "=r"(flags) :: "memory");
     return flags;
 }
@@ -778,8 +835,12 @@ void vfs_free_file_owned(u32 frame, u32 frames) {
 
 int vfs_stat(const char* path, u32* out_size, int* out_is_dir) {
     u32 size = 0;
+    int is_dir;
+    unsigned int flags;
 
+    flags = vfs_irq_save();
     if (ext2_stat(path, &size)) {
+        vfs_irq_restore(flags);
         if (out_size) {
             *out_size = size;
         }
@@ -789,7 +850,9 @@ int vfs_stat(const char* path, u32* out_size, int* out_is_dir) {
         return 1;
     }
 
-    if (!ext2_is_dir(path)) {
+    is_dir = ext2_is_dir(path);
+    vfs_irq_restore(flags);
+    if (!is_dir) {
         return 0;
     }
 
@@ -804,36 +867,74 @@ int vfs_stat(const char* path, u32* out_size, int* out_is_dir) {
 
 int vfs_stat_info(const char* path, sys_stat_info_t* out) {
     ext2_stat_info_t info;
+    int ok;
+    unsigned int flags;
 
     if (!out) return 0;
-    if (!ext2_stat_info(path, &info)) return 0;
+    flags = vfs_irq_save();
+    ok = ext2_stat_info(path, &info);
+    vfs_irq_restore(flags);
+    if (!ok) return 0;
+    vfs_copy_ext2_stat(out, &info);
+    return 1;
+}
+
+int vfs_lstat_info(const char* path, sys_stat_info_t* out) {
+    ext2_stat_info_t info;
+    int ok;
+    unsigned int flags;
+
+    if (!out) return 0;
+    flags = vfs_irq_save();
+    ok = ext2_lstat_info(path, &info);
+    vfs_irq_restore(flags);
+    if (!ok) return 0;
     vfs_copy_ext2_stat(out, &info);
     return 1;
 }
 
 int vfs_is_dir(const char* path) {
-    return ext2_is_dir(path);
+    int ok;
+    unsigned int flags = vfs_irq_save();
+    ok = ext2_is_dir(path);
+    vfs_irq_restore(flags);
+    return ok;
 }
 
 int vfs_write_root(const char* name, const u8* data, u32 size) {
+    int ok;
+    unsigned int flags;
+
     vfs_ro_map_invalidate_path(name);
-    return ext2_write(name, data, size);
+    flags = vfs_irq_save();
+    ok = ext2_write(name, data, size);
+    vfs_irq_restore(flags);
+    return ok;
 }
 
 int vfs_write_path(const char* path, const u8* data, u32 size) {
-    int ok = ext2_write_path(path, data, size);
+    int ok;
+    unsigned int flags = vfs_irq_save();
+    ok = ext2_write_path(path, data, size);
+    vfs_irq_restore(flags);
     if (ok) vfs_ro_map_invalidate_path(path);
     return ok;
 }
 
 int vfs_unlink(const char* path) {
-    int ok = ext2_rm(path);
+    int ok;
+    unsigned int flags = vfs_irq_save();
+    ok = ext2_rm(path);
+    vfs_irq_restore(flags);
     if (ok) vfs_ro_map_invalidate_path(path);
     return ok;
 }
 
 int vfs_rename(const char* src, const char* dst) {
-    int ok = ext2_move(src, dst);
+    int ok;
+    unsigned int flags = vfs_irq_save();
+    ok = ext2_move(src, dst);
+    vfs_irq_restore(flags);
     if (ok) {
         vfs_ro_map_invalidate_path(src);
         vfs_ro_map_invalidate_path(dst);
@@ -841,12 +942,94 @@ int vfs_rename(const char* src, const char* dst) {
     return ok;
 }
 
+int vfs_link(const char* oldpath, const char* newpath) {
+    int ok;
+    unsigned int flags = vfs_irq_save();
+    ok = ext2_link(oldpath, newpath);
+    vfs_irq_restore(flags);
+    if (ok) {
+        vfs_ro_map_invalidate_path(oldpath);
+        vfs_ro_map_invalidate_path(newpath);
+    }
+    return ok;
+}
+
+int vfs_symlink(const char* target, const char* linkpath) {
+    int ok;
+    unsigned int flags = vfs_irq_save();
+    ok = ext2_symlink(target, linkpath);
+    vfs_irq_restore(flags);
+    if (ok) vfs_ro_map_invalidate_path(linkpath);
+    return ok;
+}
+
+int vfs_readlink(const char* path, char* out, u32 out_size, u32* out_len) {
+    int ok;
+    unsigned int flags = vfs_irq_save();
+    ok = ext2_readlink(path, out, out_size, out_len);
+    vfs_irq_restore(flags);
+    return ok;
+}
+
+int vfs_chmod(const char* path, u16 mode) {
+    int ok;
+    unsigned int flags = vfs_irq_save();
+    ok = ext2_chmod(path, mode);
+    vfs_irq_restore(flags);
+    if (ok) vfs_ro_map_invalidate_path(path);
+    return ok;
+}
+
+int vfs_chown(const char* path, u16 uid, u16 gid) {
+    int ok;
+    unsigned int flags = vfs_irq_save();
+    ok = ext2_chown(path, uid, gid);
+    vfs_irq_restore(flags);
+    if (ok) vfs_ro_map_invalidate_path(path);
+    return ok;
+}
+
+int vfs_utimes(const char* path, u32 atime, u32 mtime) {
+    int ok;
+    unsigned int flags = vfs_irq_save();
+    ok = ext2_utimes(path, atime, mtime);
+    vfs_irq_restore(flags);
+    if (ok) vfs_ro_map_invalidate_path(path);
+    return ok;
+}
+
+int vfs_mknod(const char* path, u16 mode, u32 rdev) {
+    int ok;
+    unsigned int flags = vfs_irq_save();
+    ok = ext2_mknod(path, mode, rdev);
+    vfs_irq_restore(flags);
+    if (ok) vfs_ro_map_invalidate_path(path);
+    return ok;
+}
+
+int vfs_resize(const char* path, u32 size) {
+    int ok;
+    unsigned int flags = vfs_irq_save();
+    ok = ext2_resize_path(path, size);
+    vfs_irq_restore(flags);
+    if (ok) vfs_ro_map_invalidate_path(path);
+    return ok;
+}
+
 int vfs_mkdir(const char* path) {
-    return ext2_mkdir(path);
+    int ok;
+    unsigned int flags = vfs_irq_save();
+    ok = ext2_mkdir(path);
+    vfs_irq_restore(flags);
+    return ok;
 }
 
 int vfs_rmdir(const char* path) {
-    return ext2_rmdir(path);
+    int ok;
+    unsigned int flags = vfs_irq_save();
+    ok = ext2_rmdir(path);
+    vfs_irq_restore(flags);
+    return ok;
 }
 
 int vfs_dirent_at(const char* path,
@@ -855,8 +1038,12 @@ int vfs_dirent_at(const char* path,
                   u32 out_name_size,
                   u32* out_size,
                   int* out_is_dir) {
-    return ext2_dirent_at(path, index, out_name, out_name_size,
-                          out_size, out_is_dir);
+    int ok;
+    unsigned int flags = vfs_irq_save();
+    ok = ext2_dirent_at(path, index, out_name, out_name_size,
+                        out_size, out_is_dir);
+    vfs_irq_restore(flags);
+    return ok;
 }
 
 int vfs_dirents_read(const char* path,
@@ -864,5 +1051,9 @@ int vfs_dirents_read(const char* path,
                      ext2_dirent_info_t* out,
                      u32 max_entries,
                      u32* out_count) {
-    return ext2_dirents_read(path, start_index, out, max_entries, out_count);
+    int ok;
+    unsigned int flags = vfs_irq_save();
+    ok = ext2_dirents_read(path, start_index, out, max_entries, out_count);
+    vfs_irq_restore(flags);
+    return ok;
 }

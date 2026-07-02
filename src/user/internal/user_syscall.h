@@ -281,6 +281,18 @@ static inline int sys_unlink(const char* path) {
     return syscall1(SYS_UNLINK, (uint32_t)path);
 }
 
+static inline int sys_link(const char* oldpath, const char* newpath) {
+    return syscall2(SYS_LINK, (uint32_t)oldpath, (uint32_t)newpath);
+}
+
+static inline int sys_symlink(const char* target, const char* linkpath) {
+    return syscall2(SYS_SYMLINK, (uint32_t)target, (uint32_t)linkpath);
+}
+
+static inline int sys_readlink(const char* path, char* out, uint32_t out_size) {
+    return syscall3(SYS_READLINK, (uint32_t)path, (uint32_t)out, out_size);
+}
+
 /*
  * sys_rename(src, dst)
  *
@@ -309,8 +321,44 @@ static inline int sys_stat_full(const char* path, sys_stat_info_t* out) {
     return syscall2(SYS_STAT_FULL, (uint32_t)path, (uint32_t)out);
 }
 
+static inline int sys_lstat_full(const char* path, sys_stat_info_t* out) {
+    return syscall2(SYS_LSTAT_FULL, (uint32_t)path, (uint32_t)out);
+}
+
 static inline int sys_fstat_full(int fd, sys_stat_info_t* out) {
     return syscall2(SYS_FSTAT_FULL, (uint32_t)fd, (uint32_t)out);
+}
+
+static inline int sys_chmod(const char* path, uint32_t mode) {
+    return syscall2(SYS_CHMOD, (uint32_t)path, mode);
+}
+
+static inline int sys_chown(const char* path, uint32_t uid, uint32_t gid) {
+    return syscall3(SYS_CHOWN, (uint32_t)path, uid, gid);
+}
+
+static inline int sys_utimens(const char* path, const void* times) {
+    return syscall2(SYS_UTIMENS, (uint32_t)path, (uint32_t)times);
+}
+
+static inline int sys_mknod(const char* path, uint32_t mode, uint32_t dev) {
+    return syscall3(SYS_MKNOD, (uint32_t)path, mode, dev);
+}
+
+static inline int sys_ftruncate(int fd, uint32_t size) {
+    return syscall2(SYS_FTRUNCATE, (uint32_t)fd, size);
+}
+
+static inline int sys_fchmod(int fd, uint32_t mode) {
+    return syscall2(SYS_FCHMOD, (uint32_t)fd, mode);
+}
+
+static inline int sys_fchown(int fd, uint32_t uid, uint32_t gid) {
+    return syscall3(SYS_FCHOWN, (uint32_t)fd, uid, gid);
+}
+
+static inline int sys_futimens(int fd, const void* times) {
+    return syscall2(SYS_FUTIMENS, (uint32_t)fd, (uint32_t)times);
 }
 
 static inline int sys_fsinfo(sys_fsinfo_t* out_info) {

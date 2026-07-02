@@ -92,9 +92,12 @@ setconf CONFIG_FIND y
 setconf CONFIG_HEAD y
 setconf CONFIG_ID y
 setconf CONFIG_KILL y
+setconf CONFIG_LINK y
 setconf CONFIG_LN y
 setconf CONFIG_LS y
 setconf CONFIG_MKDIR y
+setconf CONFIG_MKFIFO y
+setconf CONFIG_MKNOD y
 setconf CONFIG_MV y
 setconf CONFIG_MD5SUM y
 setconf CONFIG_PRINTENV y

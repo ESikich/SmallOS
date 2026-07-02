@@ -391,7 +391,19 @@ enum {
     SYS_DISPLAY_PRESENT_PAGE = 96, /* present a mapped display page */
     SYS_MMAP           = 97, /* anonymous or read-only file private mapping */
     SYS_MUNMAP         = 98, /* unmap user mapping pages */
-    SYS_MPROTECT       = 99  /* update user mapping write permission */
+    SYS_MPROTECT       = 99, /* update user mapping write permission */
+    SYS_LINK           = 100, /* create hard link */
+    SYS_SYMLINK        = 101, /* create symbolic link */
+    SYS_READLINK       = 102, /* read symbolic link target */
+    SYS_LSTAT_FULL     = 103, /* copy stat info without following final symlink */
+    SYS_CHMOD          = 104, /* update path mode bits */
+    SYS_CHOWN          = 105, /* update path owner/group */
+    SYS_UTIMENS        = 106, /* update path atime/mtime seconds */
+    SYS_MKNOD          = 107, /* create special filesystem node */
+    SYS_FTRUNCATE      = 108, /* resize writable regular fd */
+    SYS_FCHMOD         = 109, /* update fd mode bits */
+    SYS_FCHOWN         = 110, /* update fd owner/group */
+    SYS_FUTIMENS       = 111  /* update fd atime/mtime seconds */
 };
 
 #endif

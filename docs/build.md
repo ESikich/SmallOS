@@ -415,8 +415,8 @@ stored under `/var/tmp/`, while the shipped hello demo lives under `usr/bin/`.
 
 BusyBox coverage lives in the same guest pass. The suite checks `/bin/sh`,
 native-shell fallback to `/usr/bin/busybox`, representative applets, virtual
-`/proc` and `/dev` paths, and compatibility wrappers such as `statfs` and
-`sysinfo`.
+`/proc` and `/dev` paths, link/symlink/node applets, and compatibility wrappers
+such as `statfs`, `sysinfo`, metadata updates, and truncate.
 
 The user runtime behavior that those tests depend on is documented in
 [`docs/user-runtime.md`](user-runtime.md), including `errno`, cwd-aware
@@ -838,7 +838,8 @@ bridges the kernel `_start(argc, argv)` launch ABI to TinyCC's normal
 BusyBox ships as `usr/bin/busybox`, configured for a useful Unix compatibility
 set rather than full Linux emulation. `ash` is enabled as `/bin/sh`, standalone
 applets are enabled, and common text, archive, process, filesystem, and
-diagnostic commands are available, including gzip/gunzip and checksum helpers.
+diagnostic commands are available, including gzip/gunzip, checksum helpers,
+hard/symbolic link tools, `readlink`, `mkfifo`, and `mknod`.
 Native SmallOS commands remain preferred in shell lookup; BusyBox is the
 fallback for missing applets.
 
@@ -976,7 +977,8 @@ Shipped ext2 programs:
 - `usr/libexec/tests/dirprobe` - exercise root and nested directory iteration
 - `usr/libexec/tests/errnoprobe` - exercise raw syscall errors and POSIX errno wrappers
 - `usr/libexec/tests/compatprobe` - exercise BusyBox-facing `/proc`, `/dev`,
-  `statfs`, `sysinfo`, `/bin/sh`, and compatibility wrappers
+  `statfs`, `sysinfo`, `/bin/sh`, metadata mutation, links/symlinks,
+  truncate, special nodes, and compatibility wrappers
 - `usr/libexec/tests/badptrprobe` - exercise unmapped user pointers, page-crossing buffers/structs, and wrapped syscall byte counts
 - `usr/libexec/tests/sleep_test` - exercise SYS_SLEEP semantics
 - `usr/libexec/tests/ptrguard` - exercise syscall pointer validation
@@ -1347,4 +1349,5 @@ state and USB boot mouse path from userland.
 
 * Broader DHCP coverage such as renewal and lease expiry handling
 * Broader TCP close-state fuzzing beyond the focused EOF smoke
-* Richer filesystem metadata such as long filenames, chmod, or ownership
+* Long filenames and richer permission semantics beyond stored ext2 mode,
+  owner, group, timestamp, link, symlink, and special-node metadata

@@ -2871,6 +2871,57 @@ static int sys_unlink_impl(const char* path) {
     return vfs_unlink(kpath) ? 0 : path_lookup_errno(kpath);
 }
 
+static int sys_link_impl(const char* oldpath, const char* newpath) {
+    char kold[PROCESS_FD_NAME_MAX];
+    char knew[PROCESS_FD_NAME_MAX];
+    sys_stat_info_t info;
+    int old_rc = copy_user_path_resolved(kold, sizeof(kold), oldpath);
+    if (old_rc < 0) return old_rc;
+    int new_rc = copy_user_path_resolved(knew, sizeof(knew), newpath);
+    if (new_rc < 0) return new_rc;
+    if (vfs_is_dir(kold)) return -EPERM;
+    if (vfs_link(kold, knew)) return 0;
+    if (vfs_lstat_info(knew, &info)) return -EEXIST;
+    return path_lookup_errno(kold);
+}
+
+static int sys_symlink_impl(const char* target, const char* linkpath) {
+    char ktarget[PROCESS_FD_NAME_MAX];
+    char klink[PROCESS_FD_NAME_MAX];
+    int target_rc = copy_user_cstr(ktarget, sizeof(ktarget), target);
+    if (target_rc < 0) return target_rc;
+    if (target_rc <= 1) return -EINVAL;
+    int link_rc = copy_user_path_resolved(klink, sizeof(klink), linkpath);
+    if (link_rc < 0) return link_rc;
+    if (vfs_symlink(ktarget, klink)) return 0;
+    {
+        sys_stat_info_t info;
+        if (vfs_lstat_info(klink, &info)) return -EEXIST;
+    }
+    return path_lookup_errno(klink);
+}
+
+static int sys_readlink_impl(const char* path, char* out, unsigned int out_size) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    char target[PROCESS_FD_NAME_MAX];
+    u32 len = 0;
+    u32 copied;
+    int path_rc;
+
+    if (!out || out_size == 0u) return -EINVAL;
+    path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    if (path_rc < 0) return path_rc;
+    if (!vfs_readlink(kpath, target, sizeof(target), &len)) {
+        sys_stat_info_t info;
+        if (vfs_lstat_info(kpath, &info)) return -EINVAL;
+        return path_lookup_errno(kpath);
+    }
+    copied = len;
+    if (copied > out_size) copied = out_size;
+    if (copy_to_user(out, target, copied) < 0) return -EFAULT;
+    return (int)copied;
+}
+
 static int sys_rename_impl(const char* src, const char* dst) {
     char ksrc[PROCESS_FD_NAME_MAX];
     char kdst[PROCESS_FD_NAME_MAX];
@@ -2879,6 +2930,110 @@ static int sys_rename_impl(const char* src, const char* dst) {
     int dst_rc = copy_user_path_resolved(kdst, sizeof(kdst), dst);
     if (dst_rc < 0) return dst_rc;
     return vfs_rename(ksrc, kdst) ? 0 : path_lookup_errno(ksrc);
+}
+
+static int sys_chmod_impl(const char* path, unsigned int mode) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    if (path_rc < 0) return path_rc;
+    return vfs_chmod(kpath, (u16)mode) ? 0 : path_lookup_errno(kpath);
+}
+
+static int sys_chown_impl(const char* path, unsigned int uid, unsigned int gid) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    if (path_rc < 0) return path_rc;
+    return vfs_chown(kpath, (u16)uid, (u16)gid) ? 0 : path_lookup_errno(kpath);
+}
+
+static int sys_utimens_impl(const char* path, const struct user_timespec* times) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    struct user_timespec in[2];
+    u32 atime;
+    u32 mtime;
+    int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    if (path_rc < 0) return path_rc;
+    if (times) {
+        if (copy_from_user(in, times, sizeof(in)) < 0) return -EFAULT;
+        if (in[0].tv_nsec < 0 || in[0].tv_nsec >= (long)SMALLOS_NS_PER_SECOND ||
+            in[1].tv_nsec < 0 || in[1].tv_nsec >= (long)SMALLOS_NS_PER_SECOND) {
+            return -EINVAL;
+        }
+        atime = in[0].tv_sec;
+        mtime = in[1].tv_sec;
+    } else {
+        atime = timer_get_realtime_seconds();
+        mtime = atime;
+    }
+    return vfs_utimes(kpath, atime, mtime) ? 0 : path_lookup_errno(kpath);
+}
+
+static int sys_mknod_impl(const char* path, unsigned int mode, unsigned int dev) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    sys_stat_info_t info;
+    int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    if (path_rc < 0) return path_rc;
+    if (vfs_mknod(kpath, (u16)mode, dev)) return 0;
+    if (vfs_lstat_info(kpath, &info)) return -EEXIST;
+    return path_lookup_errno(kpath);
+}
+
+static int sys_ftruncate_impl(int fd, unsigned int size) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+
+    if (!proc) return -EINVAL;
+    ent = process_fd_get(proc, fd);
+    if (!ent) return -EBADF;
+    return vfs_file_truncate_fd(ent, size);
+}
+
+static int sys_fchmod_impl(int fd, unsigned int mode) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+
+    if (!proc) return -EINVAL;
+    ent = process_fd_get(proc, fd);
+    if (!ent) return -EBADF;
+    if (ent->kind != PROCESS_HANDLE_KIND_FILE) return -EBADF;
+    return vfs_chmod(ent->name, (u16)mode) ? 0 : -EIO;
+}
+
+static int sys_fchown_impl(int fd, unsigned int uid, unsigned int gid) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+
+    if (!proc) return -EINVAL;
+    ent = process_fd_get(proc, fd);
+    if (!ent) return -EBADF;
+    if (ent->kind != PROCESS_HANDLE_KIND_FILE) return -EBADF;
+    return vfs_chown(ent->name, (u16)uid, (u16)gid) ? 0 : -EIO;
+}
+
+static int sys_futimens_impl(int fd, const struct user_timespec* times) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+    struct user_timespec in[2];
+    u32 atime;
+    u32 mtime;
+
+    if (!proc) return -EINVAL;
+    ent = process_fd_get(proc, fd);
+    if (!ent) return -EBADF;
+    if (ent->kind != PROCESS_HANDLE_KIND_FILE) return -EBADF;
+    if (times) {
+        if (copy_from_user(in, times, sizeof(in)) < 0) return -EFAULT;
+        if (in[0].tv_nsec < 0 || in[0].tv_nsec >= (long)SMALLOS_NS_PER_SECOND ||
+            in[1].tv_nsec < 0 || in[1].tv_nsec >= (long)SMALLOS_NS_PER_SECOND) {
+            return -EINVAL;
+        }
+        atime = in[0].tv_sec;
+        mtime = in[1].tv_sec;
+    } else {
+        atime = timer_get_realtime_seconds();
+        mtime = atime;
+    }
+    return vfs_utimes(ent->name, atime, mtime) ? 0 : -EIO;
 }
 
 static int sys_stat_impl(const char* path, unsigned int* out_size, int* out_is_dir) {
@@ -2937,6 +3092,20 @@ static int sys_stat_full_impl(const char* path, sys_stat_info_t* out) {
     if (path_rc < 0) return path_rc;
     if (!out) return -EFAULT;
     if (!virtual_stat_info(kpath, &info) && !vfs_stat_info(kpath, &info)) {
+        return path_lookup_errno(kpath);
+    }
+    if (copy_to_user(out, &info, sizeof(info)) < 0) return -EFAULT;
+    return 0;
+}
+
+static int sys_lstat_full_impl(const char* path, sys_stat_info_t* out) {
+    char kpath[PROCESS_FD_NAME_MAX];
+    sys_stat_info_t info;
+    int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+
+    if (path_rc < 0) return path_rc;
+    if (!out) return -EFAULT;
+    if (!virtual_stat_info(kpath, &info) && !vfs_lstat_info(kpath, &info)) {
         return path_lookup_errno(kpath);
     }
     if (copy_to_user(out, &info, sizeof(info)) < 0) return -EFAULT;
@@ -4345,6 +4514,73 @@ void syscall_handler_main(syscall_regs_t* regs) {
             regs->eax = (unsigned int)sys_ntp_sync_impl(
                             regs->ebx,
                             (struct user_timespec*)regs->ecx);
+            break;
+
+        case SYS_LINK:
+            regs->eax = (unsigned int)sys_link_impl((const char*)regs->ebx,
+                                                    (const char*)regs->ecx);
+            break;
+
+        case SYS_SYMLINK:
+            regs->eax = (unsigned int)sys_symlink_impl((const char*)regs->ebx,
+                                                       (const char*)regs->ecx);
+            break;
+
+        case SYS_READLINK:
+            regs->eax = (unsigned int)sys_readlink_impl((const char*)regs->ebx,
+                                                        (char*)regs->ecx,
+                                                        regs->edx);
+            break;
+
+        case SYS_LSTAT_FULL:
+            regs->eax = (unsigned int)sys_lstat_full_impl(
+                            (const char*)regs->ebx,
+                            (sys_stat_info_t*)regs->ecx);
+            break;
+
+        case SYS_CHMOD:
+            regs->eax = (unsigned int)sys_chmod_impl((const char*)regs->ebx,
+                                                     regs->ecx);
+            break;
+
+        case SYS_CHOWN:
+            regs->eax = (unsigned int)sys_chown_impl((const char*)regs->ebx,
+                                                     regs->ecx,
+                                                     regs->edx);
+            break;
+
+        case SYS_UTIMENS:
+            regs->eax = (unsigned int)sys_utimens_impl(
+                            (const char*)regs->ebx,
+                            (const struct user_timespec*)regs->ecx);
+            break;
+
+        case SYS_MKNOD:
+            regs->eax = (unsigned int)sys_mknod_impl((const char*)regs->ebx,
+                                                     regs->ecx,
+                                                     regs->edx);
+            break;
+
+        case SYS_FTRUNCATE:
+            regs->eax = (unsigned int)sys_ftruncate_impl((int)regs->ebx,
+                                                         regs->ecx);
+            break;
+
+        case SYS_FCHMOD:
+            regs->eax = (unsigned int)sys_fchmod_impl((int)regs->ebx,
+                                                      regs->ecx);
+            break;
+
+        case SYS_FCHOWN:
+            regs->eax = (unsigned int)sys_fchown_impl((int)regs->ebx,
+                                                      regs->ecx,
+                                                      regs->edx);
+            break;
+
+        case SYS_FUTIMENS:
+            regs->eax = (unsigned int)sys_futimens_impl(
+                            (int)regs->ebx,
+                            (const struct user_timespec*)regs->ecx);
             break;
 
         default:

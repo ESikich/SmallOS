@@ -70,9 +70,17 @@ static void probe_metadata(void) {
     struct timeval tv[2];
     struct timespec ts[2];
     struct stat st;
+    struct stat lst;
     char buf[16];
+    char linkbuf[64];
     int fd;
+    int n;
 
+    unlink("/tmp/compatprobe-file");
+    unlink("/tmp/compatprobe-hard");
+    unlink("/tmp/compatprobe-sym");
+    unlink("/tmp/compat-node");
+    unlink("/tmp/compat-fifo");
     memset(tv, 0, sizeof(tv));
     memset(ts, 0, sizeof(ts));
     check("stat absolute dir", stat("/etc", &st) == 0 && S_ISDIR(st.st_mode));
@@ -91,23 +99,68 @@ static void probe_metadata(void) {
     fd = open("/tmp/compatprobe-file", O_RDWR | O_CREAT, 0666);
     check("open create tmp", fd >= 0);
     if (fd >= 0) {
+        check("write compat tmp", write(fd, "abcdef", 6) == 6);
+        check("ftruncate shrink", ftruncate(fd, 3) == 0 &&
+                                  fstat(fd, &st) == 0 && st.st_size == 3);
+        check("ftruncate grow", ftruncate(fd, 8) == 0 &&
+                                fstat(fd, &st) == 0 && st.st_size == 8);
+        ts[0].tv_sec = 111;
+        ts[0].tv_nsec = 0;
+        ts[1].tv_sec = 222;
+        ts[1].tv_nsec = 0;
+        check("futimens set", futimens(fd, ts) == 0 &&
+                              fstat(fd, &st) == 0 && st.st_mtime == 222);
         close(fd);
-        check("unlink tmp file", unlink("/tmp/compatprobe-file") == 0);
     }
-    check("chmod noop", chmod("/usr/bin/hello", 0755) == 0);
-    check("chown noop", chown("/usr/bin/hello", 0, 0) == 0);
-    check("utimes noop", utimes("/usr/bin/hello", tv) == 0);
-    check("utimensat noop", utimensat(AT_FDCWD, "/usr/bin/hello", ts, 0) == 0);
+    check("chmod set", chmod("/tmp/compatprobe-file", 0600) == 0 &&
+                       stat("/tmp/compatprobe-file", &st) == 0 &&
+                       (st.st_mode & 0777) == 0600);
+    check("chown set", chown("/tmp/compatprobe-file", 2, 3) == 0 &&
+                       stat("/tmp/compatprobe-file", &st) == 0 &&
+                       st.st_uid == 2 && st.st_gid == 3);
+    tv[0].tv_sec = 333;
+    tv[0].tv_usec = 0;
+    tv[1].tv_sec = 444;
+    tv[1].tv_usec = 0;
+    check("utimes set", utimes("/tmp/compatprobe-file", tv) == 0 &&
+                         stat("/tmp/compatprobe-file", &st) == 0 &&
+                         st.st_mtime == 444);
+    ts[0].tv_sec = 555;
+    ts[0].tv_nsec = 0;
+    ts[1].tv_sec = 666;
+    ts[1].tv_nsec = 0;
+    check("utimensat set", utimensat(AT_FDCWD, "/tmp/compatprobe-file", ts, 0) == 0 &&
+                           stat("/tmp/compatprobe-file", &st) == 0 &&
+                           st.st_mtime == 666);
+    check("hard link create", link("/tmp/compatprobe-file", "/tmp/compatprobe-hard") == 0);
+    check("hard link nlink", stat("/tmp/compatprobe-file", &st) == 0 &&
+                             stat("/tmp/compatprobe-hard", &lst) == 0 &&
+                             st.st_ino == lst.st_ino && st.st_nlink >= 2);
+    check("hard link unlink one", unlink("/tmp/compatprobe-file") == 0 &&
+                                  stat("/tmp/compatprobe-hard", &st) == 0 &&
+                                  st.st_size == 8);
+    check("symlink create", symlink("/tmp/compatprobe-hard", "/tmp/compatprobe-sym") == 0);
+    memset(linkbuf, 0, sizeof(linkbuf));
+    n = readlink("/tmp/compatprobe-sym", linkbuf, sizeof(linkbuf));
+    if (n >= 0 && n < (int)sizeof(linkbuf)) linkbuf[n] = '\0';
+    check("readlink target", n == 21 && strcmp(linkbuf, "/tmp/compatprobe-hard") == 0);
+    check("lstat symlink", lstat("/tmp/compatprobe-sym", &lst) == 0 && S_ISLNK(lst.st_mode));
+    check("stat symlink follows", stat("/tmp/compatprobe-sym", &st) == 0 &&
+                                  S_ISREG(st.st_mode) && st.st_size == 8);
+    check("unlink symlink", unlink("/tmp/compatprobe-sym") == 0 &&
+                            stat("/tmp/compatprobe-hard", &st) == 0);
+    check("unlink hard final", unlink("/tmp/compatprobe-hard") == 0);
     errno = 0;
     check("chmod missing", chmod("/no/such/file", 0755) < 0 && errno == ENOENT);
     errno = 0;
     check("utimensat missing", utimensat(AT_FDCWD, "/no/such/file", ts, 0) < 0 &&
                                 errno == ENOENT);
-    errno = 0;
-    check("mknod enosys", mknod("/tmp/compat-node", S_IFCHR | 0600, makedev(1, 3)) < 0 &&
-                          errno == ENOSYS);
-    errno = 0;
-    check("mkfifo enosys", mkfifo("/tmp/compat-fifo", 0600) < 0 && errno == ENOSYS);
+    check("mknod char", mknod("/tmp/compat-node", S_IFCHR | 0600, makedev(1, 3)) == 0 &&
+                        lstat("/tmp/compat-node", &st) == 0 && S_ISCHR(st.st_mode));
+    check("mkfifo node", mkfifo("/tmp/compat-fifo", 0600) == 0 &&
+                         lstat("/tmp/compat-fifo", &st) == 0 && S_ISFIFO(st.st_mode));
+    check("unlink node", unlink("/tmp/compat-node") == 0);
+    check("unlink fifo", unlink("/tmp/compat-fifo") == 0);
 }
 
 static int read_file_contains(const char* path, const char* needle) {

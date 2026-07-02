@@ -44,6 +44,7 @@ typedef struct {
     u16 uid;
     u16 gid;
     u16 links_count;
+    u32 rdev;
     u32 size;
     u32 blocks_512;
     u32 atime;
@@ -64,6 +65,7 @@ void ext2_ls_path_filtered(const char* path, const char* pattern);
 
 int ext2_stat(const char* path, u32* out_size);
 int ext2_stat_info(const char* path, ext2_stat_info_t* out);
+int ext2_lstat_info(const char* path, ext2_stat_info_t* out);
 const u8* ext2_load(const char* path, u32* out_size);
 int ext2_read_path_to_sink(const char* path,
                            const ext2_data_sink_t* sink,
@@ -85,10 +87,18 @@ int ext2_write_at_path(const char* path,
                        u32 len,
                        u32* inout_size,
                        int create);
+int ext2_resize_path(const char* path, u32 size);
 
 int ext2_mkdir(const char* path);
 int ext2_rmdir(const char* path);
 int ext2_rm(const char* path);
+int ext2_link(const char* oldpath, const char* newpath);
+int ext2_symlink(const char* target, const char* linkpath);
+int ext2_readlink(const char* path, char* out, u32 out_size, u32* out_len);
+int ext2_chmod(const char* path, u16 mode);
+int ext2_chown(const char* path, u16 uid, u16 gid);
+int ext2_utimes(const char* path, u32 atime, u32 mtime);
+int ext2_mknod(const char* path, u16 mode, u32 rdev);
 int ext2_is_dir(const char* path);
 int ext2_dirent_at(const char* path,
                    u32 index,

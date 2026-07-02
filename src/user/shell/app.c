@@ -1585,7 +1585,16 @@ void sh_selftest(void) {
     sh_selftest_exec_expect("busybox ls filetype", "usr/bin/busybox ls -Fd /tmp/busybox-lsdir", 0);
     sh_selftest_exec("busybox ls sort prep", "echo busybox-ls-sort-ok | usr/bin/busybox tee /tmp/busybox-sort-b");
     sh_selftest_exec("busybox ls sort", "usr/bin/busybox ls /tmp/busybox-sort-b /tmp/busybox-sum.txt");
-    sh_selftest_exec_expect("busybox ln missing", "usr/bin/busybox ln /tmp/busybox-sum.txt /tmp/busybox-link.txt", 1);
+    sh_selftest_exec_expect("busybox ln hard", "usr/bin/busybox ln /tmp/busybox-sum.txt /tmp/busybox-link.txt", 0);
+    sh_selftest_exec_expect("busybox link applet", "usr/bin/busybox link /tmp/busybox-sum.txt /tmp/busybox-link2.txt", 0);
+    sh_selftest_exec("busybox ln cat", "usr/bin/busybox cat /tmp/busybox-link.txt");
+    sh_selftest_exec_expect("busybox ln symlink", "usr/bin/busybox ln -s /tmp/busybox-sum.txt /tmp/busybox-symlink.txt", 0);
+    sh_selftest_exec("busybox readlink", "usr/bin/busybox readlink /tmp/busybox-symlink.txt");
+    sh_selftest_exec_expect("busybox symlink cat", "usr/bin/busybox cat /tmp/busybox-symlink.txt", 0);
+    sh_selftest_exec_expect("busybox mkfifo", "usr/bin/busybox mkfifo /tmp/busybox-fifo", 0);
+    sh_selftest_exec_expect("busybox mknod", "usr/bin/busybox mknod /tmp/busybox-char c 1 3", 0);
+    sh_selftest_exec_expect("busybox stat fifo", "usr/bin/busybox stat /tmp/busybox-fifo", 0);
+    sh_selftest_exec_expect("busybox stat char", "usr/bin/busybox stat /tmp/busybox-char", 0);
     sh_selftest_exec_expect("busybox unlink", "usr/bin/busybox unlink /tmp/busybox-touch.txt", 0);
     sh_selftest_exec("wolf3d-srcprobe", "usr/libexec/tests/wolf3d-srcprobe");
     sh_selftest_exec("wolf3d-srcprobe episodes", "usr/libexec/tests/wolf3d-srcprobe --check-episodes");
