@@ -979,6 +979,9 @@ Shipped ext2 programs:
 - `usr/libexec/tests/compatprobe` - exercise BusyBox-facing `/proc`, `/dev`,
   `statfs`, `sysinfo`, `/bin/sh`, metadata mutation, links/symlinks,
   truncate, special nodes, and compatibility wrappers
+- `usr/libexec/tests/permprobe` - exercise kernel-owned credentials, `umask`,
+  ext2 mode-bit enforcement, `access`, owner/root metadata checks, and
+  non-root denial paths
 - `usr/libexec/tests/badptrprobe` - exercise unmapped user pointers, page-crossing buffers/structs, and wrapped syscall byte counts
 - `usr/libexec/tests/sleep_test` - exercise SYS_SLEEP semantics
 - `usr/libexec/tests/ptrguard` - exercise syscall pointer validation
@@ -1349,5 +1352,5 @@ state and USB boot mouse path from userland.
 
 * Broader DHCP coverage such as renewal and lease expiry handling
 * Broader TCP close-state fuzzing beyond the focused EOF smoke
-* Long filenames and richer permission semantics beyond stored ext2 mode,
-  owner, group, timestamp, link, symlink, and special-node metadata
+* Long filenames and richer permission semantics beyond the current uid/gid,
+  `umask`, owner/root, and ext2 mode-bit enforcement model

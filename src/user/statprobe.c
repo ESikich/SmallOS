@@ -44,7 +44,7 @@ void _start(int argc, char** argv) {
             st.st_nlink >= 1 &&
             st.st_blksize == 4096 &&
             st.st_blocks >= 1 &&
-            (st.st_mode & 0777) == 0644) {
+            (st.st_mode & 0777) == 0755) {
             u_puts("statprobe metadata: PASS\n");
         } else {
             u_puts("statprobe metadata: FAIL\n");

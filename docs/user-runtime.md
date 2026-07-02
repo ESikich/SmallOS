@@ -288,6 +288,7 @@ The runtime provides a small POSIX-shaped surface:
 - `fsync`, `ftruncate`, `fchmod`, `fchown`
 - `getcwd`, `chdir`
 - `getpid`, `fork`, `execve`, `execv`, `execvp`, `waitpid`, `kill`
+- `getuid`, `geteuid`, `getgid`, `getegid`, `setuid`, `setgid`, and `umask`
 - `sysinfo`, `times`, `uname`, `ioctl`, and termios-shaped stubs
 - `popen` / `pclose` and `mntent` helpers for compatibility-oriented ports
 - `system`, implemented through `shell -c command`
@@ -296,9 +297,11 @@ The runtime provides a small POSIX-shaped surface:
 - regex, fnmatch, basename/dirname, passwd/group, and getopt helpers
 - socket, poll, epoll, timerfd, and signalfd wrappers used by guest services
 
-`access(path, mode)` validates mode bits and checks existence through
-`SYS_STAT`. SmallOS does not currently model Unix permission bits, so `R_OK`,
-`W_OK`, and `X_OK` are existence/type checks rather than permission checks.
+`access(path, mode)` now checks the caller's real uid/gid against the stored
+mode bits reported by `stat`. Kernel syscalls enforce execute permission for
+path traversal and exec, read/write permission for opens, write+execute on
+parent directories for create/unlink/rename/link operations, and owner/root
+rules for metadata mutation.
 
 The runtime is also where SmallOS grows its hosted C surface. Older ports such
 as Fractint are useful completeness tests: when they need a normal libc, libm,
@@ -339,9 +342,10 @@ mode bits, link count, uid/gid, device id, size, block size, block count, and
 ext2 timestamps. `stat` follows symbolic links, while `lstat` reports the link
 inode itself. `chmod`, `chown`, `utimes`, `utimensat`, `fchmod`, `fchown`, and
 `futimens` update ext2 metadata; `truncate` and `ftruncate` resize regular
-files and zero-fill grown ranges. Newly created ext2 files and directories
-default to `0644` and `0755` respectively, and `mknod`/`mkfifo` can create
-stat-visible special nodes for BusyBox/POSIX compatibility.
+files and zero-fill grown ranges. Newly created ext2 files, directories, and
+special nodes apply the kernel-owned process `umask`, store the caller's
+effective uid/gid, and enforce mode bits. Seeded regular files are executable
+so the new exec permission checks can launch shipped programs.
 
 `execve(path, argv, envp)` copies both argument and environment vectors into
 kernel-owned storage before replacing the image. Passing `NULL` for `envp`
@@ -551,6 +555,8 @@ Runtime coverage currently lives in guest ELF probes:
 - `fileprobe` - POSIX open modes, large write/readback, seek, append, partial-sector writes, zero-filled gaps, rename/delete
 - `cwdprobe` - process cwd, relative opens, `realpath`, `access`
 - `statprobe` - `SYS_STAT`, POSIX `stat`, `access`
+- `permprobe` - kernel-owned credentials, `umask`, mode-bit enforcement, and
+  non-root access denial
 - `stdioprobe` - EOF/error state, `clearerr`, `fflush`, invalid stdio ops
 - `dirprobe` - root and nested directory iteration, EOF, invalid/missing dirs
 - `errnoprobe` - wrapper `errno` behavior

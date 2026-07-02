@@ -1498,6 +1498,7 @@ void sh_selftest(void) {
     sh_selftest_exec("execveprobe", "usr/libexec/tests/execveprobe");
     sh_selftest_exec("mathprobe", "usr/libexec/tests/mathprobe");
     sh_selftest_exec_expect("compatprobe", "usr/libexec/tests/compatprobe", 0);
+    sh_selftest_exec_expect("permprobe", "usr/libexec/tests/permprobe", 0);
     sh_selftest_exec_expect("busybox true", "usr/bin/busybox true", 0);
     sh_selftest_exec_expect("busybox false", "usr/bin/busybox false", 1);
     sh_selftest_exec_expect("busybox echo", "usr/bin/busybox echo busybox-echo-ok", 0);

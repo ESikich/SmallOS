@@ -120,6 +120,13 @@ typedef struct process {
     u32             pid;                /* kernel process id, unique until wrap */
     u32             parent_pid;         /* process that spawned this task, if any */
     u32             pgid;               /* lightweight process group id */
+    u32             uid;
+    u32             gid;
+    u32             euid;
+    u32             egid;
+    u32             supp_gid;
+    u32             supp_gid_count;
+    u32             umask;
     unsigned int    sched_esp;
     unsigned int    cpu_ticks;
     volatile process_state_t state;

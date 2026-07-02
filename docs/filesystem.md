@@ -10,6 +10,10 @@ device ids, sizes, block counts, and timestamps. ext2 supports hard links,
 symbolic links, `readlink`, symlink-aware path traversal, file resizing through
 `truncate`/`ftruncate`, metadata mutation through chmod/chown/utimens-style
 calls, and special inode creation for FIFO, character, block, and socket nodes.
+The kernel stores process credentials and enforces ext2 mode bits for path
+traversal, open/create/unlink/rename/link operations, exec, and owner/root
+metadata updates; new filesystem objects apply the caller's `umask` and
+effective uid/gid.
 The fd path routes file, socket, and console descriptors through a dynamic
 generic per-process handle table. ext2-backed file handles and path operations
 are wrapped by the small kernel VFS layer in `src/kernel/vfs.c`, which
@@ -262,7 +266,8 @@ The current ext2 driver is intentionally narrow.
 
 ## Not supported
 
-- permission enforcement, ownership semantics, or timestamps
+- setuid/setgid/sticky-bit semantics beyond stored mode bits and owner/root
+  permission checks
 - multiple concurrent `ext2_load()` whole-file buffers outside the VFS-owned
   executable image path
 - arbitrary transport stacks beyond the current passive TCP stream path

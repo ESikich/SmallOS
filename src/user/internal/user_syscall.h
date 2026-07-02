@@ -216,6 +216,10 @@ static inline int sys_open_mode(const char* name, uint32_t mode) {
     return syscall2(SYS_OPEN_MODE, (uint32_t)name, mode);
 }
 
+static inline int sys_open_mode_create(const char* name, uint32_t mode, uint32_t create_mode) {
+    return syscall3(SYS_OPEN_CREATE_MODE, (uint32_t)name, mode, create_mode);
+}
+
 static inline int sys_getcwd(char* buf, uint32_t size) {
     return syscall2(SYS_GETCWD, (uint32_t)buf, size);
 }
@@ -359,6 +363,34 @@ static inline int sys_fchown(int fd, uint32_t uid, uint32_t gid) {
 
 static inline int sys_futimens(int fd, const void* times) {
     return syscall2(SYS_FUTIMENS, (uint32_t)fd, (uint32_t)times);
+}
+
+static inline uint32_t sys_getuid(void) {
+    return (uint32_t)syscall0(SYS_GETUID);
+}
+
+static inline uint32_t sys_geteuid(void) {
+    return (uint32_t)syscall0(SYS_GETEUID);
+}
+
+static inline uint32_t sys_getgid(void) {
+    return (uint32_t)syscall0(SYS_GETGID);
+}
+
+static inline uint32_t sys_getegid(void) {
+    return (uint32_t)syscall0(SYS_GETEGID);
+}
+
+static inline int sys_setuid(uint32_t uid) {
+    return syscall1(SYS_SETUID, uid);
+}
+
+static inline int sys_setgid(uint32_t gid) {
+    return syscall1(SYS_SETGID, gid);
+}
+
+static inline uint32_t sys_umask(uint32_t mask) {
+    return (uint32_t)syscall1(SYS_UMASK, mask);
 }
 
 static inline int sys_fsinfo(sys_fsinfo_t* out_info) {

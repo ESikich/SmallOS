@@ -2597,6 +2597,23 @@ process_t* process_create(const char* name) {
     {
         process_t* parent = sched_current();
         proc->parent_pid = parent ? parent->pid : 0;
+        if (parent) {
+            proc->uid = parent->uid;
+            proc->gid = parent->gid;
+            proc->euid = parent->euid;
+            proc->egid = parent->egid;
+            proc->supp_gid = parent->supp_gid;
+            proc->supp_gid_count = parent->supp_gid_count;
+            proc->umask = parent->umask;
+        } else {
+            proc->uid = 0;
+            proc->gid = 0;
+            proc->euid = 0;
+            proc->egid = 0;
+            proc->supp_gid = 0;
+            proc->supp_gid_count = 1;
+            proc->umask = 0022u;
+        }
     }
     proc->state = PROCESS_STATE_UNUSED;
     proc->heap_base = USER_HEAP_BASE;
@@ -2708,6 +2725,13 @@ process_t* process_fork_from_syscall(unsigned int regs_esp, unsigned int frame_t
     child->mmap_base = parent->mmap_base;
     child->mmap_next = parent->mmap_next;
     child->pgid = parent->pgid;
+    child->uid = parent->uid;
+    child->gid = parent->gid;
+    child->euid = parent->euid;
+    child->egid = parent->egid;
+    child->supp_gid = parent->supp_gid;
+    child->supp_gid_count = parent->supp_gid_count;
+    child->umask = parent->umask;
     child->user_entry = parent->user_entry;
     child->user_argc = parent->user_argc;
     k_memcpy(child->user_arg_data, parent->user_arg_data, sizeof(child->user_arg_data));

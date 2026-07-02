@@ -674,6 +674,116 @@ static int virtual_stat_info(const char* path, sys_stat_info_t* info) {
     return 1;
 }
 
+static int stat_info_any(const char* path, sys_stat_info_t* info) {
+    return virtual_stat_info(path, info) || vfs_stat_info(path, info);
+}
+
+#define SYS_PERM_X 1u
+#define SYS_PERM_W 2u
+#define SYS_PERM_R 4u
+#define SYS_MODE_IFMT  0170000u
+#define SYS_MODE_IFDIR 0040000u
+
+static int process_is_root(process_t* proc) {
+    return proc && proc->euid == 0u;
+}
+
+static int process_in_group(process_t* proc, unsigned int gid) {
+    if (!proc) return 0;
+    if (proc->egid == gid) return 1;
+    return proc->supp_gid_count != 0u && proc->supp_gid == gid;
+}
+
+static unsigned int permission_class_bits(process_t* proc, const sys_stat_info_t* info) {
+    if (!proc || !info) return 0u;
+    if (proc->euid == info->uid) return (info->mode >> 6) & 07u;
+    if (process_in_group(proc, info->gid)) return (info->mode >> 3) & 07u;
+    return info->mode & 07u;
+}
+
+static int permission_allows(process_t* proc,
+                             const sys_stat_info_t* info,
+                             unsigned int need) {
+    if (!proc || !info) return 0;
+    if (need == 0u) return 1;
+    if (process_is_root(proc)) return 1;
+    return (permission_class_bits(proc, info) & need) == need;
+}
+
+static int path_parent(char* out, unsigned int out_size, const char* path) {
+    int last = -1;
+
+    if (!out || out_size == 0u || !path) return 0;
+    for (unsigned int i = 0; path[i] != '\0'; i++) {
+        if (path[i] == '/') last = (int)i;
+    }
+    if (last < 0) {
+        if (out_size < 1u) return 0;
+        out[0] = '\0';
+        return 1;
+    }
+    if ((unsigned int)last >= out_size) return 0;
+    for (int i = 0; i < last; i++) out[i] = path[i];
+    out[last] = '\0';
+    return 1;
+}
+
+static int check_path_prefix_execute(process_t* proc, const char* path) {
+    char prefix[PROCESS_FD_NAME_MAX];
+    sys_stat_info_t info;
+
+    if (!proc || !path) return -EINVAL;
+    if (process_is_root(proc)) return 0;
+    for (unsigned int i = 0; path[i] != '\0'; i++) {
+        if (path[i] != '/') continue;
+        if (i == 0u || i >= sizeof(prefix)) continue;
+        k_memcpy(prefix, path, i);
+        prefix[i] = '\0';
+        if (!stat_info_any(prefix, &info)) return path_lookup_errno(prefix);
+        if ((info.mode & SYS_MODE_IFMT) != SYS_MODE_IFDIR) return -ENOTDIR;
+        if (!permission_allows(proc, &info, SYS_PERM_X)) return -EACCES;
+    }
+    return 0;
+}
+
+static int check_path_permission(process_t* proc,
+                                 const char* path,
+                                 unsigned int need,
+                                 sys_stat_info_t* out_info) {
+    sys_stat_info_t info;
+    int rc;
+
+    if (!proc || !path) return -EINVAL;
+    rc = check_path_prefix_execute(proc, path);
+    if (rc < 0) return rc;
+    if (!stat_info_any(path, &info)) return path_lookup_errno(path);
+    if (!permission_allows(proc, &info, need)) return -EACCES;
+    if (out_info) *out_info = info;
+    return 0;
+}
+
+static int check_parent_permission(process_t* proc,
+                                   const char* path,
+                                   unsigned int need) {
+    char parent[PROCESS_FD_NAME_MAX];
+    sys_stat_info_t info;
+    int rc;
+
+    if (!path_parent(parent, sizeof(parent), path)) return -ENAMETOOLONG;
+    rc = check_path_prefix_execute(proc, parent);
+    if (rc < 0) return rc;
+    if (!stat_info_any(parent, &info)) return path_lookup_errno(parent);
+    if ((info.mode & SYS_MODE_IFMT) != SYS_MODE_IFDIR) return -ENOTDIR;
+    if (!permission_allows(proc, &info, need)) return -EACCES;
+    return 0;
+}
+
+static unsigned int mode_after_umask(process_t* proc,
+                                     unsigned int type,
+                                     unsigned int mode) {
+    return type | ((mode & 07777u) & ~(proc ? proc->umask : 0022u));
+}
+
 /* ------------------------------------------------------------------ */
 /* Syscall implementations                                            */
 /* ------------------------------------------------------------------ */
@@ -847,6 +957,11 @@ static int sys_exec_spawn_impl(const char* name,
 
     int name_rc = copy_user_path_resolved(kname, sizeof(kname), name);
     if (name_rc < 0) return name_rc;
+    {
+        process_t* proc = (process_t*)sched_current();
+        int perm_rc = check_path_permission(proc, kname, SYS_PERM_X, 0);
+        if (perm_rc < 0) return perm_rc;
+    }
 
     if (argc < 0 || argc > PROCESS_MAX_ARGS) return -EINVAL;
 
@@ -1060,6 +1175,8 @@ static int sys_execve_impl(syscall_regs_t* regs, const char* name, char** argv, 
 
     if (!proc) return -EINVAL;
     rc = copy_user_path_resolved(kname, sizeof(kname), name);
+    if (rc < 0) return rc;
+    rc = check_path_permission(proc, kname, SYS_PERM_X, 0);
     if (rc < 0) return rc;
     rc = sys_copy_argv(argv, &argc, kargv_data, kargv);
     if (rc < 0) return rc;
@@ -1565,6 +1682,10 @@ static int sys_open_impl(const char* name) {
 
     process_t* proc = (process_t*)sched_current();
     if (!proc) return -EINVAL;
+    {
+        int perm_rc = check_path_permission(proc, kname, SYS_PERM_R, 0);
+        if (perm_rc < 0) return perm_rc;
+    }
 
     int fd = process_fd_open_file(proc, kname, file_size, 0);
     fd_entry_t* ent = process_fd_get(proc, fd);
@@ -1595,6 +1716,16 @@ static int sys_open_write_impl(const char* name) {
 
     process_t* proc = (process_t*)sched_current();
     if (!proc) return -EINVAL;
+    {
+        sys_stat_info_t info;
+        int perm_rc;
+        if (stat_info_any(kname, &info)) {
+            perm_rc = check_path_permission(proc, kname, SYS_PERM_W, 0);
+        } else {
+            perm_rc = check_parent_permission(proc, kname, SYS_PERM_W | SYS_PERM_X);
+        }
+        if (perm_rc < 0) return perm_rc;
+    }
 
     int fd = process_fd_open_file(proc, kname, 0, 1);
     if (fd < 0) return fd;
@@ -1605,7 +1736,9 @@ static int sys_open_write_impl(const char* name) {
     return fd;
 }
 
-static int sys_open_mode_impl(const char* name, unsigned int mode) {
+static int sys_open_mode_create_impl(const char* name,
+                                     unsigned int mode,
+                                     unsigned int create_mode) {
     char kname[PROCESS_FD_NAME_MAX];
     unsigned int supported = SYS_OPEN_MODE_READ | SYS_OPEN_MODE_WRITE |
                              SYS_OPEN_MODE_CREATE | SYS_OPEN_MODE_TRUNC |
@@ -1620,6 +1753,7 @@ static int sys_open_mode_impl(const char* name, unsigned int mode) {
     int is_dir = 0;
     int exists;
     int fd;
+    process_t* proc;
 
     if ((mode & ~supported) != 0) return -EINVAL;
     if (!readable && !writable) return -EINVAL;
@@ -1659,8 +1793,20 @@ static int sys_open_mode_impl(const char* name, unsigned int mode) {
     if (!exists && !create) return path_lookup_errno(kname);
     if (!exists || trunc) file_size = 0;
 
-    process_t* proc = (process_t*)sched_current();
+    proc = (process_t*)sched_current();
     if (!proc) return -EINVAL;
+    if (exists) {
+        unsigned int need = 0u;
+        if (readable) need |= SYS_PERM_R;
+        if (writable) need |= SYS_PERM_W;
+        {
+            int perm_rc = check_path_permission(proc, kname, need, 0);
+            if (perm_rc < 0) return perm_rc;
+        }
+    } else {
+        int perm_rc = check_parent_permission(proc, kname, SYS_PERM_W | SYS_PERM_X);
+        if (perm_rc < 0) return perm_rc;
+    }
 
     fd = process_fd_open_file_mode(proc, kname, file_size, readable, writable);
     if (fd < 0) return fd;
@@ -1677,6 +1823,11 @@ static int sys_open_mode_impl(const char* name, unsigned int mode) {
             sys_close_impl(fd);
             return -EIO;
         }
+        if (!exists) {
+            unsigned int final_mode = mode_after_umask(proc, 0100000u, create_mode);
+            (void)vfs_chmod(kname, (u16)final_mode);
+            (void)vfs_chown(kname, (u16)proc->euid, (u16)proc->egid);
+        }
     }
 
     if (append) {
@@ -1687,6 +1838,10 @@ static int sys_open_mode_impl(const char* name, unsigned int mode) {
     }
 
     return fd;
+}
+
+static int sys_open_mode_impl(const char* name, unsigned int mode) {
+    return sys_open_mode_create_impl(name, mode, 0666u);
 }
 
 static int copy_user_sockaddr_in(struct sockaddr_in* dst,
@@ -2616,16 +2771,30 @@ static int sys_getpeername_impl(int fd, struct sockaddr* addr, unsigned int* add
 
 static int sys_mkdir_impl(const char* path, unsigned int mode) {
     char kpath[PROCESS_FD_NAME_MAX];
-    (void)mode;
     int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    process_t* proc = (process_t*)sched_current();
+    int perm_rc;
+
     if (path_rc < 0) return path_rc;
-    return vfs_mkdir(kpath) ? 0 : -EIO;
+    if (!proc) return -EINVAL;
+    perm_rc = check_parent_permission(proc, kpath, SYS_PERM_W | SYS_PERM_X);
+    if (perm_rc < 0) return perm_rc;
+    if (!vfs_mkdir(kpath)) return -EIO;
+    (void)vfs_chmod(kpath, (u16)mode_after_umask(proc, SYS_MODE_IFDIR, mode));
+    (void)vfs_chown(kpath, (u16)proc->euid, (u16)proc->egid);
+    return 0;
 }
 
 static int sys_rmdir_impl(const char* path) {
     char kpath[PROCESS_FD_NAME_MAX];
     int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    process_t* proc = (process_t*)sched_current();
+    int perm_rc;
+
     if (path_rc < 0) return path_rc;
+    if (!proc) return -EINVAL;
+    perm_rc = check_parent_permission(proc, kpath, SYS_PERM_W | SYS_PERM_X);
+    if (perm_rc < 0) return perm_rc;
     return vfs_rmdir(kpath) ? 0 : path_lookup_errno(kpath);
 }
 
@@ -2713,6 +2882,11 @@ static int sys_dirlist_impl(const char* path, unsigned int index, uapi_dirent_t*
     if (path_rc < 0) return path_rc;
     if (!out) return -EFAULT;
     if (!user_buf_ok((unsigned int)out, sizeof(*out))) return -EFAULT;
+    {
+        process_t* proc = (process_t*)sched_current();
+        int perm_rc = check_path_permission(proc, kpath, SYS_PERM_R | SYS_PERM_X, 0);
+        if (perm_rc < 0) return perm_rc;
+    }
     if (!virtual_dirent_at(kpath, index, name, sizeof(name), &size, &is_dir) &&
         !vfs_dirent_at(kpath, index, name, sizeof(name), &size, &is_dir)) {
         return 0;
@@ -2748,6 +2922,11 @@ static int sys_dirlist_batch_impl(const char* path,
 
     path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
     if (path_rc < 0) return path_rc;
+    {
+        process_t* proc = (process_t*)sched_current();
+        int perm_rc = check_path_permission(proc, kpath, SYS_PERM_R | SYS_PERM_X, 0);
+        if (perm_rc < 0) return perm_rc;
+    }
 
     if (virtual_path_is_dir(kpath)) {
         while (count < max_count) {
@@ -2866,8 +3045,14 @@ static int sys_fsync_impl(int fd) {
 static int sys_unlink_impl(const char* path) {
     char kpath[PROCESS_FD_NAME_MAX];
     int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    process_t* proc = (process_t*)sched_current();
+    int perm_rc;
+
     if (path_rc < 0) return path_rc;
+    if (!proc) return -EINVAL;
     if (vfs_is_dir(kpath)) return -EISDIR;
+    perm_rc = check_parent_permission(proc, kpath, SYS_PERM_W | SYS_PERM_X);
+    if (perm_rc < 0) return perm_rc;
     return vfs_unlink(kpath) ? 0 : path_lookup_errno(kpath);
 }
 
@@ -2876,9 +3061,17 @@ static int sys_link_impl(const char* oldpath, const char* newpath) {
     char knew[PROCESS_FD_NAME_MAX];
     sys_stat_info_t info;
     int old_rc = copy_user_path_resolved(kold, sizeof(kold), oldpath);
+    process_t* proc = (process_t*)sched_current();
+    int perm_rc;
+
     if (old_rc < 0) return old_rc;
     int new_rc = copy_user_path_resolved(knew, sizeof(knew), newpath);
     if (new_rc < 0) return new_rc;
+    if (!proc) return -EINVAL;
+    perm_rc = check_path_permission(proc, kold, 0, 0);
+    if (perm_rc < 0) return perm_rc;
+    perm_rc = check_parent_permission(proc, knew, SYS_PERM_W | SYS_PERM_X);
+    if (perm_rc < 0) return perm_rc;
     if (vfs_is_dir(kold)) return -EPERM;
     if (vfs_link(kold, knew)) return 0;
     if (vfs_lstat_info(knew, &info)) return -EEXIST;
@@ -2889,10 +3082,16 @@ static int sys_symlink_impl(const char* target, const char* linkpath) {
     char ktarget[PROCESS_FD_NAME_MAX];
     char klink[PROCESS_FD_NAME_MAX];
     int target_rc = copy_user_cstr(ktarget, sizeof(ktarget), target);
+    process_t* proc = (process_t*)sched_current();
+    int perm_rc;
+
     if (target_rc < 0) return target_rc;
     if (target_rc <= 1) return -EINVAL;
     int link_rc = copy_user_path_resolved(klink, sizeof(klink), linkpath);
     if (link_rc < 0) return link_rc;
+    if (!proc) return -EINVAL;
+    perm_rc = check_parent_permission(proc, klink, SYS_PERM_W | SYS_PERM_X);
+    if (perm_rc < 0) return perm_rc;
     if (vfs_symlink(ktarget, klink)) return 0;
     {
         sys_stat_info_t info;
@@ -2911,6 +3110,11 @@ static int sys_readlink_impl(const char* path, char* out, unsigned int out_size)
     if (!out || out_size == 0u) return -EINVAL;
     path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
     if (path_rc < 0) return path_rc;
+    {
+        process_t* proc = (process_t*)sched_current();
+        int perm_rc = check_path_prefix_execute(proc, kpath);
+        if (perm_rc < 0) return perm_rc;
+    }
     if (!vfs_readlink(kpath, target, sizeof(target), &len)) {
         sys_stat_info_t info;
         if (vfs_lstat_info(kpath, &info)) return -EINVAL;
@@ -2926,23 +3130,46 @@ static int sys_rename_impl(const char* src, const char* dst) {
     char ksrc[PROCESS_FD_NAME_MAX];
     char kdst[PROCESS_FD_NAME_MAX];
     int src_rc = copy_user_path_resolved(ksrc, sizeof(ksrc), src);
+    process_t* proc = (process_t*)sched_current();
+    int perm_rc;
+
     if (src_rc < 0) return src_rc;
     int dst_rc = copy_user_path_resolved(kdst, sizeof(kdst), dst);
     if (dst_rc < 0) return dst_rc;
+    if (!proc) return -EINVAL;
+    perm_rc = check_parent_permission(proc, ksrc, SYS_PERM_W | SYS_PERM_X);
+    if (perm_rc < 0) return perm_rc;
+    perm_rc = check_parent_permission(proc, kdst, SYS_PERM_W | SYS_PERM_X);
+    if (perm_rc < 0) return perm_rc;
     return vfs_rename(ksrc, kdst) ? 0 : path_lookup_errno(ksrc);
 }
 
 static int sys_chmod_impl(const char* path, unsigned int mode) {
     char kpath[PROCESS_FD_NAME_MAX];
     int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    process_t* proc = (process_t*)sched_current();
+    sys_stat_info_t info;
+    int perm_rc;
+
     if (path_rc < 0) return path_rc;
+    if (!proc) return -EINVAL;
+    perm_rc = check_path_permission(proc, kpath, 0, &info);
+    if (perm_rc < 0) return perm_rc;
+    if (!process_is_root(proc) && proc->euid != info.uid) return -EPERM;
     return vfs_chmod(kpath, (u16)mode) ? 0 : path_lookup_errno(kpath);
 }
 
 static int sys_chown_impl(const char* path, unsigned int uid, unsigned int gid) {
     char kpath[PROCESS_FD_NAME_MAX];
     int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    process_t* proc = (process_t*)sched_current();
+    int perm_rc;
+
     if (path_rc < 0) return path_rc;
+    if (!proc) return -EINVAL;
+    if (!process_is_root(proc)) return -EPERM;
+    perm_rc = check_path_permission(proc, kpath, 0, 0);
+    if (perm_rc < 0) return perm_rc;
     return vfs_chown(kpath, (u16)uid, (u16)gid) ? 0 : path_lookup_errno(kpath);
 }
 
@@ -2952,7 +3179,18 @@ static int sys_utimens_impl(const char* path, const struct user_timespec* times)
     u32 atime;
     u32 mtime;
     int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    process_t* proc = (process_t*)sched_current();
+    sys_stat_info_t info;
+    int perm_rc;
+
     if (path_rc < 0) return path_rc;
+    if (!proc) return -EINVAL;
+    perm_rc = check_path_permission(proc, kpath, 0, &info);
+    if (perm_rc < 0) return perm_rc;
+    if (!process_is_root(proc) && proc->euid != info.uid &&
+        !permission_allows(proc, &info, SYS_PERM_W)) {
+        return -EACCES;
+    }
     if (times) {
         if (copy_from_user(in, times, sizeof(in)) < 0) return -EFAULT;
         if (in[0].tv_nsec < 0 || in[0].tv_nsec >= (long)SMALLOS_NS_PER_SECOND ||
@@ -2972,8 +3210,19 @@ static int sys_mknod_impl(const char* path, unsigned int mode, unsigned int dev)
     char kpath[PROCESS_FD_NAME_MAX];
     sys_stat_info_t info;
     int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
+    process_t* proc = (process_t*)sched_current();
+    int perm_rc;
+    unsigned int final_mode;
+
     if (path_rc < 0) return path_rc;
-    if (vfs_mknod(kpath, (u16)mode, dev)) return 0;
+    if (!proc) return -EINVAL;
+    perm_rc = check_parent_permission(proc, kpath, SYS_PERM_W | SYS_PERM_X);
+    if (perm_rc < 0) return perm_rc;
+    final_mode = mode_after_umask(proc, mode & SYS_MODE_IFMT, mode);
+    if (vfs_mknod(kpath, (u16)final_mode, dev)) {
+        (void)vfs_chown(kpath, (u16)proc->euid, (u16)proc->egid);
+        return 0;
+    }
     if (vfs_lstat_info(kpath, &info)) return -EEXIST;
     return path_lookup_errno(kpath);
 }
@@ -2985,6 +3234,10 @@ static int sys_ftruncate_impl(int fd, unsigned int size) {
     if (!proc) return -EINVAL;
     ent = process_fd_get(proc, fd);
     if (!ent) return -EBADF;
+    if (ent->kind == PROCESS_HANDLE_KIND_FILE) {
+        int perm_rc = check_path_permission(proc, ent->name, SYS_PERM_W, 0);
+        if (perm_rc < 0) return perm_rc;
+    }
     return vfs_file_truncate_fd(ent, size);
 }
 
@@ -2996,6 +3249,12 @@ static int sys_fchmod_impl(int fd, unsigned int mode) {
     ent = process_fd_get(proc, fd);
     if (!ent) return -EBADF;
     if (ent->kind != PROCESS_HANDLE_KIND_FILE) return -EBADF;
+    {
+        sys_stat_info_t info;
+        int perm_rc = check_path_permission(proc, ent->name, 0, &info);
+        if (perm_rc < 0) return perm_rc;
+        if (!process_is_root(proc) && proc->euid != info.uid) return -EPERM;
+    }
     return vfs_chmod(ent->name, (u16)mode) ? 0 : -EIO;
 }
 
@@ -3007,6 +3266,11 @@ static int sys_fchown_impl(int fd, unsigned int uid, unsigned int gid) {
     ent = process_fd_get(proc, fd);
     if (!ent) return -EBADF;
     if (ent->kind != PROCESS_HANDLE_KIND_FILE) return -EBADF;
+    if (!process_is_root(proc)) return -EPERM;
+    {
+        int perm_rc = check_path_permission(proc, ent->name, 0, 0);
+        if (perm_rc < 0) return perm_rc;
+    }
     return vfs_chown(ent->name, (u16)uid, (u16)gid) ? 0 : -EIO;
 }
 
@@ -3021,6 +3285,15 @@ static int sys_futimens_impl(int fd, const struct user_timespec* times) {
     ent = process_fd_get(proc, fd);
     if (!ent) return -EBADF;
     if (ent->kind != PROCESS_HANDLE_KIND_FILE) return -EBADF;
+    {
+        sys_stat_info_t info;
+        int perm_rc = check_path_permission(proc, ent->name, 0, &info);
+        if (perm_rc < 0) return perm_rc;
+        if (!process_is_root(proc) && proc->euid != info.uid &&
+            !permission_allows(proc, &info, SYS_PERM_W)) {
+            return -EACCES;
+        }
+    }
     if (times) {
         if (copy_from_user(in, times, sizeof(in)) < 0) return -EFAULT;
         if (in[0].tv_nsec < 0 || in[0].tv_nsec >= (long)SMALLOS_NS_PER_SECOND ||
@@ -3036,12 +3309,72 @@ static int sys_futimens_impl(int fd, const struct user_timespec* times) {
     return vfs_utimes(ent->name, atime, mtime) ? 0 : -EIO;
 }
 
+static unsigned int sys_getuid_impl(void) {
+    process_t* proc = (process_t*)sched_current();
+    return proc ? proc->uid : 0u;
+}
+
+static unsigned int sys_geteuid_impl(void) {
+    process_t* proc = (process_t*)sched_current();
+    return proc ? proc->euid : 0u;
+}
+
+static unsigned int sys_getgid_impl(void) {
+    process_t* proc = (process_t*)sched_current();
+    return proc ? proc->gid : 0u;
+}
+
+static unsigned int sys_getegid_impl(void) {
+    process_t* proc = (process_t*)sched_current();
+    return proc ? proc->egid : 0u;
+}
+
+static int sys_setuid_impl(unsigned int uid) {
+    process_t* proc = (process_t*)sched_current();
+    if (!proc) return -EINVAL;
+    if (!process_is_root(proc) && uid != proc->uid && uid != proc->euid) {
+        return -EPERM;
+    }
+    if (process_is_root(proc)) {
+        proc->uid = uid;
+    }
+    proc->euid = uid;
+    return 0;
+}
+
+static int sys_setgid_impl(unsigned int gid) {
+    process_t* proc = (process_t*)sched_current();
+    if (!proc) return -EINVAL;
+    if (!process_is_root(proc) && gid != proc->gid && gid != proc->egid) {
+        return -EPERM;
+    }
+    if (process_is_root(proc)) {
+        proc->gid = gid;
+        proc->supp_gid = gid;
+        proc->supp_gid_count = 1u;
+    }
+    proc->egid = gid;
+    return 0;
+}
+
+static unsigned int sys_umask_impl(unsigned int mask) {
+    process_t* proc = (process_t*)sched_current();
+    unsigned int old = proc ? proc->umask : 0022u;
+    if (proc) proc->umask = mask & 0777u;
+    return old;
+}
+
 static int sys_stat_impl(const char* path, unsigned int* out_size, int* out_is_dir) {
     char kpath[PROCESS_FD_NAME_MAX];
     u32 size = 0;
     int is_dir = 0;
     int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
     if (path_rc < 0) return path_rc;
+    {
+        process_t* proc = (process_t*)sched_current();
+        int perm_rc = check_path_prefix_execute(proc, kpath);
+        if (perm_rc < 0) return perm_rc;
+    }
 
     if (!virtual_path_exists(kpath, &size, &is_dir, 0) &&
         !vfs_stat(kpath, &size, &is_dir)) {
@@ -3091,6 +3424,11 @@ static int sys_stat_full_impl(const char* path, sys_stat_info_t* out) {
 
     if (path_rc < 0) return path_rc;
     if (!out) return -EFAULT;
+    {
+        process_t* proc = (process_t*)sched_current();
+        int perm_rc = check_path_prefix_execute(proc, kpath);
+        if (perm_rc < 0) return perm_rc;
+    }
     if (!virtual_stat_info(kpath, &info) && !vfs_stat_info(kpath, &info)) {
         return path_lookup_errno(kpath);
     }
@@ -3105,6 +3443,11 @@ static int sys_lstat_full_impl(const char* path, sys_stat_info_t* out) {
 
     if (path_rc < 0) return path_rc;
     if (!out) return -EFAULT;
+    {
+        process_t* proc = (process_t*)sched_current();
+        int perm_rc = check_path_prefix_execute(proc, kpath);
+        if (perm_rc < 0) return perm_rc;
+    }
     if (!virtual_stat_info(kpath, &info) && !vfs_lstat_info(kpath, &info)) {
         return path_lookup_errno(kpath);
     }
@@ -3911,6 +4254,10 @@ static int sys_chdir_impl(const char* path) {
             ? -ENOTDIR
             : path_lookup_errno(kpath);
     }
+    {
+        int perm_rc = check_path_permission(proc, kpath, SYS_PERM_X, 0);
+        if (perm_rc < 0) return perm_rc;
+    }
 
     k_memcpy(proc->cwd, kpath, (k_size_t)k_strlen(kpath) + 1u);
     return 0;
@@ -4068,6 +4415,13 @@ void syscall_handler_main(syscall_regs_t* regs) {
             regs->eax = (unsigned int)sys_open_mode_impl(
                             (const char*)regs->ebx,
                             (unsigned int)regs->ecx);
+            break;
+
+        case SYS_OPEN_CREATE_MODE:
+            regs->eax = (unsigned int)sys_open_mode_create_impl(
+                            (const char*)regs->ebx,
+                            (unsigned int)regs->ecx,
+                            (unsigned int)regs->edx);
             break;
 
         case SYS_CLOSE:
@@ -4581,6 +4935,34 @@ void syscall_handler_main(syscall_regs_t* regs) {
             regs->eax = (unsigned int)sys_futimens_impl(
                             (int)regs->ebx,
                             (const struct user_timespec*)regs->ecx);
+            break;
+
+        case SYS_GETUID:
+            regs->eax = sys_getuid_impl();
+            break;
+
+        case SYS_GETEUID:
+            regs->eax = sys_geteuid_impl();
+            break;
+
+        case SYS_GETGID:
+            regs->eax = sys_getgid_impl();
+            break;
+
+        case SYS_GETEGID:
+            regs->eax = sys_getegid_impl();
+            break;
+
+        case SYS_SETUID:
+            regs->eax = (unsigned int)sys_setuid_impl(regs->ebx);
+            break;
+
+        case SYS_SETGID:
+            regs->eax = (unsigned int)sys_setgid_impl(regs->ebx);
+            break;
+
+        case SYS_UMASK:
+            regs->eax = sys_umask_impl(regs->ebx);
             break;
 
         default:

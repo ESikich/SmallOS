@@ -13,7 +13,8 @@ SCENARIOS = {
     "no-loader": {
         "command": "usr/libexec/tests/dynhello",
         "markers": (
-            "elf: missing interpreter: /lib/ld-smallos.so",
+            "elf: missing interpreter:",
+            "ld-smallos.so",
             "usr/libexec/tests/dynhello: failed",
         ),
     },

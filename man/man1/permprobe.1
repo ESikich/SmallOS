@@ -1,0 +1,17 @@
+.TH PERMPROBE 1
+.SH NAME
+permprobe \- exercise SmallOS credential and permission behavior
+.SH SYNOPSIS
+.B permprobe
+.SH DESCRIPTION
+.B permprobe
+is a regression probe for the SmallOS kernel permission model. It verifies
+root credentials, kernel-owned umask handling, file creation modes, non-root
+read/write/access denials, owner-only chmod, root-only chown, and cleanup of
+temporary ext2 paths.
+.PP
+The probe is installed under
+.I /usr/libexec/tests
+and is normally run by the shell selftest and host ELF regression harness.
+.SH EXIT STATUS
+Exits 0 when every check passes, or 1 after printing failed check names.

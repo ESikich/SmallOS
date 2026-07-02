@@ -403,7 +403,15 @@ enum {
     SYS_FTRUNCATE      = 108, /* resize writable regular fd */
     SYS_FCHMOD         = 109, /* update fd mode bits */
     SYS_FCHOWN         = 110, /* update fd owner/group */
-    SYS_FUTIMENS       = 111  /* update fd atime/mtime seconds */
+    SYS_FUTIMENS       = 111, /* update fd atime/mtime seconds */
+    SYS_GETUID         = 112,
+    SYS_GETEUID        = 113,
+    SYS_GETGID         = 114,
+    SYS_GETEGID        = 115,
+    SYS_SETUID         = 116,
+    SYS_SETGID         = 117,
+    SYS_UMASK          = 118,
+    SYS_OPEN_CREATE_MODE = 119 /* mode-aware open with create mode */
 };
 
 #endif

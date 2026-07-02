@@ -342,7 +342,17 @@ static uint32_t open_flags_to_mode(int flags) {
 }
 
 int open(const char* path, int flags, ...) {
-    return errno_from_raw(sys_open_mode(path, open_flags_to_mode(flags)));
+    unsigned int create_mode = 0666;
+
+    if (flags & O_CREAT) {
+        __builtin_va_list ap;
+        __builtin_va_start(ap, flags);
+        create_mode = (unsigned int)__builtin_va_arg(ap, int);
+        __builtin_va_end(ap);
+    }
+    return errno_from_raw(sys_open_mode_create(path,
+                                               open_flags_to_mode(flags),
+                                               create_mode));
 }
 
 int creat(const char* path, unsigned mode) {
@@ -447,11 +457,7 @@ int fchown(int fd, uid_t owner, gid_t group) {
 }
 
 mode_t umask(mode_t mask) {
-    static mode_t current = 0022;
-    mode_t old = current;
-
-    current = mask & 0777;
-    return old;
+    return (mode_t)sys_umask((uint32_t)(mask & 0777u));
 }
 
 int utimes(const char* path, const struct timeval times[2]) {
@@ -549,13 +555,35 @@ int lstat(const char* path, struct stat* st) {
 }
 
 int access(const char* path, int mode) {
-    uint32_t size = 0;
-    int is_dir = 0;
+    struct stat st;
+    unsigned int bits;
+    uid_t uid;
+    gid_t gid;
+
     if ((mode & ~(R_OK | W_OK | X_OK)) != 0) {
         set_errno(EINVAL);
         return -1;
     }
-    return errno_from_raw(sys_stat(path, &size, &is_dir));
+    if (stat(path, &st) < 0) return -1;
+    if (mode == F_OK) return 0;
+
+    uid = getuid();
+    gid = getgid();
+    if (uid == 0) return 0;
+    if (uid == st.st_uid) {
+        bits = (st.st_mode >> 6) & 07u;
+    } else if (gid == st.st_gid) {
+        bits = (st.st_mode >> 3) & 07u;
+    } else {
+        bits = st.st_mode & 07u;
+    }
+    if (((mode & R_OK) && !(bits & 04u)) ||
+        ((mode & W_OK) && !(bits & 02u)) ||
+        ((mode & X_OK) && !(bits & 01u))) {
+        set_errno(EACCES);
+        return -1;
+    }
+    return 0;
 }
 
 int remove(const char* path) {
@@ -1165,7 +1193,7 @@ int getgroups(int size, gid_t list[]) {
         set_errno(EFAULT);
         return -1;
     }
-    list[0] = 0;
+    list[0] = getgid();
     return 1;
 }
 
@@ -1225,35 +1253,27 @@ int prctl(int option, unsigned long arg2, unsigned long arg3,
 }
 
 uid_t getuid(void) {
-    return 0;
+    return (uid_t)sys_getuid();
 }
 
 uid_t geteuid(void) {
-    return 0;
+    return (uid_t)sys_geteuid();
 }
 
 gid_t getgid(void) {
-    return 0;
+    return (gid_t)sys_getgid();
 }
 
 gid_t getegid(void) {
-    return 0;
+    return (gid_t)sys_getegid();
 }
 
 int setuid(uid_t uid) {
-    if (uid == 0) {
-        return 0;
-    }
-    set_errno(ENOSYS);
-    return -1;
+    return errno_from_raw(sys_setuid(uid));
 }
 
 int setgid(gid_t gid) {
-    if (gid == 0) {
-        return 0;
-    }
-    set_errno(ENOSYS);
-    return -1;
+    return errno_from_raw(sys_setgid(gid));
 }
 
 int seteuid(uid_t euid) {

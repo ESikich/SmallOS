@@ -457,7 +457,7 @@ static u32 dir_link_count(node_t* dir) {
 static void write_inode(node_t* node) {
     u8* ino = inode_ptr(node->ino);
     memset(ino, 0, INODE_SIZE);
-    put_u16(ino, 0, (u16)((node->is_dir ? EXT2_S_IFDIR | 0755u : EXT2_S_IFREG | 0644u)));
+    put_u16(ino, 0, (u16)((node->is_dir ? EXT2_S_IFDIR | 0755u : EXT2_S_IFREG | 0755u)));
     put_u32(ino, 4, node->is_dir ? node->blocks_needed * BLOCK_SIZE : node->size);
     put_u16(ino, 26, (u16)(node->is_dir ? dir_link_count(node) : 1u));
     put_u32(ino, 28, (node->blocks_needed + pointer_blocks_for(node->blocks_needed)) * (BLOCK_SIZE / 512u));

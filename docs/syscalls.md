@@ -512,8 +512,9 @@ with socket-owned accept/read/write queues while sleeping.
 int sys_mkdir(const char* path, uint32_t mode);
 ```
 
-Creates an ext2 directory at `path`. `mode` is accepted for POSIX-shaped
-callers but ignored because SmallOS does not model Unix permission bits.
+Creates an ext2 directory at `path`. The kernel applies the caller's `umask`,
+stores the effective uid/gid on the new inode, and requires write+execute
+permission on the parent directory unless the caller is root.
 
 ---
 
@@ -1597,8 +1598,9 @@ int sys_fchmod(int fd, uint32_t mode);
 ```
 
 Updates stored ext2 permission bits while preserving the inode type bits.
-SmallOS currently stores this metadata for compatibility and reporting; it
-does not enforce full Unix permission checks.
+The caller must be root or own the target inode. The kernel enforces these
+mode bits for path traversal, open/create/remove/link operations, exec, and
+metadata updates.
 
 ---
 
@@ -1623,6 +1625,62 @@ int sys_futimens(int fd, const struct timespec times[2]);
 Updates access and modification timestamps in seconds. Passing `NULL` uses the
 current realtime value for both fields. Nanoseconds are validated for POSIX
 shape but ext2 stores whole seconds.
+
+The caller must be root, own the target inode, or have write permission on the
+target file.
+
+---
+
+### SYS_GETUID (112), SYS_GETEUID (113), SYS_GETGID (114), SYS_GETEGID (115)
+
+```c
+uint32_t sys_getuid(void);
+uint32_t sys_geteuid(void);
+uint32_t sys_getgid(void);
+uint32_t sys_getegid(void);
+```
+
+Returns the caller's kernel-owned real/effective uid or gid. Processes start as
+root at boot and inherit credentials across fork/exec.
+
+---
+
+### SYS_SETUID (116), SYS_SETGID (117)
+
+```c
+int sys_setuid(uint32_t uid);
+int sys_setgid(uint32_t gid);
+```
+
+Changes the caller's real and effective uid or gid. Root can switch to any id.
+Non-root callers may only set the id to their current real or effective id.
+SmallOS does not yet model saved ids, setuid/setgid inode bits, or full
+supplementary-group transitions.
+
+---
+
+### SYS_UMASK (118)
+
+```c
+uint32_t sys_umask(uint32_t mask);
+```
+
+Sets the process `umask` and returns the previous value. The kernel applies the
+mask in create paths for regular files, directories, and special nodes.
+
+---
+
+### SYS_OPEN_CREATE_MODE (119)
+
+```c
+int sys_open_mode_create(const char* path, uint32_t flags, uint32_t create_mode);
+```
+
+Mode-aware open with an explicit POSIX create mode for `O_CREAT` callers. The
+`flags` argument uses the same `SYS_OPEN_MODE_*` bits as `SYS_OPEN_MODE`.
+Existing files are checked against the requested read/write intent; new files
+require write+execute permission on the parent directory, receive
+`create_mode & ~umask`, and are owned by the caller's effective uid/gid.
 
 ---
 
