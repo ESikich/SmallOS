@@ -989,7 +989,7 @@ Shipped ext2 programs:
   echo/raw/EOF behavior, terminal process-group ioctls, and non-terminal
   `ENOTTY` failures
 - `usr/libexec/tests/rsrcprobe` - exercise resource limits, `RLIMIT_NOFILE`
-  enforcement, fixed address-space limits, and `getrusage`
+  enforcement, fixed address-space limits, and child `getrusage` accounting
 - `usr/libexec/tests/sessprobe` - exercise session ids, process groups,
   terminal foreground process-group wrappers, and child inheritance
 - `usr/libexec/tests/badptrprobe` - exercise unmapped user pointers, page-crossing buffers/structs, and wrapped syscall byte counts

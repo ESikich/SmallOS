@@ -573,7 +573,7 @@ Runtime coverage currently lives in guest ELF probes:
 - `ttyprobe` - kernel-backed termios state, PTY echo/raw/EOF behavior,
   foreground process-group ioctls, and non-terminal `ENOTTY` failures
 - `rsrcprobe` - resource limits, `RLIMIT_NOFILE` enforcement, and
-  `getrusage` self/children behavior
+  `getrusage` self/children accounting behavior
 - `sessprobe` - session ids, process groups, terminal foreground pgrp wrappers,
   child inheritance, and invalid process/session failures
 - `stdioprobe` - EOF/error state, `clearerr`, `fflush`, invalid stdio ops

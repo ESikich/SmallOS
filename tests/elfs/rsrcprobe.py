@@ -17,6 +17,8 @@ CASES = [
             "getrlimit cpu: PASS",
             "getrusage self: PASS",
             "getrusage children: PASS",
+            "child accounting wait: PASS",
+            "getrusage children after: PASS",
             "rsrcprobe PASS",
         ],
     ),

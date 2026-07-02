@@ -1,7 +1,9 @@
 #include "errno.h"
 #include "fcntl.h"
 #include "stdio.h"
+#include "stdlib.h"
 #include "sys/resource.h"
+#include "sys/wait.h"
 #include "unistd.h"
 
 static int failures = 0;
@@ -22,8 +24,12 @@ int main(void) {
     struct rlimit saved_nofile;
     struct rlimit lim;
     struct rusage usage;
+    struct rusage before_children;
+    struct rusage after_children;
     int fds[64];
     int opened = 0;
+    pid_t child;
+    int status = -1;
 
     puts("rsrcprobe start");
 
@@ -78,8 +84,22 @@ int main(void) {
                             usage.ru_utime.tv_usec >= 0 &&
                             usage.ru_maxrss >= 0);
     check("getrusage children", getrusage(RUSAGE_CHILDREN, &usage) == 0 &&
-                                usage.ru_utime.tv_sec == 0 &&
+                                usage.ru_utime.tv_sec >= 0 &&
                                 usage.ru_stime.tv_sec == 0);
+    check("getrusage children before", getrusage(RUSAGE_CHILDREN, &before_children) == 0);
+    child = fork();
+    if (child == 0) {
+        exit(3);
+    }
+    check("child accounting fork", child > 0);
+    if (child > 0) {
+        check("child accounting wait", waitpid(child, &status, 0) == child &&
+                                       WIFEXITED(status) &&
+                                       WEXITSTATUS(status) == 3);
+        check("getrusage children after", getrusage(RUSAGE_CHILDREN, &after_children) == 0 &&
+                                           after_children.ru_nvcsw >
+                                               before_children.ru_nvcsw);
+    }
     errno = 0;
     check("getrusage invalid", getrusage(1234, &usage) < 0 && errno == EINVAL);
 

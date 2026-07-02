@@ -3962,6 +3962,11 @@ static int sys_getrusage_impl(int who, sys_rusage_t* out) {
         usage.ru_utime.tv_sec = (long)(ticks / 1000u);
         usage.ru_utime.tv_usec = (long)((ticks % 1000u) * 1000u);
         usage.ru_maxrss = (long)(process_ram_bytes(proc) / 1024u);
+    } else {
+        ticks = proc->child_cpu_ticks;
+        usage.ru_utime.tv_sec = (long)(ticks / 1000u);
+        usage.ru_utime.tv_usec = (long)((ticks % 1000u) * 1000u);
+        usage.ru_nvcsw = (long)proc->child_wait_count;
     }
 
     if (copy_to_user(out, &usage, sizeof(usage)) < 0) return -EFAULT;

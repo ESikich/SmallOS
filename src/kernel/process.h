@@ -132,6 +132,8 @@ typedef struct process {
     u32             umask;
     unsigned int    sched_esp;
     unsigned int    cpu_ticks;
+    unsigned int    child_cpu_ticks;
+    unsigned int    child_wait_count;
     volatile process_state_t state;
     int             exit_status;
     volatile int    reaper_claimed;  /* 1 once a waiter owns zombie cleanup */

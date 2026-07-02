@@ -1265,8 +1265,8 @@ int sys_getrusage(int who, sys_rusage_t* out);
 allocation and duplication paths. `RLIMIT_AS`, `RLIMIT_DATA`, and
 `RLIMIT_STACK` report fixed values from the current user address-space layout,
 and `RLIMIT_CPU` reports infinity. `getrusage(RUSAGE_SELF)` reports CPU ticks
-as an approximate user time and task-owned RAM as `ru_maxrss`; child usage is
-currently a valid zeroed structure.
+as an approximate user time and task-owned RAM as `ru_maxrss`;
+`RUSAGE_CHILDREN` reports accumulated waited-child ticks and waited-child count.
 
 ### Session and Process-Group Syscalls (135-138)
 

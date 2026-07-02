@@ -2545,6 +2545,8 @@ int process_wait_pid(process_t* parent,
 
             *out_pid = child_pid;
             *out_status = status;
+            parent->child_cpu_ticks += child->cpu_ticks + child->child_cpu_ticks;
+            parent->child_wait_count++;
             sched_dequeue(child);
             process_destroy(child);
             return 0;
