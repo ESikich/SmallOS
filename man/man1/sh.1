@@ -1,0 +1,24 @@
+SH(1)
+
+NAME
+    sh - BusyBox ash command interpreter
+
+SYNOPSIS
+    sh [options] [script [arg ...]]
+    sh -c command
+
+DESCRIPTION
+    /bin/sh is a SmallOS launcher that execs /usr/bin/busybox sh. It exists for
+    script-style POSIX compatibility and for BusyBox applets that expect a
+    standard sh path.
+
+    /bin/shell remains the native interactive SmallOS shell launched at boot.
+    Use shell when you want the native command prompt, job table, and selftest
+    built-ins. Use sh when a Unix script or applet expects BusyBox ash.
+
+EXAMPLES
+    sh -c 'echo ok'
+    sh -c 'grep root /etc/passwd'
+
+SEE ALSO
+    busybox(1), shell(1)

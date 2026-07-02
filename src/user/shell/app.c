@@ -17,6 +17,7 @@
 #define SHELL_JOB_MAX      8
 #define SHELL_SIGTERM      15
 #define SHELL_HISTORY_MAX  16
+#define SHELL_BUSYBOX_PATH "/usr/bin/busybox"
 
 typedef struct {
     int used;
@@ -821,12 +822,21 @@ static int sh_launch_wait(const char* path, int argc, char* argv[], const char* 
 
 static int sh_run_external(int argc, char* argv[]) {
     char path[SHELL_PATH_MAX];
+    char* busy_argv[SHELL_ARG_MAX + 1];
 
     if (!sh_resolve_program(argv[0], path, sizeof(path))) {
-        u_puts("Unknown command: ");
-        u_puts(argv[0]);
-        u_putc('\n');
-        return 0;
+        if (!sh_file_exists(SHELL_BUSYBOX_PATH) || argc + 1 > SHELL_ARG_MAX) {
+            u_puts("Unknown command: ");
+            u_puts(argv[0]);
+            u_putc('\n');
+            return 0;
+        }
+        busy_argv[0] = "busybox";
+        for (int i = 0; i < argc; i++) {
+            busy_argv[i + 1] = argv[i];
+        }
+        busy_argv[argc + 1] = 0;
+        return sh_launch_wait(SHELL_BUSYBOX_PATH, argc + 1, busy_argv, argv[0]);
     }
 
     return sh_launch_wait(path, argc, argv, argv[0]);
@@ -862,6 +872,9 @@ static void sh_job_clear(shell_job_t* job) {
 
 static int sh_bg(int argc, char* argv[]) {
     char path[SHELL_PATH_MAX];
+    char* busy_argv[SHELL_ARG_MAX + 1];
+    char** exec_argv = &argv[1];
+    int exec_argc = argc - 1;
     int pid;
     shell_job_t* job;
 
@@ -873,12 +886,22 @@ static int sh_bg(int argc, char* argv[]) {
     }
 
     if (!sh_resolve_program(argv[1], path, sizeof(path))) {
-        u_puts(argv[0]);
-        u_puts(": failed\n");
-        return 0;
+        if (!sh_file_exists(SHELL_BUSYBOX_PATH) || argc > SHELL_ARG_MAX) {
+            u_puts(argv[0]);
+            u_puts(": failed\n");
+            return 0;
+        }
+        busy_argv[0] = "busybox";
+        for (int i = 1; i < argc; i++) {
+            busy_argv[i] = argv[i];
+        }
+        busy_argv[argc] = 0;
+        exec_argv = busy_argv;
+        exec_argc = argc;
+        sh_copy(path, SHELL_BUSYBOX_PATH, sizeof(path));
     }
 
-    pid = sys_exec(path, argc - 1, &argv[1]);
+    pid = sys_exec(path, exec_argc, exec_argv);
     if (pid < 0) {
         u_puts(argv[0]);
         u_puts(": failed\n");
@@ -1022,10 +1045,21 @@ static int sh_run_pipeline(int argc, char* argv[]) {
             if (!sh_resolve_program(stage_argv[stage_count][0],
                                     paths[stage_count],
                                     sizeof(paths[stage_count]))) {
-                u_puts("pipeline: command not found: ");
-                u_puts(stage_argv[stage_count][0]);
-                u_putc('\n');
-                return 0;
+                if (!sh_file_exists(SHELL_BUSYBOX_PATH) ||
+                    count + 1 > SHELL_ARG_MAX) {
+                    u_puts("pipeline: command not found: ");
+                    u_puts(stage_argv[stage_count][0]);
+                    u_putc('\n');
+                    return 0;
+                }
+                for (int j = count; j > 0; j--) {
+                    stage_argv[stage_count][j] = stage_argv[stage_count][j - 1];
+                }
+                stage_argv[stage_count][0] = "busybox";
+                stage_argv[stage_count][count + 1] = 0;
+                stage_argc[stage_count] = count + 1;
+                sh_copy(paths[stage_count], SHELL_BUSYBOX_PATH,
+                        sizeof(paths[stage_count]));
             }
             stage_count++;
             arg_start = i + 1;
@@ -1463,6 +1497,75 @@ void sh_selftest(void) {
     sh_selftest_exec("forkprobe", "usr/libexec/tests/forkprobe");
     sh_selftest_exec("execveprobe", "usr/libexec/tests/execveprobe");
     sh_selftest_exec("mathprobe", "usr/libexec/tests/mathprobe");
+    sh_selftest_exec_expect("compatprobe", "usr/libexec/tests/compatprobe", 0);
+    sh_selftest_exec_expect("busybox true", "usr/bin/busybox true", 0);
+    sh_selftest_exec_expect("busybox false", "usr/bin/busybox false", 1);
+    sh_selftest_exec_expect("busybox echo", "usr/bin/busybox echo busybox-echo-ok", 0);
+    sh_selftest_exec_expect("bin sh", "/bin/sh -c true", 0);
+    sh_selftest_exec_expect("busybox ash", "usr/bin/busybox sh -c true", 0);
+    sh_selftest_exec_expect("busybox pwd", "usr/bin/busybox pwd", 0);
+    sh_selftest_exec_expect("busybox cat", "usr/bin/busybox cat /var/tmp/samples/tccmini.c", 0);
+    sh_selftest_exec_expect("busybox ls", "usr/bin/busybox ls /", 0);
+    sh_selftest_exec_expect("busybox test", "usr/bin/busybox test -f /usr/bin/busybox", 0);
+    sh_selftest_exec_expect("busybox expr", "usr/bin/busybox expr 1 + 2", 0);
+    sh_selftest_exec_expect("busybox grep", "usr/bin/busybox grep MemTotal /proc/meminfo", 0);
+    sh_selftest_exec_expect("busybox sed", "usr/bin/busybox sed -n 1p /proc/filesystems", 0);
+    sh_selftest_exec_expect("busybox awk", "usr/bin/busybox awk 1 /proc/filesystems", 0);
+    sh_selftest_exec_expect("busybox df", "usr/bin/busybox df /", 0);
+    sh_selftest_exec_expect("busybox du", "usr/bin/busybox du /tmp", 0);
+    sh_selftest_exec_expect("busybox free", "usr/bin/busybox free", 0);
+    sh_selftest_exec_expect("busybox ps", "usr/bin/busybox ps", 0);
+    sh_selftest_exec_expect("busybox date", "usr/bin/busybox date", 0);
+    sh_selftest_exec("busybox fallback grep", "grep MemTotal /proc/meminfo");
+    sh_selftest_exec("busybox dev null", "usr/bin/busybox cat /dev/null");
+    sh_selftest_exec_expect("busybox dd zero", "usr/bin/busybox dd if=/dev/zero of=/tmp/busybox-zero.bin bs=4 count=1", 0);
+    sh_selftest_exec_expect("busybox od", "usr/bin/busybox od /tmp/busybox-zero.bin", 0);
+    sh_selftest_exec_expect("busybox hexdump", "usr/bin/busybox hexdump /tmp/busybox-zero.bin", 0);
+    sh_selftest_exec("busybox ls proof prep", "touch /tmp/busybox-ls-proof-xyz");
+    sh_selftest_exec_expect("busybox ls proof", "usr/bin/busybox ls /tmp/busybox-ls-proof-xyz", 0);
+    sh_selftest_exec_expect("busybox rm proof", "usr/bin/busybox rm /tmp/busybox-ls-proof-xyz", 0);
+    sh_selftest_exec_expect("busybox mkdir", "usr/bin/busybox mkdir /tmp/busybox-dir", 0);
+    sh_selftest_exec_expect("busybox rmdir", "usr/bin/busybox rmdir /tmp/busybox-dir", 0);
+    sh_selftest_exec("busybox rm prep", "touch /tmp/busybox-rm.txt");
+    sh_selftest_exec_expect("busybox rm", "usr/bin/busybox rm /tmp/busybox-rm.txt", 0);
+    sh_selftest_exec_expect("busybox basename", "usr/bin/busybox basename /tmp/busybox-name.txt", 0);
+    sh_selftest_exec_expect("busybox dirname", "usr/bin/busybox dirname /tmp/busybox-name.txt", 0);
+    sh_selftest_exec_expect("busybox env", "usr/bin/busybox env", 0);
+    sh_selftest_exec_expect("busybox printenv", "usr/bin/busybox printenv", 0);
+    sh_selftest_exec_expect("busybox whoami", "usr/bin/busybox whoami", 0);
+    sh_selftest_exec_expect("busybox uname", "usr/bin/busybox uname", 0);
+    sh_selftest_exec_expect("busybox tty", "usr/bin/busybox tty", 1);
+    sh_selftest_exec_expect("busybox seq", "usr/bin/busybox seq 3", 0);
+    sh_selftest_exec_expect("busybox sleep", "usr/bin/busybox sleep 0", 0);
+    sh_selftest_exec_expect("busybox usleep", "usr/bin/busybox usleep 1", 0);
+    sh_selftest_exec_expect("busybox head", "usr/bin/busybox head -n 1 /var/tmp/samples/tccmini.c", 0);
+    sh_selftest_exec("busybox wc", "echo busybox-wc-ok | usr/bin/busybox wc -c");
+    sh_selftest_exec("busybox cut", "echo busybox-cut-ok | usr/bin/busybox cut -c1-14");
+    sh_selftest_exec("busybox tr", "echo busybox-tr-ok | usr/bin/busybox tr a-z A-Z");
+    sh_selftest_exec_expect("busybox printf", "usr/bin/busybox printf busybox-printf-ok", 0);
+    sh_selftest_exec_expect("busybox cp", "usr/bin/busybox cp /var/tmp/samples/tccmini.c /tmp/busybox-cp.txt", 0);
+    sh_selftest_exec_expect("busybox chmod", "usr/bin/busybox chmod 644 /tmp/busybox-cp.txt", 0);
+    sh_selftest_exec_expect("busybox chown", "usr/bin/busybox chown root /tmp/busybox-cp.txt", 0);
+    sh_selftest_exec_expect("busybox tar create", "usr/bin/busybox tar -cf /tmp/busybox.tar /tmp/busybox-cp.txt", 0);
+    sh_selftest_exec("busybox tar list", "usr/bin/busybox tar -tf /tmp/busybox.tar");
+    sh_selftest_exec_expect("busybox realpath", "usr/bin/busybox realpath /tmp/busybox-cp.txt", 0);
+    sh_selftest_exec_expect("busybox find prep", "usr/bin/busybox touch /tmp/busybox-find-target", 0);
+    sh_selftest_exec_expect("busybox find", "usr/bin/busybox find /tmp -name busybox-find-target", 0);
+    sh_selftest_exec_expect("busybox cmp", "usr/bin/busybox cmp /tmp/busybox-cp.txt /tmp/busybox-cp.txt", 0);
+    sh_selftest_exec_expect("busybox diff", "usr/bin/busybox diff /tmp/busybox-cp.txt /tmp/busybox-cp.txt", 0);
+    sh_selftest_exec("busybox sort", "echo busybox-sort-ok | usr/bin/busybox sort");
+    sh_selftest_exec("busybox uniq", "echo busybox-uniq-ok | usr/bin/busybox uniq");
+    sh_selftest_exec("busybox xargs", "echo busybox-xargs-ok | usr/bin/busybox xargs usr/bin/busybox echo");
+    sh_selftest_exec("busybox tee", "echo busybox-tee-ok | usr/bin/busybox tee /tmp/busybox-tee.txt");
+    sh_selftest_exec_expect("busybox tee cat", "usr/bin/busybox cat /tmp/busybox-tee.txt", 0);
+    sh_selftest_exec_expect("busybox sync", "usr/bin/busybox sync", 0);
+    sh_selftest_exec_expect("busybox mv prep", "usr/bin/busybox cp /tmp/busybox-cp.txt /tmp/busybox-mv-src.txt", 0);
+    sh_selftest_exec_expect("busybox mv", "usr/bin/busybox mv /tmp/busybox-mv-src.txt /tmp/busybox-mv-dst.txt", 0);
+    sh_selftest_exec_expect("busybox touch", "usr/bin/busybox touch /tmp/busybox-touch.txt", 0);
+    sh_selftest_exec_expect("busybox stat", "usr/bin/busybox stat /tmp/busybox-touch.txt", 0);
+    sh_selftest_exec_expect("busybox id", "usr/bin/busybox id", 0);
+    sh_selftest_exec_expect("busybox kill missing", "usr/bin/busybox kill 99999", 1);
+    sh_selftest_exec_expect("busybox unlink", "usr/bin/busybox unlink /tmp/busybox-touch.txt", 0);
     sh_selftest_exec("wolf3d-srcprobe", "usr/libexec/tests/wolf3d-srcprobe");
     sh_selftest_exec("wolf3d-srcprobe episodes", "usr/libexec/tests/wolf3d-srcprobe --check-episodes");
     sh_selftest_exec("wolf3d-srcprobe init", "usr/libexec/tests/wolf3d-srcprobe --init-game");

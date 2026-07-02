@@ -1,0 +1,64 @@
+diff --git a/applets/applets.c b/applets/applets.c
+index e422b10..09827c1 100644
+--- a/applets/applets.c
++++ b/applets/applets.c
+@@ -8,6 +8,20 @@
+  */
+ #include "busybox.h"
+-
++#if defined(SMALLOS)
++extern char **environ;
++void __smallos_set_environ(char **envp);
++void exit(int code) NORETURN;
++int main(int argc, char **argv);
++
++void _start(int argc, char **argv, char **envp);
++void _start(int argc, char **argv, char **envp)
++{
++	environ = envp;
++	__smallos_set_environ(envp);
++	exit(main(argc, argv));
++}
++#endif
++
+ #if ENABLE_BUILD_LIBBUSYBOX
+ int main(int argc UNUSED_PARAM, char **argv)
+ {
+diff --git a/include/platform.h b/include/platform.h
+index 69914fc..68fa3f3 100644
+--- a/include/platform.h
++++ b/include/platform.h
+@@ -431,6 +431,32 @@
+ #define HAVE_DEV_FD 1
+ #define DEV_FD_PREFIX "/dev/fd/"
+-
++#if defined(SMALLOS)
++# undef HAVE_CLEARENV
++# undef HAVE_FDATASYNC
++# undef HAVE_DPRINTF
++# undef HAVE_MEMRCHR
++# undef HAVE_MKDTEMP
++# undef HAVE_TTYNAME_R
++# undef HAVE_PTSNAME_R
++# undef HAVE_SETBIT
++# undef HAVE_STPCPY
++# undef HAVE_STPNCPY
++# undef HAVE_MEMPCPY
++# undef HAVE_STRCASESTR
++# undef HAVE_STRCHRNUL
++# undef HAVE_STRSEP
++# undef HAVE_STRSIGNAL
++# undef HAVE_STRVERSCMP
++# undef HAVE_UNLOCKED_STDIO
++# undef HAVE_UNLOCKED_LINE_OPS
++# undef HAVE_GETLINE
++# undef HAVE_XTABS
++# undef HAVE_NET_ETHERNET_H
++# undef HAVE_SYS_STATFS_H
++# undef HAVE_PRINTF_PERCENTM
++# undef HAVE_WAIT3
++#endif
++
+ #if defined(__UCLIBC__)
+ # if UCLIBC_VERSION < KERNEL_VERSION(0, 9, 32)
+ #  undef HAVE_STRVERSCMP

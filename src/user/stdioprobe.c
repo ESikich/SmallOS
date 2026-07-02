@@ -74,6 +74,22 @@ void _start(int argc, char** argv) {
         puts("stdio float format: PASS");
     }
 
+    snprintf(fmtbuf, sizeof(fmtbuf), "%*s|%-*c|%.*s", 4, "x", 3, 'y', 2, "abcd");
+    if (strcmp(fmtbuf, "   x|y  |ab") != 0) {
+        puts("stdio dynamic width: FAIL");
+        ok = 0;
+    } else {
+        puts("stdio dynamic width: PASS");
+    }
+
+    snprintf(fmtbuf, sizeof(fmtbuf), "%lo|%o", 0644ul, 0755u);
+    if (strcmp(fmtbuf, "644|755") != 0) {
+        puts("stdio octal format: FAIL");
+        ok = 0;
+    } else {
+        puts("stdio octal format: PASS");
+    }
+
     in = fopen("usr/bin/hello", "r");
     if (!in || fwrite("x", 1, 1, in) != 0 || !ferror(in)) {
         puts("stdio write failure: FAIL");

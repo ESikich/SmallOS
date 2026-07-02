@@ -12,6 +12,8 @@ DESCRIPTION
     at boot after the kernel mounts ext2.
 
     The shell resolves external commands from /bin, /usr/bin, and /usr/sbin.
+    Native SmallOS commands remain preferred. If a bare command is not found,
+    the shell tries /usr/bin/busybox with the command name as a BusyBox applet.
     A command containing a slash is treated as a path.
 
     The shell also implements a small set of built-ins for navigation,
@@ -66,4 +68,4 @@ PIPES
         command1 | command2 | command3
 
 SEE ALSO
-    cd(1), jobs(1), fg(1), bg(1)
+    busybox(1), sh(1), cd(1), jobs(1), fg(1), bg(1)

@@ -946,6 +946,13 @@ static int dir_add_entry(u32 dir_ino,
                     }
                     return write_block(block, s_block) && write_inode(dir_ino, dir);
                 }
+                if (EXT2_BLOCK_SIZE - off >= need) {
+                    if (!dir_write_entry(s_block, off, child_ino,
+                                         (u16)(EXT2_BLOCK_SIZE - off), name, type)) {
+                        return 0;
+                    }
+                    return write_block(block, s_block) && write_inode(dir_ino, dir);
+                }
                 return 0;
             }
 
@@ -1769,10 +1776,9 @@ int ext2_dirent_at(const char* path,
                         if (!read_inode(de.inode, &child)) return 0;
                         int is_dir = inode_is_dir(&child);
                         u32 len = (u32)k_strlen(tmp);
-                        u32 need = len + (is_dir ? 1u : 0u) + 1u;
+                        u32 need = len + 1u;
                         if (need > out_name_size) return 0;
                         k_memcpy(out_name, tmp, len);
-                        if (is_dir) out_name[len++] = '/';
                         out_name[len] = '\0';
                         if (out_size) *out_size = child.size;
                         if (out_is_dir) *out_is_dir = is_dir ? 1 : 0;
@@ -1821,12 +1827,11 @@ int ext2_dirents_read(const char* path,
                         if (!read_inode(de.inode, &child)) return 0;
                         int is_dir = inode_is_dir(&child);
                         u32 len = (u32)k_strlen(tmp);
-                        u32 need = len + (is_dir ? 1u : 0u) + 1u;
+                        u32 need = len + 1u;
                         if (need > sizeof(out[copied].name)) return 0;
 
                         k_memset(&out[copied], 0, sizeof(out[copied]));
                         k_memcpy(out[copied].name, tmp, len);
-                        if (is_dir) out[copied].name[len++] = '/';
                         out[copied].name[len] = '\0';
                         out[copied].size = child.size;
                         out[copied].is_dir = is_dir ? 1 : 0;

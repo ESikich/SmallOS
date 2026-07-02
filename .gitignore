@@ -26,6 +26,7 @@ Thumbs.db
 *.txt
 !samples/boot.txt
 *.patch
+!patches/busybox/smallos.patch
 
 # Local/vendor experiments
 third_party/*

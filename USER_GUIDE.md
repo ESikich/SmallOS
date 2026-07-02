@@ -8,7 +8,8 @@ the technical notes under `docs/`.
 
 SmallOS is a small 32-bit x86 operating system that boots into its own shell.
 It has a writable filesystem, user programs, a text editor, manual pages,
-network tools, a tiny C compiler, and simple FTP and HTTP services.
+network tools, BusyBox-backed Unix commands, a tiny C compiler, and simple FTP
+and HTTP services.
 
 Most day-to-day use looks like this:
 
@@ -32,6 +33,8 @@ python3
 qemu-system-i386
 svn
 curl
+patch
+bzip2
 unzip
 ```
 
@@ -111,6 +114,9 @@ ls
 tree /
 man smallos
 man shell
+busybox --help
+/bin/sh -c true
+cat /proc/meminfo
 ```
 
 `help` shows the built-in shell commands. `man` opens installed manual pages.
@@ -138,6 +144,9 @@ SmallOS keeps normal-looking directories:
 /usr/sbin            service programs
 /usr/libexec/tests   diagnostic test programs
 /usr/share/man       manual pages
+/proc                virtual process and system status files
+/dev                 virtual null, zero, tty, console, and fd nodes
+/etc                 passwd, group, services, and system configuration
 /var/log             boot and service logs
 /var/tmp             scratch files
 /var/www             sample web content
@@ -186,6 +195,13 @@ You can also run a program by path:
 usr/bin/hello
 hello alpha beta
 ```
+
+Native SmallOS commands stay first. If a bare command is not found in `/bin`,
+`/usr/bin`, or `/usr/sbin`, the shell tries `/usr/bin/busybox <command> ...`.
+That makes BusyBox applets such as `grep`, `sed`, `awk`, `df`, `du`, `free`,
+`ps`, `tar`, and `hexdump` available without replacing native tools. `/bin/sh`
+is a tiny launcher for BusyBox `ash`; `/bin/shell` remains the interactive
+SmallOS shell.
 
 Background jobs use `bg`, `jobs`, `fg`, and `kill`:
 

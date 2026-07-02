@@ -568,7 +568,9 @@ control keys. Fractint and `mandel` use this shared path instead of carrying
 program-local ANSI escape parsers.
 
 The boot sequence launches `/bin/shell` as the interactive shell. The old
-kernel shell is no longer linked into the kernel image.
+kernel shell is no longer linked into the kernel image. `/bin/sh` is a tiny
+launcher for BusyBox `ash`, and `/usr/bin/busybox` fills missing Unix applets
+after native `/bin`, `/usr/bin`, and `/usr/sbin` command lookup.
 
 Mouse input is intentionally lower-level today. `mouse.c` initializes the PS/2
 auxiliary port, decodes 3-byte relative-motion packets on IRQ12, drains VMware
@@ -932,6 +934,7 @@ ext2 filesystem — user programs loaded from ATA, USB storage, or the boot RAM 
 run/runimg infrastructure removed — direct shell execution is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
 interactive shell with builtin job control plus `/bin` command binaries such as meminfo / memmap / cpuz / top / ataread / ls / tree / fsread / mkdir / rmdir
 guest TinyCC compiler path — `usr/bin/tcc` runs inside SmallOS through `crt0` and TinyCC's normal `main`, then compiles guest C samples during `make test`
+guest BusyBox path — `usr/bin/busybox` provides fallback Unix applets, `/bin/sh` runs BusyBox `ash`, and virtual `/proc` plus `/dev` expose the small Linux-like status/device surface those tools need
 ```
 
 Foundation for:

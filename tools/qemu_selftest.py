@@ -321,7 +321,7 @@ def run_interactive_regressions(sock, log, start_offset, deadline, echo=True, re
             if echo:
                 tee_stdout(chunk)
             buf += chunk
-            if "Unknown command: poop" in buf and not saw_failed:
+            if ("Unknown command: poop" in buf or "poop: applet not found" in buf) and not saw_failed:
                 saw_failed = True
                 send_text(sock, "pwd")
                 send_key(sock, "ret")

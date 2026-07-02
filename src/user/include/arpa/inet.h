@@ -30,12 +30,13 @@ static inline unsigned int inet_addr(const char* text) {
     unsigned int part = 0;
     unsigned int value = 0;
     int saw_digit = 0;
+    const char* p;
 
     if (!text) {
         return 0xFFFFFFFFu;
     }
 
-    for (const char* p = text; ; p++) {
+    for (p = text; ; p++) {
         char c = *p;
         if (c >= '0' && c <= '9') {
             value = value * 10u + (unsigned int)(c - '0');
@@ -72,6 +73,17 @@ static inline unsigned int inet_addr(const char* text) {
                | parts[3]);
 }
 
+static inline int inet_aton(const char* text, struct in_addr* out) {
+    unsigned int addr = inet_addr(text);
+    if (addr == 0xFFFFFFFFu) {
+        return 0;
+    }
+    if (out) {
+        out->s_addr = addr;
+    }
+    return 1;
+}
+
 static inline char* inet_ntoa(struct in_addr in) {
     static char bufs[4][INET_ADDRSTRLEN];
     static unsigned int slot = 0;
@@ -84,15 +96,17 @@ static inline char* inet_ntoa(struct in_addr in) {
         host & 0xFFu
     };
     unsigned int pos = 0;
+    unsigned int i;
 
-    for (unsigned int i = 0; i < 4u; i++) {
+    for (i = 0; i < 4u; i++) {
         char tmp[4];
         unsigned int n = 0;
         unsigned int v = parts[i];
+        unsigned int j;
         if (v >= 100u) tmp[n++] = (char)('0' + (v / 100u));
         if (v >= 10u) tmp[n++] = (char)('0' + ((v / 10u) % 10u));
         tmp[n++] = (char)('0' + (v % 10u));
-        for (unsigned int j = 0; j < n && pos + 1u < INET_ADDRSTRLEN; j++) {
+        for (j = 0; j < n && pos + 1u < INET_ADDRSTRLEN; j++) {
             out[pos++] = tmp[j];
         }
         if (i + 1u < 4u && pos + 1u < INET_ADDRSTRLEN) {
@@ -104,13 +118,15 @@ static inline char* inet_ntoa(struct in_addr in) {
 }
 
 static inline const char* inet_ntop(int af, const void* src, char* dst, socklen_t size) {
+    struct in_addr in;
+    const char* text;
+    unsigned int i = 0;
+
     if (af != AF_INET || !src || !dst || size < INET_ADDRSTRLEN) {
         return 0;
     }
-    struct in_addr in;
     in.s_addr = ((const struct in_addr*)src)->s_addr;
-    const char* text = inet_ntoa(in);
-    unsigned int i = 0;
+    text = inet_ntoa(in);
     while (text[i] && i + 1u < size) {
         dst[i] = text[i];
         i++;

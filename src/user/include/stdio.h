@@ -4,6 +4,7 @@
 #include <stdarg.h>
 
 #include "stddef.h"
+#include "sys/types.h"
 
 #define SEEK_SET 0
 #define SEEK_CUR 1
@@ -12,6 +13,7 @@
 #define _IOFBF 0
 #define _IOLBF 1
 #define _IONBF 2
+#define BUFSIZ 1024
 
 typedef struct u_file_stream {
     int fd;
@@ -35,6 +37,8 @@ extern FILE* stderr;
 FILE* fopen(const char* path, const char* mode);
 FILE* fdopen(int fildes, const char* mode);
 FILE* freopen(const char* path, const char* mode, FILE* stream);
+FILE* popen(const char* command, const char* type);
+int pclose(FILE* stream);
 int fclose(FILE* stream);
 size_t fread(void* ptr, size_t size, size_t nmemb, FILE* stream);
 size_t fwrite(const void* ptr, size_t size, size_t nmemb, FILE* stream);
@@ -50,6 +54,9 @@ int ferror(FILE* stream);
 void clearerr(FILE* stream);
 int fseek(FILE* stream, long offset, int whence);
 long ftell(FILE* stream);
+int fseeko(FILE* stream, off_t offset, int whence);
+off_t ftello(FILE* stream);
+int fileno(FILE* stream);
 int fputc(int c, FILE* stream);
 int fputs(const char* s, FILE* stream);
 int putc(int c, FILE* stream);
@@ -58,6 +65,7 @@ int getw(FILE* stream);
 int putchar(int c);
 int puts(const char* s);
 int setvbuf(FILE* stream, char* buf, int mode, size_t size);
+void setbuf(FILE* stream, char* buf);
 void rewind(FILE* stream);
 
 int printf(const char* format, ...);

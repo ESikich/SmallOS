@@ -659,6 +659,11 @@ Supports descriptor flags through `SYS_FCNTL_GETFD` / `F_GETFD` and
 fork-inherited descriptors observe the same nonblocking state. Unsupported
 commands return `-EINVAL`.
 
+`SYS_FCNTL_DUPFD` / `F_DUPFD` and `SYS_FCNTL_DUPFD_CLOEXEC` /
+`F_DUPFD_CLOEXEC` duplicate a descriptor at or above the requested minimum fd.
+They share the same underlying open-file description as `dup`/`dup2`; the
+`CLOEXEC` variant sets `FD_CLOEXEC` only on the new descriptor.
+
 ---
 
 ### SYS_EPOLL_CREATE (42)

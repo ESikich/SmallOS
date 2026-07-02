@@ -18,18 +18,33 @@ typedef int ssize_t;
 #define STDOUT_FILENO 1
 #define STDERR_FILENO 2
 
+#define _SC_CLK_TCK 1
+#define _SC_PAGESIZE 2
+#define _SC_PAGE_SIZE _SC_PAGESIZE
+
 extern char** environ;
+extern char* optarg;
+extern int optind;
+extern int opterr;
+extern int optopt;
 
 int close(int fd);
 int read(int fd, void* buf, unsigned int len);
 int write(int fd, const void* buf, unsigned int len);
 int lseek(int fd, int offset, int whence);
 int unlink(const char* path);
+int link(const char* oldpath, const char* newpath);
+int symlink(const char* target, const char* linkpath);
+ssize_t readlink(const char* path, char* buf, size_t bufsiz);
 int rename(const char* src, const char* dst);
 int access(const char* path, int mode);
 int fstat(int fd, struct stat* st);
 char* getcwd(char* buf, unsigned int size);
 int chdir(const char* path);
+int fchdir(int fd);
+int chroot(const char* path);
+int fsync(int fd);
+int ftruncate(int fd, off_t length);
 int remove(const char* path);
 int pipe(int fds[2]);
 int pipe2(int fds[2], int flags);
@@ -37,10 +52,30 @@ int dup(int oldfd);
 int dup2(int oldfd, int newfd);
 int dup3(int oldfd, int newfd, int flags);
 pid_t fork(void);
+pid_t vfork(void);
 int execve(const char* path, char* const argv[], char* const envp[]);
 int execv(const char* path, char* const argv[]);
 int execvp(const char* file, char* const argv[]);
+int getgroups(int size, gid_t list[]);
+uid_t getuid(void);
+uid_t geteuid(void);
+gid_t getgid(void);
+gid_t getegid(void);
+int setuid(uid_t uid);
+int setgid(gid_t gid);
+int seteuid(uid_t euid);
+int setegid(gid_t egid);
 pid_t getpid(void);
+pid_t getppid(void);
+pid_t setsid(void);
+pid_t getsid(pid_t pid);
 int usleep(unsigned int usec);
+unsigned int sleep(unsigned int seconds);
+unsigned int alarm(unsigned int seconds);
+void sync(void);
+int isatty(int fd);
+int getopt(int argc, char* const argv[], const char* optstring);
+long sysconf(int name);
+__attribute__((noreturn)) void _exit(int status);
 
 #endif

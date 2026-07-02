@@ -10,6 +10,8 @@ CASES = [
             "stdio eof: PASS",
             "stdio clearerr: PASS",
             "stdio write+fflush: PASS",
+            "stdio dynamic width: PASS",
+            "stdio octal format: PASS",
             "stdio write failure: PASS",
             "stdio bad read op: PASS",
             "stdio bad fd flush: PASS",

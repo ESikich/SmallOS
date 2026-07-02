@@ -8,6 +8,10 @@ int setvbuf(FILE* stream, char* buf, int mode, size_t size) {
     return 0;
 }
 
+void setbuf(FILE* stream, char* buf) {
+    (void)setvbuf(stream, buf, buf ? _IOFBF : _IONBF, BUFSIZ);
+}
+
 void rewind(FILE* stream) {
     fseek(stream, 0, SEEK_SET);
     clearerr(stream);

@@ -3,7 +3,13 @@
 
 #include "stddef.h"
 
-#define RAND_MAX 32767
+#define RAND_MAX 2147483647
+#define EXIT_SUCCESS 0
+#define EXIT_FAILURE 1
+
+#ifndef alloca
+#define alloca(size) __builtin_alloca(size)
+#endif
 
 void* malloc(size_t size);
 void  free(void* ptr);
@@ -12,6 +18,11 @@ void* calloc(size_t nmemb, size_t size);
 void qsort(void* base, size_t nmemb, size_t size, int (*compar)(const void*, const void*));
 void* bsearch(const void* key, const void* base, size_t nmemb, size_t size, int (*compar)(const void*, const void*));
 char* getenv(const char* name);
+int putenv(char* string);
+int setenv(const char* name, const char* value, int overwrite);
+int unsetenv(const char* name);
+char* mktemp(char* template);
+int mkstemp(char* template);
 extern char** environ;
 char* realpath(const char* path, char* resolved_path);
 int atoi(const char* nptr);
@@ -30,6 +41,7 @@ long double strtold(const char* nptr, char** endptr);
 double strtod(const char* nptr, char** endptr);
 long double ldexpl(long double x, int exp);
 int system(const char* command);
+int atexit(void (*function)(void));
 __attribute__((noreturn)) void exit(int code);
 
 #endif

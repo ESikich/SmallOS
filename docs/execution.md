@@ -78,6 +78,10 @@ Important current-state facts:
   draw inside the window instead of the global console. The GUI paces frame
   work and shell PTY polling so quiet windows do not keep the desktop awake.
 - the shipped `usr/bin/tcc` compiler binary links the generic SmallOS `crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from ext2, write the results back to disk, and then those generated ELFs can be executed immediately
+- the shipped `usr/bin/busybox` binary provides the broader Unix applet layer;
+  native SmallOS commands remain first in shell lookup, `/bin/sh` launches
+  BusyBox `ash`, and missing bare commands fall back to
+  `/usr/bin/busybox <command> ...`
 - QEMU user networking is still the default for `make run` / `make test`, but the guest now learns its IPv4 address, netmask, gateway, DNS server, and lease time through DHCP instead of assuming QEMU's NAT addresses. `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT.
 - Boot queues DHCP and best-effort NTP as an async kernel task once the scheduler is live. On success, `CLOCK_REALTIME` is set and the boot log prints the UTC time; on failure, boot continues with a warning.
 - Protected-mode boot diagnostics are muted on the active display, mirrored to
@@ -149,9 +153,15 @@ relative to the shell cwd. Commands like `echo`, `about`,
 `ipconfig` are shipped this way under `/bin/`.
 
 Larger demo and port binaries are staged under `/usr/bin/`, including
-`hello`, `plasma`, `mandel`, `fractint`, `wolf3d`, and `tcc`. Regression probes
-that are useful to keep out of the normal command namespace live under
-`/usr/libexec/tests/`, including `mathprobe` and `wolf3d-srcprobe`.
+`hello`, `plasma`, `mandel`, `fractint`, `wolf3d`, `tcc`, and `busybox`.
+Regression probes that are useful to keep out of the normal command namespace
+live under `/usr/libexec/tests/`, including `mathprobe`, `compatprobe`, and
+`wolf3d-srcprobe`.
+
+If no native command matches a bare name, the shell tries
+`/usr/bin/busybox <name> ...`. That keeps native SmallOS behavior preferred
+while making applets such as `grep`, `sed`, `awk`, `df`, `du`, `free`, `ps`,
+`tar`, and `hexdump` available as ordinary commands.
 
 The interactive shell editor keeps a short command history and command/path
 completion. History stores the full input line before tokenization, so recalled
@@ -186,7 +196,9 @@ That means `argv[0]` inside the process is the command token as typed. For
 
 There is **no active `runimg` command path** in the current shell command table.
 The shell also supports `shell -c "command args"` for non-interactive command
-execution; libc `system()` uses that path.
+execution; libc `system()` uses that path. `/bin/sh` is separate: it launches
+BusyBox `ash` for script-style POSIX compatibility without replacing the
+native interactive `/bin/shell`.
 
 The same path is used by the guest TinyCC smoke tests:
 

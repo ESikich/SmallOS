@@ -356,6 +356,324 @@ static int path_lookup_errno(const char* path) {
     return -ENOENT;
 }
 
+static int k_is_digit(char c) {
+    return c >= '0' && c <= '9';
+}
+
+static int k_parse_uint_path(const char* s, unsigned int* out, const char** tail) {
+    unsigned int value = 0;
+    int saw = 0;
+
+    if (!s || !out) return 0;
+    while (k_is_digit(*s)) {
+        value = value * 10u + (unsigned int)(*s - '0');
+        s++;
+        saw = 1;
+    }
+    if (!saw) return 0;
+    *out = value;
+    if (tail) *tail = s;
+    return 1;
+}
+
+static void vbuf_putc(char* out, unsigned int cap, unsigned int* pos, char c) {
+    if (!out || !pos || cap == 0u) return;
+    if (*pos + 1u < cap) {
+        out[*pos] = c;
+        (*pos)++;
+    }
+    out[*pos < cap ? *pos : cap - 1u] = '\0';
+}
+
+static void vbuf_puts(char* out, unsigned int cap, unsigned int* pos, const char* s) {
+    if (!s) return;
+    while (*s) {
+        vbuf_putc(out, cap, pos, *s++);
+    }
+}
+
+static void vbuf_put_uint(char* out, unsigned int cap, unsigned int* pos, unsigned int value) {
+    char tmp[16];
+    unsigned int n = 0;
+
+    if (value == 0u) {
+        vbuf_putc(out, cap, pos, '0');
+        return;
+    }
+    while (value && n < sizeof(tmp)) {
+        tmp[n++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    }
+    while (n) {
+        vbuf_putc(out, cap, pos, tmp[--n]);
+    }
+}
+
+static void vbuf_put_kb_line(char* out,
+                             unsigned int cap,
+                             unsigned int* pos,
+                             const char* name,
+                             unsigned int bytes) {
+    vbuf_puts(out, cap, pos, name);
+    vbuf_putc(out, cap, pos, ':');
+    vbuf_putc(out, cap, pos, '\t');
+    vbuf_put_uint(out, cap, pos, bytes / 1024u);
+    vbuf_puts(out, cap, pos, " kB\n");
+}
+
+static int path_eq(const char* path, const char* literal) {
+    return k_strcmp(path, literal);
+}
+
+static int path_child(const char* path, const char* prefix, const char** child) {
+    unsigned int len;
+
+    if (!path || !prefix || !child) return 0;
+    len = (unsigned int)k_strlen(prefix);
+    if (!k_starts_with(path, prefix)) return 0;
+    if (path[len] != '/') return 0;
+    *child = path + len + 1u;
+    return 1;
+}
+
+static int virtual_proc_pid_path(const char* path,
+                                 process_t** out_proc,
+                                 const char** out_leaf) {
+    const char* rest;
+    const char* tail;
+    unsigned int pid;
+
+    if (!path_child(path, "proc", &rest)) return 0;
+    if (k_starts_with(rest, "self")) {
+        process_t* cur;
+        tail = rest + 4;
+        if (*tail != '\0' && *tail != '/') return 0;
+        cur = (process_t*)sched_current();
+        if (!cur) return 0;
+        if (out_proc) *out_proc = cur;
+        if (out_leaf) *out_leaf = (*tail == '/') ? tail + 1 : "";
+        return 1;
+    }
+    if (!k_parse_uint_path(rest, &pid, &tail)) return 0;
+    if (*tail != '\0' && *tail != '/') return 0;
+    if (out_proc) *out_proc = process_find_by_pid(pid);
+    if (out_leaf) *out_leaf = (*tail == '/') ? tail + 1 : "";
+    return 1;
+}
+
+static int virtual_path_is_dir(const char* path) {
+    process_t* proc = 0;
+    const char* leaf = 0;
+
+    if (path_eq(path, "proc") || path_eq(path, "dev") || path_eq(path, "dev/fd")) {
+        return 1;
+    }
+    if (virtual_proc_pid_path(path, &proc, &leaf)) {
+        return proc && leaf && leaf[0] == '\0';
+    }
+    return 0;
+}
+
+static int virtual_path_is_dev(const char* path, unsigned int* out_type) {
+    if (path_eq(path, "dev/null")) {
+        if (out_type) *out_type = PROCESS_VIRTUAL_NULL;
+        return 1;
+    }
+    if (path_eq(path, "dev/zero")) {
+        if (out_type) *out_type = PROCESS_VIRTUAL_ZERO;
+        return 1;
+    }
+    if (path_eq(path, "dev/tty") || path_eq(path, "dev/console") ||
+        path_eq(path, "dev/fd/0") || path_eq(path, "dev/fd/1") ||
+        path_eq(path, "dev/fd/2")) {
+        if (out_type) *out_type = PROCESS_VIRTUAL_TTY;
+        return 1;
+    }
+    return 0;
+}
+
+static const char* process_state_name(unsigned int state) {
+    switch (state) {
+        case PROCESS_STATE_RUNNING: return "R";
+        case PROCESS_STATE_EXITED: return "X";
+        case PROCESS_STATE_ZOMBIE: return "Z";
+        case PROCESS_STATE_WAITING: return "S";
+        case PROCESS_STATE_SLEEPING: return "S";
+        default: return "?";
+    }
+}
+
+static unsigned int virtual_build_proc_content(const char* path,
+                                               char* out,
+                                               unsigned int cap) {
+    unsigned int pos = 0;
+    process_t* proc = 0;
+    const char* leaf = 0;
+
+    if (!out || cap == 0u) return 0;
+    out[0] = '\0';
+
+    if (path_eq(path, "proc/meminfo")) {
+        unsigned int total = pmm_total_count() * PAGE_SIZE;
+        unsigned int free = pmm_free_count() * PAGE_SIZE;
+        vbuf_put_kb_line(out, cap, &pos, "MemTotal", total);
+        vbuf_put_kb_line(out, cap, &pos, "MemFree", free);
+        vbuf_put_kb_line(out, cap, &pos, "MemAvailable", free);
+        return pos;
+    }
+    if (path_eq(path, "proc/uptime")) {
+        unsigned int ticks = timer_get_ticks();
+        unsigned int sec = ticks / SMALLOS_TIMER_HZ;
+        unsigned int frac = ((ticks % SMALLOS_TIMER_HZ) * 100u) / SMALLOS_TIMER_HZ;
+        vbuf_put_uint(out, cap, &pos, sec);
+        vbuf_putc(out, cap, &pos, '.');
+        if (frac < 10u) vbuf_putc(out, cap, &pos, '0');
+        vbuf_put_uint(out, cap, &pos, frac);
+        vbuf_putc(out, cap, &pos, ' ');
+        vbuf_put_uint(out, cap, &pos, sec);
+        vbuf_puts(out, cap, &pos, ".00\n");
+        return pos;
+    }
+    if (path_eq(path, "proc/stat")) {
+        unsigned int ticks = timer_get_ticks();
+        vbuf_puts(out, cap, &pos, "cpu  ");
+        vbuf_put_uint(out, cap, &pos, ticks);
+        vbuf_puts(out, cap, &pos, " 0 0 0 0 0 0 0 0 0\n");
+        vbuf_puts(out, cap, &pos, "intr 0\nctxt 0\nbtime 0\nprocesses ");
+        vbuf_put_uint(out, cap, &pos, ticks);
+        vbuf_putc(out, cap, &pos, '\n');
+        return pos;
+    }
+    if (path_eq(path, "proc/mounts")) {
+        vbuf_puts(out, cap, &pos, "rootfs / ext2 rw 0 0\n");
+        vbuf_puts(out, cap, &pos, "proc /proc proc rw 0 0\n");
+        vbuf_puts(out, cap, &pos, "dev /dev devtmpfs rw 0 0\n");
+        return pos;
+    }
+    if (path_eq(path, "proc/filesystems")) {
+        vbuf_puts(out, cap, &pos, "nodev\tproc\nnodev\tdevtmpfs\next2\n");
+        return pos;
+    }
+
+    if (!virtual_proc_pid_path(path, &proc, &leaf) || !proc || !leaf) {
+        return 0;
+    }
+    if (path_eq(leaf, "comm")) {
+        vbuf_puts(out, cap, &pos, proc->name);
+        vbuf_putc(out, cap, &pos, '\n');
+        return pos;
+    }
+    if (path_eq(leaf, "cmdline")) {
+        for (int i = 0; i < proc->user_argc; i++) {
+            if (i) vbuf_putc(out, cap, &pos, '\0');
+            vbuf_puts(out, cap, &pos, proc->user_argv[i]);
+        }
+        if (pos == 0u) vbuf_puts(out, cap, &pos, proc->name);
+        return pos;
+    }
+    if (path_eq(leaf, "status")) {
+        vbuf_puts(out, cap, &pos, "Name:\t");
+        vbuf_puts(out, cap, &pos, proc->name);
+        vbuf_puts(out, cap, &pos, "\nState:\t");
+        vbuf_puts(out, cap, &pos, process_state_name((unsigned int)proc->state));
+        vbuf_puts(out, cap, &pos, "\nPid:\t");
+        vbuf_put_uint(out, cap, &pos, proc->pid);
+        vbuf_puts(out, cap, &pos, "\nPPid:\t");
+        vbuf_put_uint(out, cap, &pos, proc->parent_pid);
+        vbuf_puts(out, cap, &pos, "\nUid:\t0\t0\t0\t0\nGid:\t0\t0\t0\t0\n");
+        return pos;
+    }
+    if (path_eq(leaf, "stat")) {
+        vbuf_put_uint(out, cap, &pos, proc->pid);
+        vbuf_puts(out, cap, &pos, " (");
+        vbuf_puts(out, cap, &pos, proc->name);
+        vbuf_puts(out, cap, &pos, ") ");
+        vbuf_puts(out, cap, &pos, process_state_name((unsigned int)proc->state));
+        vbuf_putc(out, cap, &pos, ' ');
+        vbuf_put_uint(out, cap, &pos, proc->parent_pid);
+        vbuf_putc(out, cap, &pos, ' ');
+        vbuf_put_uint(out, cap, &pos, proc->pgid);
+        vbuf_puts(out, cap, &pos, " 0 0 0 0 0 0 0 0 0 0 ");
+        vbuf_put_uint(out, cap, &pos, proc->cpu_ticks);
+        vbuf_puts(out, cap, &pos, " 0 0 0 20 0 1 0 0 ");
+        vbuf_put_uint(out, cap, &pos, proc->heap_brk >= proc->heap_base
+                                      ? proc->heap_brk - proc->heap_base
+                                      : 0u);
+        vbuf_putc(out, cap, &pos, '\n');
+        return pos;
+    }
+
+    return 0;
+}
+
+static int virtual_path_regular_size(const char* path, unsigned int* out_size) {
+    char tmp[PAGE_SIZE];
+    unsigned int size;
+
+    if (!path || !out_size) return 0;
+    if (!k_starts_with(path, "proc/")) return 0;
+    size = virtual_build_proc_content(path, tmp, sizeof(tmp));
+    if (size == 0u) return 0;
+    *out_size = size;
+    return 1;
+}
+
+static int virtual_path_exists(const char* path,
+                               unsigned int* out_size,
+                               int* out_is_dir,
+                               unsigned int* out_type) {
+    unsigned int size = 0;
+    unsigned int type = PROCESS_VIRTUAL_REGULAR;
+    int is_dir = 0;
+
+    if (!path) return 0;
+    if (virtual_path_is_dir(path)) {
+        is_dir = 1;
+    } else if (virtual_path_is_dev(path, &type)) {
+        size = 0;
+    } else if (!virtual_path_regular_size(path, &size)) {
+        return 0;
+    }
+    if (out_size) *out_size = size;
+    if (out_is_dir) *out_is_dir = is_dir;
+    if (out_type) *out_type = type;
+    return 1;
+}
+
+static int virtual_stat_info(const char* path, sys_stat_info_t* info) {
+    unsigned int size = 0;
+    unsigned int type = PROCESS_VIRTUAL_REGULAR;
+    int is_dir = 0;
+    unsigned int mode;
+
+    if (!info || !virtual_path_exists(path, &size, &is_dir, &type)) return 0;
+    k_memset(info, 0, sizeof(*info));
+    mode = is_dir ? (0040000u | 0555u) : (0100000u | 0444u);
+    if (type == PROCESS_VIRTUAL_NULL ||
+        type == PROCESS_VIRTUAL_ZERO ||
+        type == PROCESS_VIRTUAL_TTY) {
+        mode = 0020000u | 0666u;
+        info->rdev = type;
+    }
+    info->dev = 2u;
+    info->ino = 2000u;
+    for (unsigned int i = 0; path[i]; i++) {
+        info->ino = info->ino * 33u + (unsigned char)path[i];
+    }
+    info->mode = mode;
+    info->nlink = is_dir ? 2u : 1u;
+    info->uid = 0u;
+    info->gid = 0u;
+    info->size = size;
+    info->blksize = PAGE_SIZE;
+    info->blocks = (size + 511u) / 512u;
+    info->atime = timer_get_seconds();
+    info->mtime = info->atime;
+    info->ctime = info->atime;
+    info->is_dir = is_dir ? 1u : 0u;
+    return 1;
+}
+
 /* ------------------------------------------------------------------ */
 /* Syscall implementations                                            */
 /* ------------------------------------------------------------------ */
@@ -1220,7 +1538,26 @@ static int sys_mprotect_impl(unsigned int addr, unsigned int length, unsigned in
 static int sys_open_impl(const char* name) {
     char kname[PROCESS_FD_NAME_MAX];
     int path_rc = copy_user_path_resolved(kname, sizeof(kname), name);
+    unsigned int vsize = 0;
+    unsigned int vtype = PROCESS_VIRTUAL_REGULAR;
+    int vis_dir = 0;
     if (path_rc < 0) return path_rc;
+
+    if (virtual_path_exists(kname, &vsize, &vis_dir, &vtype)) {
+        process_t* proc;
+        char content[PAGE_SIZE];
+        const char* data = 0;
+        if (vis_dir) return -EISDIR;
+        if (vtype == PROCESS_VIRTUAL_REGULAR) {
+            vsize = virtual_build_proc_content(kname, content, sizeof(content));
+            data = content;
+        }
+        proc = (process_t*)sched_current();
+        if (!proc) return -EINVAL;
+        return process_fd_open_virtual(proc, kname, vtype, data, vsize, 1,
+                                       vtype == PROCESS_VIRTUAL_NULL ||
+                                       vtype == PROCESS_VIRTUAL_TTY);
+    }
 
     u32 file_size = 0;
     int is_dir = 0;
@@ -1289,6 +1626,32 @@ static int sys_open_mode_impl(const char* name, unsigned int mode) {
     if ((trunc || append || create) && !writable) return -EINVAL;
     int path_rc = copy_user_path_resolved(kname, sizeof(kname), name);
     if (path_rc < 0) return path_rc;
+
+    {
+        unsigned int vsize = 0;
+        unsigned int vtype = PROCESS_VIRTUAL_REGULAR;
+        int vis_dir = 0;
+        if (virtual_path_exists(kname, &vsize, &vis_dir, &vtype)) {
+            char content[PAGE_SIZE];
+            const char* data = 0;
+            if (create || trunc || excl || append) return -EISDIR;
+            if (vis_dir) return -EISDIR;
+            if (writable && vtype != PROCESS_VIRTUAL_NULL && vtype != PROCESS_VIRTUAL_TTY) {
+                return -EBADF;
+            }
+            if (vtype == PROCESS_VIRTUAL_REGULAR) {
+                vsize = virtual_build_proc_content(kname, content, sizeof(content));
+                data = content;
+            }
+            process_t* proc = (process_t*)sched_current();
+            if (!proc) return -EINVAL;
+            return process_fd_open_virtual(proc, kname, vtype, data, vsize,
+                                           readable,
+                                           writable ||
+                                           vtype == PROCESS_VIRTUAL_NULL ||
+                                           vtype == PROCESS_VIRTUAL_TTY);
+        }
+    }
 
     exists = vfs_stat(kname, &file_size, &is_dir);
     if (exists && create && excl) return -EEXIST;
@@ -1773,6 +2136,12 @@ static int sys_fcntl_impl(int fd, int cmd, unsigned int arg) {
     ent = process_fd_get(proc, fd);
     if (!ent) return -EBADF;
 
+    if (cmd == SYS_FCNTL_DUPFD) {
+        return process_fd_dup(proc, fd, (int)arg, 0);
+    }
+    if (cmd == SYS_FCNTL_DUPFD_CLOEXEC) {
+        return process_fd_dup(proc, fd, (int)arg, SYS_FD_FLAG_CLOEXEC);
+    }
     if (cmd == SYS_FCNTL_GETFD) {
         return (int)process_fd_get_fd_flags(ent);
     }
@@ -2260,6 +2629,81 @@ static int sys_rmdir_impl(const char* path) {
     return vfs_rmdir(kpath) ? 0 : path_lookup_errno(kpath);
 }
 
+static int virtual_dirent_at(const char* path,
+                             unsigned int index,
+                             char* out_name,
+                             unsigned int out_name_size,
+                             unsigned int* out_size,
+                             int* out_is_dir) {
+    static const char* const proc_entries[] = {
+        "meminfo", "uptime", "stat", "mounts", "filesystems", "self"
+    };
+    static const char* const pid_entries[] = {
+        "stat", "status", "cmdline", "comm"
+    };
+    static const char* const dev_entries[] = {
+        "null", "zero", "tty", "console", "fd"
+    };
+    static const char* const fd_entries[] = {
+        "0", "1", "2"
+    };
+    const char* name = 0;
+    int is_dir = 0;
+    unsigned int size = 0;
+
+    if (!path || !out_name || out_name_size == 0u) return 0;
+
+    if (path_eq(path, "proc")) {
+        unsigned int proc_count = sizeof(proc_entries) / sizeof(proc_entries[0]);
+        if (index < proc_count) {
+            name = proc_entries[index];
+            is_dir = path_eq(name, "self");
+        } else {
+            process_t* procs[SYS_PROCINFO_MAX];
+            int count = sched_snapshot_all(procs, SYS_PROCINFO_MAX);
+            unsigned int proc_index = index - proc_count;
+            if (proc_index >= (unsigned int)count || !procs[proc_index]) return 0;
+            {
+                static char pid_buf[16];
+                unsigned int pos = 0;
+                pid_buf[0] = '\0';
+                vbuf_put_uint(pid_buf, sizeof(pid_buf), &pos, procs[proc_index]->pid);
+                name = pid_buf;
+                is_dir = 1;
+            }
+        }
+    } else if (path_eq(path, "dev")) {
+        if (index >= sizeof(dev_entries) / sizeof(dev_entries[0])) return 0;
+        name = dev_entries[index];
+        is_dir = path_eq(name, "fd");
+    } else if (path_eq(path, "dev/fd")) {
+        if (index >= sizeof(fd_entries) / sizeof(fd_entries[0])) return 0;
+        name = fd_entries[index];
+    } else {
+        process_t* proc = 0;
+        const char* leaf = 0;
+        if (!virtual_proc_pid_path(path, &proc, &leaf) || !proc || !leaf || leaf[0] != '\0') {
+            return 0;
+        }
+        if (index >= sizeof(pid_entries) / sizeof(pid_entries[0])) return 0;
+        name = pid_entries[index];
+    }
+
+    if (!name || (unsigned int)k_strlen(name) + 1u > out_name_size) return 0;
+    k_memcpy(out_name, name, (k_size_t)k_strlen(name) + 1u);
+    if (!is_dir) {
+        char full[PROCESS_FD_NAME_MAX];
+        unsigned int pos = 0;
+        vbuf_puts(full, sizeof(full), &pos, path);
+        vbuf_putc(full, sizeof(full), &pos, '/');
+        vbuf_puts(full, sizeof(full), &pos, name);
+        (void)virtual_path_exists(full, &size, &is_dir, 0);
+    }
+    if (out_size) *out_size = size;
+    if (out_is_dir) *out_is_dir = is_dir;
+    return 1;
+}
+
 static int sys_dirlist_impl(const char* path, unsigned int index, uapi_dirent_t* out) {
     char kpath[PROCESS_FD_NAME_MAX];
     char name[UAPI_DIRENT_NAME_MAX];
@@ -2269,7 +2713,8 @@ static int sys_dirlist_impl(const char* path, unsigned int index, uapi_dirent_t*
     if (path_rc < 0) return path_rc;
     if (!out) return -EFAULT;
     if (!user_buf_ok((unsigned int)out, sizeof(*out))) return -EFAULT;
-    if (!vfs_dirent_at(kpath, index, name, sizeof(name), &size, &is_dir)) {
+    if (!virtual_dirent_at(kpath, index, name, sizeof(name), &size, &is_dir) &&
+        !vfs_dirent_at(kpath, index, name, sizeof(name), &size, &is_dir)) {
         return 0;
     }
     {
@@ -2303,6 +2748,23 @@ static int sys_dirlist_batch_impl(const char* path,
 
     path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
     if (path_rc < 0) return path_rc;
+
+    if (virtual_path_is_dir(kpath)) {
+        while (count < max_count) {
+            char name[UAPI_DIRENT_NAME_MAX];
+            unsigned int size = 0;
+            int is_dir = 0;
+            if (!virtual_dirent_at(kpath, index + count, name, sizeof(name), &size, &is_dir)) {
+                break;
+            }
+            k_memset(&out[count], 0, sizeof(out[count]));
+            k_memcpy(out[count].d_name, name, k_strlen(name) + 1u);
+            out[count].d_size = size;
+            out[count].d_is_dir = is_dir;
+            count++;
+        }
+        return (int)count;
+    }
 
     entries_bytes = sizeof(*entries) * max_count;
     entries_frames = (entries_bytes + PMM_FRAME_SIZE - 1u) / PMM_FRAME_SIZE;
@@ -2426,7 +2888,10 @@ static int sys_stat_impl(const char* path, unsigned int* out_size, int* out_is_d
     int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
     if (path_rc < 0) return path_rc;
 
-    if (!vfs_stat(kpath, &size, &is_dir)) return path_lookup_errno(kpath);
+    if (!virtual_path_exists(kpath, &size, &is_dir, 0) &&
+        !vfs_stat(kpath, &size, &is_dir)) {
+        return path_lookup_errno(kpath);
+    }
 
     if (out_size) {
         if (write_user_u32(out_size, size) < 0) return -EFAULT;
@@ -2471,7 +2936,9 @@ static int sys_stat_full_impl(const char* path, sys_stat_info_t* out) {
 
     if (path_rc < 0) return path_rc;
     if (!out) return -EFAULT;
-    if (!vfs_stat_info(kpath, &info)) return path_lookup_errno(kpath);
+    if (!virtual_stat_info(kpath, &info) && !vfs_stat_info(kpath, &info)) {
+        return path_lookup_errno(kpath);
+    }
     if (copy_to_user(out, &info, sizeof(info)) < 0) return -EFAULT;
     return 0;
 }
@@ -2489,6 +2956,14 @@ static int sys_fstat_full_impl(int fd, sys_stat_info_t* out) {
     if (ent->kind == PROCESS_HANDLE_KIND_FILE) {
         int rc = vfs_file_stat_info_fd(ent, &info);
         if (rc < 0) return rc;
+    } else if (ent->kind == PROCESS_HANDLE_KIND_VIRTUAL) {
+        if (!virtual_stat_info(ent->name, &info)) {
+            k_memset(&info, 0, sizeof(info));
+            info.mode = 0020000u | 0600u;
+            info.nlink = 1u;
+            info.blksize = PAGE_SIZE;
+            info.size = ent->size;
+        }
     } else {
         k_memset(&info, 0, sizeof(info));
         info.mode = 0020000u | 0600u;
@@ -3260,10 +3735,12 @@ static int sys_chdir_impl(const char* path) {
     if (!proc) return -EINVAL;
     int path_rc = copy_user_path_resolved(kpath, sizeof(kpath), path);
     if (path_rc < 0) return path_rc;
-    if (!vfs_is_dir(kpath)) {
+    if (!virtual_path_is_dir(kpath) && !vfs_is_dir(kpath)) {
         u32 size = 0;
         int is_dir = 0;
-        return vfs_stat(kpath, &size, &is_dir) ? -ENOTDIR : path_lookup_errno(kpath);
+        return virtual_path_exists(kpath, &size, &is_dir, 0) || vfs_stat(kpath, &size, &is_dir)
+            ? -ENOTDIR
+            : path_lookup_errno(kpath);
     }
 
     k_memcpy(proc->cwd, kpath, (k_size_t)k_strlen(kpath) + 1u);

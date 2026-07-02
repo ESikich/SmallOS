@@ -9,8 +9,8 @@ user programs.
 
 The project is intentionally small enough to understand end to end, but it now
 has real subsystems: process scheduling, user/kernel syscalls, persistent disk
-state, framebuffer graphics, TCP services, and a hosted TinyCC build inside the
-guest.
+state, framebuffer graphics, TCP services, a hosted TinyCC build, and a
+BusyBox-backed Unix compatibility layer inside the guest.
 
 ## Highlights
 
@@ -45,6 +45,13 @@ guest.
   `ipconfig`, `uptime`, `halt`, and `reboot`, plus diagnostics such as
   `cpuz`, `usbinfo`, `usbports`, `usbpower`, `mousetest`, and demos/ports such
   as `mandel`, `plasma`, `fractint`, and `wolf3d`.
+- BusyBox is staged as `usr/bin/busybox`; native `/bin` tools remain first in
+  shell command lookup, while BusyBox fills gaps such as `grep`, `sed`, `awk`,
+  `df`, `du`, `free`, `ps`, `tar`, and `hexdump`. `/bin/sh` launches BusyBox
+  `ash` for script-style compatibility without replacing `/bin/shell`.
+- The compatibility layer exposes virtual `/proc` and `/dev` entries used by
+  Unix tools, including memory, uptime, process, mount, filesystem, null, zero,
+  tty, console, and standard-fd paths.
 - TinyCC is built as `usr/bin/tcc` and can compile sample C programs inside
   SmallOS.
 
@@ -63,6 +70,8 @@ python3
 qemu-system-i386
 svn
 curl
+patch
+bzip2
 unzip
 ```
 

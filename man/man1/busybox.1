@@ -1,0 +1,42 @@
+BUSYBOX(1)
+
+NAME
+    busybox - BusyBox multi-call Unix compatibility tools
+
+SYNOPSIS
+    busybox applet [arg ...]
+    applet [arg ...]
+
+DESCRIPTION
+    busybox is the SmallOS build of BusyBox. It provides a broader set of
+    familiar Unix applets without replacing native SmallOS tools.
+
+    The SmallOS shell searches /bin, /usr/bin, and /usr/sbin first. If a bare
+    command is not found there, it tries /usr/bin/busybox with the original
+    command name as the applet. This keeps native commands preferred while
+    making applets such as grep, sed, awk, df, du, free, ps, tar, od, hexdump,
+    readlink, which, expr, and test available.
+
+    /bin/sh is a tiny launcher for BusyBox ash.
+
+SCOPE
+    This is a useful Unix compatibility layer, not full Linux emulation.
+    Mount management, init/login/getty behavior, authentication semantics,
+    raw-socket-heavy tools, and complete /dev device behavior are outside this
+    compatibility wave.
+
+FILES
+    /usr/bin/busybox
+        BusyBox multi-call binary.
+
+    /bin/sh
+        Launcher for BusyBox ash.
+
+    /proc
+        Virtual process and system status files used by BusyBox applets.
+
+    /dev
+        Virtual null, zero, tty, console, and fd entries.
+
+SEE ALSO
+    sh(1), shell(1), smallos(7)

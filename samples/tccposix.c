@@ -100,7 +100,7 @@ static int header_probe(void) {
     bzero(buf, sizeof(buf));
     bcopy("abc", buf, 4);
     ent.d_ino = 12;
-    return RAND_MAX == 32767 && strcmp(buf, "abc") == 0 && bcmp(buf, "abc", 4) == 0 &&
+    return RAND_MAX == 2147483647 && strcmp(buf, "abc") == 0 && bcmp(buf, "abc", 4) == 0 &&
            S_IREAD == S_IRUSR && O_RDONLY == 0 && ent.d_ino == 12;
 }
 

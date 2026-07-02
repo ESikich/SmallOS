@@ -114,6 +114,14 @@ THIRD_PARTY_WOLF3D_SENTINEL=$(CURDIR)/third_party/wolf3d/WOLFSRC/WL_MAIN.C
 STATE_DIR=.state
 STATE_EXT2_IMG=$(STATE_DIR)/ext2.img
 STATE_EXT2_STAMP=$(STATE_DIR)/ext2.img.stamp
+BUSYBOX_VERSION=1.36.1
+BUSYBOX_URL=https://busybox.net/downloads/busybox-$(BUSYBOX_VERSION).tar.bz2
+BUSYBOX_TARBALL=$(STATE_DIR)/downloads/busybox-$(BUSYBOX_VERSION).tar.bz2
+BUSYBOX_SRC_DIR=$(BUILD_DIR)/busybox-smalos-src
+BUSYBOX_PATCH_STAMP=$(BUSYBOX_SRC_DIR)/.smallos-patched
+BUSYBOX_OUT_DIR=$(OBJ_DIR)/busybox-smalos
+BUSYBOX_CONFIG_STAMP=$(BUSYBOX_OUT_DIR)/.smallos-configured
+BUSYBOX_SMALOS_BIN=$(BIN_DIR)/busybox.elf
 
 BOOT_SECTOR_SIZE := $(shell awk '/^BOOT_SECTOR_SIZE[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 BOOT_SECTOR_MASK := $(shell echo $$(( $(BOOT_SECTOR_SIZE) - 1 )))
@@ -217,7 +225,7 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/ext2.c \
 	$(DRIVERS_DIR)/serial.c
 
-USER_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell ip ipconfig meminfo memmap cpuz top netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest hello ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe envprobe mathprobe soundprobe plasma mandel wolf3d fractint tcpecho sockeof ftpd
+USER_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell sh ip ipconfig meminfo memmap cpuz top netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest hello ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe envprobe mathprobe compatprobe soundprobe plasma mandel wolf3d fractint tcpecho sockeof ftpd
 USER_PROGS := $(filter-out fractint,$(USER_PROGS))
 USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
 USER_LIBC_SRCS=\
@@ -226,6 +234,7 @@ USER_LIBC_SRCS=\
 	$(USER_DIR)/libc/stdio.c \
 	$(USER_DIR)/libc/time.c \
 	$(USER_DIR)/libc/stdlib_extra.c \
+	$(USER_DIR)/libc/compiler_rt.c \
 	$(USER_DIR)/libc/string_bsd.c \
 	$(USER_DIR)/libc/stdio_ext.c \
 	$(USER_DIR)/libc/stdio_scan.c \
@@ -275,14 +284,14 @@ USER_INCLUDE_FILES=$(shell find $(USER_INCLUDE_DIR) -type f | sort)
 USER_INCLUDE_ENTRIES=$(foreach file,$(USER_INCLUDE_FILES),usr/include/$(patsubst $(USER_INCLUDE_DIR)/%,%,$(file))=$(CURDIR)/$(file))
 USER_UAPI_FILES=$(wildcard $(KERNEL_DIR)/uapi_*.h)
 USER_UAPI_ENTRIES=$(foreach file,$(USER_UAPI_FILES),usr/include/$(notdir $(file))=$(CURDIR)/$(file))
-EXT2_BIN_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell ip ipconfig meminfo memmap cpuz netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest top soundprobe
+EXT2_BIN_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell sh ip ipconfig meminfo memmap cpuz netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest top soundprobe
 EXT2_DEMO_PROGS=hello plasma mandel wolf3d fractint
-EXT2_TEST_PROGS=ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe envprobe mathprobe
+EXT2_TEST_PROGS=ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe envprobe mathprobe compatprobe
 USER_DYNAMIC_NO_CRT0=echo about uptime date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv meminfo memmap cpuz top hello args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe dirprobe errnoprobe badptrprobe sleep_test timerfdprobe ptrguard preempt_test inputprobe stdioprobe ip ipconfig netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ticks fault signalfdprobe connectprobe spinwkr pgrpprobe tcpecho sockeof ftpd halt reboot ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest soundprobe displayprobe
-USER_DYNAMIC_WITH_CRT0=crtprobe mathprobe pipeprobe dupprobe forkprobe execveprobe envprobe
+USER_DYNAMIC_WITH_CRT0=crtprobe mathprobe pipeprobe dupprobe forkprobe execveprobe envprobe compatprobe
 USER_DYNAMIC_PROGS=$(USER_DYNAMIC_NO_CRT0) $(USER_DYNAMIC_WITH_CRT0)
 USER_DYNAMIC_PIE_NO_CRT0=hello pwd cat meminfo date echo about uptime more man fsread ls tree touch rm mkdir rmdir cp mv memmap cpuz args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe dirprobe errnoprobe badptrprobe sleep_test timerfdprobe ptrguard preempt_test inputprobe stdioprobe ticks fault signalfdprobe connectprobe spinwkr pgrpprobe ip ipconfig netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck tcpecho sockeof ftpd top halt reboot ataread
-USER_DYNAMIC_PIE_WITH_CRT0=crtprobe mathprobe pipeprobe dupprobe forkprobe execveprobe envprobe
+USER_DYNAMIC_PIE_WITH_CRT0=crtprobe mathprobe pipeprobe dupprobe forkprobe execveprobe envprobe compatprobe
 USER_DYNAMIC_PIE_PROGS=$(USER_DYNAMIC_PIE_NO_CRT0) $(USER_DYNAMIC_PIE_WITH_CRT0)
 USER_DYNAMIC_LEGACY_NO_CRT0=$(filter-out $(USER_DYNAMIC_PIE_NO_CRT0),$(USER_DYNAMIC_NO_CRT0))
 USER_DYNAMIC_LEGACY_WITH_CRT0=$(filter-out $(USER_DYNAMIC_PIE_WITH_CRT0),$(USER_DYNAMIC_WITH_CRT0))
@@ -351,7 +360,7 @@ else
 WOLF3D_DATA_ENTRIES=
 endif
 EXT2_EXTRA_DIRS=tmp/ var/log/ lib/ usr/include/ usr/include/arpa/ usr/include/netinet/ usr/include/sys/ usr/lib/ usr/lib/smallos/ usr/lib/smallos/plugins/ usr/libexec/tests/static/ usr/share/examples/tinycc/ usr/share/man/man1/ usr/share/man/man2/ usr/share/man/man3/ usr/share/man/man4/ usr/share/man/man5/ usr/share/man/man6/ usr/share/man/man7/ usr/share/man/man8/ usr/share/wolf3d/
-EXT2_BASE_EXTRA_ENTRIES=usr/bin/tcc=$(TINYCC_SMALOS_BIN) $(USER_INCLUDE_ENTRIES) $(USER_UAPI_ENTRIES) usr/share/examples/tinycc/tccmath.c=$(CURDIR)/samples/tccmath.c usr/share/examples/tinycc/tccagg.c=$(CURDIR)/samples/tccagg.c usr/share/examples/tinycc/tcctree.c=$(CURDIR)/samples/tcctree.c usr/share/examples/tinycc/tccmini.c=$(CURDIR)/samples/tccmini.c usr/share/examples/tinycc/tccsysroot.c=$(CURDIR)/samples/tccsysroot.c usr/share/examples/tinycc/tccposix.c=$(CURDIR)/samples/tccposix.c etc/cserve.ini=$(CURDIR)/samples/cserve.ini var/www/index.html=$(CURDIR)/samples/cserve_index.html var/log/boot.txt=$(CURDIR)/samples/boot.txt boot/splash.bmp=$(CURDIR)/assets/boot_splash.bmp $(MAN_PAGE_ENTRIES)
+EXT2_BASE_EXTRA_ENTRIES=usr/bin/tcc=$(TINYCC_SMALOS_BIN) usr/bin/busybox=$(BUSYBOX_SMALOS_BIN) $(USER_INCLUDE_ENTRIES) $(USER_UAPI_ENTRIES) usr/share/examples/tinycc/tccmath.c=$(CURDIR)/samples/tccmath.c usr/share/examples/tinycc/tccagg.c=$(CURDIR)/samples/tccagg.c usr/share/examples/tinycc/tcctree.c=$(CURDIR)/samples/tcctree.c usr/share/examples/tinycc/tccmini.c=$(CURDIR)/samples/tccmini.c usr/share/examples/tinycc/tccsysroot.c=$(CURDIR)/samples/tccsysroot.c usr/share/examples/tinycc/tccposix.c=$(CURDIR)/samples/tccposix.c etc/passwd=$(CURDIR)/samples/passwd etc/group=$(CURDIR)/samples/group etc/cserve.ini=$(CURDIR)/samples/cserve.ini var/www/index.html=$(CURDIR)/samples/cserve_index.html var/log/boot.txt=$(CURDIR)/samples/boot.txt boot/splash.bmp=$(CURDIR)/assets/boot_splash.bmp $(MAN_PAGE_ENTRIES)
 EXT2_EXTRA_ENTRIES=$(EXT2_BASE_EXTRA_ENTRIES) $(USER_LIB_ENTRIES)
 FRACTINT_EXTRA_ENTRIES=usr/share/xfractint/fractint.hlp=$(FRACTINT_DIR)/fractint.hlp usr/share/xfractint/sstools.ini=$(FRACTINT_DIR)/sstools.ini $(FRACTINT_DATA_ENTRIES)
 EXT2_ALL_EXTRA_ENTRIES=$(EXT2_EXTRA_ENTRIES) $(FRACTINT_EXTRA_ENTRIES) $(WOLF3D_DATA_ENTRIES)
@@ -450,7 +459,7 @@ OBJ_SUBDIRS=$(sort \
 )
 
 BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(dir $(IMG_FILE)) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
-BUILD_SUBDIRS+=$(TINYCC_SMALOS_OBJ_DIR) $(CSERVER_OBJ_DIR)
+BUILD_SUBDIRS+=$(TINYCC_SMALOS_OBJ_DIR) $(BUSYBOX_OUT_DIR) $(CSERVER_OBJ_DIR)
 
 all: artifacts
 
@@ -720,6 +729,27 @@ dynamic-link-check: $(USER_DYNAMIC_ELFS) $(USER_DYN_ELFS) $(USER_DYN_LIBC) $(USE
 dyn-reloc-inventory: $(USER_DYNAMIC_ELFS) $(USER_DYN_ELFS) $(USER_DYN_LIBC) $(USER_DYN_EXTRA_SHARED) $(LD_SMALLOS_BIN)
 	$(PYTHON3) tools/verify_dynamic_link.py --reloc-inventory $(DYNAMIC_LINK_VERIFY_ARGS)
 
+$(BUSYBOX_TARBALL): | dirs
+	mkdir -p $(dir $@)
+	curl -L --fail -o $@ $(BUSYBOX_URL)
+
+$(BUSYBOX_PATCH_STAMP): $(BUSYBOX_TARBALL) patches/busybox/smallos.patch | dirs
+	rm -rf $(BUSYBOX_SRC_DIR)
+	mkdir -p $(BUSYBOX_SRC_DIR)
+	tar -xjf $(BUSYBOX_TARBALL) --strip-components=1 -C $(BUSYBOX_SRC_DIR)
+	patch -d $(BUSYBOX_SRC_DIR) -p1 < patches/busybox/smallos.patch
+	touch $@
+
+$(BUSYBOX_CONFIG_STAMP): $(BUSYBOX_PATCH_STAMP) tools/configure_busybox_smalos.sh $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
+	rm -rf $(BUSYBOX_OUT_DIR)
+	mkdir -p $(BUSYBOX_OUT_DIR)
+	tools/configure_busybox_smalos.sh $(CURDIR) $(CURDIR)/$(BUSYBOX_SRC_DIR) $(CURDIR)/$(BUSYBOX_OUT_DIR) $(CC) $(LIBGCC_FILE) $(OBJ_DIR)
+	touch $@
+
+$(BUSYBOX_SMALOS_BIN): $(BUSYBOX_CONFIG_STAMP) $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
+	$(MAKE) -C $(BUSYBOX_SRC_DIR) O=$(CURDIR)/$(BUSYBOX_OUT_DIR) ARCH=i386 CC="$(CC)" busybox
+	cp $(BUSYBOX_OUT_DIR)/busybox $@
+
 $(TINYCC_SMALOS_PATCH_STAMP): check-third-party patches/tinycc/smallos.patch | dirs
 	rm -rf $(TINYCC_SMALOS_SRC_DIR)
 	mkdir -p $(TINYCC_SMALOS_SRC_DIR)
@@ -776,6 +806,9 @@ $(BIN_DIR)/envprobe.elf: $(OBJ_DIR)/user/envprobe.o $(USER_CRT0_OBJ) $(USER_LIB_
 $(BIN_DIR)/mathprobe.elf: $(OBJ_DIR)/user/mathprobe.o $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
 	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
 
+$(BIN_DIR)/compatprobe.elf: $(OBJ_DIR)/user/compatprobe.o $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
+	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
+
 $(BIN_DIR)/bmpview.elf: $(OBJ_DIR)/user/bmpview.o $(OBJ_DIR)/user/image_bmp.o $(OBJ_DIR)/user/gfx.o $(USER_LIB_ARCHIVES) | dirs
 	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
 
@@ -789,6 +822,9 @@ $(BIN_DIR)/gui.elf: $(OBJ_DIR)/user/gui.o $(GUI_OBJS) $(OBJ_DIR)/user/gfx.o $(US
 	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
 
 $(BIN_DIR)/shell.elf: $(OBJ_DIR)/user/shell.o $(USER_SHELL_OBJS) $(USER_LIB_ARCHIVES) | dirs
+	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
+
+$(BIN_DIR)/sh.elf: $(OBJ_DIR)/user/sh.o $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) Makefile | dirs
 	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
 
 $(BIN_DIR)/plasma.elf: $(OBJ_DIR)/user/plasma.o $(OBJ_DIR)/user/gfx.o $(USER_LIB_ARCHIVES) | dirs
@@ -856,6 +892,8 @@ tinycc-host-clean:
 	rm -rf $(TINYCC_DIR)
 
 tinycc-smalos: $(TINYCC_SMALOS_BIN)
+
+busybox-smalos: $(BUSYBOX_SMALOS_BIN)
 
 $(GEN_DIR)/loader2.gen.asm: $(BOOT_DIR)/loader2.asm FORCE | dirs
 	sed \
@@ -1038,7 +1076,7 @@ QEMU_USB_STORAGE_FLAGS=-drive if=none,id=stick,format=raw,file=$(IMG_FILE) \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all image img artifacts dirs deps fractint-source wolf3d-shareware-data wolf3d-source-probe check-third-party dyn-size-report dynamic-link-check dyn-reloc-inventory dynlink-negative-smoke run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage run-usb-storage-fallback run-headless-usb-storage-fallback usb-storage-smoke usb-ramdisk-fallback-smoke test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean FORCE
+.PHONY: all image img artifacts dirs deps fractint-source wolf3d-shareware-data wolf3d-source-probe check-third-party dyn-size-report dynamic-link-check dyn-reloc-inventory dynlink-negative-smoke run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage run-usb-storage-fallback run-headless-usb-storage-fallback usb-storage-smoke usb-ramdisk-fallback-smoke test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean tinycc-smalos busybox-smalos FORCE
 
 FORCE:
 

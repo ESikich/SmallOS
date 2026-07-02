@@ -46,8 +46,16 @@ typedef enum {
     PROCESS_HANDLE_KIND_SIGNALFD = 6,
     PROCESS_HANDLE_KIND_PIPE = 7,
     PROCESS_HANDLE_KIND_PTY_MASTER = 8,
-    PROCESS_HANDLE_KIND_PTY_SLAVE = 9
+    PROCESS_HANDLE_KIND_PTY_SLAVE = 9,
+    PROCESS_HANDLE_KIND_VIRTUAL = 10
 } process_handle_kind_t;
+
+typedef enum {
+    PROCESS_VIRTUAL_REGULAR = 1,
+    PROCESS_VIRTUAL_NULL = 2,
+    PROCESS_VIRTUAL_ZERO = 3,
+    PROCESS_VIRTUAL_TTY = 4
+} process_virtual_type_t;
 
 typedef enum {
     PROCESS_SOCKET_STATE_NONE      = 0,
@@ -160,6 +168,13 @@ int        process_fd_open_file_mode(process_t* proc,
                                      int writable);
 int        process_fd_open_socket(process_t* proc, const char* name);
 int        process_fd_open_special(process_t* proc, int kind, const char* name);
+int        process_fd_open_virtual(process_t* proc,
+                                   const char* name,
+                                   unsigned int type,
+                                   const char* data,
+                                   unsigned int size,
+                                   int readable,
+                                   int writable);
 int        process_fd_pipe(process_t* proc, int fds[2], unsigned int flags);
 int        process_fd_pty(process_t* proc, int fds[2], unsigned int master_flags);
 int        process_fd_pty_set_size(fd_entry_t* ent, unsigned int rows, unsigned int cols);

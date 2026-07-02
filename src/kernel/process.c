@@ -77,6 +77,12 @@ typedef struct pty_object {
     u32 foreground_pgid;
 } pty_object_t;
 
+typedef struct virtual_object {
+    unsigned int refs;
+    unsigned int type;
+    u32 data_frame;
+} virtual_object_t;
+
 typedef struct kernel_signalfd_siginfo {
     u32 ssi_signo;
     u32 ssi_errno;
@@ -536,6 +542,12 @@ static int process_handle_pty_seek(fd_entry_t* ent, int offset, int whence);
 static short process_handle_pty_poll(fd_entry_t* ent, short events);
 static void process_handle_pty_close(fd_entry_t* ent);
 
+static int process_handle_virtual_read(fd_entry_t* ent, char* buf, unsigned int len);
+static int process_handle_virtual_write(fd_entry_t* ent, const char* buf, unsigned int len);
+static int process_handle_virtual_seek(fd_entry_t* ent, int offset, int whence);
+static short process_handle_virtual_poll(fd_entry_t* ent, short events);
+static void process_handle_virtual_close(fd_entry_t* ent);
+
 static const process_handle_ops_t s_socket_handle_ops = {
     .read = process_handle_socket_read,
     .write = process_handle_socket_write,
@@ -579,6 +591,15 @@ static const process_handle_ops_t s_pty_handle_ops = {
     .poll = process_handle_pty_poll,
     .flush = 0,
     .close = process_handle_pty_close,
+};
+
+static const process_handle_ops_t s_virtual_handle_ops = {
+    .read = process_handle_virtual_read,
+    .write = process_handle_virtual_write,
+    .seek = process_handle_virtual_seek,
+    .poll = process_handle_virtual_poll,
+    .flush = 0,
+    .close = process_handle_virtual_close,
 };
 
 static void process_init_standard_fds(process_t* proc) {
@@ -692,6 +713,71 @@ int process_fd_open_special(process_t* proc, int kind, const char* name) {
     return fd;
 }
 
+static virtual_object_t* virtual_object_from_ent(fd_entry_t* ent) {
+    if (!ent || ent->kind != PROCESS_HANDLE_KIND_VIRTUAL || !ent->aux_frame) return 0;
+    return (virtual_object_t*)paging_phys_to_kernel_virt(ent->aux_frame);
+}
+
+int process_fd_open_virtual(process_t* proc,
+                            const char* name,
+                            unsigned int type,
+                            const char* data,
+                            unsigned int size,
+                            int readable,
+                            int writable) {
+    fd_entry_t* ent;
+    virtual_object_t* obj;
+    u32 obj_frame;
+    int fd;
+
+    if (!proc || !name) return -EINVAL;
+    if (size > PAGE_SIZE) return -EFBIG;
+    if (type != PROCESS_VIRTUAL_REGULAR &&
+        type != PROCESS_VIRTUAL_NULL &&
+        type != PROCESS_VIRTUAL_ZERO &&
+        type != PROCESS_VIRTUAL_TTY) {
+        return -EINVAL;
+    }
+
+    obj_frame = pmm_alloc_frame();
+    if (!obj_frame) return -ENOMEM;
+    obj = (virtual_object_t*)paging_phys_to_kernel_virt(obj_frame);
+    k_memset(obj, 0, PAGE_SIZE);
+    obj->refs = 1;
+    obj->type = type;
+
+    if (type == PROCESS_VIRTUAL_REGULAR && size > 0u) {
+        obj->data_frame = pmm_alloc_frame();
+        if (!obj->data_frame) {
+            pmm_free_frame(obj_frame);
+            return -ENOMEM;
+        }
+        k_memset(paging_phys_to_kernel_virt(obj->data_frame), 0, PAGE_SIZE);
+        if (data) {
+            k_memcpy(paging_phys_to_kernel_virt(obj->data_frame), data, size);
+        }
+    }
+
+    fd = process_fd_alloc_entry(proc, &ent);
+    if (fd < 0) {
+        if (obj->data_frame) pmm_free_frame(obj->data_frame);
+        pmm_free_frame(obj_frame);
+        return fd;
+    }
+
+    k_memset(ent, 0, sizeof(*ent));
+    ent->valid = 1;
+    ent->kind = PROCESS_HANDLE_KIND_VIRTUAL;
+    ent->ops = &s_virtual_handle_ops;
+    ent->readable = readable ? 1 : 0;
+    ent->writable = writable ? 1 : 0;
+    ent->aux_frame = obj_frame;
+    ent->size = size;
+    ent->offset = 0;
+    k_strncpy(ent->name, name, sizeof(ent->name));
+    return fd;
+}
+
 static pipe_object_t* pipe_object_from_ent(fd_entry_t* ent) {
     if (!ent || ent->kind != PROCESS_HANDLE_KIND_PIPE || !ent->aux_frame) return 0;
     return (pipe_object_t*)paging_phys_to_kernel_virt(ent->aux_frame);
@@ -747,6 +833,9 @@ static void process_fd_share_ref(fd_entry_t* ent) {
         socket_retain(ent->socket);
     } else if (ent->kind == PROCESS_HANDLE_KIND_FILE) {
         vfs_file_retain(ent);
+    } else if (ent->kind == PROCESS_HANDLE_KIND_VIRTUAL) {
+        virtual_object_t* obj = virtual_object_from_ent(ent);
+        if (obj) obj->refs++;
     } else if (ent->kind == PROCESS_HANDLE_KIND_EPOLL ||
                ent->kind == PROCESS_HANDLE_KIND_TIMERFD ||
                ent->kind == PROCESS_HANDLE_KIND_SIGNALFD) {
@@ -1207,7 +1296,7 @@ static int process_handle_console_read_common(fd_entry_t* ent, char* buf, unsign
     process_t* proc = sched_current();
     unsigned int n = 0;
 
-    if (!ent || !ent->valid || ent->writable) return -EBADF;
+    if (!ent || !ent->valid || !ent->readable) return -EBADF;
     if (!buf) return -EFAULT;
     if (len == 0) return 0;
 
@@ -1978,6 +2067,105 @@ static void process_handle_special_close(fd_entry_t* ent) {
     }
     if (ent->aux_frame) {
         pmm_free_frame(ent->aux_frame);
+    }
+    k_memset(ent, 0, sizeof(*ent));
+}
+
+static int process_handle_virtual_read(fd_entry_t* ent, char* buf, unsigned int len) {
+    virtual_object_t* obj = virtual_object_from_ent(ent);
+
+    if (!ent || !ent->valid || !obj || !buf) return -EFAULT;
+    if (!ent->readable) return -EBADF;
+    if (len == 0u) return 0;
+
+    if (obj->type == PROCESS_VIRTUAL_NULL) {
+        return 0;
+    }
+    if (obj->type == PROCESS_VIRTUAL_ZERO) {
+        k_memset(buf, 0, len);
+        return (int)len;
+    }
+    if (obj->type == PROCESS_VIRTUAL_TTY) {
+        return process_handle_console_read(ent, buf, len);
+    }
+
+    if (ent->offset >= ent->size) return 0;
+    if (len > ent->size - ent->offset) {
+        len = ent->size - ent->offset;
+    }
+    if (len == 0u) return 0;
+    if (!obj->data_frame) return -EIO;
+
+    k_memcpy(buf,
+             ((const char*)paging_phys_to_kernel_virt(obj->data_frame)) + ent->offset,
+             len);
+    ent->offset += len;
+    return (int)len;
+}
+
+static int process_handle_virtual_write(fd_entry_t* ent, const char* buf, unsigned int len) {
+    virtual_object_t* obj = virtual_object_from_ent(ent);
+
+    if (!ent || !ent->valid || !obj || (!buf && len > 0u)) return -EFAULT;
+    if (!ent->writable) return -EBADF;
+    if (obj->type == PROCESS_VIRTUAL_NULL) return (int)len;
+    if (obj->type == PROCESS_VIRTUAL_TTY) return process_handle_console_write(ent, buf, len);
+    return -EBADF;
+}
+
+static int process_handle_virtual_seek(fd_entry_t* ent, int offset, int whence) {
+    virtual_object_t* obj = virtual_object_from_ent(ent);
+    int base;
+    int next;
+
+    if (!ent || !ent->valid || !obj) return -EBADF;
+    if (obj->type == PROCESS_VIRTUAL_TTY) return -EINVAL;
+
+    if (whence == 0) {
+        base = 0;
+    } else if (whence == 1) {
+        base = (int)ent->offset;
+    } else if (whence == 2) {
+        base = (int)ent->size;
+    } else {
+        return -EINVAL;
+    }
+
+    next = base + offset;
+    if (next < 0) return -EINVAL;
+    ent->offset = (u32)next;
+    return next;
+}
+
+static short process_handle_virtual_poll(fd_entry_t* ent, short events) {
+    virtual_object_t* obj = virtual_object_from_ent(ent);
+    short revents = 0;
+
+    if (!ent || !ent->valid || !obj) return POLLERR;
+    if ((events & POLLIN) && ent->readable) {
+        if (obj->type == PROCESS_VIRTUAL_REGULAR) {
+            if (ent->offset < ent->size) revents |= POLLIN;
+        } else {
+            revents |= POLLIN;
+        }
+    }
+    if ((events & POLLOUT) && ent->writable) {
+        revents |= POLLOUT;
+    }
+    return revents;
+}
+
+static void process_handle_virtual_close(fd_entry_t* ent) {
+    virtual_object_t* obj = virtual_object_from_ent(ent);
+
+    if (!ent) return;
+    if (obj) {
+        if (obj->refs > 1u) {
+            obj->refs--;
+        } else {
+            if (obj->data_frame) pmm_free_frame(obj->data_frame);
+            pmm_free_frame(ent->aux_frame);
+        }
     }
     k_memset(ent, 0, sizeof(*ent));
 }

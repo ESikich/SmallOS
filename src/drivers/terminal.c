@@ -195,6 +195,24 @@ static void terminal_emit_raw_char(char c) {
 #endif
 }
 
+static void terminal_emit_display_char(char c) {
+    if (c == '\t') {
+        int col = backend_col();
+        int spaces = 8 - (col & 7);
+
+        utf8_decoder_reset(&utf8_decoder);
+        if (spaces <= 0) {
+            spaces = 8;
+        }
+        while (spaces-- > 0) {
+            terminal_emit_utf8_byte(' ');
+        }
+        return;
+    }
+
+    terminal_emit_utf8_byte((unsigned char)c);
+}
+
 static void terminal_emit_raw_string(const char* s) {
     if (!s) return;
     while (*s) {
@@ -260,13 +278,11 @@ void terminal_clear(void) {
 }
 
 void terminal_putc(char c) {
-    unsigned char b = (unsigned char)c;
-
     terminal_emit_line_prefix_if_needed(c);
     if (terminal_handle_escape(c)) {
         utf8_decoder_reset(&utf8_decoder);
     } else {
-        terminal_emit_utf8_byte(b);
+        terminal_emit_display_char(c);
     }
 #ifdef SMALLOS_SERIAL_CONSOLE
     serial_putc(c);
@@ -293,7 +309,7 @@ void terminal_write(const char* s, unsigned int len) {
         if (terminal_handle_escape((char)b)) {
             utf8_decoder_reset(&utf8_decoder);
         } else {
-            terminal_emit_utf8_byte(b);
+            terminal_emit_display_char((char)b);
         }
 #ifdef SMALLOS_SERIAL_CONSOLE
         serial_putc((char)b);

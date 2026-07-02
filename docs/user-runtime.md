@@ -280,16 +280,20 @@ The runtime provides a small POSIX-shaped surface:
 - `pipe`, `pipe2`
 - `dup`, `dup2`, `dup3`
 - `lseek`
-- `stat`, `lstat`, `fstat`
+- `stat`, `lstat`, `fstat`, `statfs`, `fstatfs`, and `statvfs`
 - `access`
 - `unlink`, `remove`
 - `rename`
 - `mkdir`, `rmdir`
+- `fsync`, `ftruncate`, `fchmod`, `fchown`
 - `getcwd`, `chdir`
 - `getpid`, `fork`, `execve`, `execv`, `execvp`, `waitpid`, `kill`
+- `sysinfo`, `times`, `uname`, `ioctl`, and termios-shaped stubs
+- `popen` / `pclose` and `mntent` helpers for compatibility-oriented ports
 - `system`, implemented through `shell -c command`
 - `environ`, `getenv`, and `main(argc, argv, envp)` through `crt/crt0.c`
 - `time`, `gettimeofday`, `clock_gettime`, `clock_settime`
+- regex, fnmatch, basename/dirname, passwd/group, and getopt helpers
 - socket, poll, epoll, timerfd, and signalfd wrappers used by guest services
 
 `access(path, mode)` validates mode bits and checks existence through
@@ -310,7 +314,9 @@ that boundary:
 - `src/user/include/` owns the public libc/POSIX/SmallOS-extension headers,
   including compatibility names such as `<strings.h>`, `<malloc.h>`,
   `<endian.h>`, `<sys/dir.h>`, `<sys/file.h>`, `<dos.h>`, `<dir.h>`,
-  `<conio.h>`, and `<bios.h>`
+  `<conio.h>`, `<bios.h>`, `<fnmatch.h>`, `<libgen.h>`, `<pwd.h>`,
+  `<grp.h>`, `<regex.h>`, `<termios.h>`, `<mntent.h>`, `<sys/vfs.h>`,
+  `<sys/statvfs.h>`, `<sys/sysinfo.h>`, and `<sys/times.h>`
 - `src/user/internal/` owns raw syscall and native runtime helper headers
 - `src/user/posix/core.c` owns the broader syscall-backed descriptor and
   process wrappers
@@ -429,6 +435,58 @@ directory listing behavior should stay aligned with `dirprobe`.
 
 ---
 
+# Virtual Unix Compatibility Paths
+
+The kernel recognizes a small virtual `/proc` and `/dev` surface through the
+same open, stat, dirlist, and read paths used by ext2-backed files. These paths
+exist for BusyBox and POSIX-shaped tools; they are read-mostly compatibility
+interfaces, not complete Linux procfs or devfs implementations.
+
+`/proc` currently exposes system and process status:
+
+- `/proc/meminfo`
+- `/proc/uptime`
+- `/proc/stat`
+- `/proc/mounts`
+- `/proc/filesystems`
+- `/proc/<pid>/stat`
+- `/proc/<pid>/status`
+- `/proc/<pid>/cmdline`
+- `/proc/<pid>/comm`
+
+`/dev` currently exposes the common stream endpoints:
+
+- `/dev/null`
+- `/dev/zero`
+- `/dev/tty`
+- `/dev/console`
+- `/dev/fd/0`, `/dev/fd/1`, and `/dev/fd/2`
+
+These nodes are intentionally narrow. They support the common reads, writes,
+stats, and directory listings needed by tools such as `cat`, `ps`, `free`,
+`df`, shell redirection, and compatibility probes, while real mount tables,
+procfs write knobs, authentication devices, and full terminal ioctls remain out
+of scope for now.
+
+---
+
+# BusyBox Expectations
+
+`usr/bin/busybox` is built as the broad Unix applet layer. The configuration
+keeps the native SmallOS command set intact and enables BusyBox where it fills
+compatibility gaps: `ash` as `/bin/sh`, standalone applets, core file tools,
+text filters, archive/hexdump tools, and lightweight process/filesystem
+diagnostics. Native `/bin` tools stay first in command lookup; if a bare command
+is missing, the shell runs `/usr/bin/busybox <command> ...`.
+
+The current compatibility wave deliberately leaves mount management, init,
+login/getty, raw-socket-heavy tools, authentication semantics, and complete
+Linux device behavior disabled or stubbed. New BusyBox applets should grow the
+shared runtime, headers, and virtual filesystem behavior when they reveal a
+portable Unix expectation.
+
+---
+
 # TinyCC Expectations
 
 `usr/bin/tcc` is built from TinyCC submodule sources plus the SmallOS user
@@ -489,6 +547,8 @@ Runtime coverage currently lives in guest ELF probes:
 - `stdioprobe` - EOF/error state, `clearerr`, `fflush`, invalid stdio ops
 - `dirprobe` - root and nested directory iteration, EOF, invalid/missing dirs
 - `errnoprobe` - wrapper `errno` behavior
+- `compatprobe` - BusyBox-facing `statfs`, `/proc`, `/dev`, `/bin/sh`, and
+  compatibility wrappers
 - `crtprobe` - `main(argc, argv)` via `crt0`, argv terminator, and return status
 - `waitprobe` - `SYS_EXEC` pid return, `waitpid`, `WNOHANG`, `kill`, and wait status macros
 - `pipeprobe` - pipe read/write, EOF, `EPIPE`, nonblocking behavior, `PIPE_BUF`, poll readiness, and blocking transfer wakeups

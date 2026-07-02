@@ -1,0 +1,19 @@
+COMPATPROBE(1)
+
+NAME
+    compatprobe - test BusyBox-facing compatibility paths
+
+SYNOPSIS
+    compatprobe
+
+DESCRIPTION
+    compatprobe is a guest regression probe for the Unix compatibility layer.
+    It checks the pieces that BusyBox and POSIX-shaped programs commonly touch:
+    /bin/sh, /proc directory and file reads, /dev/null, /dev/zero, statfs,
+    sysinfo, and related libc wrappers.
+
+    The probe is installed under /usr/libexec/tests and is normally run by the
+    host-driven selftest suite rather than by hand.
+
+SEE ALSO
+    busybox(1), selftest(1), shell(1)

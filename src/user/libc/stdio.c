@@ -149,6 +149,19 @@ FILE* freopen(const char* path, const char* mode, FILE* stream) {
     return stream->fd < 0 ? 0 : stream;
 }
 
+FILE* popen(const char* command, const char* type) {
+    (void)command;
+    (void)type;
+    errno = ENOSYS;
+    return 0;
+}
+
+int pclose(FILE* stream) {
+    (void)stream;
+    errno = ENOSYS;
+    return -1;
+}
+
 int fclose(FILE* stream) {
     if (!stream) return -1;
     if (stream->is_console) return 0;
@@ -295,6 +308,22 @@ long ftell(FILE* stream) {
     return (long)r;
 }
 
+int fseeko(FILE* stream, off_t offset, int whence) {
+    return fseek(stream, (long)offset, whence);
+}
+
+off_t ftello(FILE* stream) {
+    return (off_t)ftell(stream);
+}
+
+int fileno(FILE* stream) {
+    if (!stream) {
+        errno = EINVAL;
+        return -1;
+    }
+    return stream->fd;
+}
+
 int putchar(int c) {
     sys_putc((char)c);
     return c;
@@ -319,6 +348,38 @@ static void append_str(char** out, size_t* left, const char* s, size_t* count) {
     if (!s) s = "(null)";
     while (*s) {
         append_char(out, left, *s++, count);
+    }
+}
+
+static void append_repeat(char** out, size_t* left, char c, int n, size_t* count) {
+    while (n-- > 0) {
+        append_char(out, left, c, count);
+    }
+}
+
+static int fmt_strnlen(const char* s, int precision) {
+    int len = 0;
+    if (!s) s = "(null)";
+    while (s[len] && (precision < 0 || len < precision)) {
+        len++;
+    }
+    return len;
+}
+
+static void append_str_width(char** out, size_t* left, const char* s,
+                             int width, int left_adjust, int precision,
+                             size_t* count) {
+    int len;
+    if (!s) s = "(null)";
+    len = fmt_strnlen(s, precision);
+    if (!left_adjust && width > len) {
+        append_repeat(out, left, ' ', width - len, count);
+    }
+    for (int i = 0; i < len; i++) {
+        append_char(out, left, s[i], count);
+    }
+    if (left_adjust && width > len) {
+        append_repeat(out, left, ' ', width - len, count);
     }
 }
 
@@ -357,6 +418,28 @@ static void append_uint64_hex_parts(char** out, size_t* left,
         tmp[i++] = digits[nibble];
         lo = (lo >> 4) | (hi << 28);
         hi >>= 4;
+    }
+
+    while (i > 0u) {
+        append_char(out, left, tmp[--i], count);
+    }
+}
+
+static void append_uint64_oct_parts(char** out, size_t* left,
+                                    unsigned long hi, unsigned long lo,
+                                    size_t* count) {
+    char tmp[24];
+    unsigned int i = 0;
+
+    if (hi == 0u && lo == 0u) {
+        append_char(out, left, '0', count);
+        return;
+    }
+
+    while (hi != 0u || lo != 0u) {
+        tmp[i++] = (char)('0' + (lo & 7u));
+        lo = (lo >> 3) | (hi << 29);
+        hi >>= 3;
     }
 
     while (i > 0u) {
@@ -478,12 +561,14 @@ static void append_int_width(char** out, size_t* left, int value, int min_width,
 static int parse_decimal_field(const char** fmt, va_list* ap, int* present) {
     int value = 0;
 
-    *present = 1;
+    *present = 0;
     if (**fmt == '*') {
         (*fmt)++;
+        *present = 1;
         return va_arg(*ap, int);
     }
     while (**fmt >= '0' && **fmt <= '9') {
+        *present = 1;
         value = value * 10 + (*((*fmt)++) - '0');
     }
     return value;
@@ -670,12 +755,19 @@ static int format_into(char* str, size_t size, const char* fmt, va_list ap) {
             fmt++;
             continue;
         }
+        int left_adjust = 0;
         while (*fmt == '-' || *fmt == '+' || *fmt == ' ' || *fmt == '#'
             || *fmt == '0' || *fmt == '\'') {
+            if (*fmt == '-') left_adjust = 1;
             fmt++;
         }
+        int width_present = 0;
+        int width = parse_decimal_field(&fmt, &ap, &width_present);
+        if (width_present && width < 0) {
+            left_adjust = 1;
+            width = -width;
+        }
         int field_present = 0;
-        (void)parse_decimal_field(&fmt, &ap, &field_present);
         int precision = -1;
         if (*fmt == '.') {
             fmt++;
@@ -721,11 +813,22 @@ static int format_into(char* str, size_t size, const char* fmt, va_list ap) {
         }
         switch (*fmt++) {
             case 's':
-                append_str(&out, &left, va_arg(ap, const char*), &count);
+                append_str_width(&out, &left, va_arg(ap, const char*),
+                                 width_present ? width : 0,
+                                 left_adjust, precision, &count);
                 break;
             case 'c':
-                append_char(&out, &left, (char)va_arg(ap, int), &count);
+            {
+                char ch = (char)va_arg(ap, int);
+                if (!left_adjust && width_present && width > 1) {
+                    append_repeat(&out, &left, ' ', width - 1, &count);
+                }
+                append_char(&out, &left, ch, &count);
+                if (left_adjust && width_present && width > 1) {
+                    append_repeat(&out, &left, ' ', width - 1, &count);
+                }
                 break;
+            }
             case 'd':
             case 'i':
                 if (long_long || intmax_mod) {
@@ -758,6 +861,7 @@ static int format_into(char* str, size_t size, const char* fmt, va_list ap) {
                 }
                 break;
             case 'x':
+            case 'o':
                 if (long_long || intmax_mod) {
                     union {
                         unsigned long long full;
@@ -767,13 +871,20 @@ static int format_into(char* str, size_t size, const char* fmt, va_list ap) {
                         } parts;
                     } u;
                     u.full = va_arg(ap, unsigned long long);
-                    append_uint64_hex_parts(&out, &left, u.parts.hi, u.parts.lo, 0, &count);
+                    if (fmt[-1] == 'o') {
+                        append_uint64_oct_parts(&out, &left, u.parts.hi, u.parts.lo, &count);
+                    } else {
+                        append_uint64_hex_parts(&out, &left, u.parts.hi, u.parts.lo, 0, &count);
+                    }
                 } else if (long_count || size_t_mod || ptrdiff_mod) {
-                    append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned long), 16, 0, &count);
+                    append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned long),
+                                fmt[-1] == 'o' ? 8u : 16u, 0, &count);
                 } else if (short_count) {
-                    append_uint(&out, &left, (unsigned long)(unsigned short)va_arg(ap, unsigned int), 16, 0, &count);
+                    append_uint(&out, &left, (unsigned long)(unsigned short)va_arg(ap, unsigned int),
+                                fmt[-1] == 'o' ? 8u : 16u, 0, &count);
                 } else {
-                    append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned int), 16, 0, &count);
+                    append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned int),
+                                fmt[-1] == 'o' ? 8u : 16u, 0, &count);
                 }
                 break;
             case 'X':
@@ -1088,6 +1199,21 @@ char* strdup(const char* s) {
     char* out = (char*)malloc(n);
     if (!out) return 0;
     memcpy(out, s, n);
+    return out;
+}
+
+char* strndup(const char* s, size_t n) {
+    size_t len = 0;
+    char* out;
+
+    if (!s) return 0;
+    while (len < n && s[len]) {
+        len++;
+    }
+    out = (char*)malloc(len + 1u);
+    if (!out) return 0;
+    memcpy(out, s, len);
+    out[len] = '\0';
     return out;
 }
 
@@ -1453,6 +1579,8 @@ long double ldexpl(long double x, int exp) {
 }
 
 void (*__smallos_fini_hook)(void);
+static void (*__smallos_atexit_handlers[16])(void);
+static int __smallos_atexit_count;
 
 typedef struct smallos_dlfcn_services {
     void* (*dlopen)(const char* filename, int flag);
@@ -1469,11 +1597,36 @@ static void __smallos_set_static_dlerror(const char* msg) {
 }
 
 __attribute__((noreturn)) void exit(int code) {
+    while (__smallos_atexit_count > 0) {
+        void (*fn)(void) = __smallos_atexit_handlers[--__smallos_atexit_count];
+        if (fn) {
+            fn();
+        }
+    }
     if (__smallos_fini_hook) {
         __smallos_fini_hook();
     }
     sys_exit(code);
     for (;;) {}
+}
+
+__attribute__((noreturn)) void _exit(int status) {
+    sys_exit(status);
+    for (;;) {}
+}
+
+int atexit(void (*function)(void)) {
+    if (!function) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (__smallos_atexit_count >= (int)(sizeof(__smallos_atexit_handlers) /
+                                        sizeof(__smallos_atexit_handlers[0]))) {
+        errno = ENOMEM;
+        return -1;
+    }
+    __smallos_atexit_handlers[__smallos_atexit_count++] = function;
+    return 0;
 }
 
 char* getenv(const char* name) {

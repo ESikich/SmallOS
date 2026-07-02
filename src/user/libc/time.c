@@ -1,6 +1,7 @@
 #include "user_lib.h"
 #include "stdio.h"
 #include "time.h"
+#include "sys/times.h"
 
 static const char* s_months[] = {
     "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -55,6 +56,17 @@ struct tm* gmtime_r(const time_t* timep, struct tm* result) {
 
 clock_t clock(void) {
     return (clock_t)sys_get_ticks();
+}
+
+clock_t times(struct tms* buf) {
+    clock_t now = (clock_t)sys_get_ticks();
+    if (buf) {
+        buf->tms_utime = now;
+        buf->tms_stime = 0;
+        buf->tms_cutime = 0;
+        buf->tms_cstime = 0;
+    }
+    return now;
 }
 
 char* ctime(const time_t* timep) {
@@ -176,6 +188,18 @@ time_t timegm(struct tm* tm) {
                     (unsigned int)tm->tm_hour * 3600u +
                     (unsigned int)tm->tm_min * 60u +
                     (unsigned int)tm->tm_sec);
+}
+
+time_t mktime(struct tm* tm) {
+    time_t value;
+    struct tm normalized;
+
+    if (!tm) return (time_t)-1;
+    value = timegm(tm);
+    gmtime_r(&value, &normalized);
+    tm->tm_wday = normalized.tm_wday;
+    tm->tm_yday = normalized.tm_yday;
+    return value;
 }
 
 static void append_ch(char* out, size_t max, size_t* pos, char c) {

@@ -21,7 +21,9 @@ char* strerror(int errnum) {
         case EINVAL: return "invalid argument";
         case ENFILE: return "file table full";
         case EFBIG: return "file too large";
+        case ESPIPE: return "illegal seek";
         case EPIPE: return "broken pipe";
+        case ERANGE: return "numerical result out of range";
         case ENOSYS: return "function not implemented";
         case ENOTEMPTY: return "directory not empty";
         case ENOTTY: return "inappropriate ioctl for device";

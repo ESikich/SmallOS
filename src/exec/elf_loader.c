@@ -327,6 +327,8 @@ static unsigned int elf_vaddr_for_file_offset(const unsigned char* image,
 static int elf_copy_interp_path(const unsigned char* image, char* out, unsigned int out_size) {
     const Elf32_Ehdr* eh = (const Elf32_Ehdr*)image;
     const Elf32_Phdr* ph = (const Elf32_Phdr*)(image + eh->e_phoff);
+    unsigned int read_pos;
+    unsigned int write_pos;
 
     if (!out || out_size == 0u) return 0;
     out[0] = '\0';
@@ -335,6 +337,15 @@ static int elf_copy_interp_path(const unsigned char* image, char* out, unsigned 
         if (ph[i].p_filesz == 0 || ph[i].p_filesz >= out_size) return 0;
         k_memcpy(out, image + ph[i].p_offset, ph[i].p_filesz);
         out[ph[i].p_filesz] = '\0';
+        read_pos = 0;
+        write_pos = 0;
+        while (out[read_pos] == '/' || out[read_pos] == '\\') {
+            read_pos++;
+        }
+        while (out[read_pos] != '\0') {
+            out[write_pos++] = out[read_pos++];
+        }
+        out[write_pos] = '\0';
         return 1;
     }
     return 0;

@@ -55,7 +55,7 @@ void srand(unsigned int seed) {
 
 int rand(void) {
     s_rand_state = s_rand_state * 1103515245u + 12345u;
-    return (int)((s_rand_state >> 16) & 0x7fff);
+    return (int)(s_rand_state & 0x7fffffffu);
 }
 
 double atof(const char* nptr) {

@@ -5,11 +5,15 @@
 #include "uapi_syscall.h"
 
 #define WNOHANG SYS_WAITPID_WNOHANG
+#define WUNTRACED 2
 
 #define WIFEXITED(status)   (((status) & 0x7F) == 0)
 #define WEXITSTATUS(status) (((status) >> 8) & 0xFF)
 #define WIFSIGNALED(status) (((status) & 0x7F) != 0)
 #define WTERMSIG(status)    ((status) & 0x7F)
+#define WIFSTOPPED(status)  (((status) & 0xFF) == 0x7F)
+#define WSTOPSIG(status)    (((status) >> 8) & 0xFF)
+#define WCOREDUMP(status)   (0)
 
 pid_t waitpid(pid_t pid, int* status, int options);
 

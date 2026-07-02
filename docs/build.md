@@ -34,7 +34,9 @@ i686-elf-objcopy → strip ELF metadata → flat binary
 gcc              → host tool compilation (mkext2, mkimage)
 gcc -m32         → Fractint help compiler, whose file format uses 32-bit long
 svn              → official Fractint source export
-curl, unzip      → optional Wolfenstein 3-D shareware data download/extract
+curl             → BusyBox source and optional Wolfenstein 3-D shareware data
+patch            → SmallOS patch application for hosted third-party ports
+bzip2, unzip     → BusyBox tarball and Wolfenstein 3-D data extraction
 ```
 
 The `third_party/cserver`, `third_party/ftp_client`, `third_party/ftp_server`,
@@ -63,6 +65,13 @@ variant. That variant defaults to the SmallOS guest sysroot: `/usr/include`
 for headers and `/usr/lib` for `crt0.o`, `libc.a`, `libm.a`, and
 `libposix.a`.
 
+BusyBox is downloaded into `.state/downloads/`, patched from
+`patches/busybox/smallos.patch`, configured by
+`tools/configure_busybox_smalos.sh`, and built in a profile-local object tree.
+The installed binary is `usr/bin/busybox`. The image also includes `/bin/sh`,
+a tiny launcher that execs `busybox sh`, so BusyBox `ash` can serve script-like
+workloads while the native `/bin/shell` remains the boot shell.
+
 Wolfenstein 3-D data files are not tracked. `make wolf3d-shareware-data`
 downloads the public Wolfenstein 3-D Shareware v1.4 zip from Wolf3D.net into
 `.state/downloads/` and extracts the `.WL1` runtime data files into
@@ -80,7 +89,7 @@ build/
 │                    user program *.elf artifacts,
 │                    dynamic *.dyn.elf / *.pie.elf artifacts, lib/ld-smallos.so,
 │                    lib/libc.so, ext2.seed.img, boot.bin, loader2.bin,
-│                    tcc-smalos.elf)
+│                    tcc-smalos.elf, busybox-smalos/busybox)
 ├── obj/<profile>/ → object files and depfiles (.o, .d), mirrored by source subtree
 ├── gen/<profile>/ → generated source (loader2.gen.asm)
 ├── img/           → final disk images and wrappers
@@ -404,9 +413,15 @@ the freestanding guest runtime. The suite covers both freestanding
 `crt0.o`, and runtime archives from `/usr`. Those generated binaries are
 stored under `/var/tmp/`, while the shipped hello demo lives under `usr/bin/`.
 
+BusyBox coverage lives in the same guest pass. The suite checks `/bin/sh`,
+native-shell fallback to `/usr/bin/busybox`, representative applets, virtual
+`/proc` and `/dev` paths, and compatibility wrappers such as `statfs` and
+`sysinfo`.
+
 The user runtime behavior that those tests depend on is documented in
 [`docs/user-runtime.md`](user-runtime.md), including `errno`, cwd-aware
-wrappers, stdio, directory traversal, and TinyCC expectations.
+wrappers, stdio, directory traversal, TinyCC expectations, and BusyBox-facing
+compatibility paths.
 
 `make smoke` runs the dedicated reboot and halt smoke checks.  Use
 `make smoke-reboot` or `make smoke-halt` to exercise those shell
@@ -820,6 +835,12 @@ bridges the kernel `_start(argc, argv)` launch ABI to TinyCC's normal
 `usr/share/examples/tinycc/tccsysroot.c`, and
 `usr/share/examples/tinycc/tccposix.c` inside the guest with that compiler.
 
+BusyBox ships as `usr/bin/busybox`, configured for a useful Unix compatibility
+set rather than full Linux emulation. `ash` is enabled as `/bin/sh`, standalone
+applets are enabled, and common text, archive, process, filesystem, and
+diagnostic commands are available. Native SmallOS commands remain preferred in
+shell lookup; BusyBox is the fallback for missing applets.
+
 ## Compile
 
 ```bash
@@ -953,6 +974,8 @@ Shipped ext2 programs:
 - `usr/libexec/tests/stdioprobe` - exercise stdio EOF/error state, `clearerr`, and `fflush`
 - `usr/libexec/tests/dirprobe` - exercise root and nested directory iteration
 - `usr/libexec/tests/errnoprobe` - exercise raw syscall errors and POSIX errno wrappers
+- `usr/libexec/tests/compatprobe` - exercise BusyBox-facing `/proc`, `/dev`,
+  `statfs`, `sysinfo`, `/bin/sh`, and compatibility wrappers
 - `usr/libexec/tests/badptrprobe` - exercise unmapped user pointers, page-crossing buffers/structs, and wrapped syscall byte counts
 - `usr/libexec/tests/sleep_test` - exercise SYS_SLEEP semantics
 - `usr/libexec/tests/ptrguard` - exercise syscall pointer validation
@@ -962,20 +985,25 @@ Shipped ext2 programs:
 - `usr/libexec/tests/fault` - fault probe (ud/gp/de/br/pf)
 - `usr/bin/tcc` - SmallOS-hosted TinyCC compiler binary linked through
   `src/user/crt/crt0.c`
+- `usr/bin/busybox` - BusyBox multi-call binary used as the broad Unix applet
+  layer
+- `bin/sh` - launcher that execs `/usr/bin/busybox sh`
 - `/usr/include` - public libc/POSIX/SmallOS headers and kernel UAPI headers
 - `/usr/lib` - `crt0.o`, `libc.a`, `libm.a`, and `libposix.a` for guest builds
 - `/lib/ld-smallos.so` - SmallOS dynamic loader used by dynamic executables
 - `/lib/libc.so` - combined shared libc/POSIX/libm runtime for dynamic executables
 - `/lib/libdynfini.so` - focused DSO lifecycle probe library
 - `/usr/lib/libdlplug*.so`, `/usr/lib/libdldiamond*.so`, and `/usr/lib/smallos/plugins/*.so` - internal runtime-loading probe libraries
+- `/etc/passwd` and `/etc/group` - root entries for file-backed user/group
+  lookup
 - `usr/share/examples/tinycc/tccmath.c`, `usr/share/examples/tinycc/tccagg.c`, `usr/share/examples/tinycc/tcctree.c`, `usr/share/examples/tinycc/tccmini.c`, `usr/share/examples/tinycc/tccsysroot.c`, `usr/share/examples/tinycc/tccposix.c` - guest compiler test inputs used by the shell selftests
 
 ## Properties
 
 * fixed-size volume defined by `tools/mkext2.c`
 * root directory is intended to stay directory-only during normal use
-* `bin/` contains command-style app binaries found by bare shell command lookup
-* `usr/bin/` contains demos, development tools, and larger user-facing programs such as `hello`, `plasma`, `mandel`, `fractint`, and `tcc`
+* `bin/` contains command-style app binaries found first by bare shell command lookup
+* `usr/bin/` contains demos, development tools, and larger user-facing programs such as `hello`, `plasma`, `mandel`, `fractint`, `tcc`, and `busybox`
 * `usr/libexec/tests/` contains the remaining shipped test binaries; most probes, including `displayprobe`, are staged dynamically
 * `usr/sbin/` contains guest service binaries; `tcpecho`, `sockeof`, and `ftpd` are staged dynamically, while `cserve` remains static
 * `usr/include/` and `usr/lib/` contain the guest C build sysroot, including public SmallOS helpers such as `term_keys.h`
