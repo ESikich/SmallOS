@@ -1253,6 +1253,21 @@ termios data and console-like descriptors use a default console terminal
 state. `sys_tty_ioctl` currently supports `TIOCGWINSZ`, `TIOCGPGRP`, and
 `TIOCSPGRP`; non-terminal descriptors fail with `-ENOTTY`.
 
+### Resource and Usage Syscalls (132-134)
+
+```c
+int sys_getrlimit(int resource, sys_rlimit_t* out);
+int sys_setrlimit(int resource, const sys_rlimit_t* in);
+int sys_getrusage(int who, sys_rusage_t* out);
+```
+
+`RLIMIT_NOFILE` is backed by the process fd limit and is enforced by fd
+allocation and duplication paths. `RLIMIT_AS`, `RLIMIT_DATA`, and
+`RLIMIT_STACK` report fixed values from the current user address-space layout,
+and `RLIMIT_CPU` reports infinity. `getrusage(RUSAGE_SELF)` reports CPU ticks
+as an approximate user time and task-owned RAM as `ru_maxrss`; child usage is
+currently a valid zeroed structure.
+
 ### SYS_USB_MOUSE_OP (87)
 
 ```c
@@ -1896,6 +1911,9 @@ sys_pty_set_size(fd, rows, cols)
 sys_tcgetattr(fd, out)
 sys_tcsetattr(fd, in)
 sys_tty_ioctl(fd, request, arg)
+sys_getrlimit(resource, out)
+sys_setrlimit(resource, in)
+sys_getrusage(who, out)
 sys_stat_full(path, out_info)
 sys_fstat_full(fd, out_info)
 sys_sound_op(op, arg1, arg2)

@@ -1739,24 +1739,27 @@ int fnmatch(const char* pattern, const char* string, int flags) {
 }
 
 int getrlimit(int resource, struct rlimit* rlim) {
-    (void)resource;
-    (void)rlim;
-    set_errno(ENOSYS);
-    return -1;
+    if (!rlim) {
+        set_errno(EFAULT);
+        return -1;
+    }
+    return errno_from_raw(sys_getrlimit(resource, (sys_rlimit_t*)rlim));
 }
 
 int setrlimit(int resource, const struct rlimit* rlim) {
-    (void)resource;
-    (void)rlim;
-    set_errno(ENOSYS);
-    return -1;
+    if (!rlim) {
+        set_errno(EFAULT);
+        return -1;
+    }
+    return errno_from_raw(sys_setrlimit(resource, (const sys_rlimit_t*)rlim));
 }
 
 int getrusage(int who, struct rusage* usage) {
-    (void)who;
-    (void)usage;
-    set_errno(ENOSYS);
-    return -1;
+    if (!usage) {
+        set_errno(EFAULT);
+        return -1;
+    }
+    return errno_from_raw(sys_getrusage(who, (sys_rusage_t*)usage));
 }
 
 static void uts_copy(char* dst, const char* src) {

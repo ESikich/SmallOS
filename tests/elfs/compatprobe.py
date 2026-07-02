@@ -46,6 +46,7 @@ CASES = [
             "open dev fd 1: PASS",
             "root passwd uid: PASS",
             "getgrouplist root: PASS",
+            "getrlimit nofile: PASS",
             "getsid self: PASS",
             "sync noop: PASS",
             "sigaction stub: PASS",

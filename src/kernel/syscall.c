@@ -57,6 +57,16 @@
 #define SYS_IOCTL_TIOCGPGRP   0x540Fu
 #define SYS_IOCTL_TIOCSPGRP   0x5410u
 #define SYS_IOCTL_TIOCGWINSZ  0x5413u
+#define SYS_RLIMIT_CPU        0
+#define SYS_RLIMIT_FSIZE      1
+#define SYS_RLIMIT_DATA       2
+#define SYS_RLIMIT_STACK      3
+#define SYS_RLIMIT_CORE       4
+#define SYS_RLIMIT_AS         6
+#define SYS_RLIMIT_NOFILE     7
+#define SYS_RLIM_INFINITY     0xFFFFFFFFu
+#define SYS_RUSAGE_SELF       0
+#define SYS_RUSAGE_CHILDREN  (-1)
 
 static unsigned char s_sys_block_sector[512] __attribute__((aligned(16)));
 static volatile int s_sys_block_sector_locked = 0;
@@ -96,6 +106,7 @@ static int sys_close_impl(int fd);
 static int sys_utimens_kpath_impl(const char* kpath,
                                   const struct user_timespec* times,
                                   int nofollow);
+static unsigned int process_ram_bytes(process_t* proc);
 
 static int path_is_sep(char c) {
     return c == '/' || c == '\\';
@@ -3837,6 +3848,102 @@ static int sys_tty_ioctl_impl(int fd, unsigned int request, void* arg) {
     return -ENOTTY;
 }
 
+static int resource_limit_value(process_t* proc,
+                                int resource,
+                                unsigned int* cur,
+                                unsigned int* max) {
+    if (!proc || !cur || !max) return -EINVAL;
+
+    switch (resource) {
+        case SYS_RLIMIT_CPU:
+            *cur = SYS_RLIM_INFINITY;
+            *max = SYS_RLIM_INFINITY;
+            return 0;
+        case SYS_RLIMIT_DATA:
+            *cur = (USER_STACK_TOP - USER_STACK_SIZE) - USER_HEAP_BASE;
+            *max = *cur;
+            return 0;
+        case SYS_RLIMIT_STACK:
+            *cur = USER_STACK_SIZE;
+            *max = USER_STACK_SIZE;
+            return 0;
+        case SYS_RLIMIT_AS:
+            *cur = USER_STACK_TOP - USER_CODE_BASE;
+            *max = *cur;
+            return 0;
+        case SYS_RLIMIT_NOFILE:
+            *cur = proc->fd_limit;
+            *max = PROCESS_FD_LIMIT_HARD;
+            return 0;
+        default:
+            return -EINVAL;
+    }
+}
+
+static int sys_getrlimit_impl(int resource, sys_rlimit_t* out) {
+    process_t* proc = (process_t*)sched_current();
+    sys_rlimit_t lim;
+    int rc;
+
+    if (!out) return -EFAULT;
+    if (!user_buf_ok((unsigned int)out, sizeof(*out))) return -EFAULT;
+    if (!proc) return -EINVAL;
+
+    rc = resource_limit_value(proc, resource, &lim.rlim_cur, &lim.rlim_max);
+    if (rc < 0) return rc;
+    if (copy_to_user(out, &lim, sizeof(lim)) < 0) return -EFAULT;
+    return 0;
+}
+
+static int sys_setrlimit_impl(int resource, const sys_rlimit_t* in) {
+    process_t* proc = (process_t*)sched_current();
+    sys_rlimit_t lim;
+    unsigned int cur;
+    unsigned int max;
+    int rc;
+
+    if (!in) return -EFAULT;
+    if (!user_buf_ok((unsigned int)in, sizeof(*in))) return -EFAULT;
+    if (!proc) return -EINVAL;
+    if (copy_from_user(&lim, in, sizeof(lim)) < 0) return -EFAULT;
+
+    rc = resource_limit_value(proc, resource, &cur, &max);
+    if (rc < 0) return rc;
+    if (lim.rlim_cur > lim.rlim_max) return -EINVAL;
+    if (lim.rlim_max > max || lim.rlim_cur > max) return -EINVAL;
+
+    if (resource == SYS_RLIMIT_NOFILE) {
+        if (lim.rlim_cur < proc->fd_capacity) return -EINVAL;
+        proc->fd_limit = lim.rlim_cur;
+        return 0;
+    }
+
+    if (lim.rlim_cur != cur || lim.rlim_max != max) return -EINVAL;
+    return 0;
+}
+
+static int sys_getrusage_impl(int who, sys_rusage_t* out) {
+    process_t* proc = (process_t*)sched_current();
+    sys_rusage_t usage;
+    unsigned int ticks;
+
+    if (!out) return -EFAULT;
+    if (!user_buf_ok((unsigned int)out, sizeof(*out))) return -EFAULT;
+    if (!proc) return -EINVAL;
+    if (who != SYS_RUSAGE_SELF && who != SYS_RUSAGE_CHILDREN) return -EINVAL;
+
+    k_memset(&usage, 0, sizeof(usage));
+    if (who == SYS_RUSAGE_SELF) {
+        ticks = proc->cpu_ticks;
+        usage.ru_utime.tv_sec = (long)(ticks / 1000u);
+        usage.ru_utime.tv_usec = (long)((ticks % 1000u) * 1000u);
+        usage.ru_maxrss = (long)(process_ram_bytes(proc) / 1024u);
+    }
+
+    if (copy_to_user(out, &usage, sizeof(usage)) < 0) return -EFAULT;
+    return 0;
+}
+
 static int sys_display_info_impl(sys_display_info_t* out_info) {
     display_info_t info;
 
@@ -4958,6 +5065,21 @@ void syscall_handler_main(syscall_regs_t* regs) {
             regs->eax = (unsigned int)sys_tty_ioctl_impl((int)regs->ebx,
                                                          regs->ecx,
                                                          (void*)regs->edx);
+            break;
+
+        case SYS_GETRLIMIT:
+            regs->eax = (unsigned int)sys_getrlimit_impl((int)regs->ebx,
+                                                         (sys_rlimit_t*)regs->ecx);
+            break;
+
+        case SYS_SETRLIMIT:
+            regs->eax = (unsigned int)sys_setrlimit_impl((int)regs->ebx,
+                                                         (const sys_rlimit_t*)regs->ecx);
+            break;
+
+        case SYS_GETRUSAGE:
+            regs->eax = (unsigned int)sys_getrusage_impl((int)regs->ebx,
+                                                         (sys_rusage_t*)regs->ecx);
             break;
 
         case SYS_STAT_FULL:

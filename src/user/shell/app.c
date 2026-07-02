@@ -1501,6 +1501,7 @@ void sh_selftest(void) {
     sh_selftest_exec_expect("permprobe", "usr/libexec/tests/permprobe", 0);
     sh_selftest_exec_expect("atprobe", "usr/libexec/tests/atprobe", 0);
     sh_selftest_exec_expect("ttyprobe", "usr/libexec/tests/ttyprobe", 0);
+    sh_selftest_exec_expect("rsrcprobe", "usr/libexec/tests/rsrcprobe", 0);
     sh_selftest_exec_expect("busybox true", "usr/bin/busybox true", 0);
     sh_selftest_exec_expect("busybox false", "usr/bin/busybox false", 1);
     sh_selftest_exec_expect("busybox echo", "usr/bin/busybox echo busybox-echo-ok", 0);

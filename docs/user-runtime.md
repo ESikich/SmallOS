@@ -291,6 +291,7 @@ The runtime provides a small POSIX-shaped surface:
 - `getcwd`, `chdir`
 - `getpid`, `fork`, `execve`, `execv`, `execvp`, `waitpid`, `kill`
 - `getuid`, `geteuid`, `getgid`, `getegid`, `setuid`, `setgid`, and `umask`
+- `getrlimit`, `setrlimit`, and `getrusage`
 - `sysinfo`, `times`, `uname`, `ioctl`, and kernel-backed termios wrappers
 - `popen` / `pclose` and `mntent` helpers for compatibility-oriented ports
 - `system`, implemented through `shell -c command`
@@ -570,6 +571,8 @@ Runtime coverage currently lives in guest ELF probes:
   non-directory base errors, and no-follow symlink stat/timestamp behavior
 - `ttyprobe` - kernel-backed termios state, PTY echo/raw/EOF behavior,
   foreground process-group ioctls, and non-terminal `ENOTTY` failures
+- `rsrcprobe` - resource limits, `RLIMIT_NOFILE` enforcement, and
+  `getrusage` self/children behavior
 - `stdioprobe` - EOF/error state, `clearerr`, `fflush`, invalid stdio ops
 - `dirprobe` - root and nested directory iteration, EOF, invalid/missing dirs
 - `errnoprobe` - wrapper `errno` behavior

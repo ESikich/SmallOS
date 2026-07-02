@@ -1,0 +1,10 @@
+.TH RSRCPROBE 1
+.SH NAME
+rsrcprobe \- exercise resource limit and usage syscalls
+.SH SYNOPSIS
+.B rsrcprobe
+.SH DESCRIPTION
+.B rsrcprobe
+is a guest regression probe for the POSIX-shaped resource API. It checks
+getrlimit, setrlimit, getrusage, RLIMIT_NOFILE enforcement, stable fixed
+limits, invalid-argument errors, and child/self usage reporting.

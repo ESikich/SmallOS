@@ -296,8 +296,9 @@ static void probe_stubs(void) {
     sigset_t set;
     struct sigaction sa;
 
-    errno = 0;
-    check("getrlimit enosys", getrlimit(RLIMIT_NOFILE, &lim) < 0 && errno == ENOSYS);
+    check("getrlimit nofile", getrlimit(RLIMIT_NOFILE, &lim) == 0 &&
+                              lim.rlim_cur > 0 &&
+                              lim.rlim_max >= lim.rlim_cur);
     check("getaddrinfo noname", getaddrinfo("smallos.invalid", 0, 0, 0) == EAI_NONAME);
     errno = 0;
     check("gethostbyname enosys", gethostbyname("smallos.invalid") == 0 && errno == ENOSYS);

@@ -299,6 +299,35 @@ typedef struct sys_winsize {
     unsigned short ws_ypixel;
 } sys_winsize_t;
 
+typedef struct sys_rlimit {
+    unsigned int rlim_cur;
+    unsigned int rlim_max;
+} sys_rlimit_t;
+
+typedef struct sys_timeval {
+    long tv_sec;
+    long tv_usec;
+} sys_timeval_t;
+
+typedef struct sys_rusage {
+    sys_timeval_t ru_utime;
+    sys_timeval_t ru_stime;
+    long ru_maxrss;
+    long ru_ixrss;
+    long ru_idrss;
+    long ru_isrss;
+    long ru_minflt;
+    long ru_majflt;
+    long ru_nswap;
+    long ru_inblock;
+    long ru_oublock;
+    long ru_msgsnd;
+    long ru_msgrcv;
+    long ru_nsignals;
+    long ru_nvcsw;
+    long ru_nivcsw;
+} sys_rusage_t;
+
 enum {
     SYS_WRITE     = 1,
     SYS_EXIT      = 2,
@@ -440,7 +469,10 @@ enum {
     SYS_UTIMENSAT       = 128, /* dirfd-relative utimens */
     SYS_TCGETATTR       = 129, /* copy terminal attributes for fd */
     SYS_TCSETATTR       = 130, /* update terminal attributes for fd */
-    SYS_TTY_IOCTL       = 131  /* terminal ioctl by fd */
+    SYS_TTY_IOCTL       = 131, /* terminal ioctl by fd */
+    SYS_GETRLIMIT       = 132, /* copy process resource limit */
+    SYS_SETRLIMIT       = 133, /* update process resource limit */
+    SYS_GETRUSAGE       = 134  /* copy process resource accounting */
 };
 
 #endif

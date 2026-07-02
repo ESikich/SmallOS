@@ -745,6 +745,18 @@ static inline int sys_tty_ioctl(int fd, uint32_t request, void* arg) {
     return syscall3(SYS_TTY_IOCTL, (uint32_t)fd, request, (uint32_t)arg);
 }
 
+static inline int sys_getrlimit(int resource, sys_rlimit_t* rlim) {
+    return syscall2(SYS_GETRLIMIT, (uint32_t)resource, (uint32_t)rlim);
+}
+
+static inline int sys_setrlimit(int resource, const sys_rlimit_t* rlim) {
+    return syscall2(SYS_SETRLIMIT, (uint32_t)resource, (uint32_t)rlim);
+}
+
+static inline int sys_getrusage(int who, sys_rusage_t* usage) {
+    return syscall2(SYS_GETRUSAGE, (uint32_t)who, (uint32_t)usage);
+}
+
 static inline int sys_dup(int oldfd) {
     return syscall1(SYS_DUP, (uint32_t)oldfd);
 }
