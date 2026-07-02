@@ -156,6 +156,7 @@ typedef struct process {
 process_t* process_create(const char* name);
 process_t* process_create_kernel_task(const char* name, void (*entry)(void));
 void       process_destroy(process_t* proc);
+void       process_release_exit_resources(process_t* proc);
 fd_entry_t* process_fd_get(process_t* proc, int fd);
 int        process_fd_open_file(process_t* proc,
                                 const char* name,

@@ -56,6 +56,7 @@ pid_t vfork(void);
 int execve(const char* path, char* const argv[], char* const envp[]);
 int execv(const char* path, char* const argv[]);
 int execvp(const char* file, char* const argv[]);
+int execlp(const char* file, const char* arg, ...);
 int getgroups(int size, gid_t list[]);
 uid_t getuid(void);
 uid_t geteuid(void);

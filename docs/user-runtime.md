@@ -475,9 +475,10 @@ of scope for now.
 `usr/bin/busybox` is built as the broad Unix applet layer. The configuration
 keeps the native SmallOS command set intact and enables BusyBox where it fills
 compatibility gaps: `ash` as `/bin/sh`, standalone applets, core file tools,
-text filters, archive/hexdump tools, and lightweight process/filesystem
-diagnostics. Native `/bin` tools stay first in command lookup; if a bare command
-is missing, the shell runs `/usr/bin/busybox <command> ...`.
+text filters, gzip/archive/hexdump tools, checksum helpers, and lightweight
+process/filesystem diagnostics. Native `/bin` tools stay first in command
+lookup; if a bare command is missing, the shell runs
+`/usr/bin/busybox <command> ...`.
 
 The current compatibility wave deliberately leaves mount management, init,
 login/getty, raw-socket-heavy tools, authentication semantics, and complete

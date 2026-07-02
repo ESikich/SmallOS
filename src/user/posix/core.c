@@ -37,6 +37,7 @@
 #include "signal.h"
 #include "stdlib.h"
 #include "stdint.h"
+#include "stdarg.h"
 #include "user_syscall.h"
 #include "uapi_time.h"
 
@@ -699,6 +700,27 @@ int execvp(const char* file, char* const argv[]) {
     return -1;
 }
 
+int execlp(const char* file, const char* arg, ...) {
+    char* argv[32];
+    unsigned int argc = 0;
+    const char* current = arg;
+    va_list ap;
+
+    va_start(ap, arg);
+    while (current) {
+        if (argc + 1u >= sizeof(argv) / sizeof(argv[0])) {
+            va_end(ap);
+            set_errno(EINVAL);
+            return -1;
+        }
+        argv[argc++] = (char*)current;
+        current = va_arg(ap, const char*);
+    }
+    va_end(ap);
+    argv[argc] = 0;
+    return execvp(file, argv);
+}
+
 int socket(int domain, int type, int protocol) {
     return errno_from_raw(sys_socket(domain, type, protocol));
 }
@@ -1262,6 +1284,10 @@ int setegid(gid_t egid) {
 
 pid_t waitpid(pid_t pid, int* status, int options) {
     return (pid_t)errno_from_raw(sys_waitpid((int)pid, status, options));
+}
+
+pid_t wait(int* status) {
+    return waitpid((pid_t)-1, status, 0);
 }
 
 int kill(int pid, int signum) {

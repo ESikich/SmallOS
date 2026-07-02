@@ -199,9 +199,9 @@ hello alpha beta
 Native SmallOS commands stay first. If a bare command is not found in `/bin`,
 `/usr/bin`, or `/usr/sbin`, the shell tries `/usr/bin/busybox <command> ...`.
 That makes BusyBox applets such as `grep`, `sed`, `awk`, `df`, `du`, `free`,
-`ps`, `tar`, and `hexdump` available without replacing native tools. `/bin/sh`
-is a tiny launcher for BusyBox `ash`; `/bin/shell` remains the interactive
-SmallOS shell.
+`ps`, `tar`, `gzip`, `gunzip`, checksum tools, and `hexdump` available without
+replacing native tools. `/bin/sh` is a tiny launcher for BusyBox `ash`;
+`/bin/shell` remains the interactive SmallOS shell.
 
 Background jobs use `bg`, `jobs`, `fg`, and `kill`:
 

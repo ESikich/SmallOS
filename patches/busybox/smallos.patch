@@ -28,7 +28,7 @@ diff --git a/include/platform.h b/include/platform.h
 index 69914fc..68fa3f3 100644
 --- a/include/platform.h
 +++ b/include/platform.h
-@@ -431,6 +431,32 @@
+@@ -431,6 +431,31 @@
  #define HAVE_DEV_FD 1
  #define DEV_FD_PREFIX "/dev/fd/"
 -
@@ -54,7 +54,6 @@ index 69914fc..68fa3f3 100644
 +# undef HAVE_GETLINE
 +# undef HAVE_XTABS
 +# undef HAVE_NET_ETHERNET_H
-+# undef HAVE_SYS_STATFS_H
 +# undef HAVE_PRINTF_PERCENTM
 +# undef HAVE_WAIT3
 +#endif

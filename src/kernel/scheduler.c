@@ -230,6 +230,7 @@ void sched_exit_current(unsigned int esp) {
     }
 
     cur->sched_esp = esp;
+    process_release_exit_resources(cur);
     cur->state = PROCESS_STATE_ZOMBIE;
     process_wake_parent_waiter(cur);
     sched_dequeue(cur);
@@ -275,6 +276,7 @@ void sched_kill(process_t* proc, unsigned int esp) {
         }
     }
 
+    process_release_exit_resources(proc);
     proc->state = PROCESS_STATE_ZOMBIE;
     process_wake_parent_waiter(proc);
     sched_dequeue(proc);

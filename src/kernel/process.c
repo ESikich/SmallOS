@@ -1497,7 +1497,7 @@ static int process_handle_pipe_seek(fd_entry_t* ent, int offset, int whence) {
     (void)ent;
     (void)offset;
     (void)whence;
-    return -EINVAL;
+    return -ESPIPE;
 }
 
 static short process_handle_pipe_poll(fd_entry_t* ent, short events) {
@@ -2801,6 +2801,16 @@ void process_destroy(process_t* proc) {
 
     proc->state = PROCESS_STATE_EXITED;
     pmm_free_frame(paging_kernel_virt_to_phys(proc));
+}
+
+void process_release_exit_resources(process_t* proc) {
+    if (!proc) return;
+
+    for (unsigned int i = 0; i < proc->fd_capacity; i++) {
+        if (proc->fds[i].valid) {
+            process_fd_close(&proc->fds[i]);
+        }
+    }
 }
 
 process_t* process_get_current(void) {

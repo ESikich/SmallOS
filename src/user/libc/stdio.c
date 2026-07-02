@@ -401,6 +401,62 @@ static void append_uint(char** out, size_t* left, unsigned long value, unsigned 
     }
 }
 
+static unsigned int uint_to_reversed(char* tmp,
+                                     unsigned int tmp_size,
+                                     unsigned long value,
+                                     unsigned base,
+                                     int uppercase) {
+    unsigned int i = 0;
+    const char* digits = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
+
+    if (value == 0) {
+        if (tmp_size) tmp[i++] = '0';
+        return i;
+    }
+    while (value > 0 && i < tmp_size) {
+        tmp[i++] = digits[value % base];
+        value /= base;
+    }
+    return i;
+}
+
+static void append_uint_format(char** out,
+                               size_t* left,
+                               unsigned long value,
+                               unsigned base,
+                               int uppercase,
+                               int width,
+                               int left_adjust,
+                               int zero_pad,
+                               int precision,
+                               size_t* count) {
+    char tmp[32];
+    unsigned int digits = uint_to_reversed(tmp, sizeof(tmp), value, base, uppercase);
+    int digit_count = (int)digits;
+    int zero_count = 0;
+    int total;
+    char pad = (zero_pad && !left_adjust && precision < 0) ? '0' : ' ';
+
+    if (precision == 0 && value == 0) {
+        digit_count = 0;
+    }
+    if (precision > digit_count) {
+        zero_count = precision - digit_count;
+    }
+    total = digit_count + zero_count;
+
+    if (!left_adjust && width > total) {
+        append_repeat(out, left, pad, width - total, count);
+    }
+    append_repeat(out, left, '0', zero_count, count);
+    while (digit_count > 0) {
+        append_char(out, left, tmp[--digit_count], count);
+    }
+    if (left_adjust && width > total) {
+        append_repeat(out, left, ' ', width - total, count);
+    }
+}
+
 static void append_uint64_hex_parts(char** out, size_t* left,
                                     unsigned long hi, unsigned long lo,
                                     int uppercase, size_t* count) {
@@ -501,6 +557,66 @@ static void append_int(char** out, size_t* left, long value, size_t* count) {
         append_uint(out, left, (unsigned long)(-value), 10, 0, count);
     } else {
         append_uint(out, left, (unsigned long)value, 10, 0, count);
+    }
+}
+
+static void append_int_format(char** out,
+                              size_t* left,
+                              long value,
+                              int width,
+                              int left_adjust,
+                              int zero_pad,
+                              int precision,
+                              int force_sign,
+                              int space_sign,
+                              size_t* count) {
+    char tmp[32];
+    unsigned long mag;
+    unsigned int digits;
+    int digit_count;
+    int zero_count = 0;
+    int sign_count = 0;
+    int total;
+    char sign = '\0';
+
+    if (value < 0) {
+        sign = '-';
+        mag = (unsigned long)(-value);
+    } else {
+        mag = (unsigned long)value;
+        if (force_sign) {
+            sign = '+';
+        } else if (space_sign) {
+            sign = ' ';
+        }
+    }
+
+    digits = uint_to_reversed(tmp, sizeof(tmp), mag, 10u, 0);
+    digit_count = (int)digits;
+    if (precision == 0 && mag == 0) {
+        digit_count = 0;
+    }
+    if (precision > digit_count) {
+        zero_count = precision - digit_count;
+    }
+    if (sign) sign_count = 1;
+    total = sign_count + zero_count + digit_count;
+
+    if (!left_adjust && width > total && !(zero_pad && precision < 0)) {
+        append_repeat(out, left, ' ', width - total, count);
+    }
+    if (sign) {
+        append_char(out, left, sign, count);
+    }
+    if (!left_adjust && width > total && zero_pad && precision < 0) {
+        append_repeat(out, left, '0', width - total, count);
+    }
+    append_repeat(out, left, '0', zero_count, count);
+    while (digit_count > 0) {
+        append_char(out, left, tmp[--digit_count], count);
+    }
+    if (left_adjust && width > total) {
+        append_repeat(out, left, ' ', width - total, count);
     }
 }
 
@@ -756,9 +872,15 @@ static int format_into(char* str, size_t size, const char* fmt, va_list ap) {
             continue;
         }
         int left_adjust = 0;
+        int zero_pad = 0;
+        int force_sign = 0;
+        int space_sign = 0;
         while (*fmt == '-' || *fmt == '+' || *fmt == ' ' || *fmt == '#'
             || *fmt == '0' || *fmt == '\'') {
             if (*fmt == '-') left_adjust = 1;
+            if (*fmt == '0') zero_pad = 1;
+            if (*fmt == '+') force_sign = 1;
+            if (*fmt == ' ') space_sign = 1;
             fmt++;
         }
         int width_present = 0;
@@ -834,11 +956,20 @@ static int format_into(char* str, size_t size, const char* fmt, va_list ap) {
                 if (long_long || intmax_mod) {
                     append_int64(&out, &left, va_arg(ap, long long), &count);
                 } else if (long_count || ptrdiff_mod) {
-                    append_int(&out, &left, va_arg(ap, long), &count);
+                    append_int_format(&out, &left, va_arg(ap, long),
+                                      width_present ? width : 0,
+                                      left_adjust, zero_pad, precision,
+                                      force_sign, space_sign, &count);
                 } else if (short_count) {
-                    append_int(&out, &left, (long)(short)va_arg(ap, int), &count);
+                    append_int_format(&out, &left, (long)(short)va_arg(ap, int),
+                                      width_present ? width : 0,
+                                      left_adjust, zero_pad, precision,
+                                      force_sign, space_sign, &count);
                 } else {
-                    append_int(&out, &left, (long)va_arg(ap, int), &count);
+                    append_int_format(&out, &left, (long)va_arg(ap, int),
+                                      width_present ? width : 0,
+                                      left_adjust, zero_pad, precision,
+                                      force_sign, space_sign, &count);
                 }
                 break;
             case 'u':
@@ -853,11 +984,17 @@ static int format_into(char* str, size_t size, const char* fmt, va_list ap) {
                     u.full = va_arg(ap, unsigned long long);
                     append_uint64_dec_parts(&out, &left, u.parts.hi, u.parts.lo, &count);
                 } else if (long_count || size_t_mod || ptrdiff_mod) {
-                    append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned long), 10, 0, &count);
+                    append_uint_format(&out, &left, (unsigned long)va_arg(ap, unsigned long),
+                                       10u, 0, width_present ? width : 0,
+                                       left_adjust, zero_pad, precision, &count);
                 } else if (short_count) {
-                    append_uint(&out, &left, (unsigned long)(unsigned short)va_arg(ap, unsigned int), 10, 0, &count);
+                    append_uint_format(&out, &left, (unsigned long)(unsigned short)va_arg(ap, unsigned int),
+                                       10u, 0, width_present ? width : 0,
+                                       left_adjust, zero_pad, precision, &count);
                 } else {
-                    append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned int), 10, 0, &count);
+                    append_uint_format(&out, &left, (unsigned long)va_arg(ap, unsigned int),
+                                       10u, 0, width_present ? width : 0,
+                                       left_adjust, zero_pad, precision, &count);
                 }
                 break;
             case 'x':
@@ -877,14 +1014,20 @@ static int format_into(char* str, size_t size, const char* fmt, va_list ap) {
                         append_uint64_hex_parts(&out, &left, u.parts.hi, u.parts.lo, 0, &count);
                     }
                 } else if (long_count || size_t_mod || ptrdiff_mod) {
-                    append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned long),
-                                fmt[-1] == 'o' ? 8u : 16u, 0, &count);
+                    append_uint_format(&out, &left, (unsigned long)va_arg(ap, unsigned long),
+                                       fmt[-1] == 'o' ? 8u : 16u, 0,
+                                       width_present ? width : 0,
+                                       left_adjust, zero_pad, precision, &count);
                 } else if (short_count) {
-                    append_uint(&out, &left, (unsigned long)(unsigned short)va_arg(ap, unsigned int),
-                                fmt[-1] == 'o' ? 8u : 16u, 0, &count);
+                    append_uint_format(&out, &left, (unsigned long)(unsigned short)va_arg(ap, unsigned int),
+                                       fmt[-1] == 'o' ? 8u : 16u, 0,
+                                       width_present ? width : 0,
+                                       left_adjust, zero_pad, precision, &count);
                 } else {
-                    append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned int),
-                                fmt[-1] == 'o' ? 8u : 16u, 0, &count);
+                    append_uint_format(&out, &left, (unsigned long)va_arg(ap, unsigned int),
+                                       fmt[-1] == 'o' ? 8u : 16u, 0,
+                                       width_present ? width : 0,
+                                       left_adjust, zero_pad, precision, &count);
                 }
                 break;
             case 'X':
@@ -899,11 +1042,17 @@ static int format_into(char* str, size_t size, const char* fmt, va_list ap) {
                     u.full = va_arg(ap, unsigned long long);
                     append_uint64_hex_parts(&out, &left, u.parts.hi, u.parts.lo, 1, &count);
                 } else if (long_count || size_t_mod || ptrdiff_mod) {
-                    append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned long), 16, 1, &count);
+                    append_uint_format(&out, &left, (unsigned long)va_arg(ap, unsigned long),
+                                       16u, 1, width_present ? width : 0,
+                                       left_adjust, zero_pad, precision, &count);
                 } else if (short_count) {
-                    append_uint(&out, &left, (unsigned long)(unsigned short)va_arg(ap, unsigned int), 16, 1, &count);
+                    append_uint_format(&out, &left, (unsigned long)(unsigned short)va_arg(ap, unsigned int),
+                                       16u, 1, width_present ? width : 0,
+                                       left_adjust, zero_pad, precision, &count);
                 } else {
-                    append_uint(&out, &left, (unsigned long)va_arg(ap, unsigned int), 16, 1, &count);
+                    append_uint_format(&out, &left, (unsigned long)va_arg(ap, unsigned int),
+                                       16u, 1, width_present ? width : 0,
+                                       left_adjust, zero_pad, precision, &count);
                 }
                 break;
             case 'p':
@@ -1098,6 +1247,10 @@ int strcmp(const char* a, const char* b) {
         b++;
     }
     return (unsigned char)*a - (unsigned char)*b;
+}
+
+int strcoll(const char* a, const char* b) {
+    return strcmp(a, b);
 }
 
 int strncmp(const char* a, const char* b, size_t n) {

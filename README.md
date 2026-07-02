@@ -47,8 +47,9 @@ BusyBox-backed Unix compatibility layer inside the guest.
   as `mandel`, `plasma`, `fractint`, and `wolf3d`.
 - BusyBox is staged as `usr/bin/busybox`; native `/bin` tools remain first in
   shell command lookup, while BusyBox fills gaps such as `grep`, `sed`, `awk`,
-  `df`, `du`, `free`, `ps`, `tar`, and `hexdump`. `/bin/sh` launches BusyBox
-  `ash` for script-style compatibility without replacing `/bin/shell`.
+  `df`, `du`, `free`, `ps`, `tar`, `gzip`, `gunzip`, checksum tools, and
+  `hexdump`. `/bin/sh` launches BusyBox `ash` for script-style compatibility
+  without replacing `/bin/shell`.
 - The compatibility layer exposes virtual `/proc` and `/dev` entries used by
   Unix tools, including memory, uptime, process, mount, filesystem, null, zero,
   tty, console, and standard-fd paths.

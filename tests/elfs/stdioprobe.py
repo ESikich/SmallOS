@@ -12,6 +12,7 @@ CASES = [
             "stdio write+fflush: PASS",
             "stdio dynamic width: PASS",
             "stdio octal format: PASS",
+            "stdio numeric width: PASS",
             "stdio write failure: PASS",
             "stdio bad read op: PASS",
             "stdio bad fd flush: PASS",

@@ -838,8 +838,9 @@ bridges the kernel `_start(argc, argv)` launch ABI to TinyCC's normal
 BusyBox ships as `usr/bin/busybox`, configured for a useful Unix compatibility
 set rather than full Linux emulation. `ash` is enabled as `/bin/sh`, standalone
 applets are enabled, and common text, archive, process, filesystem, and
-diagnostic commands are available. Native SmallOS commands remain preferred in
-shell lookup; BusyBox is the fallback for missing applets.
+diagnostic commands are available, including gzip/gunzip and checksum helpers.
+Native SmallOS commands remain preferred in shell lookup; BusyBox is the
+fallback for missing applets.
 
 ## Compile
 

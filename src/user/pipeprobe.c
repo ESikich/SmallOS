@@ -172,6 +172,10 @@ int main(void) {
         puts("pipeprobe rw: FAIL");
         return 1;
     }
+    if (lseek(fds[0], 0, SEEK_CUR) != -1 || errno != ESPIPE) {
+        puts("pipeprobe lseek espipe: FAIL");
+        return 1;
+    }
     close(fds[1]);
     if (read(fds[0], buf, 1) != 0) {
         puts("pipeprobe eof: FAIL");

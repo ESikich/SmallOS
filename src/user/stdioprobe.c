@@ -90,6 +90,14 @@ void _start(int argc, char** argv) {
         puts("stdio octal format: PASS");
     }
 
+    snprintf(fmtbuf, sizeof(fmtbuf), "%0*lo|%04x|%05d", 8, 0644ul, 0x2au, -7);
+    if (strcmp(fmtbuf, "00000644|002a|-0007") != 0) {
+        puts("stdio numeric width: FAIL");
+        ok = 0;
+    } else {
+        puts("stdio numeric width: PASS");
+    }
+
     in = fopen("usr/bin/hello", "r");
     if (!in || fwrite("x", 1, 1, in) != 0 || !ferror(in)) {
         puts("stdio write failure: FAIL");
