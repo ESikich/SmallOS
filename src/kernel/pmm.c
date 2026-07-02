@@ -9,12 +9,14 @@
  * Bitmap allocator covering PMM_BASE (0x200000) .. 0x7FFFFFF.
  *
  * Kernel BSS starts at 0x100000.  The bump allocator
- * (kmalloc / kmalloc_page) starts after BSS and owns the remaining
- * space before the boot stack for kernel-owned permanent allocations.
- * The PMM owns 0x200000–0x7FFFFFF for reclaimable page-frame allocations such as
- * per-process page directories, private page tables, user ELF pages,
- * and user stacks.  The ranges never overlap, so there is no ordering
- * constraint between the two allocators.
+ * (kmalloc / kmalloc_page) starts after BSS for kernel-owned permanent
+ * allocations.  Early bump allocations are reserved during pmm_init();
+ * later bump allocations call pmm_reserve_range() so any pages they cross
+ * inside the PMM window cannot be handed to user processes.
+ *
+ * The PMM owns 0x200000–0x7FFFFFF for reclaimable page-frame allocations such
+ * as per-process page directories, private page tables, user ELF pages, and
+ * user stacks.
  *
  * Bitmap: 32256 bits = 4032 bytes, static in BSS (zeroed before kernel_main).
  * E820 initialization starts with all frames used, frees only BIOS-reported
@@ -25,6 +27,7 @@ static unsigned short s_refcount[PMM_NUM_FRAMES];
 static u32           s_free_count = 0;
 static u32           s_total_count = 0;
 static u32           s_next_free  = 0;
+static int           s_ready      = 0;
 
 /* ------------------------------------------------------------------ */
 /* Bitmap helpers                                                       */
@@ -190,6 +193,7 @@ void pmm_init(void) {
     s_free_count = 0;
     s_total_count = 0;
     s_next_free  = 0;
+    s_ready = 0;
 
     if (boot_info_e820_valid()) {
         pmm_free_e820_usable_ranges(boot_info_get());
@@ -198,6 +202,7 @@ void pmm_init(void) {
     }
 
     pmm_reserve_boot_ranges();
+    s_ready = 1;
     s_total_count = s_free_count;
 
     terminal_puts("pmm: ");
@@ -205,6 +210,14 @@ void pmm_init(void) {
     terminal_puts(" frames free (");
     terminal_put_uint(s_free_count * PMM_FRAME_SIZE / 1024);
     terminal_puts(" KB)\n");
+}
+
+void pmm_reserve_range(u32 start, u32 end) {
+    if (!s_ready) {
+        return;
+    }
+
+    pmm_mark_range_used(start, end);
 }
 
 u32 pmm_alloc_frame(void) {

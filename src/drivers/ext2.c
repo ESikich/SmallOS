@@ -2,7 +2,6 @@
 #include "../drivers/terminal.h"
 #include "../kernel/boot_info.h"
 #include "../kernel/klib.h"
-#include "../kernel/memory.h"
 #include "../kernel/paging.h"
 #include "../kernel/pmm.h"
 
@@ -116,6 +115,26 @@ static u8* s_block2 = 0;
 static u8* s_data_buf = 0;
 static u8* s_block_bitmap = 0;
 static u8* s_inode_bitmap = 0;
+
+static int ext2_alloc_load_buffer(void) {
+    u32 frames;
+    u32 phys;
+
+    if (s_load_buf) {
+        return 1;
+    }
+
+    frames = (EXT2_MAX_LOAD_FILE_BYTES + PMM_FRAME_SIZE - 1u) / PMM_FRAME_SIZE;
+    phys = pmm_alloc_contiguous_frames(frames);
+    if (!phys) {
+        terminal_puts("ext2: cannot allocate load buffer\n");
+        return 0;
+    }
+
+    s_load_buf = (u8*)paging_phys_to_kernel_virt(phys);
+    k_memset(s_load_buf, 0, frames * PMM_FRAME_SIZE);
+    return 1;
+}
 
 static u16 read_u16_le(const u8* buf, u32 off) {
     return (u16)(buf[off] | ((u16)buf[off + 1u] << 8));
@@ -1340,12 +1359,8 @@ int ext2_init(void) {
     s_bitmap_write_defer_depth = 0;
     s_next_alloc_block = EXT2_FIRST_DATA_BLOCK;
 
-    if (!s_load_buf) {
-        s_load_buf = (u8*)kmalloc(EXT2_MAX_LOAD_FILE_BYTES);
-        if (!s_load_buf) {
-            terminal_puts("ext2: cannot allocate load buffer\n");
-            return 0;
-        }
+    if (!ext2_alloc_load_buffer()) {
+        return 0;
     }
 
     if (s_use_boot_ramdisk && boot_info_ramdisk_valid()) {

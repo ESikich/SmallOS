@@ -1,4 +1,5 @@
 #include "memory.h"
+#include "pmm.h"
 
 #define PAGE_SIZE 4096u
 
@@ -11,11 +12,14 @@ void memory_init(unsigned int start) {
 }
 
 void* kmalloc(unsigned int size) {
+    unsigned int old_top;
+
     if (size == 0) {
         return 0;
     }
 
-    void* addr = (void*)heap_current;
+    old_top = heap_current;
+    void* addr = (void*)old_top;
     heap_current += size;
 
     /* align to 4 bytes */
@@ -23,6 +27,7 @@ void* kmalloc(unsigned int size) {
         heap_current = (heap_current & ~0x3) + 4;
     }
 
+    pmm_reserve_range(old_top, heap_current);
     return addr;
 }
 
@@ -32,18 +37,24 @@ void* kmalloc(unsigned int size) {
  * Allocate one page-aligned 4096-byte block from the bump allocator.
  * Used for kernel-owned, long-lived structures that do not need to be
  * freed (for example, kernel tables or bookkeeping buffers).
+ * Once the PMM is online, each bump allocation reserves the physical pages it
+ * spans so the frame allocator cannot reuse kernel-owned memory.
  *
  * Reclaimable page frames used for user-space mappings are allocated
  * from the PMM instead so they can be freed later.
  */
 void* kmalloc_page(void) {
+    unsigned int old_top;
+
     /* round up to next page boundary */
     if (heap_current & (PAGE_SIZE - 1)) {
         heap_current = (heap_current + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
     }
 
-    void* addr = (void*)heap_current;
+    old_top = heap_current;
+    void* addr = (void*)old_top;
     heap_current += PAGE_SIZE;
+    pmm_reserve_range(old_top, heap_current);
     return addr;
 }
 
