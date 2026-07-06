@@ -2155,9 +2155,8 @@ int sysinfo(struct sysinfo* info) {
 FILE* setmntent(const char* filename, const char* type) {
     FILE* fp;
 
-    (void)type;
     if (!filename) filename = MOUNTED;
-    fp = fopen(filename, "r");
+    fp = fopen(filename, type ? type : "r");
     if (!fp && strcmp(filename, MOUNTED) != 0) {
         fp = fopen(MOUNTED, "r");
     }
@@ -2165,27 +2164,73 @@ FILE* setmntent(const char* filename, const char* type) {
 }
 
 struct mntent* getmntent(FILE* stream) {
-    static struct mntent entries[] = {
-        { "rootfs", "/", "ext2", "rw", 0, 0 },
-        { "proc", "/proc", "proc", "rw", 0, 0 },
-        { "dev", "/dev", "devtmpfs", "rw", 0, 0 },
-    };
-    static unsigned int index = 0;
+    static struct mntent entry;
+    static char line[256];
 
-    if (!stream) {
-        index = 0;
+    return getmntent_r(stream, &entry, line, (int)sizeof(line));
+}
+
+struct mntent* getmntent_r(FILE* stream,
+                           struct mntent* mntbuf,
+                           char* buf,
+                           int buflen) {
+    char* save = 0;
+    char* tok;
+
+    if (!stream || !mntbuf || !buf || buflen <= 1) {
+        set_errno(EINVAL);
         return 0;
     }
-    if (index >= sizeof(entries) / sizeof(entries[0])) {
-        index = 0;
-        return 0;
+    while (fgets(buf, buflen, stream)) {
+        char* line = buf;
+        while (*line == ' ' || *line == '\t') line++;
+        if (!*line || *line == '\n' || *line == '#') continue;
+
+        tok = strtok_r(line, " \t\r\n", &save);
+        if (!tok) continue;
+        mntbuf->mnt_fsname = tok;
+
+        tok = strtok_r(0, " \t\r\n", &save);
+        if (!tok) continue;
+        mntbuf->mnt_dir = tok;
+
+        tok = strtok_r(0, " \t\r\n", &save);
+        if (!tok) continue;
+        mntbuf->mnt_type = tok;
+
+        tok = strtok_r(0, " \t\r\n", &save);
+        mntbuf->mnt_opts = tok ? tok : (char*)"rw";
+
+        tok = strtok_r(0, " \t\r\n", &save);
+        mntbuf->mnt_freq = tok ? atoi(tok) : 0;
+
+        tok = strtok_r(0, " \t\r\n", &save);
+        mntbuf->mnt_passno = tok ? atoi(tok) : 0;
+        return mntbuf;
     }
-    return &entries[index++];
+    return 0;
+}
+
+int addmntent(FILE* stream, const struct mntent* mnt) {
+    if (!stream || !mnt) {
+        set_errno(EINVAL);
+        return 1;
+    }
+    if (fprintf(stream,
+                "%s %s %s %s %d %d\n",
+                mnt->mnt_fsname ? mnt->mnt_fsname : "none",
+                mnt->mnt_dir ? mnt->mnt_dir : "/",
+                mnt->mnt_type ? mnt->mnt_type : "auto",
+                mnt->mnt_opts ? mnt->mnt_opts : "rw",
+                mnt->mnt_freq,
+                mnt->mnt_passno) < 0) {
+        return 1;
+    }
+    return 0;
 }
 
 int endmntent(FILE* stream) {
     if (stream) fclose(stream);
-    (void)getmntent(0);
     return 1;
 }
 

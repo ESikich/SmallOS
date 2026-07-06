@@ -993,8 +993,8 @@ Shipped ext2 programs:
 - `usr/libexec/tests/sessprobe` - exercise session ids, process groups,
   terminal foreground process-group wrappers, and child inheritance
 - `usr/libexec/tests/mountprobe` - exercise state-backed mount listings,
-  per-mount `statfs`/`fstatfs`, gated dynamic mount attempts, and busy static
-  unmount failures
+  per-mount `statfs`/`fstatfs`, dynamic `proc`/`devtmpfs` pseudo mounts,
+  gated ext2 stacking, and busy unmount failures
 - `usr/libexec/tests/badptrprobe` - exercise unmapped user pointers, page-crossing buffers/structs, and wrapped syscall byte counts
 - `usr/libexec/tests/sleep_test` - exercise SYS_SLEEP semantics
 - `usr/libexec/tests/ptrguard` - exercise syscall pointer validation

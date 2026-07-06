@@ -17,6 +17,11 @@ struct mntent {
 
 FILE* setmntent(const char* filename, const char* type);
 struct mntent* getmntent(FILE* stream);
+struct mntent* getmntent_r(FILE* stream,
+                           struct mntent* mntbuf,
+                           char* buf,
+                           int buflen);
+int addmntent(FILE* stream, const struct mntent* mnt);
 int endmntent(FILE* stream);
 char* hasmntopt(const struct mntent* mnt, const char* opt);
 

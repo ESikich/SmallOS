@@ -484,10 +484,10 @@ stats, and directory listings needed by tools such as `cat`, `ps`, `free`,
 `df`, shell redirection, and compatibility probes. The terminal layer now
 supports fd-backed `tcgetattr`, `tcsetattr`, `TIOCGWINSZ`, `TIOCSPGRP`, and
 `TIOCGPGRP` for console/PTY descriptors. The mount table is kernel-backed for
-the static ext2 root, `/proc`, and `/dev` mounts; `/proc/mounts`,
-`statfs`, `fstatfs`, `statvfs`, and `fstatvfs` report that state. Dynamic VFS
-stacking, procfs write knobs, authentication devices, and full shell
-job-control semantics remain out of scope for now.
+the ext2 root, `/proc`, `/dev`, and dynamic `proc`/`devtmpfs` pseudo mounts;
+`/proc/mounts`, `statfs`, `fstatfs`, `statvfs`, and `fstatvfs` report that
+state. Dynamic ext2 stacking, procfs write knobs, authentication devices, and
+full shell job-control semantics remain out of scope for now.
 
 ---
 
@@ -503,11 +503,12 @@ process/filesystem diagnostics. Filesystem-facing applets such as `ln`,
 Native `/bin` tools stay first in command lookup; if a bare command is missing,
 the shell runs `/usr/bin/busybox <command> ...`.
 
-The current compatibility wave deliberately leaves mount management, init,
-login/getty, raw-socket-heavy tools, authentication semantics, and complete
-Linux device behavior disabled or stubbed. New BusyBox applets should grow the
-shared runtime, headers, and virtual filesystem behavior when they reveal a
-portable Unix expectation.
+The current compatibility wave enables BusyBox `mount`/`umount` for
+`proc`/`devtmpfs` pseudo mounts but deliberately leaves arbitrary filesystem
+mounting, init, login/getty, raw-socket-heavy tools, authentication semantics,
+and complete Linux device behavior disabled or stubbed. New BusyBox applets
+should grow the shared runtime, headers, and virtual filesystem behavior when
+they reveal a portable Unix expectation.
 
 ---
 
@@ -579,7 +580,8 @@ Runtime coverage currently lives in guest ELF probes:
 - `sessprobe` - session ids, process groups, terminal foreground pgrp wrappers,
   child inheritance, and invalid process/session failures
 - `mountprobe` - state-backed mount listings, per-mount `statfs`/`fstatfs`,
-  gated dynamic mount attempts, and busy static unmount failures
+  dynamic `proc`/`devtmpfs` pseudo mounts, gated ext2 stacking, and busy
+  unmount failures
 - `stdioprobe` - EOF/error state, `clearerr`, `fflush`, invalid stdio ops
 - `dirprobe` - root and nested directory iteration, EOF, invalid/missing dirs
 - `errnoprobe` - wrapper `errno` behavior

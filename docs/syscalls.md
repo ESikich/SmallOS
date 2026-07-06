@@ -1297,14 +1297,19 @@ int sys_statfs(const char* path, sys_statfs_t* out);
 int sys_fstatfs(int fd, sys_statfs_t* out);
 ```
 
-The kernel owns a static mount table for the ext2 root, `/proc`, and `/dev`.
+The kernel owns a mount table seeded with the ext2 root, `/proc`, and `/dev`.
 `/proc/mounts` is rendered from that table, and `statfs`/`fstatfs` report
 per-mount filesystem identities: ext2 for `/`, proc for `/proc`, and devtmpfs
-for `/dev`. `sys_mount` validates requests but dynamic VFS stacking is not
-enabled yet; already-mounted static targets fail with `-EBUSY`, unsupported
-types or flags fail with `-EINVAL`, and otherwise valid dynamic mount requests
-fail with `-ENOSYS`. Static mounts are pinned, so `sys_umount2` reports
-`-EBUSY` for `/`, `/proc`, and `/dev`.
+for `/dev`. `sys_mount` accepts dynamic `proc` and `devtmpfs` pseudo mounts on
+existing ext2 directories and routes lookups below those mount points through
+the same virtual `/proc` and `/dev` providers. Dynamic pseudo mounts can be
+removed once no process cwd or open fd is below the target; busy unmounts fail
+with `-EBUSY`. The static root, `/proc`, and `/dev` mounts remain pinned and
+also fail `sys_umount2` with `-EBUSY`.
+
+Unsupported filesystem types or unknown flags fail with `-EINVAL`.
+Remount/bind/move/propagation action flags and dynamic ext2 stacking remain
+out of scope for this milestone and fail with `-ENOSYS`.
 
 ### SYS_USB_MOUSE_OP (87)
 

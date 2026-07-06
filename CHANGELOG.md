@@ -61,7 +61,7 @@ wrappers in `src/user/posix`.
   * Added `getrlimit`, `setrlimit`, and `getrusage` syscalls/wrappers, with enforced `RLIMIT_NOFILE` and `usr/libexec/tests/rsrcprobe` coverage for resource/accounting behavior.
   * Added kernel-backed session and process-group syscalls/wrappers for `setsid`, `getsid`, `setpgid`, `getpgid`, `tcgetpgrp`, and `tcsetpgrp`, plus `usr/libexec/tests/sessprobe` coverage.
   * Hardened `getrusage(RUSAGE_CHILDREN)` to report waited-child accounting and extended `usr/libexec/tests/rsrcprobe` coverage.
-  * Added a kernel-backed static mount table for `/`, `/proc`, and `/dev`, appended `mount`/`umount2`/`statfs`/`fstatfs` syscalls and wrappers, made `/proc/mounts` state-backed, and added `usr/libexec/tests/mountprobe` coverage while keeping dynamic mounts and BusyBox mount applets gated.
+  * Added a kernel-backed mount table for `/`, `/proc`, and `/dev`, appended `mount`/`umount2`/`statfs`/`fstatfs` syscalls and wrappers, made `/proc/mounts` state-backed, enabled dynamic `proc`/`devtmpfs` pseudo mounts with busy unmount checks, and enabled BusyBox `mount`/`umount` smoke coverage while keeping arbitrary ext2 stacking gated.
   * Batched buffered file flushes into 64 KiB ext2 writes so large FTP uploads no longer fall off a 4 KiB-per-inode-update cliff when they grow past the VFS write cache.
   * Switched ext2 block I/O to single 8-sector ATA commands instead of issuing one ATA command per 512-byte sector.
   * Cached ext2 block/inode bitmaps in memory after the first read to avoid repeated bitmap rereads during block-heavy writes.

@@ -182,8 +182,8 @@ setconf CONFIG_FEATURE_SH_NOFORK y
 setconf CONFIG_FEATURE_SH_READ_FRAC y
 unsetconf CONFIG_HUSH
 
-unsetconf CONFIG_MOUNT
-unsetconf CONFIG_UMOUNT
+setconf CONFIG_MOUNT y
+setconf CONFIG_UMOUNT y
 unsetconf CONFIG_INIT
 unsetconf CONFIG_LOGIN
 unsetconf CONFIG_GETTY

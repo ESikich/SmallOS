@@ -67,12 +67,46 @@
 #define SYS_RLIM_INFINITY     0xFFFFFFFFu
 #define SYS_RUSAGE_SELF       0
 #define SYS_RUSAGE_CHILDREN  (-1)
-#define SYS_MOUNT_MS_RDONLY   1u
+#define SYS_MOUNT_MS_RDONLY      1u
+#define SYS_MOUNT_MS_NOSUID      2u
+#define SYS_MOUNT_MS_NODEV       4u
+#define SYS_MOUNT_MS_NOEXEC      8u
+#define SYS_MOUNT_MS_SYNCHRONOUS 16u
+#define SYS_MOUNT_MS_REMOUNT     32u
+#define SYS_MOUNT_MS_MANDLOCK    64u
+#define SYS_MOUNT_MS_DIRSYNC     128u
+#define SYS_MOUNT_MS_NOSYMFOLLOW 256u
+#define SYS_MOUNT_MS_NOATIME     1024u
+#define SYS_MOUNT_MS_NODIRATIME  2048u
+#define SYS_MOUNT_MS_BIND        4096u
+#define SYS_MOUNT_MS_MOVE        8192u
+#define SYS_MOUNT_MS_REC         16384u
+#define SYS_MOUNT_MS_SILENT      32768u
+#define SYS_MOUNT_MS_UNBINDABLE  (1u << 17)
+#define SYS_MOUNT_MS_PRIVATE     (1u << 18)
+#define SYS_MOUNT_MS_SLAVE       (1u << 19)
+#define SYS_MOUNT_MS_SHARED      (1u << 20)
+#define SYS_MOUNT_MS_RELATIME    (1u << 21)
+#define SYS_MOUNT_MS_STRICTATIME (1u << 24)
+#define SYS_MOUNT_MS_LAZYTIME    (1u << 25)
+#define SYS_MOUNT_MS_MGC_VAL     0xc0ed0000u
+#define SYS_MOUNT_MS_MGC_MSK     0xffff0000u
+#define SYS_MOUNT_SUPPORTED_FLAGS \
+    (SYS_MOUNT_MS_RDONLY | SYS_MOUNT_MS_NOSUID | SYS_MOUNT_MS_NODEV | \
+     SYS_MOUNT_MS_NOEXEC | SYS_MOUNT_MS_SYNCHRONOUS | SYS_MOUNT_MS_MANDLOCK | \
+     SYS_MOUNT_MS_DIRSYNC | SYS_MOUNT_MS_NOSYMFOLLOW | SYS_MOUNT_MS_NOATIME | \
+     SYS_MOUNT_MS_NODIRATIME | SYS_MOUNT_MS_SILENT | SYS_MOUNT_MS_RELATIME | \
+     SYS_MOUNT_MS_STRICTATIME | SYS_MOUNT_MS_LAZYTIME)
+#define SYS_MOUNT_ACTION_FLAGS \
+    (SYS_MOUNT_MS_REMOUNT | SYS_MOUNT_MS_BIND | SYS_MOUNT_MS_MOVE | \
+     SYS_MOUNT_MS_REC | SYS_MOUNT_MS_UNBINDABLE | SYS_MOUNT_MS_PRIVATE | \
+     SYS_MOUNT_MS_SLAVE | SYS_MOUNT_MS_SHARED)
 #define SYS_UMOUNT_MNT_FORCE  1u
 #define SYS_UMOUNT_MNT_DETACH 2u
 #define SYS_STATFS_EXT2_MAGIC 0xEF53L
 #define SYS_STATFS_PROC_MAGIC 0x9FA0L
 #define SYS_STATFS_DEV_MAGIC  0x01021994L
+#define SYS_MOUNT_MAX         16u
 
 static unsigned char s_sys_block_sector[512] __attribute__((aligned(16)));
 static volatile int s_sys_block_sector_locked = 0;
@@ -85,22 +119,24 @@ typedef struct epoll_watch {
 } epoll_watch_t;
 
 typedef struct kernel_mount {
-    const char* source;
-    const char* target;
-    const char* fstype;
-    const char* options;
+    unsigned int used;
+    unsigned int dynamic;
+    char source[PROCESS_FD_NAME_MAX];
+    char target[PROCESS_FD_NAME_MAX];
+    char fstype[16];
+    char options[16];
     unsigned int flags;
     long magic;
     unsigned int pseudo;
 } kernel_mount_t;
 
-static kernel_mount_t s_mounts[] = {
-    { "rootfs", "",     "ext2",     "rw", 0u, SYS_STATFS_EXT2_MAGIC, 0u },
-    { "proc",   "proc", "proc",     "rw", 0u, SYS_STATFS_PROC_MAGIC, 1u },
-    { "dev",    "dev",  "devtmpfs", "rw", 0u, SYS_STATFS_DEV_MAGIC,  1u },
+static kernel_mount_t s_mounts[SYS_MOUNT_MAX] = {
+    { 1u, 0u, "rootfs", "",     "ext2",     "rw", 0u, SYS_STATFS_EXT2_MAGIC, 0u },
+    { 1u, 0u, "proc",   "proc", "proc",     "rw", 0u, SYS_STATFS_PROC_MAGIC, 1u },
+    { 1u, 0u, "dev",    "dev",  "devtmpfs", "rw", 0u, SYS_STATFS_DEV_MAGIC,  1u },
 };
 
-#define SYS_MOUNT_COUNT ((unsigned int)(sizeof(s_mounts) / sizeof(s_mounts[0])))
+#define SYS_MOUNT_STATIC_COUNT 3u
 
 struct user_itimerspec {
     struct {
@@ -519,13 +555,22 @@ static int mount_path_matches(const char* path, const char* target) {
     return path[len] == '\0' || path[len] == '/';
 }
 
+static int mount_is_proc(const kernel_mount_t* mnt) {
+    return mnt && mnt->used && path_eq(mnt->fstype, "proc");
+}
+
+static int mount_is_devtmpfs(const kernel_mount_t* mnt) {
+    return mnt && mnt->used && path_eq(mnt->fstype, "devtmpfs");
+}
+
 static const kernel_mount_t* mount_find_for_path(const char* path) {
     const kernel_mount_t* best = &s_mounts[0];
     unsigned int best_len = 0u;
 
     if (!path) return best;
-    for (unsigned int i = 0; i < SYS_MOUNT_COUNT; i++) {
+    for (unsigned int i = 0; i < SYS_MOUNT_MAX; i++) {
         unsigned int len;
+        if (!s_mounts[i].used) continue;
         if (!mount_path_matches(path, s_mounts[i].target)) continue;
         len = (unsigned int)k_strlen(s_mounts[i].target);
         if (!best || len >= best_len) {
@@ -538,10 +583,70 @@ static const kernel_mount_t* mount_find_for_path(const char* path) {
 
 static const kernel_mount_t* mount_find_exact(const char* path) {
     if (!path) return 0;
-    for (unsigned int i = 0; i < SYS_MOUNT_COUNT; i++) {
+    for (unsigned int i = 0; i < SYS_MOUNT_MAX; i++) {
+        if (!s_mounts[i].used) continue;
         if (path_eq(path, s_mounts[i].target)) return &s_mounts[i];
     }
     return 0;
+}
+
+static kernel_mount_t* mount_find_exact_mutable(const char* path) {
+    if (!path) return 0;
+    for (unsigned int i = 0; i < SYS_MOUNT_MAX; i++) {
+        if (!s_mounts[i].used) continue;
+        if (path_eq(path, s_mounts[i].target)) return &s_mounts[i];
+    }
+    return 0;
+}
+
+static kernel_mount_t* mount_alloc_slot(void) {
+    for (unsigned int i = SYS_MOUNT_STATIC_COUNT; i < SYS_MOUNT_MAX; i++) {
+        if (!s_mounts[i].used) return &s_mounts[i];
+    }
+    return 0;
+}
+
+static int mount_translate_virtual_path(const char* path,
+                                        char* out,
+                                        unsigned int out_size) {
+    const kernel_mount_t* mnt;
+    const char* base;
+    const char* suffix;
+    unsigned int pos = 0;
+    unsigned int target_len;
+
+    if (!path || !out || out_size == 0u) return 0;
+    mnt = mount_find_for_path(path);
+    if (!mnt || !mnt->pseudo) return 0;
+    if (mount_is_proc(mnt)) {
+        base = "proc";
+    } else if (mount_is_devtmpfs(mnt)) {
+        base = "dev";
+    } else {
+        return 0;
+    }
+
+    target_len = (unsigned int)k_strlen(mnt->target);
+    suffix = path + target_len;
+    if (mnt->target[0] != '\0' && *suffix != '\0' && *suffix != '/') {
+        return 0;
+    }
+
+    out[0] = '\0';
+    vbuf_puts(out, out_size, &pos, base);
+    if (*suffix == '/') {
+        vbuf_puts(out, out_size, &pos, suffix);
+    }
+    return out[0] != '\0';
+}
+
+static const char* virtual_effective_path(const char* path,
+                                          char* translated,
+                                          unsigned int translated_size) {
+    if (mount_translate_virtual_path(path, translated, translated_size)) {
+        return translated;
+    }
+    return path;
 }
 
 static unsigned int mount_build_proc_content(char* out, unsigned int cap) {
@@ -549,7 +654,8 @@ static unsigned int mount_build_proc_content(char* out, unsigned int cap) {
 
     if (!out || cap == 0u) return 0;
     out[0] = '\0';
-    for (unsigned int i = 0; i < SYS_MOUNT_COUNT; i++) {
+    for (unsigned int i = 0; i < SYS_MOUNT_MAX; i++) {
+        if (!s_mounts[i].used) continue;
         vbuf_puts(out, cap, &pos, s_mounts[i].source);
         vbuf_putc(out, cap, &pos, ' ');
         if (s_mounts[i].target[0] == '\0') {
@@ -595,7 +701,9 @@ static int virtual_proc_pid_path(const char* path,
 static int virtual_path_is_dir(const char* path) {
     process_t* proc = 0;
     const char* leaf = 0;
+    char translated[PROCESS_FD_NAME_MAX];
 
+    path = virtual_effective_path(path, translated, sizeof(translated));
     if (path_eq(path, "proc") || path_eq(path, "dev") || path_eq(path, "dev/fd")) {
         return 1;
     }
@@ -606,6 +714,9 @@ static int virtual_path_is_dir(const char* path) {
 }
 
 static int virtual_path_is_dev(const char* path, unsigned int* out_type) {
+    char translated[PROCESS_FD_NAME_MAX];
+
+    path = virtual_effective_path(path, translated, sizeof(translated));
     if (path_eq(path, "dev/null")) {
         if (out_type) *out_type = PROCESS_VIRTUAL_NULL;
         return 1;
@@ -640,8 +751,10 @@ static unsigned int virtual_build_proc_content(const char* path,
     unsigned int pos = 0;
     process_t* proc = 0;
     const char* leaf = 0;
+    char translated[PROCESS_FD_NAME_MAX];
 
     if (!out || cap == 0u) return 0;
+    path = virtual_effective_path(path, translated, sizeof(translated));
     out[0] = '\0';
 
     if (path_eq(path, "proc/meminfo")) {
@@ -737,8 +850,10 @@ static unsigned int virtual_build_proc_content(const char* path,
 static int virtual_path_regular_size(const char* path, unsigned int* out_size) {
     char tmp[PAGE_SIZE];
     unsigned int size;
+    char translated[PROCESS_FD_NAME_MAX];
 
     if (!path || !out_size) return 0;
+    path = virtual_effective_path(path, translated, sizeof(translated));
     if (!k_starts_with(path, "proc/")) return 0;
     size = virtual_build_proc_content(path, tmp, sizeof(tmp));
     if (size == 0u) return 0;
@@ -804,6 +919,15 @@ static int virtual_stat_info(const char* path, sys_stat_info_t* info) {
 
 static int stat_info_any(const char* path, sys_stat_info_t* info) {
     return virtual_stat_info(path, info) || vfs_stat_info(path, info);
+}
+
+static int path_on_pseudo_mount(const char* path) {
+    const kernel_mount_t* mnt = mount_find_for_path(path);
+    return mnt && mnt->used && mnt->pseudo;
+}
+
+static int path_is_mount_target(const char* path) {
+    return mount_find_exact(path) != 0;
 }
 
 #define SYS_PERM_X 1u
@@ -1861,6 +1985,7 @@ static int sys_open_write_impl(const char* name) {
     char kname[PROCESS_FD_NAME_MAX];
     int path_rc = copy_user_path_resolved(kname, sizeof(kname), name);
     if (path_rc < 0) return path_rc;
+    if (path_on_pseudo_mount(kname)) return -EACCES;
 
     process_t* proc = (process_t*)sched_current();
     if (!proc) return -EINVAL;
@@ -1933,6 +2058,7 @@ static int sys_open_mode_create_kpath_impl(const char* kname,
     }
 
     exists = vfs_stat(kname, &file_size, &is_dir);
+    if (!exists && path_on_pseudo_mount(kname)) return create ? -EACCES : -ENOENT;
     if (exists && create && excl) return -EEXIST;
     if (exists && is_dir && writable) return -EISDIR;
     if (!exists && !create) return path_lookup_errno(kname);
@@ -2941,6 +3067,7 @@ static int sys_mkdir_impl(const char* path, unsigned int mode) {
 
     if (path_rc < 0) return path_rc;
     if (!proc) return -EINVAL;
+    if (path_on_pseudo_mount(kpath)) return -EACCES;
     perm_rc = check_parent_permission(proc, kpath, SYS_PERM_W | SYS_PERM_X);
     if (perm_rc < 0) return perm_rc;
     if (!vfs_mkdir(kpath)) return -EIO;
@@ -2957,6 +3084,7 @@ static int sys_mkdirat_impl(int dirfd, const char* path, unsigned int mode) {
 
     if (path_rc < 0) return path_rc;
     if (!proc) return -EINVAL;
+    if (path_on_pseudo_mount(kpath)) return -EACCES;
     perm_rc = check_parent_permission(proc, kpath, SYS_PERM_W | SYS_PERM_X);
     if (perm_rc < 0) return perm_rc;
     if (!vfs_mkdir(kpath)) return -EIO;
@@ -2973,6 +3101,8 @@ static int sys_rmdir_impl(const char* path) {
 
     if (path_rc < 0) return path_rc;
     if (!proc) return -EINVAL;
+    if (path_is_mount_target(kpath)) return -EBUSY;
+    if (path_on_pseudo_mount(kpath)) return -EACCES;
     perm_rc = check_parent_permission(proc, kpath, SYS_PERM_W | SYS_PERM_X);
     if (perm_rc < 0) return perm_rc;
     return vfs_rmdir(kpath) ? 0 : path_lookup_errno(kpath);
@@ -2999,8 +3129,10 @@ static int virtual_dirent_at(const char* path,
     const char* name = 0;
     int is_dir = 0;
     unsigned int size = 0;
+    char translated[PROCESS_FD_NAME_MAX];
 
     if (!path || !out_name || out_name_size == 0u) return 0;
+    path = virtual_effective_path(path, translated, sizeof(translated));
 
     if (path_eq(path, "proc")) {
         unsigned int proc_count = sizeof(proc_entries) / sizeof(proc_entries[0]);
@@ -3230,6 +3362,8 @@ static int sys_unlink_impl(const char* path) {
 
     if (path_rc < 0) return path_rc;
     if (!proc) return -EINVAL;
+    if (path_is_mount_target(kpath)) return -EBUSY;
+    if (path_on_pseudo_mount(kpath)) return -EACCES;
     if (vfs_is_dir(kpath)) return -EISDIR;
     perm_rc = check_parent_permission(proc, kpath, SYS_PERM_W | SYS_PERM_X);
     if (perm_rc < 0) return perm_rc;
@@ -3246,10 +3380,14 @@ static int sys_unlinkat_impl(int dirfd, const char* path, unsigned int flags) {
     if (path_rc < 0) return path_rc;
     if (!proc) return -EINVAL;
     if (flags & SYS_AT_REMOVEDIR) {
+        if (path_is_mount_target(kpath)) return -EBUSY;
+        if (path_on_pseudo_mount(kpath)) return -EACCES;
         perm_rc = check_parent_permission(proc, kpath, SYS_PERM_W | SYS_PERM_X);
         if (perm_rc < 0) return perm_rc;
         return vfs_rmdir(kpath) ? 0 : path_lookup_errno(kpath);
     }
+    if (path_is_mount_target(kpath)) return -EBUSY;
+    if (path_on_pseudo_mount(kpath)) return -EACCES;
     if (vfs_is_dir(kpath)) return -EISDIR;
     perm_rc = check_parent_permission(proc, kpath, SYS_PERM_W | SYS_PERM_X);
     if (perm_rc < 0) return perm_rc;
@@ -3268,6 +3406,7 @@ static int sys_link_impl(const char* oldpath, const char* newpath) {
     int new_rc = copy_user_path_resolved(knew, sizeof(knew), newpath);
     if (new_rc < 0) return new_rc;
     if (!proc) return -EINVAL;
+    if (path_on_pseudo_mount(kold) || path_on_pseudo_mount(knew)) return -EACCES;
     perm_rc = check_path_permission(proc, kold, 0, 0);
     if (perm_rc < 0) return perm_rc;
     perm_rc = check_parent_permission(proc, knew, SYS_PERM_W | SYS_PERM_X);
@@ -3297,6 +3436,7 @@ static int sys_linkat_impl(int olddirfd,
         if (new_rc < 0) return new_rc;
     }
     if (!proc) return -EINVAL;
+    if (path_on_pseudo_mount(kold) || path_on_pseudo_mount(knew)) return -EACCES;
     perm_rc = check_path_permission(proc, kold, 0, 0);
     if (perm_rc < 0) return perm_rc;
     perm_rc = check_parent_permission(proc, knew, SYS_PERM_W | SYS_PERM_X);
@@ -3319,6 +3459,7 @@ static int sys_symlink_impl(const char* target, const char* linkpath) {
     int link_rc = copy_user_path_resolved(klink, sizeof(klink), linkpath);
     if (link_rc < 0) return link_rc;
     if (!proc) return -EINVAL;
+    if (path_on_pseudo_mount(klink)) return -EACCES;
     perm_rc = check_parent_permission(proc, klink, SYS_PERM_W | SYS_PERM_X);
     if (perm_rc < 0) return perm_rc;
     if (vfs_symlink(ktarget, klink)) return 0;
@@ -3343,6 +3484,7 @@ static int sys_symlinkat_impl(const char* target, int newdirfd, const char* link
         if (link_rc < 0) return link_rc;
     }
     if (!proc) return -EINVAL;
+    if (path_on_pseudo_mount(klink)) return -EACCES;
     perm_rc = check_parent_permission(proc, klink, SYS_PERM_W | SYS_PERM_X);
     if (perm_rc < 0) return perm_rc;
     if (vfs_symlink(ktarget, klink)) return 0;
@@ -3416,6 +3558,8 @@ static int sys_rename_impl(const char* src, const char* dst) {
     int dst_rc = copy_user_path_resolved(kdst, sizeof(kdst), dst);
     if (dst_rc < 0) return dst_rc;
     if (!proc) return -EINVAL;
+    if (path_is_mount_target(ksrc) || path_is_mount_target(kdst)) return -EBUSY;
+    if (path_on_pseudo_mount(ksrc) || path_on_pseudo_mount(kdst)) return -EACCES;
     perm_rc = check_parent_permission(proc, ksrc, SYS_PERM_W | SYS_PERM_X);
     if (perm_rc < 0) return perm_rc;
     perm_rc = check_parent_permission(proc, kdst, SYS_PERM_W | SYS_PERM_X);
@@ -3439,6 +3583,8 @@ static int sys_renameat_impl(int olddirfd,
         if (dst_rc < 0) return dst_rc;
     }
     if (!proc) return -EINVAL;
+    if (path_is_mount_target(ksrc) || path_is_mount_target(kdst)) return -EBUSY;
+    if (path_on_pseudo_mount(ksrc) || path_on_pseudo_mount(kdst)) return -EACCES;
     perm_rc = check_parent_permission(proc, ksrc, SYS_PERM_W | SYS_PERM_X);
     if (perm_rc < 0) return perm_rc;
     perm_rc = check_parent_permission(proc, kdst, SYS_PERM_W | SYS_PERM_X);
@@ -3455,6 +3601,7 @@ static int sys_chmod_impl(const char* path, unsigned int mode) {
 
     if (path_rc < 0) return path_rc;
     if (!proc) return -EINVAL;
+    if (path_on_pseudo_mount(kpath)) return -EACCES;
     perm_rc = check_path_permission(proc, kpath, 0, &info);
     if (perm_rc < 0) return perm_rc;
     if (!process_is_root(proc) && proc->euid != info.uid) return -EPERM;
@@ -3469,6 +3616,7 @@ static int sys_chown_impl(const char* path, unsigned int uid, unsigned int gid) 
 
     if (path_rc < 0) return path_rc;
     if (!proc) return -EINVAL;
+    if (path_on_pseudo_mount(kpath)) return -EACCES;
     if (!process_is_root(proc)) return -EPERM;
     perm_rc = check_path_permission(proc, kpath, 0, 0);
     if (perm_rc < 0) return perm_rc;
@@ -3493,6 +3641,7 @@ static int sys_utimens_kpath_impl(const char* kpath,
     int perm_rc;
 
     if (!proc) return -EINVAL;
+    if (path_on_pseudo_mount(kpath)) return -EACCES;
     if (nofollow) {
         perm_rc = check_path_prefix_execute(proc, kpath);
         if (perm_rc < 0) return perm_rc;
@@ -3547,6 +3696,7 @@ static int sys_mknod_impl(const char* path, unsigned int mode, unsigned int dev)
 
     if (path_rc < 0) return path_rc;
     if (!proc) return -EINVAL;
+    if (path_on_pseudo_mount(kpath)) return -EACCES;
     perm_rc = check_parent_permission(proc, kpath, SYS_PERM_W | SYS_PERM_X);
     if (perm_rc < 0) return perm_rc;
     final_mode = mode_after_umask(proc, mode & SYS_MODE_IFMT, mode);
@@ -4160,6 +4310,36 @@ static int mount_fstype_supported(const char* fstype) {
            path_eq(fstype, "devtmpfs");
 }
 
+static long mount_magic_for_fstype(const char* fstype) {
+    if (path_eq(fstype, "ext2")) return SYS_STATFS_EXT2_MAGIC;
+    if (path_eq(fstype, "proc")) return SYS_STATFS_PROC_MAGIC;
+    if (path_eq(fstype, "devtmpfs")) return SYS_STATFS_DEV_MAGIC;
+    return 0;
+}
+
+static int mount_pseudo_for_fstype(const char* fstype) {
+    return path_eq(fstype, "proc") || path_eq(fstype, "devtmpfs");
+}
+
+static int mount_target_busy(const kernel_mount_t* mnt) {
+    process_t* procs[SCHED_MAX_PROCS];
+    int count;
+
+    if (!mnt || !mnt->used || !mnt->target[0]) return 1;
+    count = sched_snapshot_all(procs, SCHED_MAX_PROCS);
+    for (int i = 0; i < count; i++) {
+        process_t* proc = procs[i];
+        if (!proc) continue;
+        if (mount_path_matches(proc->cwd, mnt->target)) return 1;
+        for (unsigned int fd = 0; fd < proc->fd_capacity; fd++) {
+            fd_entry_t* ent = &proc->fds[fd];
+            if (!ent->valid || ent->name[0] == '\0') continue;
+            if (mount_path_matches(ent->name, mnt->target)) return 1;
+        }
+    }
+    return 0;
+}
+
 static int sys_mount_impl(const char* source,
                           const char* target,
                           const char* fstype,
@@ -4169,11 +4349,16 @@ static int sys_mount_impl(const char* source,
     char ktarget[PROCESS_FD_NAME_MAX];
     char kfstype[32];
     sys_stat_info_t info;
+    kernel_mount_t* slot;
     int rc;
 
     (void)data;
     if (!target || !fstype) return -EFAULT;
-    if ((flags & ~SYS_MOUNT_MS_RDONLY) != 0u) return -EINVAL;
+    if ((flags & SYS_MOUNT_MS_MGC_MSK) == SYS_MOUNT_MS_MGC_VAL) {
+        flags &= ~SYS_MOUNT_MS_MGC_MSK;
+    }
+    if ((flags & SYS_MOUNT_ACTION_FLAGS) != 0u) return -ENOSYS;
+    if ((flags & ~SYS_MOUNT_SUPPORTED_FLAGS) != 0u) return -EINVAL;
     if (source) {
         rc = copy_user_cstr(ksource, sizeof(ksource), source);
         if (rc < 0) return rc;
@@ -4185,17 +4370,33 @@ static int sys_mount_impl(const char* source,
     if (rc < 0) return rc;
 
     if (!mount_fstype_supported(kfstype)) return -EINVAL;
-    if (!virtual_stat_info(ktarget, &info) && !vfs_stat_info(ktarget, &info)) {
+    if (mount_find_exact(ktarget)) return -EBUSY;
+    if (!vfs_stat_info(ktarget, &info)) {
         return path_lookup_errno(ktarget);
     }
     if (!info.is_dir) return -ENOTDIR;
-    if (mount_find_exact(ktarget)) return -EBUSY;
+    if (path_eq(kfstype, "ext2")) return -ENOSYS;
+    if (!mount_pseudo_for_fstype(kfstype)) return -EINVAL;
 
-    return -ENOSYS;
+    slot = mount_alloc_slot();
+    if (!slot) return -ENFILE;
+    k_memset(slot, 0, sizeof(*slot));
+    slot->used = 1u;
+    slot->dynamic = 1u;
+    k_strncpy(slot->source, source ? ksource : kfstype, sizeof(slot->source));
+    k_strncpy(slot->target, ktarget, sizeof(slot->target));
+    k_strncpy(slot->fstype, kfstype, sizeof(slot->fstype));
+    k_strncpy(slot->options, (flags & SYS_MOUNT_MS_RDONLY) ? "ro" : "rw",
+              sizeof(slot->options));
+    slot->flags = flags;
+    slot->magic = mount_magic_for_fstype(kfstype);
+    slot->pseudo = 1u;
+    return 0;
 }
 
 static int sys_umount2_impl(const char* target, unsigned int flags) {
     char ktarget[PROCESS_FD_NAME_MAX];
+    kernel_mount_t* mnt;
     int rc;
 
     if (!target) return -EFAULT;
@@ -4205,8 +4406,12 @@ static int sys_umount2_impl(const char* target, unsigned int flags) {
     rc = copy_user_path_resolved(ktarget, sizeof(ktarget), target);
     if (rc < 0) return rc;
 
-    if (mount_find_exact(ktarget)) return -EBUSY;
-    return -EINVAL;
+    mnt = mount_find_exact_mutable(ktarget);
+    if (!mnt) return -EINVAL;
+    if (!mnt->dynamic) return -EBUSY;
+    if (mount_target_busy(mnt)) return -EBUSY;
+    k_memset(mnt, 0, sizeof(*mnt));
+    return 0;
 }
 
 static int sys_display_info_impl(sys_display_info_t* out_info) {

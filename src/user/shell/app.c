@@ -1532,6 +1532,12 @@ void sh_selftest(void) {
     sh_selftest_exec_expect("busybox rm proof", "usr/bin/busybox rm /tmp/busybox-ls-proof-xyz", 0);
     sh_selftest_exec_expect("busybox mkdir", "usr/bin/busybox mkdir /tmp/busybox-dir", 0);
     sh_selftest_exec_expect("busybox rmdir", "usr/bin/busybox rmdir /tmp/busybox-dir", 0);
+    sh_selftest_exec_expect("busybox mount prep", "usr/bin/busybox mkdir /tmp/busybox-proc", 0);
+    sh_selftest_exec_expect("busybox mount proc", "usr/bin/busybox mount -t proc proc /tmp/busybox-proc", 0);
+    sh_selftest_exec_expect("busybox mount list", "usr/bin/busybox mount", 0);
+    sh_selftest_exec_expect("busybox mount read", "usr/bin/busybox grep MemTotal /tmp/busybox-proc/meminfo", 0);
+    sh_selftest_exec_expect("busybox umount proc", "usr/bin/busybox umount /tmp/busybox-proc", 0);
+    sh_selftest_exec_expect("busybox mount cleanup", "usr/bin/busybox rmdir /tmp/busybox-proc", 0);
     sh_selftest_exec("busybox rm prep", "touch /tmp/busybox-rm.txt");
     sh_selftest_exec_expect("busybox rm", "usr/bin/busybox rm /tmp/busybox-rm.txt", 0);
     sh_selftest_exec_expect("busybox basename", "usr/bin/busybox basename /tmp/busybox-name.txt", 0);
