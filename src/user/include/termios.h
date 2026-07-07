@@ -32,6 +32,7 @@ struct termios {
     tcflag_t c_oflag;
     tcflag_t c_cflag;
     tcflag_t c_lflag;
+    cc_t c_line;
     cc_t c_cc[NCCS];
 };
 
@@ -80,9 +81,28 @@ struct termios {
 #define IMAXBEL 0020000
 #define ONLCR 0000004
 
+#define CS5 0000000
+#define CS6 0000020
+#define CS7 0000040
+#define CS8 0000060
+#define CSIZE 0000060
+#define CSTOPB 0000100
+#define CREAD 0000200
+#define PARENB 0000400
+#define PARODD 0001000
+#define HUPCL 0002000
+#define CLOCAL 0004000
+#define CRTSCTS 020000000000u
+
+#define ECHOCTL 0001000
+#define ECHOKE 0004000
+
 int tcgetattr(int fd, struct termios* termios_p);
 int tcsetattr(int fd, int optional_actions, const struct termios* termios_p);
 int tcflush(int fd, int queue_selector);
+int tcdrain(int fd);
+int cfsetspeed(struct termios* termios_p, speed_t speed);
+pid_t tcgetsid(int fd);
 pid_t tcgetpgrp(int fd);
 int tcsetpgrp(int fd, pid_t pgrp);
 

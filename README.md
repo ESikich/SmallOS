@@ -58,10 +58,11 @@ BusyBox-backed Unix compatibility layer inside the guest.
   `hexdump`, network applets such as `ifconfig`, `route`, `arp`, `ip`,
   `hostname`, `ipcalc`, `netstat`, `nslookup`, `pscan`, `ping`, `nc`, plain
   HTTP `wget`, `whois`, `ftpget`, `ftpput`, `tftp`, `tcpsvd`, `udpsvd`,
-  `tftpd`, and `httpd`, plus link/node utilities such as `ln`, `link`,
-  `readlink`, `mkfifo`, and `mknod`. `/bin/sh` launches BusyBox `ash` with
-  basic POSIX job-control support for script-style compatibility without
-  replacing `/bin/shell`.
+  `tftpd`, and `httpd`, login-flow applets such as `init`, `login`, and
+  `getty`, plus link/node utilities such as `ln`, `link`, `readlink`,
+  `mkfifo`, and `mknod`. `/bin/sh` launches BusyBox `ash` with basic POSIX
+  job-control support for script-style compatibility without replacing
+  `/bin/shell`.
 - The compatibility layer exposes virtual `/proc` and `/dev` entries used by
   Unix tools, including memory, uptime, process, mount, filesystem, network,
   null, zero, tty, console, and standard-fd paths.

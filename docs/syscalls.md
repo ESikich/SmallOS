@@ -1348,8 +1348,11 @@ int sys_tty_ioctl(int fd, uint32_t request, void* arg);
 
 Terminal attributes live in kernel terminal state. PTYs carry their own
 termios data and console-like descriptors use a default console terminal
-state. `sys_tty_ioctl` currently supports `TIOCGWINSZ`, `TIOCGPGRP`, and
-`TIOCSPGRP`; non-terminal descriptors fail with `-ENOTTY`.
+state. `sys_tty_ioctl` currently supports `TIOCGWINSZ`, `TIOCGPGRP`,
+`TIOCSPGRP`, and compatibility no-ops for `TIOCSCTTY`/`TIOCNOTTY`;
+non-terminal descriptors fail with `-ENOTTY`. The controlling-tty no-ops let
+BusyBox `getty`/`login` tolerate SmallOS console and PTY descriptors without
+modeling the full Linux tty-stealing lifecycle.
 
 ### Resource and Usage Syscalls (132-134)
 
@@ -1382,7 +1385,8 @@ children into a valid same-session process group, or create a new group whose
 id is the target pid. Terminal foreground process-group ioctls validate that
 the requested group exists in the caller's session. Terminal stop/continue
 delivery uses those groups for Ctrl+Z, `killpg()`, BusyBox `ash` job control,
-and `waitpid(..., WUNTRACED)` stopped-child reporting.
+BusyBox `getty`/`login` terminal setup, and `waitpid(..., WUNTRACED)`
+stopped-child reporting.
 
 ### Mount and Filesystem Statistics Syscalls (139-142)
 
@@ -1826,8 +1830,8 @@ int sys_setgid(uint32_t gid);
 
 Changes the caller's real and effective uid or gid. Root can switch to any id.
 Non-root callers may only set the id to their current real or effective id.
-SmallOS does not yet model saved ids, setuid/setgid inode bits, or full
-supplementary-group transitions.
+SmallOS does not yet model saved ids, setuid/setgid inode bits, password
+authentication state, or full supplementary-group transitions.
 
 ---
 

@@ -59,6 +59,8 @@
 #define SYS_IOCTL_TIOCGPGRP   0x540Fu
 #define SYS_IOCTL_TIOCSPGRP   0x5410u
 #define SYS_IOCTL_TIOCGWINSZ  0x5413u
+#define SYS_IOCTL_TIOCSCTTY   0x540Eu
+#define SYS_IOCTL_TIOCNOTTY   0x5422u
 #define SYS_RLIMIT_CPU        0
 #define SYS_RLIMIT_FSIZE      1
 #define SYS_RLIMIT_DATA       2
@@ -5460,6 +5462,10 @@ static int sys_tty_ioctl_impl(int fd, unsigned int request, void* arg) {
     ent = process_fd_get(proc, fd);
     if (!ent) return -EBADF;
     if (!process_fd_is_terminal(ent)) return -ENOTTY;
+
+    if (request == SYS_IOCTL_TIOCSCTTY || request == SYS_IOCTL_TIOCNOTTY) {
+        return 0;
+    }
 
     if (request == SYS_IOCTL_TIOCGWINSZ) {
         sys_winsize_t ws;

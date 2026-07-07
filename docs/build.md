@@ -853,7 +853,7 @@ hard/symbolic link tools, `readlink`, `mkfifo`, `mknod`, `ifconfig`, `route`,
 `arp`, `hostname`, `dnsdomainname`, `ipcalc`, `netstat`, `nslookup`, `pscan`,
 `ip link`/`ip addr`/`ip route`/`ip neigh`, IPv4 `ping`, `nc`, plain HTTP
 `wget`, `whois`, `ftpget`, `ftpput`, `tftp`, `tcpsvd`, `udpsvd`, `tftpd`,
-and `httpd`.
+`httpd`, `init`, `login`, and `getty`.
 Native SmallOS commands remain preferred in shell lookup; BusyBox is the
 fallback for missing applets.
 

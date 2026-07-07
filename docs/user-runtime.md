@@ -294,7 +294,9 @@ The runtime provides a small POSIX-shaped surface:
   `setpgrp`
 - `getuid`, `geteuid`, `getgid`, `getegid`, `setuid`, `setgid`, and `umask`
 - `getrlimit`, `setrlimit`, and `getrusage`
-- `sysinfo`, `times`, `uname`, `ioctl`, and kernel-backed termios wrappers
+- `sysinfo`, `times`, `uname`, `ioctl`, `reboot`, signal-set helpers, and
+  kernel-backed termios wrappers, including compatibility pieces used by
+  BusyBox `getty` and `login`
 - `popen` / `pclose` and `mntent` helpers for compatibility-oriented ports
 - `system`, implemented through `shell -c command`
 - `environ`, `getenv`, and `main(argc, argv, envp)` through `crt/crt0.c`
@@ -530,16 +532,18 @@ The current compatibility wave enables BusyBox `ash` job control, BusyBox
 `ip neigh`, ARP/hostname/calculation/inspection tools (`arp`, `hostname`,
 `dnsdomainname`, `ipcalc`, `netstat -r`, `nslookup`, `pscan`, and `whois`), and
 TCP/UDP applets (`nc`, plain HTTP `wget`, `ftpget`, `ftpput`, `tftp`,
-`tcpsvd`, `udpsvd`, `tftpd`, and `httpd`). Those applets are backed by kernel
+`tcpsvd`, `udpsvd`, `tftpd`, and `httpd`), and login-flow applets (`init`,
+`login`, and `getty`). Those applets are backed by kernel
 stopped-job/process-group semantics, kernel network ioctls, minimal rtnetlink,
 state-backed `/proc/net/dev`, `/proc/net/route`, and `/proc/net/arp`,
 ARP-neighbor reporting, raw ICMP sockets, UDP DNS/TFTP traffic, UDP
-`SO_REUSEADDR`/`MSG_PEEK` service compatibility, and the
-existing SmallOS IPv4/TCP path. Arbitrary filesystem mounting, init,
-login/getty, authentication semantics, BusyBox DHCP daemons/clients,
-telnet/telnetd, inetd, richer TFTP server modes, AF_PACKET applets, `ip`
-rule/tunnel modes, multi-interface and IPv6 behavior, HTTPS/TLS, and complete
-Linux device behavior remain disabled or stubbed. New BusyBox applets should
+`SO_REUSEADDR`/`MSG_PEEK` service compatibility, credential syscalls,
+`/etc/passwd`/`/etc/group`, and terminal/session compatibility wrappers for
+BusyBox `init`/`login`/`getty`. Arbitrary filesystem mounting, real BusyBox
+PID-1 boot supervision, password authentication semantics, BusyBox DHCP
+daemons/clients, telnet/telnetd, inetd, richer TFTP server modes, AF_PACKET
+applets, `ip` rule/tunnel modes, multi-interface and IPv6 behavior, HTTPS/TLS,
+and complete Linux device behavior remain disabled or stubbed. New BusyBox applets should
 grow the shared runtime, headers, and virtual filesystem behavior when they
 reveal a portable Unix expectation.
 

@@ -290,6 +290,7 @@ typedef struct sys_termios {
     unsigned int c_oflag;
     unsigned int c_cflag;
     unsigned int c_lflag;
+    unsigned char c_line;
     unsigned char c_cc[SYS_NCCS];
 } sys_termios_t;
 

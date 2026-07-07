@@ -17,7 +17,7 @@ DESCRIPTION
     making applets such as grep, sed, awk, df, du, free, ps, tar, gzip,
     gunzip, od, hexdump, ifconfig, route, ping, readlink, ln, chgrp, md5sum,
     sha1sum, sha256sum, link, mkfifo, mknod, ftpget, ftpput, tftp, tcpsvd,
-    udpsvd, tftpd, which, expr, and test available.
+    udpsvd, tftpd, init, login, getty, which, expr, and test available.
 
     /bin/sh is a tiny launcher for BusyBox ash. Basic job-control behavior is
     backed by SmallOS process groups, stopped child reporting, and terminal
@@ -35,11 +35,12 @@ SCOPE
     ipcalc, netstat, nslookup, pscan, whois, ip link, ip addr, ip route,
     ip neigh, ping, nc, plain HTTP wget, ftpget, ftpput, tftp, tcpsvd,
     udpsvd, tftpd, and httpd. BusyBox ash can use jobs, fg, bg, Ctrl+Z,
-    and SIGCONT/SIGTSTP-style
-    stopped jobs. Init/login/getty behavior, authentication semantics,
-    DHCP/telnet/inetd service applets, AF_PACKET applets, ip rule/tunnel,
-    IPv6, HTTPS/TLS, and complete /dev device behavior remain outside this
-    compatibility wave.
+    and SIGCONT/SIGTSTP-style stopped jobs. BusyBox init/login/getty applets
+    are present with SmallOS terminal/session/credential compatibility, but the
+    system still boots through the native boot sequence and does not provide
+    real password authentication. DHCP/telnet/inetd service applets, AF_PACKET
+    applets, ip rule/tunnel, IPv6, HTTPS/TLS, and complete /dev device behavior
+    remain outside this compatibility wave.
 
 FILES
     /usr/bin/busybox

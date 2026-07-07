@@ -21,6 +21,7 @@
 #include "sys/mount.h"
 #include "sys/statvfs.h"
 #include "sys/sysinfo.h"
+#include "sys/reboot.h"
 #include "libgen.h"
 #include "fnmatch.h"
 #include "netdb.h"
@@ -1163,7 +1164,9 @@ int ioctl(int fd, unsigned long request, ...) {
     arg = __builtin_va_arg(ap, void*);
     __builtin_va_end(ap);
 
-    if (request == TIOCGWINSZ || request == TIOCGPGRP || request == TIOCSPGRP) {
+    if (request == TIOCGWINSZ || request == TIOCGPGRP ||
+        request == TIOCSPGRP || request == TIOCSCTTY ||
+        request == TIOCNOTTY) {
         return errno_from_raw(sys_tty_ioctl(fd, (uint32_t)request, arg));
     }
     if ((request >= SIOCADDRT && request <= SIOCGIFHWADDR) ||
@@ -1295,6 +1298,15 @@ int sigaddset(sigset_t* set, int signum) {
     return 0;
 }
 
+int sigdelset(sigset_t* set, int signum) {
+    if (!set || signum <= 0 || signum >= 32) {
+        set_errno(EINVAL);
+        return -1;
+    }
+    *set &= ~(1u << (unsigned int)signum);
+    return 0;
+}
+
 int sigfillset(sigset_t* set) {
     if (!set) {
         set_errno(EFAULT);
@@ -1327,6 +1339,14 @@ int sigprocmask(int how, const sigset_t* set, sigset_t* oldset) {
 int sigsuspend(const sigset_t* mask) {
     (void)mask;
     set_errno(EINTR);
+    return -1;
+}
+
+int sigtimedwait(const sigset_t* set, void* info, const struct timespec* timeout) {
+    (void)set;
+    (void)info;
+    (void)timeout;
+    set_errno(EAGAIN);
     return -1;
 }
 
@@ -1507,6 +1527,16 @@ int seteuid(uid_t euid) {
 
 int setegid(gid_t egid) {
     return setgid(egid);
+}
+
+int reboot(int cmd) {
+    if (cmd == RB_ENABLE_CAD || cmd == RB_DISABLE_CAD) {
+        return 0;
+    }
+    if (cmd == RB_HALT_SYSTEM || cmd == RB_POWER_OFF) {
+        return errno_from_raw(sys_halt());
+    }
+    return errno_from_raw(sys_reboot());
 }
 
 pid_t waitpid(pid_t pid, int* status, int options) {
@@ -2594,6 +2624,32 @@ int tcflush(int fd, int queue_selector) {
         return -1;
     }
     return 0;
+}
+
+int tcdrain(int fd) {
+    if (!isatty(fd)) {
+        set_errno(ENOTTY);
+        return -1;
+    }
+    return 0;
+}
+
+int cfsetspeed(struct termios* termios_p, speed_t speed) {
+    if (!termios_p) {
+        set_errno(EFAULT);
+        return -1;
+    }
+    termios_p->c_cflag &= ~0xFFFFu;
+    termios_p->c_cflag |= (tcflag_t)(speed & 0xFFFFu);
+    return 0;
+}
+
+pid_t tcgetsid(int fd) {
+    if (!isatty(fd)) {
+        set_errno(ENOTTY);
+        return -1;
+    }
+    return getsid(0);
 }
 
 pid_t tcgetpgrp(int fd) {
