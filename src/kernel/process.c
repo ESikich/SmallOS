@@ -29,6 +29,8 @@ static u32 s_next_pid = 1;
 static process_t* s_process_registry[PROCESS_REGISTRY_MAX];
 static volatile int s_terminal_interrupt_pending = 0;
 static process_t* s_terminal_interrupt_target = 0;
+static volatile int s_terminal_stop_pending = 0;
+static process_t* s_terminal_stop_target = 0;
 static process_t* s_raw_console_reader = 0;
 static process_t* s_display_input_owner = 0;
 static volatile process_t* s_detach_requested = 0;
@@ -38,12 +40,19 @@ static volatile int s_detach_allowed = 0;
 #define PROCESS_SIGINT  2
 #define PROCESS_SIGPIPE 13
 #define PROCESS_SIGTERM 15
+#define PROCESS_SIGCONT 18
+#define PROCESS_SIGSTOP 19
+#define PROCESS_SIGTSTP 20
+#define PROCESS_SIGTTIN 21
+#define PROCESS_SIGTTOU 22
+#define PROCESS_STOPPED_STATUS(signum) (0x10000 | ((signum) & 0xFF))
 
 #define TERM_VINTR  0
 #define TERM_VERASE 2
 #define TERM_VEOF   4
 #define TERM_VTIME  5
 #define TERM_VMIN   6
+#define TERM_VSUSP 10
 #define TERM_LFLAG_ISIG   0000001u
 #define TERM_LFLAG_ICANON 0000002u
 #define TERM_LFLAG_ECHO   0000010u
@@ -133,6 +142,7 @@ static void terminal_attr_init_default(sys_termios_t* tio) {
     tio->c_cc[TERM_VEOF] = 4u;
     tio->c_cc[TERM_VMIN] = 1u;
     tio->c_cc[TERM_VTIME] = 0u;
+    tio->c_cc[TERM_VSUSP] = 26u;
 }
 
 static sys_termios_t* console_termios(void) {
@@ -241,6 +251,25 @@ static process_t* process_find_zombie_child(process_t* parent, int pid) {
     return 0;
 }
 
+static process_t* process_find_stopped_child(process_t* parent, int pid) {
+    if (!parent) return 0;
+
+    for (unsigned int i = 0; i < PROCESS_REGISTRY_MAX; i++) {
+        process_t* proc = s_process_registry[i];
+        if (!proc || proc->parent_pid != parent->pid) {
+            continue;
+        }
+        if (pid != -1 && proc->pid != (u32)pid) {
+            continue;
+        }
+        if (proc->state == PROCESS_STATE_STOPPED && !proc->stop_reported) {
+            return proc;
+        }
+    }
+
+    return 0;
+}
+
 static void process_orphan_children(u32 parent_pid) {
     if (parent_pid == 0) return;
 
@@ -321,15 +350,20 @@ static void process_key_consumer(key_event_t ev) {
 
     if (ev.ctrl && ev.key == KEY_Z) {
         process_t* proc = s_foreground_reader;
+        u32 pgid = s_foreground_pgid;
         if (!proc) return;
-        if (!s_detach_allowed) return;
 
         terminal_puts("^Z\n");
         keyboard_buf_clear();
-        s_detach_requested = proc;
-        s_foreground_reader = 0;
-        s_foreground_pgid = 0;
-        process_wake_parent_waiter(proc);
+        if (s_detach_allowed) {
+            s_detach_requested = proc;
+            s_foreground_reader = 0;
+            s_foreground_pgid = 0;
+            process_wake_parent_waiter(proc);
+        } else if (pgid != 0u) {
+            (void)process_group_stop(pgid, PROCESS_SIGTSTP, sched_current(), 1);
+            process_set_foreground(0);
+        }
         return;
     }
 
@@ -1868,6 +1902,9 @@ static int process_handle_pty_write(fd_entry_t* ent, const char* buf, unsigned i
             unsigned char vintr = pty->termios.c_cc[TERM_VINTR]
                                 ? pty->termios.c_cc[TERM_VINTR]
                                 : 3u;
+            unsigned char vsusp = pty->termios.c_cc[TERM_VSUSP]
+                                ? pty->termios.c_cc[TERM_VSUSP]
+                                : 26u;
             if ((pty->termios.c_lflag & TERM_LFLAG_ISIG) != 0u &&
                 (unsigned char)buf[i] == vintr &&
                 interrupt_pgid != 0u) {
@@ -1880,6 +1917,26 @@ static int process_handle_pty_write(fd_entry_t* ent, const char* buf, unsigned i
                     (void)pty_buffer_write(&pty->slave_to_master,
                                            interrupt_text,
                                            sizeof(interrupt_text) - 1u,
+                                           &pty->master_refs,
+                                           0);
+                }
+                if (i > 0) {
+                    return (int)i;
+                }
+                return 1;
+            }
+            if ((pty->termios.c_lflag & TERM_LFLAG_ISIG) != 0u &&
+                (unsigned char)buf[i] == vsusp &&
+                interrupt_pgid != 0u) {
+                char stop_text[] = "^Z\n";
+                (void)process_group_stop(interrupt_pgid,
+                                         PROCESS_SIGTSTP,
+                                         sched_current(),
+                                         0);
+                if ((pty->termios.c_lflag & TERM_LFLAG_ECHO) != 0u) {
+                    (void)pty_buffer_write(&pty->slave_to_master,
+                                           stop_text,
+                                           sizeof(stop_text) - 1u,
                                            &pty->master_refs,
                                            0);
                 }
@@ -2536,7 +2593,7 @@ int process_wait_pid(process_t* parent,
 
     if (!parent || !out_pid || !out_status) return -EINVAL;
     if (pid == 0 || pid < -1) return -EINVAL;
-    if ((options & ~1) != 0) return -EINVAL;
+    if ((options & ~(SYS_WAITPID_WNOHANG | SYS_WAITPID_WUNTRACED)) != 0) return -EINVAL;
 
     child = process_find_child(parent, pid);
     if (!child) return -ECHILD;
@@ -2556,7 +2613,17 @@ int process_wait_pid(process_t* parent,
             return 0;
         }
 
-        if (options & 1) {
+        if ((options & SYS_WAITPID_WUNTRACED) != 0) {
+            child = process_find_stopped_child(parent, pid);
+            if (child) {
+                *out_pid = (int)child->pid;
+                *out_status = child->exit_status;
+                child->stop_reported = 1;
+                return 0;
+            }
+        }
+
+        if (options & SYS_WAITPID_WNOHANG) {
             *out_pid = 0;
             *out_status = 0;
             return 0;
@@ -2596,6 +2663,84 @@ int process_kill_pid(int pid, int status, unsigned int esp) {
         paging_switch(paging_get_kernel_pd());
     }
     sched_kill(proc, esp);
+    return 0;
+}
+
+static int process_stop_one(process_t* proc,
+                            int signum,
+                            process_t* defer_current,
+                            int mark_terminal_stop) {
+    if (!proc || proc->state == PROCESS_STATE_ZOMBIE ||
+        proc->state == PROCESS_STATE_EXITED ||
+        proc->state == PROCESS_STATE_STOPPED) {
+        return 0;
+    }
+    if (!proc->pd) {
+        return 0;
+    }
+
+    proc->exit_status = PROCESS_STOPPED_STATUS(signum);
+    proc->stop_reported = 0;
+    if (keyboard_get_waiting_process() == (void*)proc) {
+        keyboard_set_waiting_process(0);
+    }
+    if (s_raw_console_reader == proc) {
+        s_raw_console_reader = 0;
+    }
+    process_clear_display_input_owner(proc);
+    input_forget_waiting_process(proc);
+    socket_wait_clear_process(proc);
+    wait_queue_remove_proc(proc);
+    proc->state = PROCESS_STATE_STOPPED;
+    process_wake_parent_waiter(proc);
+
+    if (proc == defer_current && mark_terminal_stop) {
+        s_terminal_stop_target = proc;
+        s_terminal_stop_pending = 1;
+    }
+    return 1;
+}
+
+int process_stop_pid(int pid, int signum, unsigned int esp) {
+    process_t* proc;
+
+    if (pid <= 0) return -EINVAL;
+
+    proc = process_find_by_pid((u32)pid);
+    if (!proc || proc->state == PROCESS_STATE_ZOMBIE ||
+        proc->state == PROCESS_STATE_EXITED) {
+        return -ESRCH;
+    }
+    if (!proc->pd) {
+        return -EPERM;
+    }
+
+    (void)process_stop_one(proc, signum, sched_current(), 0);
+    if (proc == sched_current()) {
+        sched_yield_now(esp);
+    }
+    return 0;
+}
+
+int process_continue_pid(int pid) {
+    process_t* proc;
+
+    if (pid <= 0) return -EINVAL;
+
+    proc = process_find_by_pid((u32)pid);
+    if (!proc || proc->state == PROCESS_STATE_ZOMBIE ||
+        proc->state == PROCESS_STATE_EXITED) {
+        return -ESRCH;
+    }
+    if (!proc->pd) {
+        return -EPERM;
+    }
+
+    (void)process_signal_deliver(proc, PROCESS_SIGCONT);
+    if (proc->state == PROCESS_STATE_STOPPED) {
+        proc->stop_reported = 0;
+        proc->state = PROCESS_STATE_RUNNING;
+    }
     return 0;
 }
 
@@ -3231,8 +3376,61 @@ int process_group_kill(u32 pgid, int status) {
     return process_group_force_exit(pgid, status, 0, 0);
 }
 
+int process_group_stop(u32 pgid,
+                       int signum,
+                       process_t* defer_current,
+                       int mark_terminal_stop) {
+    process_t* targets[SCHED_MAX_PROCS];
+    int count;
+    int stopped = 0;
+
+    if (pgid == 0) return 0;
+
+    count = sched_snapshot_process_group(pgid, targets, SCHED_MAX_PROCS);
+    for (int i = 0; i < count; i++) {
+        if (process_stop_one(targets[i], signum, defer_current, mark_terminal_stop)) {
+            stopped = 1;
+        }
+    }
+    return stopped;
+}
+
+int process_group_continue(u32 pgid) {
+    process_t* targets[SCHED_MAX_PROCS];
+    int count;
+    int found = 0;
+
+    if (pgid == 0) return -EINVAL;
+
+    count = sched_snapshot_process_group(pgid, targets, SCHED_MAX_PROCS);
+    for (int i = 0; i < count; i++) {
+        process_t* proc = targets[i];
+        if (!proc || proc->state == PROCESS_STATE_ZOMBIE ||
+            proc->state == PROCESS_STATE_EXITED) {
+            continue;
+        }
+        found = 1;
+        (void)process_signal_deliver(proc, PROCESS_SIGCONT);
+        if (proc->state == PROCESS_STATE_STOPPED) {
+            proc->stop_reported = 0;
+            proc->state = PROCESS_STATE_RUNNING;
+        }
+    }
+    return found ? 0 : -ESRCH;
+}
+
 void process_deliver_pending_terminal_interrupt(unsigned int esp) {
     process_t* proc;
+
+    if (s_terminal_stop_pending) {
+        proc = s_terminal_stop_target ? s_terminal_stop_target : sched_current();
+        s_terminal_stop_pending = 0;
+        s_terminal_stop_target = 0;
+        if (proc && proc == sched_current() &&
+            proc->state == PROCESS_STATE_STOPPED) {
+            sched_yield_now(esp);
+        }
+    }
 
     if (!s_terminal_interrupt_pending) return;
 

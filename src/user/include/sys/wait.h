@@ -5,7 +5,7 @@
 #include "uapi_syscall.h"
 
 #define WNOHANG SYS_WAITPID_WNOHANG
-#define WUNTRACED 2
+#define WUNTRACED SYS_WAITPID_WUNTRACED
 
 #define WIFEXITED(status)   (((status) & 0x7F) == 0)
 #define WEXITSTATUS(status) (((status) >> 8) & 0xFF)

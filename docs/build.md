@@ -70,7 +70,8 @@ BusyBox is downloaded into `.state/downloads/`, patched from
 `tools/configure_busybox_smalos.sh`, and built in a profile-local object tree.
 The installed binary is `usr/bin/busybox`. The image also includes `/bin/sh`,
 a tiny launcher that execs `busybox sh`, so BusyBox `ash` can serve script-like
-workloads while the native `/bin/shell` remains the boot shell.
+workloads and basic job control while the native `/bin/shell` remains the boot
+shell.
 
 Wolfenstein 3-D data files are not tracked. `make wolf3d-shareware-data`
 downloads the public Wolfenstein 3-D Shareware v1.4 zip from Wolf3D.net into
@@ -415,9 +416,10 @@ the freestanding guest runtime. The suite covers both freestanding
 stored under `/var/tmp/`, while the shipped hello demo lives under `usr/bin/`.
 
 BusyBox coverage lives in the same guest pass. The suite checks `/bin/sh`,
-native-shell fallback to `/usr/bin/busybox`, representative applets, virtual
-`/proc` and `/dev` paths, link/symlink/node applets, and compatibility wrappers
-such as `statfs`, `sysinfo`, metadata updates, and truncate.
+ash job control, native-shell fallback to `/usr/bin/busybox`, representative
+applets, virtual `/proc` and `/dev` paths, link/symlink/node applets, and
+compatibility wrappers such as `statfs`, `sysinfo`, metadata updates, and
+truncate.
 
 The user runtime behavior that those tests depend on is documented in
 [`docs/user-runtime.md`](user-runtime.md), including `errno`, cwd-aware
@@ -837,7 +839,8 @@ bridges the kernel `_start(argc, argv)` launch ABI to TinyCC's normal
 `usr/share/examples/tinycc/tccposix.c` inside the guest with that compiler.
 
 BusyBox ships as `usr/bin/busybox`, configured for a useful Unix compatibility
-set rather than full Linux emulation. `ash` is enabled as `/bin/sh`, standalone
+set rather than full Linux emulation. `ash` is enabled as `/bin/sh` with basic
+job control, standalone
 applets are enabled, and common text, archive, process, filesystem, and
 diagnostic commands are available, including gzip/gunzip, checksum helpers,
 hard/symbolic link tools, `readlink`, `mkfifo`, `mknod`, `ifconfig`, `route`,
@@ -966,6 +969,7 @@ Shipped ext2 programs:
 - `usr/libexec/tests/readline` - interactive SYS_READ demo
 - `usr/libexec/tests/exec_test` - exercise SYS_EXEC semantics
 - `usr/libexec/tests/waitprobe` - exercise getpid/waitpid/kill process lifecycle
+- `usr/libexec/tests/jobctlprobe` - exercise stopped children, WUNTRACED, SIGTSTP/SIGCONT, and killpg
 - `usr/libexec/tests/pipeprobe` - exercise pipe EOF, EPIPE, nonblocking, PIPE_BUF, poll, and blocking transfer behavior
 - `usr/libexec/tests/dupprobe` - exercise dup/dup2 shared descriptions and FD_CLOEXEC
 - `usr/libexec/tests/forkprobe` - exercise fork memory copy, wait, and shared inherited fd offsets

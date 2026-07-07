@@ -290,7 +290,8 @@ The runtime provides a small POSIX-shaped surface:
 - `fsync`, `ftruncate`, `fchmod`, `fchown`
 - `getcwd`, `chdir`
 - `getpid`, `fork`, `execve`, `execv`, `execvp`, `waitpid`, `kill`,
-  `setsid`, `getsid`, `setpgid`, `getpgid`, `getpgrp`, and `setpgrp`
+  `killpg`, `setsid`, `getsid`, `setpgid`, `getpgid`, `getpgrp`, and
+  `setpgrp`
 - `getuid`, `geteuid`, `getgid`, `getegid`, `setuid`, `setgid`, and `umask`
 - `getrlimit`, `setrlimit`, and `getrusage`
 - `sysinfo`, `times`, `uname`, `ioctl`, and kernel-backed termios wrappers
@@ -497,8 +498,11 @@ supports fd-backed `tcgetattr`, `tcsetattr`, `TIOCGWINSZ`, `TIOCSPGRP`, and
 `TIOCGPGRP` for console/PTY descriptors. The mount table is kernel-backed for
 the ext2 root, `/proc`, `/dev`, and dynamic `proc`/`devtmpfs` pseudo mounts;
 `/proc/mounts`, `statfs`, `fstatfs`, `statvfs`, and `fstatvfs` report that
-state. Dynamic ext2 stacking, procfs write knobs, authentication devices, and
-full shell job-control semantics remain out of scope for now.
+state. Foreground terminal stop/continue is backed by stopped process state,
+`waitpid(..., WUNTRACED)`, process-group `SIGTSTP`/`SIGCONT`, and Ctrl+Z
+handling for console and PTY foreground groups. Dynamic ext2 stacking, procfs
+write knobs, authentication devices, and full Linux tty discipline semantics
+remain out of scope for now.
 
 ---
 
@@ -514,17 +518,18 @@ process/filesystem diagnostics. Filesystem-facing applets such as `ln`,
 Native `/bin` tools stay first in command lookup; if a bare command is missing,
 the shell runs `/usr/bin/busybox <command> ...`.
 
-The current compatibility wave enables BusyBox `mount`/`umount` for
-`proc`/`devtmpfs` pseudo mounts, classic networking tools (`ifconfig`, `route`,
-and IPv4 `ping`), BusyBox `ip link`/`ip addr`/`ip route`, and the first TCP
-applets (`nc`, plain HTTP `wget`, and `httpd`). Those applets are backed by
-kernel network ioctls, minimal rtnetlink, state-backed `/proc/net/dev` and
-`/proc/net/route`, raw ICMP sockets, UDP DNS traffic, and the existing SmallOS
-IPv4/TCP path. Arbitrary filesystem mounting, init, login/getty,
-authentication semantics, BusyBox `ip` rule/neigh/tunnel modes, HTTPS/TLS, and
-complete Linux device behavior remain disabled or stubbed. New BusyBox applets
-should grow the shared runtime, headers, and virtual filesystem behavior when
-they reveal a portable Unix expectation.
+The current compatibility wave enables BusyBox `ash` job control, BusyBox
+`mount`/`umount` for `proc`/`devtmpfs` pseudo mounts, classic networking tools
+(`ifconfig`, `route`, and IPv4 `ping`), BusyBox `ip link`/`ip addr`/`ip route`,
+and the first TCP applets (`nc`, plain HTTP `wget`, and `httpd`). Those applets
+are backed by kernel stopped-job/process-group semantics, kernel network
+ioctls, minimal rtnetlink, state-backed `/proc/net/dev` and `/proc/net/route`,
+raw ICMP sockets, UDP DNS traffic, and the existing SmallOS IPv4/TCP path.
+Arbitrary filesystem mounting, init, login/getty, authentication semantics,
+BusyBox `ip` rule/neigh/tunnel modes, HTTPS/TLS, and complete Linux device
+behavior remain disabled or stubbed. New BusyBox applets should grow the
+shared runtime, headers, and virtual filesystem behavior when they reveal a
+portable Unix expectation.
 
 ---
 
@@ -609,6 +614,7 @@ Runtime coverage currently lives in guest ELF probes:
   compatibility wrappers
 - `crtprobe` - `main(argc, argv)` via `crt0`, argv terminator, and return status
 - `waitprobe` - `SYS_EXEC` pid return, `waitpid`, `WNOHANG`, `kill`, and wait status macros
+- `jobctlprobe` - stopped child reporting, `WUNTRACED`, process-group `SIGTSTP`/`SIGCONT`, and `killpg`
 - `pipeprobe` - pipe read/write, EOF, `EPIPE`, nonblocking behavior, `PIPE_BUF`, poll readiness, and blocking transfer wakeups
 - `dupprobe` - `dup`, `dup2`, shared file offsets/status flags, and independent `FD_CLOEXEC`
 - `forkprobe` - parent/child return values, copied memory independence, `waitpid`, and inherited shared file offsets

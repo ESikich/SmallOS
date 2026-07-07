@@ -58,5 +58,6 @@ sighandler_t signal(int signum, sighandler_t handler);
 int sigaction(int signum, const struct sigaction* act, struct sigaction* oldact);
 int raise(int signum);
 int kill(int pid, int signum);
+int killpg(int pgrp, int signum);
 
 #endif /* USER_SIGNAL_H */

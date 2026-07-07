@@ -57,6 +57,9 @@ Important current-state facts:
   process launched by `bootseq`; no kernel shell fallback is linked
 - **keyboard IRQ1** decodes scancodes and calls a registered `keyboard_consumer_fn` — it makes no routing decisions itself; USB boot keyboards inject translated set-1 scancodes into the same path
 - the **process consumer** (`process_key_consumer` in `process.c`) pushes ASCII into `kb_buf`; Ctrl+C is delivered as raw byte `0x03` to a foreground `SYS_READ_RAW` prompt reader, and otherwise targets the foreground process group as a terminal signal
+- Ctrl+Z either detaches a native shell-owned foreground job back to the shell
+  job table or sends `SIGTSTP` to the foreground process group so POSIX-style
+  shells can observe a stopped job with `waitpid(..., WUNTRACED)`
 - consumer ownership transfers via `process_set_foreground()` - the process consumer is active while the user shell or another user process owns the foreground reader/group; `process_set_foreground(0)` keeps the router installed but ignores events until a new foreground owner is set
 - **Mouse input** decodes PS/2 relative packets, VMware absolute-pointer
   events, or OHCI USB boot mouse reports into accumulated `dx`/`dy` and button
@@ -80,7 +83,7 @@ Important current-state facts:
 - the shipped `usr/bin/tcc` compiler binary links the generic SmallOS `crt0` adapter and runs TinyCC's normal `main`, can compile guest C sources from ext2, write the results back to disk, and then those generated ELFs can be executed immediately
 - the shipped `usr/bin/busybox` binary provides the broader Unix applet layer;
   native SmallOS commands remain first in shell lookup, `/bin/sh` launches
-  BusyBox `ash`, and missing bare commands fall back to
+  BusyBox `ash` with basic job control, and missing bare commands fall back to
   `/usr/bin/busybox <command> ...`
 - QEMU user networking is still the default for `make run` / `make test`, but the guest now learns its IPv4 address, netmask, gateway, DNS server, and lease time through DHCP instead of assuming QEMU's NAT addresses. `make run-tap` switches the NIC onto a host TAP device for bridged or routed networking beyond QEMU's built-in NAT.
 - Boot queues DHCP and best-effort NTP as an async kernel task once the scheduler is live. On success, `CLOCK_REALTIME` is set and the boot log prints the UTC time; on failure, boot continues with a warning.
@@ -161,7 +164,8 @@ live under `/usr/libexec/tests/`, including `mathprobe`, `compatprobe`, and
 If no native command matches a bare name, the shell tries
 `/usr/bin/busybox <name> ...`. That keeps native SmallOS behavior preferred
 while making applets such as `grep`, `sed`, `awk`, `df`, `du`, `free`, `ps`,
-`tar`, and `hexdump` available as ordinary commands.
+`tar`, and `hexdump` available as ordinary commands. BusyBox `ash` also uses
+the kernel process-group stop/continue path for `jobs`, `fg`, `bg`, and Ctrl+Z.
 
 The interactive shell editor keeps a short command history and command/path
 completion. History stores the full input line before tokenization, so recalled
@@ -197,8 +201,8 @@ That means `argv[0]` inside the process is the command token as typed. For
 There is **no active `runimg` command path** in the current shell command table.
 The shell also supports `shell -c "command args"` for non-interactive command
 execution; libc `system()` uses that path. `/bin/sh` is separate: it launches
-BusyBox `ash` for script-style POSIX compatibility without replacing the
-native interactive `/bin/shell`.
+BusyBox `ash` for script-style POSIX compatibility, including basic stopped
+job control, without replacing the native interactive `/bin/shell`.
 
 The same path is used by the guest TinyCC smoke tests:
 
@@ -370,6 +374,10 @@ small process registry, and automatic zombie reaping:
 - foreground shell execution launches the child, then waits for it
 - `bg` launches the child and returns immediately, but shell job control owns cleanup until `fg <jobid>` reaps it or `kill <jobid>` stops it
 - Ctrl+Z while a shell-owned job is foregrounded detaches it back to the shell job table without killing it
+- POSIX-style shells such as BusyBox `ash` rely on the kernel stopped state:
+  terminal Ctrl+Z sends `SIGTSTP` to the foreground process group,
+  `waitpid(..., WUNTRACED)` reports the stopped child once, and `SIGCONT`
+  resumes it
 - `SYS_EXEC` returns the child pid and claims the child for its parent so userland can call `waitpid()`
 - if a parent exits without waiting, its children are orphaned and any unclaimed zombies become reaper-owned
 - interactive foreground input is tracked with `process_set_foreground(proc)` / `process_get_foreground()`, while terminal signals target `process_get_foreground_group()`
@@ -713,5 +721,5 @@ The execution model is fully scheduler-owned.
 - timer-driven preemption
 - `SYS_YIELD`, `SYS_EXEC`, `SYS_FORK`, `SYS_EXECVE`, `SYS_EXIT` all scheduler-owned
 - ELF processes have real per-process page directories
-- foreground commands wait with `process_wait()`; `bg` children are reaped automatically; `SYS_EXEC` and `SYS_FORK` children are parent-waitable with `waitpid()`; user-shell `bg` children are shell-owned jobs until `fg` or `kill`
+- foreground commands wait with `process_wait()`; `bg` children are reaped automatically; `SYS_EXEC` and `SYS_FORK` children are parent-waitable with `waitpid()` and can report stopped state through `WUNTRACED`; user-shell `bg` children are shell-owned jobs until `fg` or `kill`
 - no known zombie or frame leaks

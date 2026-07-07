@@ -1477,6 +1477,14 @@ int kill(int pid, int signum) {
     return errno_from_raw(sys_kill(pid, signum));
 }
 
+int killpg(int pgrp, int signum) {
+    if (pgrp < 0) {
+        set_errno(EINVAL);
+        return -1;
+    }
+    return kill(-pgrp, signum);
+}
+
 ssize_t writev(int fd, const struct iovec* iov, int iovcnt) {
     ssize_t total = 0;
 

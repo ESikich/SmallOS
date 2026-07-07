@@ -55,8 +55,8 @@ BusyBox-backed Unix compatibility layer inside the guest.
   `hexdump`, network applets such as `ifconfig`, `route`, `ip`, `ping`, `nc`,
   plain HTTP `wget`, and `httpd`, plus link/node utilities such as `ln`,
   `link`, `readlink`, `mkfifo`, and
-  `mknod`. `/bin/sh` launches BusyBox `ash` for script-style compatibility
-  without replacing `/bin/shell`.
+  `mknod`. `/bin/sh` launches BusyBox `ash` with basic POSIX job-control
+  support for script-style compatibility without replacing `/bin/shell`.
 - The compatibility layer exposes virtual `/proc` and `/dev` entries used by
   Unix tools, including memory, uptime, process, mount, filesystem, network,
   null, zero, tty, console, and standard-fd paths.
@@ -209,6 +209,8 @@ bg usr/sbin/cserve --config /etc/cserve.ini
 ```
 
 Shell job control supports `jobs`, `fg <jobid>`, Ctrl+Z, and `kill <jobid>`.
+BusyBox `ash` also uses the kernel stopped-job path for foreground/background
+process groups.
 Manual `ftpd` launches write service output to `/var/log/ftpd.log`; manual
 `cserve` launches use the log path from `/etc/cserve.ini`.
 

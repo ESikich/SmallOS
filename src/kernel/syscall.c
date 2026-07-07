@@ -777,6 +777,7 @@ static const char* process_state_name(unsigned int state) {
         case PROCESS_STATE_ZOMBIE: return "Z";
         case PROCESS_STATE_WAITING: return "S";
         case PROCESS_STATE_SLEEPING: return "S";
+        case PROCESS_STATE_STOPPED: return "T";
         default: return "?";
     }
 }
@@ -1534,6 +1535,9 @@ static int sys_execve_impl(syscall_regs_t* regs, const char* name, char** argv, 
 }
 
 static int wait_status_to_user(int status) {
+    if ((status & 0x10000) != 0) {
+        return ((status & 0xFF) << 8) | 0x7F;
+    }
     if (status >= 128 && status < 256) {
         return status - 128;
     }
@@ -1630,7 +1634,35 @@ static int sys_waitpid_fg_impl(int pid, int* user_status) {
 }
 
 static int sys_kill_impl(syscall_regs_t* regs, int pid, int signum) {
-    if (signum <= 0 || signum >= 32) return -EINVAL;
+    process_t* proc;
+    u32 pgid;
+
+    if (signum < 0 || signum >= 32) return -EINVAL;
+    proc = (process_t*)sched_current();
+    if (signum == 0) {
+        if (pid > 0) return process_find_by_pid((u32)pid) ? 0 : -ESRCH;
+        pgid = (pid == 0) ? (proc ? proc->pgid : 0u) : (u32)(-pid);
+        return process_find_by_pgid(pgid) ? 0 : -ESRCH;
+    }
+
+    if (pid <= 0) {
+        pgid = (pid == 0) ? (proc ? proc->pgid : 0u) : (u32)(-pid);
+        if (pgid == 0u) return -EINVAL;
+        if (signum == 18) return process_group_continue(pgid);
+        if (signum == 19 || signum == 20 || signum == 21 || signum == 22) {
+            int stopped = process_group_stop(pgid, signum, proc, 0);
+            if (stopped && proc && proc->state == PROCESS_STATE_STOPPED) {
+                sched_yield_now((unsigned int)regs);
+            }
+            return stopped ? 0 : -ESRCH;
+        }
+        return process_group_kill(pgid, 128 + signum) ? 0 : -ESRCH;
+    }
+
+    if (signum == 18) return process_continue_pid(pid);
+    if (signum == 19 || signum == 20 || signum == 21 || signum == 22) {
+        return process_stop_pid(pid, signum, (unsigned int)regs);
+    }
     return process_kill_pid(pid, 128 + signum, (unsigned int)regs);
 }
 
