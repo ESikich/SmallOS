@@ -327,7 +327,8 @@ loopback state for BusyBox `ifconfig` and `route`. Minimal `AF_NETLINK` route
 sockets serve link, address, route, and ARP-neighbor state to BusyBox
 `ip link`, `ip addr`, `ip route`, and `ip neigh`. `/proc/net/arp` exposes the
 resolved ARP cache to BusyBox `arp`, and libc resolver/service shims cover
-BusyBox `hostname`, `ipcalc`, `netstat -r`, `nslookup`, `pscan`, and `whois`.
+BusyBox `hostname`, `ipcalc`, `netstat -r`, `nslookup`, `pscan`, `whois`,
+`ftpget`, `ftpput`, `tftp`, and `tcpsvd`.
 
 The runtime is also where SmallOS grows its hosted C surface. Older ports such
 as Fractint are useful completeness tests: when they need a normal libc, libm,

@@ -52,9 +52,10 @@ POSIX edge-semantics work.
   and IPv4 `ping` are enabled through Linux-shaped `eth0`/loopback interface/route
   ioctls, minimal rtnetlink, state-backed `/proc/net/dev`, `/proc/net/route`,
   `/proc/net/arp`, resolver/service helpers, ARP-neighbor reporting, and raw
-  ICMP `sendto`/`recvfrom` descriptors. UDP
-  send/receive is available for DNS-sized IPv4 datagrams, and libc resolver
-  lookups can issue DNS A-record queries using the configured DNS server.
+  ICMP `sendto`/`recvfrom` descriptors. UDP send/receive is available for
+  DNS-sized resolver traffic and single-file TFTP client transfers, and libc
+  resolver lookups can issue DNS A-record queries using the configured DNS
+  server.
   Basic BusyBox TCP/UDP applets are enabled too: `nc`, plain HTTP `wget`,
   `whois`, `ftpget`, `ftpput`, `tftp`, `tcpsvd`, and `httpd` run over the
   existing IPv4 socket path.

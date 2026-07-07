@@ -409,10 +409,11 @@ int sys_socket(int domain, int type, int protocol);
 Creates a socket handle. The TCP stream path accepts `AF_INET`,
 `SOCK_STREAM`, and either `0` or `IPPROTO_TCP`. The networking compatibility
 path also accepts `AF_INET`/`SOCK_DGRAM` as a control/datagram descriptor for
-network ioctls, and `AF_INET`/`SOCK_RAW`/`IPPROTO_ICMP` for raw ICMP echo
-traffic used by BusyBox `ping`. `AF_NETLINK` with `NETLINK_ROUTE` creates a
-minimal rtnetlink descriptor for BusyBox `ip link`, `ip addr`, `ip route`, and
-`ip neigh` over the current `eth0`, loopback, route, and ARP-neighbor state.
+network ioctls, DNS lookups, and BusyBox `tftp`, and `AF_INET`/`SOCK_RAW`/
+`IPPROTO_ICMP` for raw ICMP echo traffic used by BusyBox `ping`. `AF_NETLINK`
+with `NETLINK_ROUTE` creates a minimal rtnetlink descriptor for BusyBox
+`ip link`, `ip addr`, `ip route`, and `ip neigh` over the current `eth0`,
+loopback, route, and ARP-neighbor state.
 
 ---
 
@@ -519,7 +520,9 @@ without a destination are forwarded to `SYS_SEND`; raw ICMP descriptors wrap
 the supplied ICMP bytes in an IPv4 packet and route them through the existing
 IPv4/ARP next-hop path. UDP descriptors build IPv4/UDP datagrams, bind an
 ephemeral source port when needed, and use the same route/ARP path. UDP
-checksums are currently omitted. Netlink route descriptors accept
+checksums are currently omitted; the covered guest surface is DNS-sized
+resolver traffic plus the current BusyBox TFTP client smoke path. Netlink route
+descriptors accept
 `RTM_GETLINK`, `RTM_GETADDR`, `RTM_GETROUTE`, `RTM_NEWADDR`, `RTM_DELADDR`,
 `RTM_NEWROUTE`, and `RTM_DELROUTE` request messages for the single `eth0`
 interface.
@@ -543,9 +546,9 @@ Raw ICMP descriptors block until an ICMP IPv4 packet is delivered by the NIC
 receive path, then return the IPv4 header plus ICMP payload, matching the shape
 expected by BusyBox `ping`. UDP descriptors receive queued IPv4/UDP datagrams
 for their bound local port; the first queue is intentionally small and sized for
-DNS-style traffic rather than high-throughput UDP applications. Netlink route
-descriptors return queued rtnetlink response messages and honor `MSG_PEEK` and
-`MSG_DONTWAIT`.
+DNS/TFTP smoke traffic rather than high-throughput UDP applications. Netlink
+route descriptors return queued rtnetlink response messages and honor
+`MSG_PEEK` and `MSG_DONTWAIT`.
 
 ---
 
@@ -1282,7 +1285,7 @@ Minimal rtnetlink is available through `AF_NETLINK` route sockets for BusyBox
 `ip link`, `ip addr`, `ip route`, and `ip neigh`; `ip rule`, tunnel, and
 advanced policy-route behavior remain unsupported. DNS-over-UDP is implemented
 in libc on top of the UDP socket path when the runtime network state has a DNS
-server.
+server, and the same UDP path is covered by BusyBox `tftp` client smoke.
 
 ### SYS_BLOCK_READ_SECTOR (81)
 
