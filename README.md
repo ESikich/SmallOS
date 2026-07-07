@@ -163,9 +163,10 @@ make run-sdl   # graphical SDL display
 `make run` uses QEMU user-network NAT with an e1000 NIC by default, and the guest acquires
 its IPv4 configuration with DHCP. `make run-usb-storage` boots the same raw
 image through QEMU OHCI USB mass storage, which exercises the protected-mode
-USB storage path instead of the IDE disk path. The USB image/run targets keep
-the loader2 RAM fallback enabled for hardware safety while the kernel still
-prefers the live `usb0` mount when it validates. If terminal input feels
+USB storage path instead of the IDE disk path. `make run-usb-storage` keeps
+the loader2 RAM fallback disabled so protected-mode USB storage failures are
+visible; use `make run-usb-storage-fallback` for the hardware-safety fallback
+path. If terminal input feels
 sluggish through curses, use `make run-gtk` or `make run QEMU_DISPLAY=gtk`.
 Mouse-driven graphics demos and ports need a graphical QEMU backend and a
 grabbed QEMU window. With GTK, click the guest and press `Ctrl+Alt+G` to toggle
@@ -308,6 +309,7 @@ make smoke-halt
 make display-smoke
 make gui-smoke
 make usb-storage-smoke
+make usb-ramdisk-fallback-smoke
 make socket-eof-smoke
 make socket-parallel-smoke
 make ftp-smoke
@@ -377,9 +379,10 @@ kernel mounts ext2 through the first storage path that validates: writable ATA,
 read-only USB mass storage, then the loader2-published RAM fallback. The default
 `BOOT_RAMDISK_FALLBACK=never` policy skips the fallback preload for normal
 VM/IDE boots. `BOOT_RAMDISK_FALLBACK=auto` preloads only when EDD does not
-identify the boot drive as USB or ATA, and the explicit USB image/run targets
-force it on so hardware boots remain recoverable when protected-mode USB
-storage is not happy yet. USB EDD boots probe and byte-check direct high-memory
+identify the boot drive as USB or ATA; `make usb-image` and the dedicated
+USB fallback run/smoke targets force it on so hardware boots remain
+recoverable when protected-mode USB storage is not happy yet. USB EDD boots
+probe and byte-check direct high-memory
 reads before using them; otherwise the loader falls back to its low-memory
 bounce buffer. Boot diagnostics are captured with `[ms=... tick=... cyc=...]`
 prefixes in `/var/log/boot.txt`; display output is muted once the protected-mode

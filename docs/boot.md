@@ -212,9 +212,9 @@ when protected-mode storage cannot validate the disk.
 
 `BOOT_RAMDISK_FALLBACK=never` is the default. `always` / `1` forces the preload
 path, and `auto` preloads only when EDD does not identify the boot drive as USB
-or ATA. The explicit USB image/run targets set `always` so direct USB builds
-remain bootable on hardware whose protected-mode USB storage path cannot yet
-validate ext2.
+or ATA. The USB image and dedicated USB fallback run/smoke targets set `always`
+so direct USB builds remain bootable on hardware whose protected-mode USB
+storage path cannot yet validate ext2.
 
 During early storage probing, the kernel temporarily unmasks only timer IRQ0.
 That keeps `[ms=... tick=... cyc=...]` boot timestamps advancing while avoiding
