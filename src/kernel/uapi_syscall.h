@@ -48,7 +48,8 @@
 #define SYS_FCNTL_SETFL 4
 #define SYS_FCNTL_DUPFD_CLOEXEC 1030
 
-#define SYS_WAITPID_WNOHANG 1
+#define SYS_WAITPID_WNOHANG   1
+#define SYS_WAITPID_WUNTRACED 2
 
 typedef struct sys_fsinfo {
     unsigned int total_bytes;

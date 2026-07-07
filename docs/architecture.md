@@ -334,9 +334,13 @@ user shell bg (reattachable background):
 
 Ctrl+Z during fg:
   process_key_consumer()
-  record detach request
-  restore shell keyboard consumer
-  process_wait_detachable() returns without destroying the job
+  if the native shell owns a detachable foreground wait:
+    record detach request
+    restore shell keyboard consumer
+    process_wait_detachable() returns without destroying the job
+  otherwise:
+    send SIGTSTP to the foreground process group
+    mark members stopped and wake waitpid(..., WUNTRACED)
 
 sys_exit:
   paging_switch(kernel_pd)
@@ -558,6 +562,10 @@ The active consumer is managed by `keyboard_set_consumer()`:
 - `process_set_foreground_preserve_input(proc)` keeps already-buffered input while refreshing the same foreground owner; bootseq uses an explicit `process_set_foreground(shell)` before resuming the suspended user shell so PS/2 and USB keyboard events are routed to the prompt immediately
 - `process_key_consumer` pushes ASCII into `kb_buf`; after each push it checks `keyboard_get_waiting_process()` and, if a process is parked in `PROCESS_STATE_WAITING`, sets it back to `PROCESS_STATE_RUNNING` and clears the waiter slot so the scheduler picks it up
 - Ctrl+C is normally handled by `process_key_consumer` as a terminal interrupt for the foreground process group. Matching signalfds receive `SIGINT`; otherwise the group gets exit status `130`, pending console/socket waits are cleared, and any actively running member is switched away from the IRQ1 frame. If the foreground console owner is parked in `SYS_READ_RAW`, as the user shell is while editing its prompt, Ctrl+C is queued as byte `0x03` so the editor can cancel the current line without killing the shell.
+- Ctrl+Z keeps the native shell's detachable `fg` behavior for shell-owned jobs,
+  and otherwise delivers `SIGTSTP` to the foreground process group. Stopped
+  tasks remain waitable through `waitpid(..., WUNTRACED)` and resume on
+  `SIGCONT`.
 - `process_set_foreground(0)` leaves the process input router registered but clears the foreground reader/group, so key events are ignored until a new foreground process is installed
 
 The keyboard driver makes no routing decisions. It decodes scancodes and calls whoever is registered. USB boot keyboards feed this same path by translating HID boot reports into set-1 scancodes and injecting them through `keyboard_inject_scancode()`.
@@ -571,8 +579,9 @@ program-local ANSI escape parsers.
 
 The boot sequence launches `/bin/shell` as the interactive shell. The old
 kernel shell is no longer linked into the kernel image. `/bin/sh` is a tiny
-launcher for BusyBox `ash`, and `/usr/bin/busybox` fills missing Unix applets
-after native `/bin`, `/usr/bin`, and `/usr/sbin` command lookup.
+launcher for BusyBox `ash` with basic job control, and `/usr/bin/busybox` fills
+missing Unix applets after native `/bin`, `/usr/bin`, and `/usr/sbin` command
+lookup.
 
 Mouse input is intentionally lower-level today. `mouse.c` initializes the PS/2
 auxiliary port, decodes 3-byte relative-motion packets on IRQ12, drains VMware
@@ -936,7 +945,7 @@ ext2 filesystem — user programs loaded from ATA, USB storage, or the boot RAM 
 run/runimg infrastructure removed — direct shell execution is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
 interactive shell with builtin job control plus `/bin` command binaries such as meminfo / memmap / cpuz / top / ataread / ls / tree / fsread / mkdir / rmdir
 guest TinyCC compiler path — `usr/bin/tcc` runs inside SmallOS through `crt0` and TinyCC's normal `main`, then compiles guest C samples during `make test`
-guest BusyBox path — `usr/bin/busybox` provides fallback Unix applets, `/bin/sh` runs BusyBox `ash`, virtual `/proc`, `/proc/net`, and `/dev` expose the small Linux-like status/device surface those tools need, ext2 supplies the link/symlink/metadata/node operations used by filesystem applets, and kernel network ioctls/rtnetlink/raw ICMP/UDP DNS/IPv4 TCP back `ifconfig`, `route`, `ip`, `ping`, `nc`, plain HTTP `wget`, and `httpd`
+guest BusyBox path — `usr/bin/busybox` provides fallback Unix applets, `/bin/sh` runs BusyBox `ash` with basic job control, virtual `/proc`, `/proc/net`, and `/dev` expose the small Linux-like status/device surface those tools need, ext2 supplies the link/symlink/metadata/node operations used by filesystem applets, and kernel stopped-job/process-group semantics plus network ioctls/rtnetlink/raw ICMP/UDP DNS/IPv4 TCP back `ash`, `ifconfig`, `route`, `ip`, `ping`, `nc`, plain HTTP `wget`, and `httpd`
 ```
 
 Foundation for:

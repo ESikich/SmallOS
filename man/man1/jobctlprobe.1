@@ -1,0 +1,20 @@
+JOBCTLPROBE(1)
+
+NAME
+    jobctlprobe - test stopped-job process control
+
+SYNOPSIS
+    jobctlprobe
+
+DESCRIPTION
+    Exercises the SmallOS job-control substrate used by BusyBox ash and other
+    POSIX-style shells. The probe verifies stopped child reporting through
+    waitpid WUNTRACED, process-group SIGTSTP delivery, SIGCONT resume, and
+    killpg wrapper behavior.
+
+NOTES
+    This is primarily a diagnostic or self-test helper, but it is documented so
+    installed programs are discoverable.
+
+SEE ALSO
+    waitprobe(1), sh(1), busybox(1), selftest(1)

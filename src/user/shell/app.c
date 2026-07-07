@@ -1503,6 +1503,7 @@ void sh_selftest(void) {
     sh_selftest_exec_expect("ttyprobe", "usr/libexec/tests/ttyprobe", 0);
     sh_selftest_exec_expect("rsrcprobe", "usr/libexec/tests/rsrcprobe", 0);
     sh_selftest_exec_expect("sessprobe", "usr/libexec/tests/sessprobe", 0);
+    sh_selftest_exec_expect("jobctlprobe", "usr/libexec/tests/jobctlprobe", 0);
     sh_selftest_exec_expect("mountprobe", "usr/libexec/tests/mountprobe", 0);
     sh_selftest_exec_expect("netbbprobe", "usr/libexec/tests/netbbprobe", 0);
     sh_selftest_exec_expect("busybox true", "usr/bin/busybox true", 0);

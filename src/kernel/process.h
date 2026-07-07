@@ -14,7 +14,8 @@ typedef enum {
     PROCESS_STATE_EXITED  = 2,
     PROCESS_STATE_ZOMBIE  = 3,
     PROCESS_STATE_WAITING = 4,  /* blocked in SYS_READ, skipped by scheduler */
-    PROCESS_STATE_SLEEPING = 5   /* blocked in SYS_SLEEP, woken by timer */
+    PROCESS_STATE_SLEEPING = 5,  /* blocked in SYS_SLEEP, woken by timer */
+    PROCESS_STATE_STOPPED = 6    /* job-control stop, resumed by SIGCONT */
 } process_state_t;
 
 /* ------------------------------------------------------------------ */
@@ -136,6 +137,7 @@ typedef struct process {
     unsigned int    child_wait_count;
     volatile process_state_t state;
     int             exit_status;
+    int             stop_reported;
     volatile int    reaper_claimed;  /* 1 once a waiter owns zombie cleanup */
     unsigned int    sleep_until;
     void          (*kernel_entry)(void);
@@ -261,6 +263,13 @@ int        process_setpgid(process_t* caller, int pid, int pgid);
 int        process_signal_deliver(process_t* proc, int signum);
 int        process_group_signal_deliver(u32 pgid, int signum);
 int        process_group_kill(u32 pgid, int status);
+int        process_stop_pid(int pid, int signum, unsigned int esp);
+int        process_continue_pid(int pid);
+int        process_group_stop(u32 pgid,
+                              int signum,
+                              process_t* defer_current,
+                              int mark_terminal_stop);
+int        process_group_continue(u32 pgid);
 
 /*
  * Terminal interrupt delivery.

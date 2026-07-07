@@ -14,7 +14,9 @@ DESCRIPTION
 
     /bin/shell remains the native interactive SmallOS shell launched at boot.
     Use shell when you want the native command prompt, job table, and selftest
-    built-ins. Use sh when a Unix script or applet expects BusyBox ash.
+    built-ins. Use sh when a Unix script or applet expects BusyBox ash. Ash has
+    basic job-control support using SmallOS process groups, Ctrl+Z stopped
+    jobs, fg/bg, and waitpid WUNTRACED reporting.
 
 EXAMPLES
     sh -c 'echo ok'

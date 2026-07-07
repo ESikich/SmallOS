@@ -1025,8 +1025,10 @@ int sys_waitpid(int pid, int* status, int options);
 Waits for a direct child created by legacy `SYS_EXEC` or POSIX-shaped
 `SYS_FORK`. `pid > 0` waits for that child; `pid == -1` waits for any child.
 `SYS_WAITPID_WNOHANG` returns `0` immediately when the selected child has not
-exited. On success, returns the collected child pid and writes a POSIX-style
-wait status when `status` is non-null. Missing children return `-ECHILD`.
+exited. `SYS_WAITPID_WUNTRACED` also reports a selected stopped child once
+without reaping it, using the POSIX stopped-status encoding. On exit success,
+returns the collected child pid and writes a POSIX-style wait status when
+`status` is non-null. Missing children return `-ECHILD`.
 
 ---
 
@@ -1036,7 +1038,11 @@ wait status when `status` is non-null. Missing children return `-ECHILD`.
 int sys_kill(int pid, int signum);
 ```
 
-Terminates a user process by pid with status `128 + signum`. Invalid pids return
+Delivers a SmallOS terminal/process signal. Positive `pid` targets one process,
+`pid == 0` targets the caller's process group, and negative `pid` targets that
+process group id. Signal `0` performs existence checks. Stop signals mark user
+processes stopped, `SIGCONT` resumes stopped processes, and other terminating
+signals exit targets with status `128 + signum`. Invalid pids or groups return
 `-ESRCH`; invalid signal numbers return `-EINVAL`.
 
 ---
@@ -1362,7 +1368,9 @@ parent session and process group; `setsid` creates a new session and process
 group for non-group-leaders. `setpgid` can move the caller or one of its
 children into a valid same-session process group, or create a new group whose
 id is the target pid. Terminal foreground process-group ioctls validate that
-the requested group exists in the caller's session.
+the requested group exists in the caller's session. Terminal stop/continue
+delivery uses those groups for Ctrl+Z, `killpg()`, BusyBox `ash` job control,
+and `waitpid(..., WUNTRACED)` stopped-child reporting.
 
 ### Mount and Filesystem Statistics Syscalls (139-142)
 
@@ -1467,6 +1475,7 @@ contains the current tick count, the number of copied tasks, and one
 `sys_procinfo_entry_t` per scheduled process up to `SYS_PROCINFO_MAX`. Each
 entry includes pid, parent pid, process group, state, accumulated CPU timer
 ticks, estimated task-owned RAM bytes, user heap bytes, and display name.
+Stopped processes are reported as the `T` state in `/proc`-style views.
 
 The RAM estimate is frame-based: `process_t`, kernel stack frames, dynamic fd
 table frames, and private user page-directory/page-table/user frames. Kernel
