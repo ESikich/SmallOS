@@ -492,6 +492,11 @@ slow reader, checks a 404, and captures guest `netinfo` socket/TCP counters.
 It holds 24 clients by default. Override `CSERVE_SMOKE_CLIENTS` or
 `CSERVE_SMOKE_PORT` when needed.
 
+`make busybox-net-smoke` forwards guest BusyBox `httpd` and `tcpsvd` ports,
+serves host-side HTTP/FTP/TFTP/WHOIS/echo fixtures, and verifies BusyBox
+`wget`, `pscan`, `whois`, `ftpget`, `ftpput`, `tftp`, `nc`, `tcpsvd`, ARP,
+and `ip neigh` against real host/guest IPv4 sockets.
+
 `make usb-storage-smoke` boots the canonical raw image through QEMU OHCI USB
 mass storage (`-device pci-ohci` plus `-device usb-storage`) with the loader2
 RAM fallback disabled. It verifies that ATA mount failure is tolerated, `usbms`
@@ -846,7 +851,7 @@ diagnostic commands are available, including gzip/gunzip, checksum helpers,
 hard/symbolic link tools, `readlink`, `mkfifo`, `mknod`, `ifconfig`, `route`,
 `arp`, `hostname`, `dnsdomainname`, `ipcalc`, `netstat`, `nslookup`, `pscan`,
 `ip link`/`ip addr`/`ip route`/`ip neigh`, IPv4 `ping`, `nc`, plain HTTP
-`wget`, `whois`, and `httpd`.
+`wget`, `whois`, `ftpget`, `ftpput`, `tftp`, `tcpsvd`, and `httpd`.
 Native SmallOS commands remain preferred in shell lookup; BusyBox is the
 fallback for missing applets.
 
@@ -1036,7 +1041,7 @@ Shipped ext2 programs:
 * `bin/` contains command-style app binaries found first by bare shell command lookup
 * `usr/bin/` contains demos, development tools, and larger user-facing programs such as `hello`, `plasma`, `mandel`, `fractint`, `tcc`, and `busybox`
 * `usr/libexec/tests/` contains the remaining shipped test binaries; most probes, including `displayprobe`, are staged dynamically
-* `usr/sbin/` contains guest service binaries; `tcpecho`, `sockeof`, and `ftpd` are staged dynamically, while `cserve` remains static
+* `usr/sbin/` contains guest service binaries; `tcpecho`, `sockeof`, and `ftpd` are staged dynamically, while `cserve` remains static; BusyBox service applets such as `tcpsvd` live under `usr/bin/busybox`
 * `usr/include/` and `usr/lib/` contain the guest C build sysroot, including public SmallOS helpers such as `term_keys.h`
 * `lib/` contains the dynamic loader and shared runtime used by converted primary commands
 * `usr/share/man/` contains plain-text manual pages installed from repository `man/man*/`

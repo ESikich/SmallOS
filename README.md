@@ -43,9 +43,10 @@ BusyBox-backed Unix compatibility layer inside the guest.
   `route`, minimal rtnetlink for BusyBox `ip link`/`ip addr`/`ip route`/
   `ip neigh`, `/proc/net/arp` for BusyBox `arp`, resolver/service helpers for
   BusyBox `hostname`/`ipcalc`/`netstat`/`nslookup`/`pscan`, raw ICMP sockets
-  for BusyBox `ping`, BusyBox `nc`/plain HTTP `wget`/`whois`/`httpd`, a compact
-  TCP service task, passive sockets, `poll`/`epoll` readiness, FTP, echo, WHOIS,
-  and HTTP server smoke paths.
+  for BusyBox `ping`, BusyBox `nc`/plain HTTP `wget`/`whois`/`ftpget`/
+  `ftpput`/`tftp`/`tcpsvd`/`httpd`, a compact TCP service task, passive
+  sockets, `poll`/`epoll` readiness, FTP, TFTP, echo, WHOIS, and HTTP server
+  smoke paths.
 - Guest userland includes familiar commands such as `ls`, `tree`, `cat`,
   `more`, `man`, `pwd`, `touch`, `mkdir`, `rm`, `cp`, `mv`, `edit`, `date`, `ip`,
   `ipconfig`, `uptime`, `halt`, and `reboot`, plus diagnostics such as
@@ -56,8 +57,8 @@ BusyBox-backed Unix compatibility layer inside the guest.
   `df`, `du`, `free`, `ps`, `tar`, `gzip`, `gunzip`, checksum tools, and
   `hexdump`, network applets such as `ifconfig`, `route`, `arp`, `ip`,
   `hostname`, `ipcalc`, `netstat`, `nslookup`, `pscan`, `ping`, `nc`, plain
-  HTTP `wget`, `whois`, and `httpd`, plus link/node utilities such as `ln`,
-  `link`, `readlink`, `mkfifo`, and
+  HTTP `wget`, `whois`, `ftpget`, `ftpput`, `tftp`, `tcpsvd`, and `httpd`,
+  plus link/node utilities such as `ln`, `link`, `readlink`, `mkfifo`, and
   `mknod`. `/bin/sh` launches BusyBox `ash` with basic POSIX job-control
   support for script-style compatibility without replacing `/bin/shell`.
 - The compatibility layer exposes virtual `/proc` and `/dev` entries used by
@@ -300,6 +301,7 @@ make socket-parallel-smoke
 make ftp-smoke
 make ftp-loop-smoke
 make cserve-smoke
+make busybox-net-smoke
 ```
 
 ## Repository Layout

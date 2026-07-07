@@ -1195,6 +1195,33 @@ int getsockopt(int fd, int level, int optname, void* optval, socklen_t* optlen) 
     return -1;
 }
 
+void openlog(const char* ident, int option, int facility) {
+    (void)ident;
+    (void)option;
+    (void)facility;
+}
+
+void vsyslog(int priority, const char* format, va_list ap) {
+    (void)priority;
+    (void)format;
+    (void)ap;
+}
+
+void syslog(int priority, const char* format, ...) {
+    va_list ap;
+
+    va_start(ap, format);
+    vsyslog(priority, format, ap);
+    va_end(ap);
+}
+
+void closelog(void) {
+}
+
+int setlogmask(int mask) {
+    return mask;
+}
+
 int getsockname(int fd, struct sockaddr* addr, socklen_t* addrlen) {
     return errno_from_raw(sys_getsockname(fd, addr, addrlen));
 }

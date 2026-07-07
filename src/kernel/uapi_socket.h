@@ -61,6 +61,7 @@ struct sockaddr_in {
 #define MSG_TRUNC    0x20u
 
 #define SOL_SOCKET   1
+#define SOL_IP       IPPROTO_IP
 #define SO_REUSEADDR 2
 #define SO_BROADCAST 6
 #define SO_KEEPALIVE 9

@@ -273,11 +273,12 @@ instance, checks the large `/var/www/index.html` static fixture, holds
 
 `make busybox-net-smoke` forwards a guest BusyBox `httpd` port, fetches its
 `/var/www` content from the host, serves a tiny host HTTP response for guest
-BusyBox `wget`, scans the host HTTP port with BusyBox `pscan`, and checks
-BusyBox `whois` against a host WHOIS responder, and checks BusyBox `nc` against
-a host echo socket. This keeps the enabled BusyBox TCP applets tied to real
-IPv4/TCP behavior rather than
-only compile-time availability.
+BusyBox `wget`, scans the host HTTP port with BusyBox `pscan`, checks BusyBox
+`whois`, `ftpget`, `ftpput`, and `tftp` against host responders, checks
+BusyBox `nc` against a host echo socket, and starts BusyBox `tcpsvd` in the
+guest for a host-forwarded echo check. This keeps the enabled BusyBox network
+applets tied to real IPv4 TCP/UDP behavior rather than only compile-time
+availability.
 
 ---
 

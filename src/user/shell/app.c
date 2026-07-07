@@ -1540,6 +1540,10 @@ void sh_selftest(void) {
     sh_selftest_exec_expect("busybox netstat", "usr/bin/busybox netstat", 0);
     sh_selftest_exec_expect("busybox nslookup localhost", "usr/bin/busybox nslookup localhost", 0);
     sh_selftest_exec_expect("busybox arp", "usr/bin/busybox arp -n", 0);
+    sh_selftest_exec_expect("busybox ftpget usage", "usr/bin/busybox ftpget", 1);
+    sh_selftest_exec_expect("busybox ftpput usage", "usr/bin/busybox ftpput", 1);
+    sh_selftest_exec_expect("busybox tftp usage", "usr/bin/busybox tftp", 1);
+    sh_selftest_exec_expect("busybox tcpsvd usage", "usr/bin/busybox tcpsvd", 1);
     sh_selftest_exec("busybox fallback grep", "grep MemTotal /proc/meminfo");
     sh_selftest_exec("busybox dev null", "usr/bin/busybox cat /dev/null");
     sh_selftest_exec_expect("busybox dd zero", "usr/bin/busybox dd if=/dev/zero of=/tmp/busybox-zero.bin bs=4 count=1", 0);

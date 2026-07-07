@@ -207,6 +207,9 @@ setconf CONFIG_HOSTNAME y
 setconf CONFIG_DNSDOMAINNAME y
 setconf CONFIG_NC y
 unsetconf CONFIG_NETCAT
+setconf CONFIG_FTPGET y
+setconf CONFIG_FTPPUT y
+unsetconf CONFIG_FEATURE_FTPGETPUT_LONG_OPTIONS
 setconf CONFIG_WGET y
 unsetconf CONFIG_FEATURE_WGET_LONG_OPTIONS
 unsetconf CONFIG_FEATURE_WGET_STATUSBAR
@@ -248,6 +251,14 @@ setconf CONFIG_PING y
 unsetconf CONFIG_FEATURE_FANCY_PING
 unsetconf CONFIG_PING6
 setconf CONFIG_PSCAN y
+setconf CONFIG_TCPSVD y
+setconf CONFIG_TFTP y
+setconf CONFIG_FEATURE_TFTP_GET y
+setconf CONFIG_FEATURE_TFTP_PUT y
+unsetconf CONFIG_FEATURE_TFTP_PROGRESS_BAR
+unsetconf CONFIG_FEATURE_TFTP_HPA_COMPAT
+unsetconf CONFIG_FEATURE_TFTP_BLOCKSIZE
+unsetconf CONFIG_TFTP_DEBUG
 
 set +o pipefail
 yes "" | make -C "$src" O="$out" ARCH=i386 CC="$cc" oldconfig >/dev/null

@@ -13,6 +13,10 @@ import time
 WGET_BODY = b"busybox-net-ok\n"
 NC_BODY = b"smallos-nc-ok\n"
 WHOIS_BODY = b"Domain Name: smallos.test\r\nsmallos-whois-ok\r\n"
+FTPGET_BODY = b"smallos-ftpget-ok\n"
+FTPPUT_BODY = b"smallos-ftpput-ok\n"
+TFTP_BODY = b"smallos-tftp-ok\n"
+TCPSVD_BODY = b"smallos-tcpsvd-ok\n"
 
 
 def wait_for_path(path, timeout_s):
@@ -267,6 +271,132 @@ def start_whois_server(port):
     return done, state
 
 
+def _ftp_readline(sock):
+    data = b""
+    while not data.endswith(b"\n"):
+        chunk = sock.recv(1)
+        if not chunk:
+            break
+        data += chunk
+    return data.decode("ascii", errors="replace").strip()
+
+
+def _ftp_sendline(sock, line):
+    sock.sendall((line + "\r\n").encode("ascii"))
+
+
+def start_ftp_server(control_port, data_port, mode):
+    ready = threading.Event()
+    done = threading.Event()
+    state = {"error": None, "uploaded": b"", "saw_upload": False}
+
+    def worker():
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as data_srv:
+                data_srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                data_srv.bind(("127.0.0.1", data_port))
+                data_srv.listen(1)
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as ctrl_srv:
+                    ctrl_srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    ctrl_srv.bind(("127.0.0.1", control_port))
+                    ctrl_srv.listen(1)
+                    ready.set()
+                    ctrl, _ = ctrl_srv.accept()
+                    with ctrl:
+                        ctrl.settimeout(5.0)
+                        _ftp_sendline(ctrl, "220 smallos ftp")
+                        while True:
+                            line = _ftp_readline(ctrl)
+                            if not line:
+                                break
+                            verb = line.split(" ", 1)[0].upper()
+                            if verb == "USER":
+                                _ftp_sendline(ctrl, "230 logged in")
+                            elif verb == "PASS":
+                                _ftp_sendline(ctrl, "230 logged in")
+                            elif verb == "TYPE":
+                                _ftp_sendline(ctrl, "200 type ok")
+                            elif verb == "PASV":
+                                p1 = data_port // 256
+                                p2 = data_port % 256
+                                _ftp_sendline(
+                                    ctrl,
+                                    f"227 Entering Passive Mode (10,0,2,2,{p1},{p2})",
+                                )
+                            elif verb == "SIZE":
+                                _ftp_sendline(ctrl, f"213 {len(FTPGET_BODY)}")
+                            elif verb == "RETR" and mode == "get":
+                                data_conn, _ = data_srv.accept()
+                                with data_conn:
+                                    _ftp_sendline(ctrl, "150 opening data")
+                                    data_conn.sendall(FTPGET_BODY)
+                                _ftp_sendline(ctrl, "226 done")
+                            elif verb == "STOR" and mode == "put":
+                                data_conn, _ = data_srv.accept()
+                                uploaded = b""
+                                with data_conn:
+                                    _ftp_sendline(ctrl, "150 opening data")
+                                    data_conn.settimeout(5.0)
+                                    while True:
+                                        chunk = data_conn.recv(512)
+                                        if not chunk:
+                                            break
+                                        uploaded += chunk
+                                state["uploaded"] = uploaded
+                                state["saw_upload"] = True
+                                if FTPPUT_BODY.strip() not in uploaded:
+                                    raise RuntimeError(f"ftpput payload mismatch: {uploaded!r}")
+                                _ftp_sendline(ctrl, "226 done")
+                            elif verb == "QUIT":
+                                _ftp_sendline(ctrl, "221 bye")
+                                break
+                            else:
+                                raise RuntimeError(f"unexpected FTP command in {mode}: {line}")
+                        if mode == "put" and not state["saw_upload"]:
+                            raise RuntimeError("ftpput did not upload any data")
+        except Exception as exc:
+            state["error"] = exc
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    if not ready.wait(5.0):
+        raise RuntimeError("timed out starting ftp server")
+    return done, state
+
+
+def start_tftp_get_server(port):
+    ready = threading.Event()
+    done = threading.Event()
+    state = {"error": None}
+
+    def worker():
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as srv:
+                srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                srv.bind(("127.0.0.1", port))
+                srv.settimeout(10.0)
+                ready.set()
+                packet, peer = srv.recvfrom(1024)
+                if not packet.startswith(b"\x00\x01") or b"busybox.txt\x00" not in packet:
+                    raise RuntimeError(f"unexpected tftp rrq: {packet!r}")
+                srv.sendto(b"\x00\x03\x00\x01" + TFTP_BODY, peer)
+                ack, _ = srv.recvfrom(1024)
+                if ack != b"\x00\x04\x00\x01":
+                    raise RuntimeError(f"unexpected tftp ack: {ack!r}")
+        except Exception as exc:
+            state["error"] = exc
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    if not ready.wait(5.0):
+        raise RuntimeError("timed out starting tftp server")
+    return done, state
+
+
 def fetch_guest_http(port, timeout_s):
     with connect_tcp("127.0.0.1", port, timeout_s) as sock:
         sock.sendall(
@@ -292,6 +422,24 @@ def fetch_guest_http(port, timeout_s):
         print(f"busybox httpd fetch: {len(data)} bytes")
 
 
+def check_guest_tcpsvd(port, timeout_s):
+    with connect_tcp("127.0.0.1", port, timeout_s) as sock:
+        sock.sendall(TCPSVD_BODY)
+        data = b""
+        deadline = time.time() + timeout_s
+        while time.time() < deadline and TCPSVD_BODY not in data:
+            try:
+                chunk = sock.recv(512)
+            except socket.timeout:
+                continue
+            if not chunk:
+                break
+            data += chunk
+        if TCPSVD_BODY not in data:
+            raise RuntimeError(f"tcpsvd echo mismatch: {data!r}")
+        print(f"busybox tcpsvd echo: {len(data)} bytes")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--monitor", default="/tmp/smallos-monitor.sock")
@@ -301,6 +449,10 @@ def main():
     parser.add_argument("--host-http-port", type=int, default=18080)
     parser.add_argument("--host-echo-port", type=int, default=18082)
     parser.add_argument("--host-whois-port", type=int, default=18083)
+    parser.add_argument("--host-ftp-port", type=int, default=18084)
+    parser.add_argument("--host-ftp-data-port", type=int, default=18085)
+    parser.add_argument("--host-tftp-port", type=int, default=18086)
+    parser.add_argument("--guest-tcpsvd-port", type=int, default=18087)
     parser.add_argument("--timeout", type=float, default=120.0)
     args = parser.parse_args()
 
@@ -400,6 +552,76 @@ def main():
             if whois_state["error"] is not None:
                 raise whois_state["error"]
 
+            ftp_done, ftp_state = start_ftp_server(
+                args.host_ftp_port,
+                args.host_ftp_data_port,
+                "get",
+            )
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                f"usr/bin/busybox ftpget -P {args.host_ftp_port} 10.0.2.2 /tmp/bbftpget.txt busybox.txt",
+                args.timeout,
+            )
+            if not ftp_done.wait(5.0):
+                raise RuntimeError("timed out waiting for host ftpget server")
+            if ftp_state["error"] is not None:
+                raise ftp_state["error"]
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                "usr/bin/busybox grep ftpget-ok /tmp/bbftpget.txt",
+                args.timeout,
+                "smallos-ftpget-ok",
+            )
+
+            ftp_done, ftp_state = start_ftp_server(
+                args.host_ftp_port,
+                args.host_ftp_data_port,
+                "put",
+            )
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                "usr/bin/busybox printf smallos-ftpput-ok | usr/bin/busybox tee /tmp/bbftpput.txt",
+                args.timeout,
+            )
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                f"usr/bin/busybox ftpput -P {args.host_ftp_port} 10.0.2.2 uploaded.txt /tmp/bbftpput.txt",
+                args.timeout,
+            )
+            if not ftp_done.wait(5.0):
+                raise RuntimeError("timed out waiting for host ftpput server")
+            if ftp_state["error"] is not None:
+                raise ftp_state["error"]
+
+            tftp_done, tftp_state = start_tftp_get_server(args.host_tftp_port)
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                f"usr/bin/busybox tftp -g -l /tmp/bbtftp.txt -r busybox.txt 10.0.2.2 {args.host_tftp_port}",
+                args.timeout,
+            )
+            if not tftp_done.wait(5.0):
+                raise RuntimeError("timed out waiting for host tftp server")
+            if tftp_state["error"] is not None:
+                raise tftp_state["error"]
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                "usr/bin/busybox grep tftp-ok /tmp/bbtftp.txt",
+                args.timeout,
+                "smallos-tftp-ok",
+            )
+
             echo_done, echo_state = start_echo_server(args.host_echo_port)
             offset, _ = run_guest_command(
                 monitor,
@@ -412,6 +634,15 @@ def main():
                 raise RuntimeError("timed out waiting for host echo server")
             if echo_state["error"] is not None:
                 raise echo_state["error"]
+
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                f"bg usr/bin/busybox tcpsvd -E 0.0.0.0 {args.guest_tcpsvd_port} usr/bin/busybox cat",
+                args.timeout,
+            )
+            check_guest_tcpsvd(args.guest_tcpsvd_port, args.timeout)
 
             offset, _ = run_guest_command(
                 monitor,
