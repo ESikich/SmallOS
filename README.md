@@ -44,9 +44,10 @@ BusyBox-backed Unix compatibility layer inside the guest.
   `ip neigh`, `/proc/net/arp` for BusyBox `arp`, resolver/service helpers for
   BusyBox `hostname`/`ipcalc`/`netstat`/`nslookup`/`pscan`, raw ICMP sockets
   for BusyBox `ping`, BusyBox `nc`/plain HTTP `wget`/`whois`/`ftpget`/
-  `ftpput`/`tftp`/`tcpsvd`/`udpsvd`/`tftpd`/`httpd`, a compact TCP service
-  task, passive sockets, `poll`/`epoll` readiness, FTP, TFTP, echo, WHOIS,
-  and HTTP server smoke paths.
+  `ftpput`/`tftp`/`tcpsvd`/`udpsvd`/`tftpd`/`httpd`, BusyBox `udhcpc`
+  routed through the native DHCP operation, a compact TCP service task,
+  passive sockets, `poll`/`epoll` readiness, FTP, TFTP, echo, WHOIS, and
+  HTTP server smoke paths.
 - Guest userland includes familiar commands such as `ls`, `tree`, `cat`,
   `more`, `man`, `pwd`, `touch`, `mkdir`, `rm`, `cp`, `mv`, `edit`, `date`, `ip`,
   `ipconfig`, `login`, `passwd`, `uptime`, `halt`, and `reboot`, plus diagnostics such as
@@ -61,8 +62,9 @@ BusyBox-backed Unix compatibility layer inside the guest.
   `hexdump`, network applets such as `ifconfig`, `route`, `arp`, `ip`,
   `hostname`, `ipcalc`, `netstat`, `nslookup`, `pscan`, `ping`, `nc`, plain
   HTTP `wget`, `whois`, `ftpget`, `ftpput`, `tftp`, `tcpsvd`, `udpsvd`,
-  `tftpd`, and `httpd`, login-flow applets such as `init`, `login`, and
-  `getty`, plus link/node utilities such as `ln`, `link`, `readlink`,
+  `tftpd`, `httpd`, `udhcpc`, `udhcpd`, and `dumpleases`, login-flow applets
+  such as `init`, `login`, and `getty`, plus link/node utilities such as `ln`,
+  `link`, `readlink`,
   `mkfifo`, and `mknod`. `/bin/sh` launches BusyBox `ash` with basic POSIX
   job-control support for script-style compatibility without replacing
   `/bin/shell`.
@@ -256,12 +258,15 @@ ipconfig /all
 BusyBox `ifconfig`, `route`, `arp`, `ip link`, `ip addr`, `ip route`,
 `ip neigh`, `hostname`, `ipcalc`, `netstat -r`, `nslookup`, `pscan`, `whois`,
 IPv4 `ping`, `nc`, plain HTTP `wget`, `ftpget`, `ftpput`, `tftp`, `tcpsvd`,
-`udpsvd`, `tftpd`, and `httpd` use the same `eth0`, loopback, route, DNS,
-ARP-neighbor, raw ICMP, UDP, and IPv4/TCP paths through Linux-shaped network
-ioctls, minimal rtnetlink, `/proc/net`, socket syscalls, and libc
-resolver/service helpers. Libc resolver calls support numeric IPv4,
-`localhost`, optional `/etc/hosts`, and DNS A-record lookups via the configured
-DNS server.
+`udpsvd`, `tftpd`, `httpd`, and `udhcpc` use the same `eth0`, loopback, route,
+DNS, ARP-neighbor, raw ICMP, UDP, IPv4/TCP, and native DHCP paths through
+Linux-shaped network ioctls, minimal rtnetlink, `/proc/net`, socket syscalls,
+`SYS_NET_OP_DHCP`, and libc resolver/service helpers. Libc resolver calls
+support numeric IPv4, `localhost`, optional `/etc/hosts`, and DNS A-record
+lookups via the configured DNS server. BusyBox `udhcpd` and `dumpleases` are
+built for compatibility, but the DHCP server applet is not run by the smoke
+suite and full raw-packet server behavior is still outside the guaranteed
+surface.
 
 VMware ESXi deploys use the same VMDK and the same DHCP/NIC path:
 

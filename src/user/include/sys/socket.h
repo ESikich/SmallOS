@@ -15,6 +15,21 @@ struct msghdr {
     int msg_flags;
 };
 
+struct cmsghdr {
+    size_t cmsg_len;
+    int cmsg_level;
+    int cmsg_type;
+};
+
+#define CMSG_ALIGN(len) (((len) + sizeof(size_t) - 1u) & ~(sizeof(size_t) - 1u))
+#define CMSG_DATA(cmsg) ((unsigned char*)((struct cmsghdr*)(cmsg) + 1))
+#define CMSG_LEN(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
+#define CMSG_SPACE(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + CMSG_ALIGN(len))
+#define CMSG_FIRSTHDR(msg) \
+    ((msg)->msg_controllen >= sizeof(struct cmsghdr) ? \
+     (struct cmsghdr*)((msg)->msg_control) : (struct cmsghdr*)0)
+#define CMSG_NXTHDR(msg, cmsg) ((void)(msg), (void)(cmsg), (struct cmsghdr*)0)
+
 int socket(int domain, int type, int protocol);
 int bind(int fd, const struct sockaddr* addr, socklen_t addrlen);
 int listen(int fd, int backlog);

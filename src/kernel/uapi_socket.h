@@ -25,6 +25,7 @@ struct sockaddr_in {
 
 #define INADDR_ANY      0u
 #define INADDR_LOOPBACK 0x7F000001u
+#define INADDR_BROADCAST 0xFFFFFFFFu
 
 #define AF_UNSPEC    0
 #define AF_UNIX      1
@@ -45,6 +46,7 @@ struct sockaddr_in {
 #define SOCK_RAW     3
 #define SOCK_RDM     4
 #define SOCK_SEQPACKET 5
+#define SOCK_PACKET  10
 #define SOCK_NONBLOCK SYS_FD_FLAG_NONBLOCK
 #define SOCK_CLOEXEC  0x00080000u
 #define SOCK_TYPE_MASK 0x0000000Fu
@@ -52,6 +54,7 @@ struct sockaddr_in {
 #define IPPROTO_ICMP 1
 #define IPPROTO_TCP  6
 #define IPPROTO_UDP  17
+#define IPPROTO_RAW  255
 
 #define NETLINK_ROUTE 0
 
@@ -62,12 +65,14 @@ struct sockaddr_in {
 
 #define SOL_SOCKET   1
 #define SOL_IP       IPPROTO_IP
+#define SOL_PACKET   263
 #define SO_REUSEADDR 2
 #define SO_BROADCAST 6
 #define SO_KEEPALIVE 9
 #define SO_ERROR     4
 #define SO_RCVBUF    8
 #define SO_SNDBUF    7
+#define SO_ATTACH_FILTER 26
 
 #define SOMAXCONN    128
 

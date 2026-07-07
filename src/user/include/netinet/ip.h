@@ -24,5 +24,7 @@ struct iphdr {
 
 #define IP_TTL 2
 #define IP_MULTICAST_TTL 33
+#define IPVERSION 4
+#define IPDEFTTL 64
 
 #endif /* USER_NETINET_IP_H */

@@ -1,5 +1,13 @@
 #include "string.h"
 #include "errno.h"
+#include "netinet/ether.h"
+
+static int ether_hex_value(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
 
 char* strerror(int errnum) {
     switch (errnum) {
@@ -58,4 +66,22 @@ int bcmp(const void* a, const void* b, size_t len) {
 
 int strncasecmp(const char* a, const char* b, size_t n) {
     return strnicmp(a, b, n);
+}
+
+struct ether_addr* ether_aton_r(const char* ascii, struct ether_addr* addr) {
+    if (!ascii || !addr) return NULL;
+
+    for (int i = 0; i < ETH_ALEN; ++i) {
+        int hi = ether_hex_value(*ascii++);
+        int lo = ether_hex_value(*ascii++);
+        if (hi < 0 || lo < 0) return NULL;
+        addr->ether_addr_octet[i] = (unsigned char)((hi << 4) | lo);
+        if (i + 1 < ETH_ALEN) {
+            if (*ascii++ != ':') return NULL;
+        } else if (*ascii) {
+            return NULL;
+        }
+    }
+
+    return addr;
 }

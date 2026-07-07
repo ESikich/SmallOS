@@ -514,6 +514,14 @@ def main():
                 monitor,
                 log,
                 offset,
+                "usr/bin/busybox udhcpc -n -q -i eth0",
+                args.timeout,
+                "lease acquired via SmallOS DHCP",
+            )
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
                 f"bg usr/bin/busybox httpd -f -p {args.guest_http_port} -h /var/www",
                 args.timeout,
             )

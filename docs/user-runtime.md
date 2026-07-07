@@ -330,7 +330,7 @@ sockets serve link, address, route, and ARP-neighbor state to BusyBox
 `ip link`, `ip addr`, `ip route`, and `ip neigh`. `/proc/net/arp` exposes the
 resolved ARP cache to BusyBox `arp`, and libc resolver/service shims cover
 BusyBox `hostname`, `ipcalc`, `netstat -r`, `nslookup`, `pscan`, `whois`,
-`ftpget`, `ftpput`, `tftp`, `tcpsvd`, `udpsvd`, and `tftpd`.
+`ftpget`, `ftpput`, `tftp`, `tcpsvd`, `udpsvd`, `tftpd`, and `udhcpc`.
 
 The runtime is also where SmallOS grows its hosted C surface. Older ports such
 as Fractint are useful completeness tests: when they need a normal libc, libm,
@@ -538,20 +538,22 @@ The current compatibility wave enables BusyBox `ash` job control, BusyBox
 `ip neigh`, ARP/hostname/calculation/inspection tools (`arp`, `hostname`,
 `dnsdomainname`, `ipcalc`, `netstat -r`, `nslookup`, `pscan`, and `whois`), and
 TCP/UDP applets (`nc`, plain HTTP `wget`, `ftpget`, `ftpput`, `tftp`,
-`tcpsvd`, `udpsvd`, `tftpd`, and `httpd`), and login-flow applets (`init`,
-`login`, and `getty`). Those applets are backed by kernel
+`tcpsvd`, `udpsvd`, `tftpd`, `httpd`, and `udhcpc`), DHCP utility applets
+(`udhcpd` and `dumpleases`), and login-flow applets (`init`, `login`, and
+`getty`). Those applets are backed by kernel
 stopped-job/process-group semantics, kernel network ioctls, minimal rtnetlink,
 state-backed `/proc/net/dev`, `/proc/net/route`, and `/proc/net/arp`,
 ARP-neighbor reporting, raw ICMP sockets, UDP DNS/TFTP traffic, UDP
-`SO_REUSEADDR`/`MSG_PEEK` service compatibility, credential syscalls,
-`/etc/passwd`/`/etc/shadow`/`/etc/group`, and terminal/session compatibility
-wrappers for BusyBox `init`/`login`/`getty`. Arbitrary filesystem mounting, real BusyBox
-PID-1 boot supervision, Linux-compatible password hash semantics, BusyBox DHCP
-daemons/clients, telnet/telnetd, inetd, richer TFTP server modes, AF_PACKET
-applets, `ip` rule/tunnel modes, multi-interface and IPv6 behavior, HTTPS/TLS,
-and complete Linux device behavior remain disabled or stubbed. New BusyBox applets should
-grow the shared runtime, headers, and virtual filesystem behavior when they
-reveal a portable Unix expectation.
+`SO_REUSEADDR`/`MSG_PEEK` service compatibility, native `SYS_NET_OP_DHCP` for
+BusyBox `udhcpc`, credential syscalls, `/etc/passwd`/`/etc/shadow`/`/etc/group`,
+and terminal/session compatibility wrappers for BusyBox `init`/`login`/`getty`.
+Arbitrary filesystem mounting, real BusyBox PID-1 boot supervision,
+Linux-compatible password hash semantics, BusyBox DHCP server operation and
+lease renewal/expiry semantics, telnet/telnetd, inetd, richer TFTP server
+modes, AF_PACKET applets, `ip` rule/tunnel modes, multi-interface and IPv6
+behavior, HTTPS/TLS, and complete Linux device behavior remain disabled or
+stubbed. New BusyBox applets should grow the shared runtime, headers, and
+virtual filesystem behavior when they reveal a portable Unix expectation.
 
 ---
 

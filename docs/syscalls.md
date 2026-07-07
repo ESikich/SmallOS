@@ -409,11 +409,12 @@ int sys_socket(int domain, int type, int protocol);
 Creates a socket handle. The TCP stream path accepts `AF_INET`,
 `SOCK_STREAM`, and either `0` or `IPPROTO_TCP`. The networking compatibility
 path also accepts `AF_INET`/`SOCK_DGRAM` as a control/datagram descriptor for
-network ioctls, DNS lookups, BusyBox `tftp`, and BusyBox `udpsvd`/`tftpd`,
-and `AF_INET`/`SOCK_RAW`/`IPPROTO_ICMP` for raw ICMP echo traffic used by
-BusyBox `ping`. `AF_NETLINK` with `NETLINK_ROUTE` creates a minimal rtnetlink
-descriptor for BusyBox `ip link`, `ip addr`, `ip route`, and `ip neigh` over
-the current `eth0`, loopback, route, and ARP-neighbor state.
+network ioctls, DNS lookups, BusyBox `tftp`, and BusyBox `udpsvd`/`tftpd`;
+BusyBox `udhcpc` uses `SYS_NET_OP_DHCP` instead of this raw socket path.
+`AF_INET`/`SOCK_RAW`/`IPPROTO_ICMP` is accepted for raw ICMP echo traffic used
+by BusyBox `ping`. `AF_NETLINK` with `NETLINK_ROUTE` creates a minimal
+rtnetlink descriptor for BusyBox `ip link`, `ip addr`, `ip route`, and
+`ip neigh` over the current `eth0`, loopback, route, and ARP-neighbor state.
 
 ---
 
@@ -1265,6 +1266,10 @@ values are:
 | `SYS_NET_OP_CONFIGURE` | Install a runtime static IPv4 config from `target_ip`, `netmask`, `gateway`, `dns`, `dhcp_server`, and `lease_seconds`. |
 | `SYS_NET_OP_CLEAR_CONFIG` | Clear the runtime IPv4 config. |
 
+The BusyBox `udhcpc` applet is patched to use `SYS_NET_OP_DHCP` for `eth0`,
+matching the native `dhcp` and `ip dhcp` commands without opening raw packet
+sockets.
+
 Addresses are host-order IPv4 values in the same format used by the kernel
 network drivers. These settings are runtime-only; they are not persisted to
 disk.
@@ -1292,7 +1297,9 @@ Minimal rtnetlink is available through `AF_NETLINK` route sockets for BusyBox
 advanced policy-route behavior remain unsupported. DNS-over-UDP is implemented
 in libc on top of the UDP socket path when the runtime network state has a DNS
 server, and the same UDP path is covered by BusyBox `tftp` client and
-`udpsvd`/`tftpd` service smoke.
+`udpsvd`/`tftpd` service smoke. BusyBox `udhcpc` is patched to call
+`SYS_NET_OP_DHCP` for `eth0`; BusyBox `udhcpd` is built but not exercised by
+the smoke suite.
 
 ### SYS_BLOCK_READ_SECTOR (81)
 

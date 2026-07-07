@@ -69,6 +69,9 @@
 #define ARPHRD_VOID 0xFFFFu
 #define ARPHRD_NONE 0xFFFEu
 
+#define ARPOP_REQUEST 1u
+#define ARPOP_REPLY   2u
+
 
 #define SIOCADDRT       0x890Bu
 #define SIOCDELRT       0x890Cu

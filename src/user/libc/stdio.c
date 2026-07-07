@@ -1376,6 +1376,12 @@ size_t strlen(const char* s) {
     return n;
 }
 
+size_t strnlen(const char* s, size_t maxlen) {
+    size_t n = 0;
+    while (s && n < maxlen && s[n]) n++;
+    return n;
+}
+
 static int c_tolower(int c) {
     if (c >= 'A' && c <= 'Z') return c - 'A' + 'a';
     return c;

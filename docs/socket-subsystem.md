@@ -60,7 +60,9 @@ POSIX edge-semantics work.
   demux over wildcard bound sockets for matching replies.
   Basic BusyBox TCP/UDP applets are enabled too: `nc`, plain HTTP `wget`,
   `whois`, `ftpget`, `ftpput`, `tftp`, `tcpsvd`, `udpsvd`, `tftpd`, and
-  `httpd` run over the existing IPv4 socket path.
+  `httpd` run over the existing IPv4 socket path. BusyBox `udhcpc` is enabled
+  through a SmallOS-specific shim that calls the native `SYS_NET_OP_DHCP`
+  operation for `eth0`.
 - The boot-started cserve instance uses `max_conn = 28`; the default cserve
   smoke gate holds 24 keep-alive clients and adds one slow-reader connection.
 
@@ -178,9 +180,10 @@ Coverage highlights:
 - `make cserve-smoke` uses the boot-started cserve instance, fetches the large
   static fixture, checks a 404, holds keep-alive clients, exercises a slow
   reader, and captures `netinfo`.
-- `make busybox-net-smoke` checks BusyBox `httpd`, plain HTTP `wget`, `pscan`,
-  `whois`, `ftpget`, `ftpput`, `tftp`, `nc`, `tcpsvd`, `udpsvd`, `tftpd`, and
-  ARP/neighbor reporting through host/guest TCP and UDP paths.
+- `make busybox-net-smoke` checks BusyBox `udhcpc`, `httpd`, plain HTTP
+  `wget`, `pscan`, `whois`, `ftpget`, `ftpput`, `tftp`, `nc`, `tcpsvd`,
+  `udpsvd`, `tftpd`, and ARP/neighbor reporting through host/guest TCP and UDP
+  paths. It does not start BusyBox `udhcpd`.
 - `make verify-network` runs the socket EOF, socket parallel, FTP, FTP loop,
   cserve, and BusyBox network smoke targets in sequence.
 
@@ -193,10 +196,10 @@ Later networking work can build on it in these areas:
   TAP-mode coverage for bridged or routed host setups.
 - Broader UDP behavior beyond DNS, single-file TFTP transfers, and the basic
   `udpsvd`/`tftpd` service path.
-- Broader BusyBox client/server coverage beyond the current `nc`, plain HTTP
-  `wget`, `whois`, `pscan`, `ftpget`, `ftpput`, `tftp`, `tcpsvd`, `udpsvd`,
-  `tftpd`, and `httpd` host smoke, including DHCP, telnet, inetd, and other
-  service applets.
+- Broader BusyBox client/server coverage beyond the current `udhcpc`, `nc`,
+  plain HTTP `wget`, `whois`, `pscan`, `ftpget`, `ftpput`, `tftp`, `tcpsvd`,
+  `udpsvd`, `tftpd`, and `httpd` host smoke, including DHCP server behavior,
+  telnet, inetd, and other service applets.
 - Broader rtnetlink coverage for BusyBox `ip rule`, tunnel modes,
   multi-interface systems, and IPv6 once those kernel features exist.
 - Production TCP polish, including broader congestion, window, and recovery

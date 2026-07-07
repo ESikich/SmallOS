@@ -19,6 +19,7 @@ void* memchr(const void* s, int c, size_t n);
 char* strdup(const char* s);
 char* strndup(const char* s, size_t n);
 size_t strlen(const char* s);
+size_t strnlen(const char* s, size_t maxlen);
 int strcasecmp(const char* a, const char* b);
 int strncasecmp(const char* a, const char* b, size_t n);
 int stricmp(const char* a, const char* b);
