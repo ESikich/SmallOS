@@ -3248,7 +3248,7 @@ static int sys_udp_recv_socket(process_t* proc,
                                unsigned int flags,
                                unsigned int* out_src_ip,
                                unsigned int* out_src_port) {
-    if (!proc || !ent || !buf || socket_kind(ent->socket) != SOCKET_KIND_UDP) {
+    if (!proc || !ent || (!buf && len != 0u) || socket_kind(ent->socket) != SOCKET_KIND_UDP) {
         return -EINVAL;
     }
 
@@ -3276,7 +3276,12 @@ static int sys_udp_recv_socket(process_t* proc,
     }
     socket_wait_clear_process(proc);
 
-    return socket_udp_recv(ent->socket, buf, len, out_src_ip, out_src_port);
+    return socket_udp_recv(ent->socket,
+                           buf,
+                           len,
+                           out_src_ip,
+                           out_src_port,
+                           (flags & MSG_PEEK) != 0u);
 }
 
 static int sys_recv_impl(syscall_regs_t* regs, int fd, void* buf, unsigned int len) {
@@ -3423,12 +3428,18 @@ static int sys_recvfrom_impl(syscall_regs_t* regs,
     fd_entry_t* ent;
 
     if (!proc) return -EINVAL;
-    if (len == 0u) return 0;
-    if (!user_buf_ok((unsigned int)buf, len)) return -EFAULT;
-    if ((flags & ~(MSG_DONTWAIT | MSG_NOSIGNAL)) != 0u) return -EINVAL;
+    if ((flags & ~(MSG_DONTWAIT | MSG_NOSIGNAL | MSG_PEEK)) != 0u) return -EINVAL;
 
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
+    if (len == 0u &&
+        !(socket_kind(ent->socket) == SOCKET_KIND_UDP &&
+          (flags & MSG_PEEK) != 0u &&
+          src_addr &&
+          addrlen)) {
+        return 0;
+    }
+    if (len != 0u && !user_buf_ok((unsigned int)buf, len)) return -EFAULT;
 
     if (socket_kind(ent->socket) == SOCKET_KIND_NETLINK_ROUTE) {
         return sys_netlink_recv_user(proc, ent, buf, len, flags, src_addr, addrlen);
@@ -4329,8 +4340,13 @@ static int sys_setsockopt_impl(int fd, int level, int optname) {
     if (!proc) return -EINVAL;
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
-    (void)level;
-    (void)optname;
+    if (level == SOL_SOCKET && optname == SO_REUSEADDR) {
+        socket_set_reuseaddr(ent->socket, 1);
+        return 0;
+    }
+    if (level == SOL_SOCKET && optname == SO_BROADCAST) {
+        return 0;
+    }
     return 0;
 }
 

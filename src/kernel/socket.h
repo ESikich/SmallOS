@@ -54,13 +54,15 @@ int            socket_bind_udp(socket_t* sock, unsigned int port);
 int            socket_connect_udp(socket_t* sock,
                                   unsigned int remote_ip,
                                   unsigned int remote_port);
+void           socket_set_reuseaddr(socket_t* sock, int enabled);
 int            socket_udp_ensure_bound(socket_t* sock);
 int            socket_udp_recv_ready(socket_t* sock);
 int            socket_udp_recv(socket_t* sock,
                                void* buf,
                                unsigned int len,
                                unsigned int* out_src_ip,
-                               unsigned int* out_src_port);
+                               unsigned int* out_src_port,
+                               unsigned int peek);
 int            socket_udp_deliver(unsigned int src_ip,
                                   unsigned int src_port,
                                   unsigned int dst_ip,

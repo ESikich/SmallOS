@@ -271,14 +271,13 @@ instance, checks the large `/var/www/index.html` static fixture, holds
 24 keep-alive clients by default, exercises a slow reader, verifies
 `/favicon.ico` returns 404, and records the guest `netinfo` socket/TCP summary.
 
-`make busybox-net-smoke` forwards a guest BusyBox `httpd` port, fetches its
-`/var/www` content from the host, serves a tiny host HTTP response for guest
-BusyBox `wget`, scans the host HTTP port with BusyBox `pscan`, checks BusyBox
-`whois`, `ftpget`, `ftpput`, and `tftp` against host responders, checks
-BusyBox `nc` against a host echo socket, and starts BusyBox `tcpsvd` in the
-guest for a host-forwarded echo check. This keeps the enabled BusyBox network
-applets tied to real IPv4 TCP/UDP behavior rather than only compile-time
-availability.
+`make busybox-net-smoke` forwards guest BusyBox `httpd`, `tcpsvd`, and
+`udpsvd`/`tftpd` ports, fetches `/var/www` content from the host, serves tiny
+host HTTP/FTP/TFTP/WHOIS/echo fixtures for guest BusyBox clients, checks
+BusyBox `nc` against a host echo socket, starts BusyBox `tcpsvd` in the guest
+for a host-forwarded echo check, and fetches a file from guest BusyBox `tftpd`
+through `udpsvd`. This keeps the enabled BusyBox network applets tied to real
+IPv4 TCP/UDP behavior rather than only compile-time availability.
 
 ---
 

@@ -17,7 +17,7 @@ DESCRIPTION
     making applets such as grep, sed, awk, df, du, free, ps, tar, gzip,
     gunzip, od, hexdump, ifconfig, route, ping, readlink, ln, chgrp, md5sum,
     sha1sum, sha256sum, link, mkfifo, mknod, ftpget, ftpput, tftp, tcpsvd,
-    which, expr, and test available.
+    udpsvd, tftpd, which, expr, and test available.
 
     /bin/sh is a tiny launcher for BusyBox ash. Basic job-control behavior is
     backed by SmallOS process groups, stopped child reporting, and terminal
@@ -33,10 +33,11 @@ SCOPE
     IPv4 ICMP sockets, UDP DNS resolver traffic, and IPv4/TCP sockets are
     implemented for mount, ifconfig, route, arp, hostname, dnsdomainname,
     ipcalc, netstat, nslookup, pscan, whois, ip link, ip addr, ip route,
-    ip neigh, ping, nc, plain HTTP wget, ftpget, ftpput, tftp, tcpsvd, and
-    httpd. BusyBox ash can use jobs, fg, bg, Ctrl+Z, and SIGCONT/SIGTSTP-style
+    ip neigh, ping, nc, plain HTTP wget, ftpget, ftpput, tftp, tcpsvd,
+    udpsvd, tftpd, and httpd. BusyBox ash can use jobs, fg, bg, Ctrl+Z,
+    and SIGCONT/SIGTSTP-style
     stopped jobs. Init/login/getty behavior, authentication semantics,
-    DHCP/telnet/inetd/UDP service applets, AF_PACKET applets, ip rule/tunnel,
+    DHCP/telnet/inetd service applets, AF_PACKET applets, ip rule/tunnel,
     IPv6, HTTPS/TLS, and complete /dev device behavior remain outside this
     compatibility wave.
 

@@ -44,9 +44,9 @@ BusyBox-backed Unix compatibility layer inside the guest.
   `ip neigh`, `/proc/net/arp` for BusyBox `arp`, resolver/service helpers for
   BusyBox `hostname`/`ipcalc`/`netstat`/`nslookup`/`pscan`, raw ICMP sockets
   for BusyBox `ping`, BusyBox `nc`/plain HTTP `wget`/`whois`/`ftpget`/
-  `ftpput`/`tftp`/`tcpsvd`/`httpd`, a compact TCP service task, passive
-  sockets, `poll`/`epoll` readiness, FTP, TFTP, echo, WHOIS, and HTTP server
-  smoke paths.
+  `ftpput`/`tftp`/`tcpsvd`/`udpsvd`/`tftpd`/`httpd`, a compact TCP service
+  task, passive sockets, `poll`/`epoll` readiness, FTP, TFTP, echo, WHOIS,
+  and HTTP server smoke paths.
 - Guest userland includes familiar commands such as `ls`, `tree`, `cat`,
   `more`, `man`, `pwd`, `touch`, `mkdir`, `rm`, `cp`, `mv`, `edit`, `date`, `ip`,
   `ipconfig`, `uptime`, `halt`, and `reboot`, plus diagnostics such as
@@ -57,10 +57,11 @@ BusyBox-backed Unix compatibility layer inside the guest.
   `df`, `du`, `free`, `ps`, `tar`, `gzip`, `gunzip`, checksum tools, and
   `hexdump`, network applets such as `ifconfig`, `route`, `arp`, `ip`,
   `hostname`, `ipcalc`, `netstat`, `nslookup`, `pscan`, `ping`, `nc`, plain
-  HTTP `wget`, `whois`, `ftpget`, `ftpput`, `tftp`, `tcpsvd`, and `httpd`,
-  plus link/node utilities such as `ln`, `link`, `readlink`, `mkfifo`, and
-  `mknod`. `/bin/sh` launches BusyBox `ash` with basic POSIX job-control
-  support for script-style compatibility without replacing `/bin/shell`.
+  HTTP `wget`, `whois`, `ftpget`, `ftpput`, `tftp`, `tcpsvd`, `udpsvd`,
+  `tftpd`, and `httpd`, plus link/node utilities such as `ln`, `link`,
+  `readlink`, `mkfifo`, and `mknod`. `/bin/sh` launches BusyBox `ash` with
+  basic POSIX job-control support for script-style compatibility without
+  replacing `/bin/shell`.
 - The compatibility layer exposes virtual `/proc` and `/dev` entries used by
   Unix tools, including memory, uptime, process, mount, filesystem, network,
   null, zero, tty, console, and standard-fd paths.
@@ -250,9 +251,11 @@ ipconfig /all
 
 BusyBox `ifconfig`, `route`, `arp`, `ip link`, `ip addr`, `ip route`,
 `ip neigh`, `hostname`, `ipcalc`, `netstat -r`, `nslookup`, `pscan`, `whois`,
-and IPv4 `ping` use the same `eth0`, loopback, route, DNS, and ARP-neighbor
-state through Linux-shaped network ioctls, minimal rtnetlink, `/proc/net`, and
-libc resolver/service helpers. Libc resolver calls support numeric IPv4,
+IPv4 `ping`, `nc`, plain HTTP `wget`, `ftpget`, `ftpput`, `tftp`, `tcpsvd`,
+`udpsvd`, `tftpd`, and `httpd` use the same `eth0`, loopback, route, DNS,
+ARP-neighbor, raw ICMP, UDP, and IPv4/TCP paths through Linux-shaped network
+ioctls, minimal rtnetlink, `/proc/net`, socket syscalls, and libc
+resolver/service helpers. Libc resolver calls support numeric IPv4,
 `localhost`, optional `/etc/hosts`, and DNS A-record lookups via the configured
 DNS server.
 

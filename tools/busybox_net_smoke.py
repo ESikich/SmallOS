@@ -17,6 +17,7 @@ FTPGET_BODY = b"smallos-ftpget-ok\n"
 FTPPUT_BODY = b"smallos-ftpput-ok\n"
 TFTP_BODY = b"smallos-tftp-ok\n"
 TCPSVD_BODY = b"smallos-tcpsvd-ok\n"
+TFTPD_BODY = b"smallos-tftpd-ok"
 
 
 def wait_for_path(path, timeout_s):
@@ -440,6 +441,43 @@ def check_guest_tcpsvd(port, timeout_s):
         print(f"busybox tcpsvd echo: {len(data)} bytes")
 
 
+def fetch_guest_tftpd(port, timeout_s):
+    request = b"\x00\x01tmp/bbtftpd.txt\x00octet\x00"
+    data = b""
+    block = 1
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.settimeout(1.0)
+        sock.sendto(request, ("127.0.0.1", port))
+        deadline = time.time() + timeout_s
+        peer = None
+        while time.time() < deadline:
+            try:
+                packet, peer = sock.recvfrom(1024)
+            except socket.timeout:
+                if peer is None:
+                    sock.sendto(request, ("127.0.0.1", port))
+                continue
+            if len(packet) < 4:
+                raise RuntimeError(f"short tftpd packet: {packet!r}")
+            opcode = int.from_bytes(packet[0:2], "big")
+            pkt_block = int.from_bytes(packet[2:4], "big")
+            if opcode == 5:
+                raise RuntimeError(f"tftpd error packet: {packet[4:]!r}")
+            if opcode != 3 or pkt_block != block:
+                raise RuntimeError(f"unexpected tftpd packet: {packet!r}")
+            payload = packet[4:]
+            data += payload
+            sock.sendto(b"\x00\x04" + packet[2:4], peer)
+            if len(payload) < 512:
+                break
+            block += 1
+        else:
+            raise RuntimeError("timed out waiting for guest tftpd")
+    if TFTPD_BODY not in data:
+        raise RuntimeError(f"tftpd body mismatch: {data!r}")
+    print(f"busybox tftpd fetch: {len(data)} bytes")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--monitor", default="/tmp/smallos-monitor.sock")
@@ -453,6 +491,7 @@ def main():
     parser.add_argument("--host-ftp-data-port", type=int, default=18085)
     parser.add_argument("--host-tftp-port", type=int, default=18086)
     parser.add_argument("--guest-tcpsvd-port", type=int, default=18087)
+    parser.add_argument("--guest-tftpd-port", type=int, default=18088)
     parser.add_argument("--timeout", type=float, default=120.0)
     args = parser.parse_args()
 
@@ -643,6 +682,22 @@ def main():
                 args.timeout,
             )
             check_guest_tcpsvd(args.guest_tcpsvd_port, args.timeout)
+
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                "usr/bin/busybox printf smallos-tftpd-ok | usr/bin/busybox tee /tmp/bbtftpd.txt",
+                args.timeout,
+            )
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                f"bg usr/bin/busybox udpsvd -E 0.0.0.0 {args.guest_tftpd_port} usr/bin/busybox tftpd",
+                args.timeout,
+            )
+            fetch_guest_tftpd(args.guest_tftpd_port, args.timeout)
 
             offset, _ = run_guest_command(
                 monitor,

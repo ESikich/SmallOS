@@ -53,12 +53,14 @@ POSIX edge-semantics work.
   ioctls, minimal rtnetlink, state-backed `/proc/net/dev`, `/proc/net/route`,
   `/proc/net/arp`, resolver/service helpers, ARP-neighbor reporting, and raw
   ICMP `sendto`/`recvfrom` descriptors. UDP send/receive is available for
-  DNS-sized resolver traffic and single-file TFTP client transfers, and libc
-  resolver lookups can issue DNS A-record queries using the configured DNS
-  server.
+  DNS-sized resolver traffic, single-file TFTP client transfers, and the
+  BusyBox `udpsvd`/`tftpd` service smoke path. Libc resolver lookups can issue
+  DNS A-record queries using the configured DNS server. UDP bind accepts
+  `SO_REUSEADDR` for service-style sharing, and connected UDP sockets win
+  demux over wildcard bound sockets for matching replies.
   Basic BusyBox TCP/UDP applets are enabled too: `nc`, plain HTTP `wget`,
-  `whois`, `ftpget`, `ftpput`, `tftp`, `tcpsvd`, and `httpd` run over the
-  existing IPv4 socket path.
+  `whois`, `ftpget`, `ftpput`, `tftp`, `tcpsvd`, `udpsvd`, `tftpd`, and
+  `httpd` run over the existing IPv4 socket path.
 - The boot-started cserve instance uses `max_conn = 28`; the default cserve
   smoke gate holds 24 keep-alive clients and adds one slow-reader connection.
 
@@ -177,8 +179,8 @@ Coverage highlights:
   static fixture, checks a 404, holds keep-alive clients, exercises a slow
   reader, and captures `netinfo`.
 - `make busybox-net-smoke` checks BusyBox `httpd`, plain HTTP `wget`, `pscan`,
-  `whois`, `ftpget`, `ftpput`, `tftp`, `nc`, `tcpsvd`, and ARP/neighbor
-  reporting through host/guest TCP and UDP paths.
+  `whois`, `ftpget`, `ftpput`, `tftp`, `nc`, `tcpsvd`, `udpsvd`, `tftpd`, and
+  ARP/neighbor reporting through host/guest TCP and UDP paths.
 - `make verify-network` runs the socket EOF, socket parallel, FTP, FTP loop,
   cserve, and BusyBox network smoke targets in sequence.
 
@@ -189,10 +191,12 @@ Later networking work can build on it in these areas:
 
 - DHCP-backed outbound `connect()` coverage in QEMU user networking, plus
   TAP-mode coverage for bridged or routed host setups.
-- Broader UDP behavior beyond DNS and single-file TFTP transfers.
+- Broader UDP behavior beyond DNS, single-file TFTP transfers, and the basic
+  `udpsvd`/`tftpd` service path.
 - Broader BusyBox client/server coverage beyond the current `nc`, plain HTTP
-  `wget`, `whois`, `pscan`, `ftpget`, `ftpput`, `tftp`, `tcpsvd`, and `httpd`
-  host smoke, including DHCP, telnet, inetd, and UDP service applets.
+  `wget`, `whois`, `pscan`, `ftpget`, `ftpput`, `tftp`, `tcpsvd`, `udpsvd`,
+  `tftpd`, and `httpd` host smoke, including DHCP, telnet, inetd, and other
+  service applets.
 - Broader rtnetlink coverage for BusyBox `ip rule`, tunnel modes,
   multi-interface systems, and IPv6 once those kernel features exist.
 - Production TCP polish, including broader congestion, window, and recovery

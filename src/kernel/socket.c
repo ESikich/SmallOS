@@ -10,6 +10,7 @@
 
 #define SOCKET_FLAG_READ_SHUTDOWN  0x00000001u
 #define SOCKET_FLAG_WRITE_SHUTDOWN 0x00000002u
+#define SOCKET_FLAG_REUSEADDR      0x00000004u
 #define SOCKET_RAW_ICMP_MAX_PACKET 1600u
 #define SOCKET_UDP_MAX_PACKET      576u
 #define SOCKET_UDP_QUEUE_MAX       8u
@@ -212,6 +213,11 @@ static int socket_udp_port_in_use(unsigned int port, socket_t* except) {
         if (sock->local_port == (unsigned short)port &&
             (sock->state == SOCKET_STATE_BOUND ||
              sock->state == SOCKET_STATE_CONNECTED)) {
+            if (except &&
+                (except->flags & SOCKET_FLAG_REUSEADDR) != 0u &&
+                (sock->flags & SOCKET_FLAG_REUSEADDR) != 0u) {
+                continue;
+            }
             return 1;
         }
     }
@@ -278,6 +284,15 @@ int socket_connect_udp(socket_t* sock,
     sock->remote_port = (unsigned short)remote_port;
     sock->state = SOCKET_STATE_CONNECTED;
     return 0;
+}
+
+void socket_set_reuseaddr(socket_t* sock, int enabled) {
+    if (!sock) return;
+    if (enabled) {
+        sock->flags |= SOCKET_FLAG_REUSEADDR;
+    } else {
+        sock->flags &= ~SOCKET_FLAG_REUSEADDR;
+    }
 }
 
 int socket_bind_tcp(socket_t* sock, unsigned int port) {
@@ -620,6 +635,21 @@ static int socket_udp_packet_matches(socket_t* sock, udp_packet_t* packet) {
     if (sock->state == SOCKET_STATE_CONNECTED) {
         if (sock->remote_ip != 0u && packet->src_ip != sock->remote_ip) return 0;
         if (sock->remote_port != 0u && packet->src_port != sock->remote_port) return 0;
+    } else if (sock->state == SOCKET_STATE_BOUND) {
+        for (unsigned int i = 0; i < SOCKET_MAX; i++) {
+            socket_t* other = &s_sockets[i];
+            if (other == sock ||
+                other->refs == 0u ||
+                other->kind != SOCKET_KIND_UDP ||
+                other->state != SOCKET_STATE_CONNECTED ||
+                other->local_port != sock->local_port) {
+                continue;
+            }
+            if (other->remote_ip == packet->src_ip &&
+                other->remote_port == packet->src_port) {
+                return 0;
+            }
+        }
     }
     return 1;
 }
@@ -637,18 +667,23 @@ int socket_udp_recv(socket_t* sock,
                     void* buf,
                     unsigned int len,
                     unsigned int* out_src_ip,
-                    unsigned int* out_src_port) {
-    if (!sock || sock->kind != SOCKET_KIND_UDP || !buf) return -EINVAL;
+                    unsigned int* out_src_port,
+                    unsigned int peek) {
+    if (!sock || sock->kind != SOCKET_KIND_UDP || (!buf && len != 0u)) return -EINVAL;
     if (!socket_udp_recv_ready(sock)) return -EAGAIN;
     for (unsigned int i = 0; i < SOCKET_UDP_QUEUE_MAX; i++) {
         udp_packet_t* packet = &s_udp_packets[i];
         if (!socket_udp_packet_matches(sock, packet)) continue;
         unsigned int copy_len = packet->len;
         if (copy_len > len) copy_len = len;
-        k_memcpy(buf, packet->payload, copy_len);
+        if (copy_len != 0u) {
+            k_memcpy(buf, packet->payload, copy_len);
+        }
         if (out_src_ip) *out_src_ip = packet->src_ip;
         if (out_src_port) *out_src_port = packet->src_port;
-        k_memset(packet, 0, sizeof(*packet));
+        if (!peek) {
+            k_memset(packet, 0, sizeof(*packet));
+        }
         return (int)copy_len;
     }
     return -EAGAIN;

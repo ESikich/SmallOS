@@ -409,11 +409,11 @@ int sys_socket(int domain, int type, int protocol);
 Creates a socket handle. The TCP stream path accepts `AF_INET`,
 `SOCK_STREAM`, and either `0` or `IPPROTO_TCP`. The networking compatibility
 path also accepts `AF_INET`/`SOCK_DGRAM` as a control/datagram descriptor for
-network ioctls, DNS lookups, and BusyBox `tftp`, and `AF_INET`/`SOCK_RAW`/
-`IPPROTO_ICMP` for raw ICMP echo traffic used by BusyBox `ping`. `AF_NETLINK`
-with `NETLINK_ROUTE` creates a minimal rtnetlink descriptor for BusyBox
-`ip link`, `ip addr`, `ip route`, and `ip neigh` over the current `eth0`,
-loopback, route, and ARP-neighbor state.
+network ioctls, DNS lookups, BusyBox `tftp`, and BusyBox `udpsvd`/`tftpd`,
+and `AF_INET`/`SOCK_RAW`/`IPPROTO_ICMP` for raw ICMP echo traffic used by
+BusyBox `ping`. `AF_NETLINK` with `NETLINK_ROUTE` creates a minimal rtnetlink
+descriptor for BusyBox `ip link`, `ip addr`, `ip route`, and `ip neigh` over
+the current `eth0`, loopback, route, and ARP-neighbor state.
 
 ---
 
@@ -521,8 +521,8 @@ the supplied ICMP bytes in an IPv4 packet and route them through the existing
 IPv4/ARP next-hop path. UDP descriptors build IPv4/UDP datagrams, bind an
 ephemeral source port when needed, and use the same route/ARP path. UDP
 checksums are currently omitted; the covered guest surface is DNS-sized
-resolver traffic plus the current BusyBox TFTP client smoke path. Netlink route
-descriptors accept
+resolver traffic plus the current BusyBox TFTP client and `udpsvd`/`tftpd`
+service smoke paths. Netlink route descriptors accept
 `RTM_GETLINK`, `RTM_GETADDR`, `RTM_GETROUTE`, `RTM_NEWADDR`, `RTM_DELADDR`,
 `RTM_NEWROUTE`, and `RTM_DELROUTE` request messages for the single `eth0`
 interface.
@@ -545,8 +545,12 @@ TCP stream descriptors without a source buffer are forwarded to `SYS_RECV`.
 Raw ICMP descriptors block until an ICMP IPv4 packet is delivered by the NIC
 receive path, then return the IPv4 header plus ICMP payload, matching the shape
 expected by BusyBox `ping`. UDP descriptors receive queued IPv4/UDP datagrams
-for their bound local port; the first queue is intentionally small and sized for
-DNS/TFTP smoke traffic rather than high-throughput UDP applications. Netlink
+for their bound local port; connected UDP sockets match their peer before a
+wildcard bound socket on the same local port, which lets BusyBox
+`udpsvd`/`tftpd` receive TFTP acknowledgements without the parent service
+stealing them. The first queue is intentionally small and sized for DNS/TFTP
+smoke traffic rather than high-throughput UDP applications. UDP receives honor
+`MSG_PEEK` for the service discovery pattern used by BusyBox `udpsvd`. Netlink
 route descriptors return queued rtnetlink response messages and honor
 `MSG_PEEK` and `MSG_DONTWAIT`.
 
@@ -611,11 +615,13 @@ int sys_setsockopt(int fd, int level, int optname,
                    const void* optval, socklen_t optlen);
 ```
 
-Validates that `fd` is a socket and currently returns success. The raw kernel
-syscall consumes `fd`, `level`, and `optname`; the user helper has the
-POSIX-shaped `optval` / `optlen` arguments and ignores them. This keeps common
-server code that calls `setsockopt(SO_REUSEADDR)` portable while the kernel TCP
-stack stays small.
+Validates that `fd` is a socket and currently treats most options as
+compatibility no-ops. `SO_REUSEADDR` is recognized and enables UDP bind sharing
+when every socket on the local port has requested it; `SO_BROADCAST` returns
+success for BusyBox compatibility. The raw kernel syscall consumes `fd`,
+`level`, and `optname`; the user helper has the POSIX-shaped `optval` /
+`optlen` arguments and ignores them. This keeps common server code portable
+while the kernel socket option surface stays small.
 
 ---
 
@@ -1285,7 +1291,8 @@ Minimal rtnetlink is available through `AF_NETLINK` route sockets for BusyBox
 `ip link`, `ip addr`, `ip route`, and `ip neigh`; `ip rule`, tunnel, and
 advanced policy-route behavior remain unsupported. DNS-over-UDP is implemented
 in libc on top of the UDP socket path when the runtime network state has a DNS
-server, and the same UDP path is covered by BusyBox `tftp` client smoke.
+server, and the same UDP path is covered by BusyBox `tftp` client and
+`udpsvd`/`tftpd` service smoke.
 
 ### SYS_BLOCK_READ_SECTOR (81)
 

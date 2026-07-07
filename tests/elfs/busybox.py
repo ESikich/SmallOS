@@ -36,6 +36,8 @@ CASES = [
             "selftest: busybox ftpput usage woke",
             "selftest: busybox tftp usage woke",
             "selftest: busybox tcpsvd usage woke",
+            "selftest: busybox udpsvd usage woke",
+            "selftest: busybox tftpd usage woke",
             "selftest: busybox fallback grep woke",
             "selftest: busybox dev null woke",
             "selftest: busybox dd zero woke",
