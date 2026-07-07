@@ -8,11 +8,11 @@ SYNOPSIS
 
 DESCRIPTION
     netbbprobe is a guest regression probe for the classic BusyBox networking
-    surface. It checks eth0 interface discovery, ifconfig-style ioctls, minimal
-    rtnetlink link/address/route dumps, runtime IPv4 address and netmask
-    updates, default-route add/delete, /proc/net/dev, /proc/net/route, UDP
-    datagram basics, localhost and numeric IPv4 resolver paths, and error
-    behavior for network ioctls on non-socket descriptors.
+    surface. It checks eth0 and loopback interface discovery, ifconfig-style
+    ioctls, minimal rtnetlink link/address/route/neighbor dumps, runtime IPv4
+    address and netmask updates, default-route add/delete, /proc/net/dev,
+    /proc/net/route, UDP datagram basics, localhost and numeric IPv4 resolver
+    paths, and error behavior for network ioctls on non-socket descriptors.
 
     The probe is installed under /usr/libexec/tests and is normally run by the
     host-driven selftest suite rather than by hand.

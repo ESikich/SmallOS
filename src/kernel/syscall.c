@@ -2572,6 +2572,10 @@ static unsigned int net_eth0_flags(void) {
     return flags;
 }
 
+static unsigned int net_loopback_flags(void) {
+    return IFF_UP | IFF_LOOPBACK | IFF_RUNNING;
+}
+
 static void* nl_begin(netlink_builder_t* b,
                       unsigned int type,
                       unsigned int payload_len,
@@ -2658,27 +2662,38 @@ static int nl_put_ack(netlink_builder_t* b,
     return 0;
 }
 
-static int nl_put_link(netlink_builder_t* b) {
+static int nl_put_link(netlink_builder_t* b,
+                       const char* name,
+                       int ifindex,
+                       unsigned short type,
+                       unsigned int flags,
+                       const unsigned char* hwaddr,
+                       unsigned int hwaddr_len,
+                       unsigned int mtu,
+                       const unsigned char* bcast,
+                       unsigned int bcast_len) {
     struct ifinfomsg* ifi;
     struct nlmsghdr* nlh;
-    const u8* mac = nic_mac();
-    unsigned char bcast[ETH_ALEN];
-    unsigned int mtu = 1500u;
     unsigned char operstate = 6u;
 
     ifi = (struct ifinfomsg*)nl_begin(b, RTM_NEWLINK, sizeof(*ifi), 0u);
     if (!ifi) return -EMSGSIZE;
     nlh = (struct nlmsghdr*)((unsigned char*)ifi - NLMSG_LENGTH(0));
     ifi->ifi_family = AF_UNSPEC;
-    ifi->ifi_type = ARPHRD_ETHER;
-    ifi->ifi_index = 1;
-    ifi->ifi_flags = net_eth0_flags();
+    ifi->ifi_type = type;
+    ifi->ifi_index = ifindex;
+    ifi->ifi_flags = flags;
     ifi->ifi_change = 0xFFFFFFFFu;
 
-    k_memset(bcast, 0xFF, sizeof(bcast));
-    if (nl_attr_put_str(b, nlh, IFLA_IFNAME, "eth0") < 0) return -EMSGSIZE;
-    if (mac && nl_attr_put(b, nlh, IFLA_ADDRESS, mac, ETH_ALEN) < 0) return -EMSGSIZE;
-    if (nl_attr_put(b, nlh, IFLA_BROADCAST, bcast, ETH_ALEN) < 0) return -EMSGSIZE;
+    if (nl_attr_put_str(b, nlh, IFLA_IFNAME, name) < 0) return -EMSGSIZE;
+    if (hwaddr && hwaddr_len != 0u &&
+        nl_attr_put(b, nlh, IFLA_ADDRESS, hwaddr, hwaddr_len) < 0) {
+        return -EMSGSIZE;
+    }
+    if (bcast && bcast_len != 0u &&
+        nl_attr_put(b, nlh, IFLA_BROADCAST, bcast, bcast_len) < 0) {
+        return -EMSGSIZE;
+    }
     if (nl_attr_put_u32(b, nlh, IFLA_MTU, mtu) < 0) return -EMSGSIZE;
     if (nl_attr_put(b, nlh, IFLA_OPERSTATE, &operstate, sizeof(operstate)) < 0) {
         return -EMSGSIZE;
@@ -2686,29 +2701,71 @@ static int nl_put_link(netlink_builder_t* b) {
     return 0;
 }
 
-static int nl_put_addr(netlink_builder_t* b) {
-    const net_ipv4_config_t* cfg = net_ipv4_config();
+static int nl_put_eth0_link(netlink_builder_t* b) {
+    const u8* mac = nic_mac();
+    unsigned char bcast[ETH_ALEN];
+
+    k_memset(bcast, 0xFF, sizeof(bcast));
+    return nl_put_link(b, "eth0", 1, ARPHRD_ETHER, net_eth0_flags(),
+                       mac, mac ? ETH_ALEN : 0u, 1500u, bcast, sizeof(bcast));
+}
+
+static int nl_put_loopback_link(netlink_builder_t* b) {
+    unsigned char zero[ETH_ALEN];
+
+    k_memset(zero, 0, sizeof(zero));
+    return nl_put_link(b, "lo", 2, ARPHRD_LOOPBACK, net_loopback_flags(),
+                       zero, sizeof(zero), 65536u, zero, sizeof(zero));
+}
+
+static int nl_put_addr_entry(netlink_builder_t* b,
+                             const char* label,
+                             unsigned int ifindex,
+                             unsigned int ip,
+                             unsigned int prefix,
+                             unsigned int scope,
+                             unsigned int flags) {
     struct ifaddrmsg* ifa;
     struct nlmsghdr* nlh;
     unsigned int ip_be;
+    unsigned int mask = net_mask_from_prefix(prefix);
     unsigned int bcast_be;
 
-    if (!cfg || !cfg->configured || cfg->ip == 0u) return 0;
+    if (ip == 0u) return 0;
     ifa = (struct ifaddrmsg*)nl_begin(b, RTM_NEWADDR, sizeof(*ifa), 0u);
     if (!ifa) return -EMSGSIZE;
     nlh = (struct nlmsghdr*)((unsigned char*)ifa - NLMSG_LENGTH(0));
     ifa->ifa_family = AF_INET;
-    ifa->ifa_prefixlen = (unsigned char)net_prefix_from_mask(cfg->netmask);
-    ifa->ifa_flags = IFA_F_PERMANENT;
-    ifa->ifa_scope = RT_SCOPE_UNIVERSE;
-    ifa->ifa_index = 1u;
+    ifa->ifa_prefixlen = (unsigned char)prefix;
+    ifa->ifa_flags = (unsigned char)flags;
+    ifa->ifa_scope = (unsigned char)scope;
+    ifa->ifa_index = ifindex;
 
-    ip_be = swap_u32(cfg->ip);
-    bcast_be = swap_u32((cfg->ip & cfg->netmask) | (~cfg->netmask));
+    ip_be = swap_u32(ip);
+    bcast_be = swap_u32((ip & mask) | (~mask));
     if (nl_attr_put_u32(b, nlh, IFA_ADDRESS, ip_be) < 0) return -EMSGSIZE;
     if (nl_attr_put_u32(b, nlh, IFA_LOCAL, ip_be) < 0) return -EMSGSIZE;
-    if (nl_attr_put_u32(b, nlh, IFA_BROADCAST, bcast_be) < 0) return -EMSGSIZE;
-    if (nl_attr_put_str(b, nlh, IFA_LABEL, "eth0") < 0) return -EMSGSIZE;
+    if (scope != RT_SCOPE_HOST &&
+        nl_attr_put_u32(b, nlh, IFA_BROADCAST, bcast_be) < 0) {
+        return -EMSGSIZE;
+    }
+    if (nl_attr_put_str(b, nlh, IFA_LABEL, label) < 0) return -EMSGSIZE;
+    return 0;
+}
+
+static int nl_put_addr(netlink_builder_t* b) {
+    const net_ipv4_config_t* cfg = net_ipv4_config();
+
+    if (nl_put_addr_entry(b, "lo", 2u, 0x7F000001u, 8u,
+                          RT_SCOPE_HOST, IFA_F_PERMANENT) < 0) {
+        return -EMSGSIZE;
+    }
+    if (!cfg || !cfg->configured || cfg->ip == 0u) return 0;
+    if (nl_put_addr_entry(b, "eth0", 1u, cfg->ip,
+                          net_prefix_from_mask(cfg->netmask),
+                          RT_SCOPE_UNIVERSE, IFA_F_PERMANENT) < 0) {
+        return -EMSGSIZE;
+    }
     return 0;
 }
 
@@ -2747,6 +2804,31 @@ static int nl_put_route(netlink_builder_t* b,
         unsigned int src_be = swap_u32(cfg->ip);
         if (nl_attr_put_u32(b, nlh, RTA_PREFSRC, src_be) < 0) return -EMSGSIZE;
     }
+    return 0;
+}
+
+static int nl_put_neigh(netlink_builder_t* b) {
+    struct ndmsg* ndm;
+    struct nlmsghdr* nlh;
+    unsigned int sender_ip = 0u;
+    unsigned int target_ip = 0u;
+    unsigned int target_be;
+    unsigned char mac[ETH_ALEN];
+
+    if (!arp_cache_get(&sender_ip, &target_ip, mac)) return 0;
+    if (sender_ip == 0u || target_ip == 0u) return 0;
+
+    ndm = (struct ndmsg*)nl_begin(b, RTM_NEWNEIGH, sizeof(*ndm), 0u);
+    if (!ndm) return -EMSGSIZE;
+    nlh = (struct nlmsghdr*)((unsigned char*)ndm - NLMSG_LENGTH(0));
+    ndm->ndm_family = AF_INET;
+    ndm->ndm_ifindex = 1;
+    ndm->ndm_state = NUD_REACHABLE;
+    ndm->ndm_type = RTN_UNICAST;
+
+    target_be = swap_u32(target_ip);
+    if (nl_attr_put_u32(b, nlh, NDA_DST, target_be) < 0) return -EMSGSIZE;
+    if (nl_attr_put(b, nlh, NDA_LLADDR, mac, sizeof(mac)) < 0) return -EMSGSIZE;
     return 0;
 }
 
@@ -2848,7 +2930,8 @@ static int nl_build_response(socket_t* sock,
     switch (nlh->nlmsg_type) {
     case RTM_GETLINK:
         b.multi = 1u;
-        rc = nl_put_link(&b);
+        rc = nl_put_eth0_link(&b);
+        if (rc == 0) rc = nl_put_loopback_link(&b);
         if (rc == 0) rc = nl_put_done(&b);
         break;
     case RTM_GETADDR:
@@ -2875,6 +2958,11 @@ static int nl_build_response(socket_t* sock,
         if (rc == 0) rc = nl_put_done(&b);
         break;
     }
+    case RTM_GETNEIGH:
+        b.multi = 1u;
+        rc = nl_put_neigh(&b);
+        if (rc == 0) rc = nl_put_done(&b);
+        break;
     case RTM_NEWADDR:
         rc = nl_apply_addr(nlh, 0);
         (void)nl_put_ack(&b, nlh, rc < 0 ? rc : 0);
@@ -2890,6 +2978,10 @@ static int nl_build_response(socket_t* sock,
     case RTM_DELROUTE:
         rc = nl_apply_route(nlh, 1);
         (void)nl_put_ack(&b, nlh, rc < 0 ? rc : 0);
+        break;
+    case RTM_NEWNEIGH:
+    case RTM_DELNEIGH:
+        (void)nl_put_ack(&b, nlh, 0);
         break;
     case RTM_SETLINK:
     case RTM_NEWLINK:
@@ -4235,8 +4327,11 @@ static int sys_getsockname_impl(int fd, struct sockaddr* addr, unsigned int* add
     return 0;
 }
 
-static int net_ifreq_name_is_eth0(const char* name) {
-    return name && k_strcmp(name, "eth0");
+static int net_ifreq_name_to_index(const char* name) {
+    if (!name) return 0;
+    if (k_strcmp(name, "eth0")) return 1;
+    if (k_strcmp(name, "lo")) return 2;
+    return 0;
 }
 
 static void net_set_sockaddr_in(struct sockaddr* out, unsigned int ip) {
@@ -4321,6 +4416,59 @@ static void net_fill_eth0_ifreq(struct ifreq* ifr, unsigned int request) {
     }
 }
 
+static void net_fill_loopback_ifreq(struct ifreq* ifr, unsigned int request) {
+    k_memset(ifr, 0, sizeof(*ifr));
+    k_memcpy(ifr->ifr_name, "lo", 3u);
+
+    switch (request) {
+    case SIOCGIFFLAGS:
+        ifr->ifr_flags = (short)net_loopback_flags();
+        break;
+    case SIOCGIFADDR:
+        net_set_sockaddr_in(&ifr->ifr_addr, 0x7F000001u);
+        break;
+    case SIOCGIFDSTADDR:
+        net_set_sockaddr_in(&ifr->ifr_dstaddr, 0x7F000001u);
+        break;
+    case SIOCGIFBRDADDR:
+        net_set_sockaddr_in(&ifr->ifr_broadaddr, 0u);
+        break;
+    case SIOCGIFNETMASK:
+        net_set_sockaddr_in(&ifr->ifr_netmask, 0xFF000000u);
+        break;
+    case SIOCGIFHWADDR:
+        k_memset(&ifr->ifr_hwaddr, 0, sizeof(ifr->ifr_hwaddr));
+        ifr->ifr_hwaddr.sa_family = ARPHRD_LOOPBACK;
+        break;
+    case SIOCGIFMTU:
+        ifr->ifr_mtu = 65536;
+        break;
+    case SIOCGIFINDEX:
+        ifr->ifr_ifindex = 2;
+        break;
+    case SIOCGIFMETRIC:
+        ifr->ifr_metric = 0;
+        break;
+    case SIOCGIFTXQLEN:
+        ifr->ifr_qlen = 1000;
+        break;
+    case SIOCGIFNAME:
+        break;
+    default:
+        break;
+    }
+}
+
+static void net_fill_ifreq_by_index(struct ifreq* ifr,
+                                    unsigned int request,
+                                    int ifindex) {
+    if (ifindex == 2) {
+        net_fill_loopback_ifreq(ifr, request);
+    } else {
+        net_fill_eth0_ifreq(ifr, request);
+    }
+}
+
 static int net_apply_ifreq_setter(unsigned int request, const struct ifreq* ifr) {
     const net_ipv4_config_t* cfg = net_ipv4_config();
     unsigned int ip = cfg ? cfg->ip : 0u;
@@ -4354,38 +4502,68 @@ static int net_apply_ifreq_setter(unsigned int request, const struct ifreq* ifr)
     return 0;
 }
 
+static int net_apply_loopback_setter(unsigned int request, const struct ifreq* ifr) {
+    unsigned int ip;
+    unsigned int mask;
+
+    switch (request) {
+    case SIOCSIFFLAGS:
+    case SIOCSIFBRDADDR:
+    case SIOCSIFDSTADDR:
+    case SIOCSIFMETRIC:
+    case SIOCSIFMTU:
+    case SIOCSIFTXQLEN:
+        return 0;
+    case SIOCSIFADDR:
+        ip = net_sockaddr_ip(&ifr->ifr_addr);
+        return ip == 0x7F000001u ? 0 : -EADDRNOTAVAIL;
+    case SIOCSIFNETMASK:
+        mask = net_sockaddr_ip(&ifr->ifr_netmask);
+        return mask == 0xFF000000u ? 0 : -EINVAL;
+    default:
+        return -ENOTTY;
+    }
+}
+
 static int net_ioctl_ifconf(void* argp) {
     struct ifconf ifc;
-    struct ifreq ifr;
+    struct ifreq ifrs[2];
+    unsigned int need_len = (unsigned int)sizeof(ifrs);
+    unsigned int copy_len;
 
     if (!argp) return -EFAULT;
     if (!user_buf_ok((unsigned int)argp, sizeof(ifc))) return -EFAULT;
     if (copy_from_user(&ifc, argp, sizeof(ifc)) < 0) return -EFAULT;
 
-    if (ifc.ifc_len >= (int)sizeof(ifr) && ifc.ifc_buf) {
-        if (!user_buf_ok((unsigned int)ifc.ifc_buf, sizeof(ifr))) return -EFAULT;
-        net_fill_eth0_ifreq(&ifr, SIOCGIFADDR);
-        if (copy_to_user(ifc.ifc_buf, &ifr, sizeof(ifr)) < 0) return -EFAULT;
+    if (ifc.ifc_len > 0 && ifc.ifc_buf) {
+        copy_len = (unsigned int)ifc.ifc_len;
+        if (copy_len > need_len) copy_len = need_len;
+        if (!user_buf_ok((unsigned int)ifc.ifc_buf, copy_len)) return -EFAULT;
+        net_fill_eth0_ifreq(&ifrs[0], SIOCGIFADDR);
+        net_fill_loopback_ifreq(&ifrs[1], SIOCGIFADDR);
+        if (copy_to_user(ifc.ifc_buf, ifrs, copy_len) < 0) return -EFAULT;
     }
-    ifc.ifc_len = (int)sizeof(ifr);
+    ifc.ifc_len = (int)need_len;
     if (copy_to_user(argp, &ifc, sizeof(ifc)) < 0) return -EFAULT;
     return 0;
 }
 
 static int net_ioctl_ifreq(unsigned int request, void* argp) {
     struct ifreq ifr;
+    int ifindex;
 
     if (!argp) return -EFAULT;
     if (!user_buf_ok((unsigned int)argp, sizeof(ifr))) return -EFAULT;
     if (copy_from_user(&ifr, argp, sizeof(ifr)) < 0) return -EFAULT;
 
     if (request == SIOCGIFNAME) {
-        if (ifr.ifr_ifindex != 1) return -ENODEV;
-        net_fill_eth0_ifreq(&ifr, request);
+        if (ifr.ifr_ifindex != 1 && ifr.ifr_ifindex != 2) return -ENODEV;
+        net_fill_ifreq_by_index(&ifr, request, ifr.ifr_ifindex);
         return copy_to_user(argp, &ifr, sizeof(ifr)) < 0 ? -EFAULT : 0;
     }
 
-    if (!net_ifreq_name_is_eth0(ifr.ifr_name)) return -ENODEV;
+    ifindex = net_ifreq_name_to_index(ifr.ifr_name);
+    if (ifindex == 0) return -ENODEV;
     switch (request) {
     case SIOCGIFFLAGS:
     case SIOCGIFADDR:
@@ -4397,7 +4575,7 @@ static int net_ioctl_ifreq(unsigned int request, void* argp) {
     case SIOCGIFMETRIC:
     case SIOCGIFTXQLEN:
     case SIOCGIFINDEX:
-        net_fill_eth0_ifreq(&ifr, request);
+        net_fill_ifreq_by_index(&ifr, request, ifindex);
         return copy_to_user(argp, &ifr, sizeof(ifr)) < 0 ? -EFAULT : 0;
     case SIOCSIFFLAGS:
     case SIOCSIFADDR:
@@ -4407,7 +4585,9 @@ static int net_ioctl_ifreq(unsigned int request, void* argp) {
     case SIOCSIFMETRIC:
     case SIOCSIFMTU:
     case SIOCSIFTXQLEN:
-        return net_apply_ifreq_setter(request, &ifr);
+        return ifindex == 2
+                 ? net_apply_loopback_setter(request, &ifr)
+                 : net_apply_ifreq_setter(request, &ifr);
     default:
         return -ENOTTY;
     }

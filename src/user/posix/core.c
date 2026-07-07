@@ -1961,6 +1961,9 @@ unsigned int if_nametoindex(const char* ifname) {
     if (ifname && strcmp(ifname, "eth0") == 0) {
         return 1u;
     }
+    if (ifname && strcmp(ifname, "lo") == 0) {
+        return 2u;
+    }
     set_errno(ENODEV);
     return 0;
 }
@@ -1972,6 +1975,10 @@ char* if_indextoname(unsigned int ifindex, char* ifname) {
     }
     if (ifindex == 1u) {
         strcpy(ifname, "eth0");
+        return ifname;
+    }
+    if (ifindex == 2u) {
+        strcpy(ifname, "lo");
         return ifname;
     }
     set_errno(ENXIO);

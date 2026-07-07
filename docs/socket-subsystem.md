@@ -47,10 +47,11 @@ POSIX edge-semantics work.
   listener and connection counts, RX/TX ring usage, allocated ring capacity,
   and global RX/TX caps. `ip` and `ipconfig` also expose the runtime IPv4
   address, route, DNS, DHCP server, and lease state used by outbound sockets.
-- BusyBox `ifconfig`, `route`, `ip link`, `ip addr`, `ip route`, and IPv4
-  `ping` are enabled through Linux-shaped `eth0` interface/route ioctls,
-  minimal rtnetlink, state-backed `/proc/net/dev` and `/proc/net/route`, and
-  raw ICMP `sendto`/`recvfrom` descriptors. UDP
+- BusyBox `ifconfig`, `route`, `ip link`, `ip addr`, `ip route`, `ip neigh`,
+  and IPv4 `ping` are enabled through Linux-shaped `eth0`/loopback
+  interface/route ioctls, minimal rtnetlink, state-backed `/proc/net/dev` and
+  `/proc/net/route`, ARP-neighbor reporting, and raw ICMP `sendto`/`recvfrom`
+  descriptors. UDP
   send/receive is available for DNS-sized IPv4 datagrams, and libc resolver
   lookups can issue DNS A-record queries using the configured DNS server.
   Basic BusyBox TCP applets are enabled too: `nc`, plain HTTP `wget`, and
@@ -187,8 +188,8 @@ Later networking work can build on it in these areas:
 - Broader UDP behavior beyond the first DNS-sized datagram queue.
 - Broader BusyBox TCP coverage beyond the current `nc`, plain HTTP `wget`, and
   `httpd` host smoke.
-- Broader rtnetlink coverage for BusyBox `ip rule`, `ip neigh`, tunnel modes,
-  multi-interface systems, and loopback once those kernel features exist.
+- Broader rtnetlink coverage for BusyBox `ip rule`, tunnel modes,
+  multi-interface systems, and IPv6 once those kernel features exist.
 - Production TCP polish, including broader congestion, window, and recovery
   behavior.
 - Broader close-state and retransmission fuzzing beyond the focused EOF smoke.

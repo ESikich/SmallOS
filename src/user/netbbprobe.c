@@ -10,6 +10,7 @@
 #include "sys/socket.h"
 #include "linux/netlink.h"
 #include "linux/rtnetlink.h"
+#include "internal/user_syscall.h"
 #include "unistd.h"
 
 static int failures = 0;
@@ -111,17 +112,26 @@ static int netlink_dump_has(int request_type, int response_type, int attr_type) 
                     struct ifinfomsg* ifi = (struct ifinfomsg*)NLMSG_DATA(h);
                     struct rtattr* attrs[IFLA_MAX + 1];
                     parse_rtattrs(attrs, IFLA_MAX, IFLA_RTA(ifi), IFLA_PAYLOAD(h));
-                    seen = ifi->ifi_index == 1 && attrs[attr_type] != 0;
+                    if (ifi->ifi_index == 1 && attrs[attr_type] != 0) seen = 1;
                 } else if (response_type == RTM_NEWADDR) {
                     struct ifaddrmsg* ifa = (struct ifaddrmsg*)NLMSG_DATA(h);
                     struct rtattr* attrs[IFA_MAX + 1];
                     parse_rtattrs(attrs, IFA_MAX, IFA_RTA(ifa), IFA_PAYLOAD(h));
-                    seen = ifa->ifa_index == 1 && attrs[attr_type] != 0;
+                    if (ifa->ifa_index == 1 && attrs[attr_type] != 0) seen = 1;
                 } else if (response_type == RTM_NEWROUTE) {
                     struct rtmsg* rtm = (struct rtmsg*)NLMSG_DATA(h);
                     struct rtattr* attrs[RTA_MAX + 1];
                     parse_rtattrs(attrs, RTA_MAX, RTM_RTA(rtm), RTM_PAYLOAD(h));
-                    seen = rtm->rtm_family == AF_INET && attrs[attr_type] != 0;
+                    if (rtm->rtm_family == AF_INET && attrs[attr_type] != 0) seen = 1;
+                } else if (response_type == RTM_NEWNEIGH) {
+                    struct ndmsg* ndm = (struct ndmsg*)NLMSG_DATA(h);
+                    struct rtattr* attrs[NDA_MAX + 1];
+                    parse_rtattrs(attrs, NDA_MAX, NDA_RTA(ndm), NDA_PAYLOAD(h));
+                    if (ndm->ndm_family == AF_INET &&
+                        ndm->ndm_ifindex == 1 &&
+                        attrs[attr_type] != 0) {
+                        seen = 1;
+                    }
                 }
             }
             h = NLMSG_NEXT(h, left);
@@ -130,6 +140,15 @@ static int netlink_dump_has(int request_type, int response_type, int attr_type) 
 
     close(nlfd);
     return seen;
+}
+
+static int resolve_neighbor(const char* text) {
+    sys_net_op_request_t req;
+
+    memset(&req, 0, sizeof(req));
+    req.op = SYS_NET_OP_ARP;
+    req.target_ip = ntohl(inet_addr(text));
+    return sys_net_op(&req) > 0;
 }
 
 int main(void) {
@@ -159,16 +178,20 @@ int main(void) {
     check("if_nametoindex eth0", if_nametoindex("eth0") == 1u);
     check("if_indextoname eth0", if_indextoname(1u, ifname) == ifname &&
                                   strcmp(ifname, "eth0") == 0);
+    check("if_nametoindex lo", if_nametoindex("lo") == 2u);
+    check("if_indextoname lo", if_indextoname(2u, ifname) == ifname &&
+                                strcmp(ifname, "lo") == 0);
     errno = 0;
-    check("if_nametoindex lo missing", if_nametoindex("lo") == 0u && errno == ENODEV);
+    check("if_nametoindex missing", if_nametoindex("nope0") == 0u && errno == ENODEV);
 
     memset(ifrs, 0, sizeof(ifrs));
     memset(&ifc, 0, sizeof(ifc));
     ifc.ifc_len = sizeof(ifrs);
     ifc.ifc_req = ifrs;
     check("ioctl ifconf", ioctl(fd, SIOCGIFCONF, &ifc) == 0 &&
-                           ifc.ifc_len == (int)sizeof(struct ifreq) &&
-                           strcmp(ifrs[0].ifr_name, "eth0") == 0);
+                           ifc.ifc_len == (int)sizeof(ifrs) &&
+                           strcmp(ifrs[0].ifr_name, "eth0") == 0 &&
+                           strcmp(ifrs[1].ifr_name, "lo") == 0);
 
     memset(&ifr, 0, sizeof(ifr));
     strcpy(ifr.ifr_name, "eth0");
@@ -179,6 +202,18 @@ int main(void) {
                           ifr.ifr_hwaddr.sa_family == ARPHRD_ETHER);
     check("ioctl ifindex", ioctl(fd, SIOCGIFINDEX, &ifr) == 0 &&
                            ifr.ifr_ifindex == 1);
+
+    memset(&ifr, 0, sizeof(ifr));
+    strcpy(ifr.ifr_name, "lo");
+    check("ioctl lo flags", ioctl(fd, SIOCGIFFLAGS, &ifr) == 0 &&
+                            (ifr.ifr_flags & IFF_LOOPBACK) &&
+                            (ifr.ifr_flags & IFF_UP));
+    check("ioctl lo mtu", ioctl(fd, SIOCGIFMTU, &ifr) == 0 && ifr.ifr_mtu == 65536);
+    check("ioctl lo ifindex", ioctl(fd, SIOCGIFINDEX, &ifr) == 0 &&
+                              ifr.ifr_ifindex == 2);
+    check("ioctl lo addr", ioctl(fd, SIOCGIFADDR, &ifr) == 0 &&
+                           ((struct sockaddr_in*)&ifr.ifr_addr)->sin_addr.s_addr ==
+                               inet_addr("127.0.0.1"));
 
     memset(&ifr, 0, sizeof(ifr));
     strcpy(ifr.ifr_name, "eth0");
@@ -217,6 +252,9 @@ int main(void) {
                                                 IFA_LOCAL));
     check("netlink route dump", netlink_dump_has(RTM_GETROUTE, RTM_NEWROUTE,
                                                  RTA_OIF));
+    check("arp neighbor resolve", resolve_neighbor("10.0.2.2"));
+    check("netlink neigh dump", netlink_dump_has(RTM_GETNEIGH, RTM_NEWNEIGH,
+                                                 NDA_DST));
 
     udpfd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
     check("udp socket", udpfd >= 0);

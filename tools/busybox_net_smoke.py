@@ -314,6 +314,23 @@ def main():
                 raise RuntimeError("timed out waiting for host echo server")
             if echo_state["error"] is not None:
                 raise echo_state["error"]
+
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                "arpgw",
+                args.timeout,
+                "arpgw:",
+            )
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                "usr/bin/busybox ip neigh show | usr/bin/busybox grep 10.0.2.2",
+                args.timeout,
+                "10.0.2.2",
+            )
             print("busybox network smoke PASS")
             exit_status = 0
     except Exception as exc:

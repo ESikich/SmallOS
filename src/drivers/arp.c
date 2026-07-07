@@ -175,6 +175,20 @@ int arp_lookup(u32 sender_ip, u32 target_ip, u8* out_mac) {
     return 1;
 }
 
+int arp_cache_get(u32* out_sender_ip, u32* out_target_ip, u8* out_mac) {
+    if (!s_arp_cache_valid) {
+        return 0;
+    }
+    if (out_sender_ip) *out_sender_ip = s_arp_cache_sender_ip;
+    if (out_target_ip) *out_target_ip = s_arp_cache_target_ip;
+    if (out_mac) {
+        for (unsigned int i = 0; i < 6; i++) {
+            out_mac[i] = s_arp_cache_mac[i];
+        }
+    }
+    return 1;
+}
+
 static int arp_send_request(u32 sender_ip, u32 target_ip) {
     u8 frame[ARP_FRAME_SIZE];
     const u8* src_mac = nic_mac();

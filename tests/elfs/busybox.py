@@ -24,6 +24,7 @@ CASES = [
             "selftest: busybox free woke",
             "selftest: busybox ps woke",
             "selftest: busybox date woke",
+            "selftest: busybox ip neigh woke",
             "selftest: busybox fallback grep woke",
             "selftest: busybox dev null woke",
             "selftest: busybox dd zero woke",

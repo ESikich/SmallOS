@@ -61,6 +61,16 @@ struct rtmsg {
     unsigned int rtm_flags;
 };
 
+struct ndmsg {
+    unsigned char ndm_family;
+    unsigned char ndm_pad1;
+    unsigned short ndm_pad2;
+    int ndm_ifindex;
+    unsigned short ndm_state;
+    unsigned char ndm_flags;
+    unsigned char ndm_type;
+};
+
 #define NLMSG_ALIGNTO 4u
 #define NLMSG_ALIGN(len) (((len) + NLMSG_ALIGNTO - 1u) & ~(NLMSG_ALIGNTO - 1u))
 #define NLMSG_HDRLEN ((unsigned int)NLMSG_ALIGN(sizeof(struct nlmsghdr)))
@@ -114,10 +124,14 @@ struct rtmsg {
 #define RTM_NEWROUTE  24
 #define RTM_DELROUTE  25
 #define RTM_GETROUTE  26
+#define RTM_NEWNEIGH  28
+#define RTM_DELNEIGH  29
+#define RTM_GETNEIGH  30
 
 #define RTMGRP_LINK   1u
 #define RTMGRP_IPV4_IFADDR 0x10u
 #define RTMGRP_IPV4_ROUTE  0x40u
+#define RTMGRP_NEIGH       0x04u
 
 #define RT_TABLE_UNSPEC 0
 #define RT_TABLE_COMPAT 252
@@ -256,5 +270,48 @@ struct rta_cacheinfo {
 
 #define RTM_RTA(r) ((struct rtattr*)(((char*)(r)) + NLMSG_ALIGN(sizeof(struct rtmsg))))
 #define RTM_PAYLOAD(n) ((int)((n)->nlmsg_len - NLMSG_LENGTH(sizeof(struct rtmsg))))
+
+#define NDA_UNSPEC 0
+#define NDA_DST 1
+#define NDA_LLADDR 2
+#define NDA_CACHEINFO 3
+#define NDA_PROBES 4
+#define NDA_VLAN 5
+#define NDA_PORT 6
+#define NDA_VNI 7
+#define NDA_IFINDEX 8
+#define NDA_MASTER 9
+#define NDA_LINK_NETNSID 10
+#define NDA_SRC_VNI 11
+#define NDA_PROTOCOL 12
+#define NDA_MAX 12
+
+#define NTF_USE 0x01u
+#define NTF_SELF 0x02u
+#define NTF_MASTER 0x04u
+#define NTF_PROXY 0x08u
+#define NTF_EXT_LEARNED 0x10u
+#define NTF_OFFLOADED 0x20u
+#define NTF_ROUTER 0x80u
+
+#define NUD_INCOMPLETE 0x01u
+#define NUD_REACHABLE 0x02u
+#define NUD_STALE 0x04u
+#define NUD_DELAY 0x08u
+#define NUD_PROBE 0x10u
+#define NUD_FAILED 0x20u
+#define NUD_NOARP 0x40u
+#define NUD_PERMANENT 0x80u
+#define NUD_NONE 0x00u
+
+#define NDA_RTA(r) ((struct rtattr*)(((char*)(r)) + NLMSG_ALIGN(sizeof(struct ndmsg))))
+#define NDA_PAYLOAD(n) ((int)((n)->nlmsg_len - NLMSG_LENGTH(sizeof(struct ndmsg))))
+
+struct nda_cacheinfo {
+    unsigned int ndm_confirmed;
+    unsigned int ndm_used;
+    unsigned int ndm_updated;
+    unsigned int ndm_refcnt;
+};
 
 #endif /* UAPI_NETLINK_H */

@@ -39,9 +39,9 @@ BusyBox-backed Unix compatibility layer inside the guest.
 - PCI networking with e1000 and RTL8139 NIC support, DHCP, ARP, IPv4,
   UDP/NTP clock sync, UDP DNS resolver traffic, runtime `ip`/`ipconfig`
   inspection and configuration,
-  Linux-shaped `eth0` interface/route ioctls for BusyBox `ifconfig` and
-  `route`, minimal rtnetlink for BusyBox `ip link`/`ip addr`/`ip route`, raw
-  ICMP sockets for BusyBox `ping`, BusyBox `nc`/plain HTTP `wget`/`httpd`, a
+  Linux-shaped `eth0`/`lo` interface/route ioctls for BusyBox `ifconfig` and
+  `route`, minimal rtnetlink for BusyBox `ip link`/`ip addr`/`ip route`/
+  `ip neigh`, raw ICMP sockets for BusyBox `ping`, BusyBox `nc`/plain HTTP `wget`/`httpd`, a
   compact TCP service task, passive sockets, `poll`/`epoll` readiness, FTP,
   echo, and HTTP server smoke paths.
 - Guest userland includes familiar commands such as `ls`, `tree`, `cat`,
@@ -244,9 +244,10 @@ ip dhcp
 ipconfig /all
 ```
 
-BusyBox `ifconfig`, `route`, `ip link`, `ip addr`, `ip route`, and IPv4 `ping`
-use the same `eth0` state through Linux-shaped network ioctls, minimal
-rtnetlink, and `/proc/net`. Libc resolver calls support numeric IPv4,
+BusyBox `ifconfig`, `route`, `ip link`, `ip addr`, `ip route`, `ip neigh`, and
+IPv4 `ping` use the same `eth0`, loopback, route, and ARP-neighbor state
+through Linux-shaped network ioctls, minimal rtnetlink, and `/proc/net`.
+Libc resolver calls support numeric IPv4,
 `localhost`, optional `/etc/hosts`, and DNS A-record lookups via the configured
 DNS server.
 

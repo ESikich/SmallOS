@@ -320,9 +320,10 @@ The resolver accepts numeric IPv4 addresses and `localhost` without network
 traffic, checks `/etc/hosts` when present, and can issue UDP DNS A-record
 queries through the configured IPv4 DNS server. IPv6 remains unsupported and
 returns the normal `EAI_FAMILY` path. The network `ioctl` wrapper routes
-classic Linux-shaped `SIOC*` interface and route requests to kernel `eth0`
-state for BusyBox `ifconfig` and `route`. Minimal `AF_NETLINK` route sockets
-serve the same state to BusyBox `ip link`, `ip addr`, and `ip route`.
+classic Linux-shaped `SIOC*` interface and route requests to kernel `eth0` and
+loopback state for BusyBox `ifconfig` and `route`. Minimal `AF_NETLINK` route
+sockets serve link, address, route, and ARP-neighbor state to BusyBox
+`ip link`, `ip addr`, `ip route`, and `ip neigh`.
 
 The runtime is also where SmallOS grows its hosted C surface. Older ports such
 as Fractint are useful completeness tests: when they need a normal libc, libm,
@@ -520,16 +521,17 @@ the shell runs `/usr/bin/busybox <command> ...`.
 
 The current compatibility wave enables BusyBox `ash` job control, BusyBox
 `mount`/`umount` for `proc`/`devtmpfs` pseudo mounts, classic networking tools
-(`ifconfig`, `route`, and IPv4 `ping`), BusyBox `ip link`/`ip addr`/`ip route`,
-and the first TCP applets (`nc`, plain HTTP `wget`, and `httpd`). Those applets
-are backed by kernel stopped-job/process-group semantics, kernel network
-ioctls, minimal rtnetlink, state-backed `/proc/net/dev` and `/proc/net/route`,
-raw ICMP sockets, UDP DNS traffic, and the existing SmallOS IPv4/TCP path.
-Arbitrary filesystem mounting, init, login/getty, authentication semantics,
-BusyBox `ip` rule/neigh/tunnel modes, HTTPS/TLS, and complete Linux device
-behavior remain disabled or stubbed. New BusyBox applets should grow the
-shared runtime, headers, and virtual filesystem behavior when they reveal a
-portable Unix expectation.
+(`ifconfig`, `route`, and IPv4 `ping`), BusyBox `ip link`/`ip addr`/`ip route`/
+`ip neigh`, and the first TCP applets (`nc`, plain HTTP `wget`, and `httpd`).
+Those applets are backed by kernel stopped-job/process-group semantics, kernel
+network ioctls, minimal rtnetlink, state-backed `/proc/net/dev` and
+`/proc/net/route`, ARP-neighbor reporting, raw ICMP sockets, UDP DNS traffic,
+and the existing SmallOS IPv4/TCP path. Arbitrary filesystem mounting, init,
+login/getty, authentication semantics, BusyBox `ip` rule/tunnel modes,
+multi-interface and IPv6 behavior, HTTPS/TLS, and complete Linux device
+behavior remain disabled or stubbed. New BusyBox applets should grow the shared
+runtime, headers, and virtual filesystem behavior when they reveal a portable
+Unix expectation.
 
 ---
 
@@ -603,9 +605,9 @@ Runtime coverage currently lives in guest ELF probes:
 - `mountprobe` - state-backed mount listings, per-mount `statfs`/`fstatfs`,
   dynamic `proc`/`devtmpfs` pseudo mounts, gated ext2 stacking, and busy
   unmount failures
-- `netbbprobe` - BusyBox-facing `eth0` interface/route ioctls, minimal
-  rtnetlink dumps, `/proc/net/dev`, `/proc/net/route`, UDP datagrams, and
-  localhost/numeric resolver behavior
+- `netbbprobe` - BusyBox-facing `eth0` and loopback interface/route ioctls,
+  minimal rtnetlink link/address/route/neighbor dumps, `/proc/net/dev`,
+  `/proc/net/route`, UDP datagrams, and localhost/numeric resolver behavior
 - `stdioprobe` - EOF/error state, `clearerr`, `fflush`, invalid stdio ops
 - `dirprobe` - root and nested directory iteration, EOF, invalid/missing dirs
 - `errnoprobe` - wrapper `errno` behavior
