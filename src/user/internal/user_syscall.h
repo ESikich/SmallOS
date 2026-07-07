@@ -683,6 +683,40 @@ static inline int sys_recv(int fd, void* buf, uint32_t len) {
     return syscall3(SYS_RECV, (uint32_t)fd, (uint32_t)buf, len);
 }
 
+static inline int sys_sendto(int fd,
+                             const void* buf,
+                             uint32_t len,
+                             uint32_t flags,
+                             const struct sockaddr* dest_addr,
+                             socklen_t addrlen) {
+    return syscall6(SYS_SENDTO,
+                    (uint32_t)fd,
+                    (uint32_t)buf,
+                    len,
+                    flags,
+                    (uint32_t)dest_addr,
+                    (uint32_t)addrlen);
+}
+
+static inline int sys_recvfrom(int fd,
+                               void* buf,
+                               uint32_t len,
+                               uint32_t flags,
+                               struct sockaddr* src_addr,
+                               socklen_t* addrlen) {
+    return syscall6(SYS_RECVFROM,
+                    (uint32_t)fd,
+                    (uint32_t)buf,
+                    len,
+                    flags,
+                    (uint32_t)src_addr,
+                    (uint32_t)addrlen);
+}
+
+static inline int sys_net_ioctl(int fd, uint32_t request, void* argp) {
+    return syscall3(SYS_NET_IOCTL, (uint32_t)fd, request, (uint32_t)argp);
+}
+
 static inline int sys_poll(struct pollfd* fds, nfds_t nfds, int timeout) {
     return syscall3(SYS_POLL, (uint32_t)fds, (uint32_t)nfds, (uint32_t)timeout);
 }

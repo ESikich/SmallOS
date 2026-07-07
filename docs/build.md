@@ -256,8 +256,9 @@ forced VGA image.
 `make dynamic-link-check`, `make dynlink-negative-smoke`, `make test`, and
 then `make smoke`. The heavier suites are grouped separately:
 `make verify-display` runs the framebuffer/VGA visual smoke checks and the GUI
-launch smoke, `make verify-network` runs the socket, FTP, and cserve smoke
-matrix, and `make verify-full` runs all verification targets in sequence.
+launch smoke, `make verify-network` runs the socket, FTP, cserve, and BusyBox
+network applet smoke matrix, and `make verify-full` runs all verification
+targets in sequence.
 
 Most freestanding test ELFs define `_start(argc, argv)` directly and can link
 either statically against the SmallOS user libraries built under
@@ -434,7 +435,7 @@ make verify          # layout, dynamic checks, guest selftest, reboot/halt smoke
 make dynamic-link-check # host-side dynamic ELF/interpreter/relocation checks
 make dynlink-negative-smoke # missing-loader/libc failure-path smoke
 make verify-display  # framebuffer/VGA screenshots plus GUI launch smoke
-make verify-network  # socket EOF/parallel, FTP, FTP loop, cserve
+make verify-network  # socket EOF/parallel, FTP, FTP loop, cserve, BusyBox net
 make verify-full     # all of the above
 ```
 
@@ -839,7 +840,8 @@ BusyBox ships as `usr/bin/busybox`, configured for a useful Unix compatibility
 set rather than full Linux emulation. `ash` is enabled as `/bin/sh`, standalone
 applets are enabled, and common text, archive, process, filesystem, and
 diagnostic commands are available, including gzip/gunzip, checksum helpers,
-hard/symbolic link tools, `readlink`, `mkfifo`, and `mknod`.
+hard/symbolic link tools, `readlink`, `mkfifo`, `mknod`, `ifconfig`, `route`,
+IPv4 `ping`, `nc`, plain HTTP `wget`, and `httpd`.
 Native SmallOS commands remain preferred in shell lookup; BusyBox is the
 fallback for missing applets.
 
@@ -995,6 +997,9 @@ Shipped ext2 programs:
 - `usr/libexec/tests/mountprobe` - exercise state-backed mount listings,
   per-mount `statfs`/`fstatfs`, dynamic `proc`/`devtmpfs` pseudo mounts,
   gated ext2 stacking, and busy unmount failures
+- `usr/libexec/tests/netbbprobe` - exercise BusyBox-facing `eth0`
+  interface/route ioctls, `/proc/net/dev`, `/proc/net/route`, UDP datagram
+  basics, and localhost/numeric resolver compatibility
 - `usr/libexec/tests/badptrprobe` - exercise unmapped user pointers, page-crossing buffers/structs, and wrapped syscall byte counts
 - `usr/libexec/tests/sleep_test` - exercise SYS_SLEEP semantics
 - `usr/libexec/tests/ptrguard` - exercise syscall pointer validation
@@ -1049,7 +1054,7 @@ The Makefile injects those values from the generated stage-2 stack contract and 
 
 ```makefile
 sed -e "s/__STAGE2_STACK_TOP__/0xFF00/" \
-    -e "s/__STAGE2_STACK_TOP_32__/0x1FF000/" \
+    -e "s/__STAGE2_STACK_TOP_32__/0x3FF000/" \
     loader2.asm > loader2.gen.asm
 ```
 

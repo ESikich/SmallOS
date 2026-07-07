@@ -9,14 +9,15 @@ This document describes the memory layout and allocator behavior used by SmallOS
 SmallOS currently uses three distinct memory pools:
 
 ```text
-0x100000 – 0x1FFFFF   kernel .bss, bump heap, and boot stack arena
-0x200000 – 0x7FFFFFF  reclaimable PMM frame pool, capped at 128 MB
+0x100000 – 0x3FFFFF   kernel .bss, bump heap, and boot stack arena
+0x200000 – 0x7FFFFFF  PMM frame window, capped at 128 MB; kernel bump/stack frames inside it are reserved before reclaimable allocation
 0x10000000+           per-process user heap (SYS_BRK)
 ```
 
 The kernel's static storage starts at 1 MiB. The kernel heap begins after
-the linked `.bss` end, is permanent, and never shrinks. The PMM frame pool is
-reclaimed on process exit. The user heap is managed per process through
+the linked `.bss` end, is permanent, and never shrinks. PMM frames not reserved
+by the kernel bump heap or boot stack are reclaimed on process exit. The user
+heap is managed per process through
 `SYS_BRK`, with a user-space allocator layered on top of it.
 
 Some boot/display structures intentionally start small or allocate lazily to

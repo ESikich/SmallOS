@@ -21,6 +21,8 @@
 #define EBUSY         16
 #define EEXIST        17
 #define EXDEV         18
+#define ENODEV        19
+#define ENXIO          6
 #define ENOTDIR       20
 #define EISDIR        21
 #define EINVAL        22
@@ -35,9 +37,13 @@
 #define ELOOP         40
 #define ENOTTY        25
 #define EPROTO        71
+#define ENOPROTOOPT   92
+#define EPROTONOSUPPORT 93
 #define EAFNOSUPPORT  97
 #define EOVERFLOW     75
 #define EMSGSIZE      90
+#define EOPNOTSUPP    95
+#define EDESTADDRREQ  89
 #define ENETUNREACH  101
 #define EADDRINUSE    98
 #define EISCONN      106

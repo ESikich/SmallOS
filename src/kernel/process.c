@@ -707,7 +707,7 @@ int process_fd_open_file(process_t* proc, const char* name, u32 size, int writab
     return process_fd_open_file_mode(proc, name, size, writable ? 0 : 1, writable);
 }
 
-int process_fd_open_socket(process_t* proc, const char* name) {
+int process_fd_open_socket_kind(process_t* proc, const char* name, int socket_kind) {
     fd_entry_t* ent;
     socket_t* sock;
     int fd;
@@ -717,7 +717,7 @@ int process_fd_open_socket(process_t* proc, const char* name) {
     fd = process_fd_alloc_entry(proc, &ent);
     if (fd < 0) return fd;
 
-    sock = socket_create_tcp();
+    sock = socket_create_kind((socket_kind_t)socket_kind);
     if (!sock) return -ENOMEM;
 
     k_memset(ent, 0, sizeof(*ent));
@@ -734,6 +734,10 @@ int process_fd_open_socket(process_t* proc, const char* name) {
         k_memcpy(ent->name, name, (k_size_t)k_strlen(name) + 1u);
     }
     return fd;
+}
+
+int process_fd_open_socket(process_t* proc, const char* name) {
+    return process_fd_open_socket_kind(proc, name, SOCKET_KIND_TCP);
 }
 
 int process_fd_open_special(process_t* proc, int kind, const char* name) {

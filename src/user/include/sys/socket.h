@@ -14,7 +14,10 @@ int send(int fd, const void* buf, size_t len, int flags);
 int sendto(int fd, const void* buf, size_t len, int flags,
            const struct sockaddr* dest_addr, socklen_t addrlen);
 int recv(int fd, void* buf, size_t len, int flags);
+int recvfrom(int fd, void* buf, size_t len, int flags,
+             struct sockaddr* src_addr, socklen_t* addrlen);
 int setsockopt(int fd, int level, int optname, const void* optval, unsigned int optlen);
+int getsockopt(int fd, int level, int optname, void* optval, socklen_t* optlen);
 int getsockname(int fd, struct sockaddr* addr, socklen_t* addrlen);
 int getpeername(int fd, struct sockaddr* addr, socklen_t* addrlen);
 int shutdown(int fd, int how);

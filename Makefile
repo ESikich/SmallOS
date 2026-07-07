@@ -131,7 +131,7 @@ LOADER2_OFFSET := $(shell awk '/^LOADER2_OFFSET[[:space:]]+equ/ {print $$3}' $(B
 LOADER2_LOAD_ADDR := $(shell echo $$(( ( $(LOADER2_SEGMENT) << 4 ) + $(LOADER2_OFFSET) )))
 STAGE2_STACK_TOP := 0xFF00
 STAGE2_STACK_TOP_PHYS := $(shell printf '0x%X' $$(( $(LOADER2_LOAD_ADDR) + $(STAGE2_STACK_TOP) )))
-STAGE2_STACK_TOP_32 := 0x1FF000
+STAGE2_STACK_TOP_32 := 0x3FF000
 EXT2_TOTAL_BLOCKS := $(shell awk '/^#define[[:space:]]+TOTAL_BLOCKS[[:space:]]+/ {print $$3}' tools/mkext2.c)
 EXT2_TOTAL_SIZE_MB := $(shell awk '/^#define[[:space:]]+TOTAL_SIZE_MB[[:space:]]+/ {print $$3}' tools/mkext2.c)
 BOOT_PARTITION_TABLE_OFFSET := $(shell awk '/^MBR_PARTITION_TABLE_OFFSET[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
@@ -225,7 +225,7 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/ext2.c \
 	$(DRIVERS_DIR)/serial.c
 
-USER_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell sh ip ipconfig meminfo memmap cpuz top netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest hello ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe envprobe mathprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe soundprobe plasma mandel wolf3d fractint tcpecho sockeof ftpd
+USER_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell sh ip ipconfig meminfo memmap cpuz top netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest hello ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe envprobe mathprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe soundprobe plasma mandel wolf3d fractint tcpecho sockeof ftpd
 USER_PROGS := $(filter-out fractint,$(USER_PROGS))
 USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
 USER_LIBC_SRCS=\
@@ -286,12 +286,12 @@ USER_UAPI_FILES=$(wildcard $(KERNEL_DIR)/uapi_*.h)
 USER_UAPI_ENTRIES=$(foreach file,$(USER_UAPI_FILES),usr/include/$(notdir $(file))=$(CURDIR)/$(file))
 EXT2_BIN_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell sh ip ipconfig meminfo memmap cpuz netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest top soundprobe
 EXT2_DEMO_PROGS=hello plasma mandel wolf3d fractint
-EXT2_TEST_PROGS=ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe envprobe mathprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe
+EXT2_TEST_PROGS=ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe envprobe mathprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe
 USER_DYNAMIC_NO_CRT0=echo about uptime date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv meminfo memmap cpuz top hello args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe dirprobe errnoprobe badptrprobe sleep_test timerfdprobe ptrguard preempt_test inputprobe stdioprobe ip ipconfig netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ticks fault signalfdprobe connectprobe spinwkr pgrpprobe tcpecho sockeof ftpd halt reboot ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest soundprobe displayprobe
-USER_DYNAMIC_WITH_CRT0=crtprobe mathprobe pipeprobe dupprobe forkprobe execveprobe envprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe
+USER_DYNAMIC_WITH_CRT0=crtprobe mathprobe pipeprobe dupprobe forkprobe execveprobe envprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe
 USER_DYNAMIC_PROGS=$(USER_DYNAMIC_NO_CRT0) $(USER_DYNAMIC_WITH_CRT0)
 USER_DYNAMIC_PIE_NO_CRT0=hello pwd cat meminfo date echo about uptime more man fsread ls tree touch rm mkdir rmdir cp mv memmap cpuz args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe dirprobe errnoprobe badptrprobe sleep_test timerfdprobe ptrguard preempt_test inputprobe stdioprobe ticks fault signalfdprobe connectprobe spinwkr pgrpprobe ip ipconfig netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck tcpecho sockeof ftpd top halt reboot ataread
-USER_DYNAMIC_PIE_WITH_CRT0=crtprobe mathprobe pipeprobe dupprobe forkprobe execveprobe envprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe
+USER_DYNAMIC_PIE_WITH_CRT0=crtprobe mathprobe pipeprobe dupprobe forkprobe execveprobe envprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe
 USER_DYNAMIC_PIE_PROGS=$(USER_DYNAMIC_PIE_NO_CRT0) $(USER_DYNAMIC_PIE_WITH_CRT0)
 USER_DYNAMIC_LEGACY_NO_CRT0=$(filter-out $(USER_DYNAMIC_PIE_NO_CRT0),$(USER_DYNAMIC_NO_CRT0))
 USER_DYNAMIC_LEGACY_WITH_CRT0=$(filter-out $(USER_DYNAMIC_PIE_WITH_CRT0),$(USER_DYNAMIC_WITH_CRT0))
@@ -1049,6 +1049,9 @@ SOCKET_PARALLEL_PORT?=2323
 SOCKET_PARALLEL_CLIENTS?=8
 SOCKET_PARALLEL_ROUNDS?=3
 FTP_LOOP_ITERATIONS?=5
+BUSYBOX_NET_SMOKE_GUEST_HTTP_PORT?=18081
+BUSYBOX_NET_SMOKE_HOST_HTTP_PORT?=18080
+BUSYBOX_NET_SMOKE_HOST_ECHO_PORT?=18082
 PYTHON3=python3
 TEST_SETUP_LOG=$(BUILD_DIR)/test-setup.log
 QEMU_SELFTEST_FLAGS?=--summary
@@ -1078,7 +1081,7 @@ QEMU_USB_STORAGE_FLAGS=-drive if=none,id=stick,format=raw,file=$(IMG_FILE) \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all image img artifacts dirs deps fractint-source wolf3d-shareware-data wolf3d-source-probe check-third-party dyn-size-report dynamic-link-check dyn-reloc-inventory dynlink-negative-smoke run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage run-usb-storage-fallback run-headless-usb-storage-fallback usb-storage-smoke usb-ramdisk-fallback-smoke test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean tinycc-smalos busybox-smalos FORCE
+.PHONY: all image img artifacts dirs deps fractint-source wolf3d-shareware-data wolf3d-source-probe check-third-party dyn-size-report dynamic-link-check dyn-reloc-inventory dynlink-negative-smoke run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage run-usb-storage-fallback run-headless-usb-storage-fallback usb-storage-smoke usb-ramdisk-fallback-smoke test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke busybox-net-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean tinycc-smalos busybox-smalos FORCE
 
 FORCE:
 
@@ -1255,6 +1258,20 @@ cserve-smoke:
 		--clients $(CSERVE_SMOKE_CLIENTS) \
 		--timeout 120
 
+busybox-net-smoke:
+	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1
+	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
+	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
+	$(MAKE) run-headless SERIAL_CONSOLE=1 QEMU_NET_HOSTFWD=',hostfwd=tcp::$(BUSYBOX_NET_SMOKE_GUEST_HTTP_PORT)-:$(BUSYBOX_NET_SMOKE_GUEST_HTTP_PORT)'
+	$(PYTHON3) tools/busybox_net_smoke.py \
+		--monitor $(MONITOR_SOCK) \
+		--serial $(SERIAL_LOG) \
+		--pidfile $(PIDFILE) \
+		--guest-http-port $(BUSYBOX_NET_SMOKE_GUEST_HTTP_PORT) \
+		--host-http-port $(BUSYBOX_NET_SMOKE_HOST_HTTP_PORT) \
+		--host-echo-port $(BUSYBOX_NET_SMOKE_HOST_ECHO_PORT) \
+		--timeout 120
+
 framebuffer-smoke:
 	$(MAKE) display-smoke-one DISPLAY_BACKEND=auto DISPLAY_SMOKE_MODE=framebuffer DISPLAY_SMOKE_PPM=$(FRAMEBUFFER_SMOKE_PPM)
 
@@ -1335,6 +1352,7 @@ verify-network:
 	$(MAKE) ftp-smoke
 	$(MAKE) ftp-loop-smoke
 	$(MAKE) cserve-smoke
+	$(MAKE) busybox-net-smoke
 
 verify-full:
 	$(MAKE) verify

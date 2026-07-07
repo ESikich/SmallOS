@@ -267,6 +267,12 @@ instance, checks the large `/var/www/index.html` static fixture, holds
 24 keep-alive clients by default, exercises a slow reader, verifies
 `/favicon.ico` returns 404, and records the guest `netinfo` socket/TCP summary.
 
+`make busybox-net-smoke` forwards a guest BusyBox `httpd` port, fetches its
+`/var/www` content from the host, serves a tiny host HTTP response for guest
+BusyBox `wget`, and checks BusyBox `nc` against a host echo socket. This keeps
+the enabled BusyBox TCP applets tied to real IPv4/TCP behavior rather than
+only compile-time availability.
+
 ---
 
 # ELF Load Path

@@ -64,7 +64,7 @@ kernel_main()
 ## Stage 1 – boot.asm
 
 * Loaded by BIOS at `0x7C00`
-* Loads stage 2 via CHS `INT 0x13 AH=0x02` (`LOADER2_SECTORS`, fits within one track) to `0x40000`
+* Loads stage 2 via CHS `INT 0x13 AH=0x02` (`LOADER2_SECTORS`, fits within one track) to `0x80000`
 * Must be exactly **512 bytes**, ending with `dw 0xAA55`
 
 ---
@@ -75,8 +75,8 @@ Runs in **real mode**, then switches to **protected mode**.
 
 * Checks `INT 0x13 AH=0x41` for LBA extension support — halts if not available
 * Reads partition entry 0 from the MBR partition table, derives the kernel LBA and size from that entry, and loads the kernel to `0x1000` via `INT 0x13 AH=0x42`
-* Sets up a generated temporary stack (`SP=0xFF00`, physical top `0x4FF00`), installs a temporary GDT, enables protected mode, and uses a 32-bit far jump into `init_pm`
-* In protected mode, switches to `0x1FF000` as the boot/kernel stack top and jumps to kernel entry at `0x1000`
+* Sets up a generated temporary stack (`SP=0xFF00`, physical top `0x8FF00`), installs a temporary GDT, enables protected mode, and uses a 32-bit far jump into `init_pm`
+* In protected mode, switches to `0x3FF000` as the boot/kernel stack top and jumps to kernel entry at `0x1000`
 
 One value injected by Makefile at build time: the generated stack-top constants.
 
@@ -632,7 +632,7 @@ process-private below `USER_STACK_TOP`, and programs enter CPL=3 through
 
 ```text
 0x00007C00   bootloader stage 1
-0x00040000   loader2 stage 2 (done after protected-mode jump)
+0x00080000   loader2 stage 2 (done after protected-mode jump)
 0x00001000   kernel image
 0x00090000   loader-written boot info
 0x00091000   copied BIOS font
@@ -640,7 +640,7 @@ process-private below `USER_STACK_TOP`, and programs enter CPL=3 through
 bss_end      kernel .bss end (depends on static buffers and build profile)
 PAGE_ALIGN(bss_end)
              bump allocator base — permanent kernel structures
-0x001FF000   KERNEL_BOOT_STACK_TOP (defined in `memory.h`) — boot stack top
+0x003FF000   KERNEL_BOOT_STACK_TOP (defined in `memory.h`) — boot stack top
              (grows downward; fallback ESP0 for kernel tasks such as the shell)
                kmalloc()      — long-lived kernel-owned data only
 0x00200000   PMM base — reclaimable frames
@@ -936,7 +936,7 @@ ext2 filesystem — user programs loaded from ATA, USB storage, or the boot RAM 
 run/runimg infrastructure removed — direct shell execution is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
 interactive shell with builtin job control plus `/bin` command binaries such as meminfo / memmap / cpuz / top / ataread / ls / tree / fsread / mkdir / rmdir
 guest TinyCC compiler path — `usr/bin/tcc` runs inside SmallOS through `crt0` and TinyCC's normal `main`, then compiles guest C samples during `make test`
-guest BusyBox path — `usr/bin/busybox` provides fallback Unix applets, `/bin/sh` runs BusyBox `ash`, virtual `/proc` plus `/dev` expose the small Linux-like status/device surface those tools need, and ext2 supplies the link/symlink/metadata/node operations used by filesystem applets
+guest BusyBox path — `usr/bin/busybox` provides fallback Unix applets, `/bin/sh` runs BusyBox `ash`, virtual `/proc`, `/proc/net`, and `/dev` expose the small Linux-like status/device surface those tools need, ext2 supplies the link/symlink/metadata/node operations used by filesystem applets, and kernel network ioctls/raw ICMP/UDP DNS/IPv4 TCP back `ifconfig`, `route`, `ping`, `nc`, plain HTTP `wget`, and `httpd`
 ```
 
 Foundation for:

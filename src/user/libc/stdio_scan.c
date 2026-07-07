@@ -165,32 +165,181 @@ int sscanf(const char* input, const char* fmt, ...) {
 int fscanf(FILE* stream, const char* fmt, ...) {
     va_list ap;
     int assigned = 0;
+    int matched = 0;
+    int input_failed = 0;
 
     va_start(ap, fmt);
     while (*fmt) {
+        int suppress = 0;
+        int width = 0;
+        int longmod = 0;
         char tok[128];
-        if (*fmt++ != '%') {
+        int c;
+        int count;
+
+        if (scan_isspace((unsigned char)*fmt)) {
+            while (scan_isspace((unsigned char)*fmt)) fmt++;
+            do {
+                c = fgetc(stream);
+            } while (c != EOF && scan_isspace(c));
+            if (c != EOF) ungetc(c, stream);
             continue;
         }
-        if (*fmt == 'd') {
-            int* out = va_arg(ap, int*);
-            if (!scan_token(stream, tok, sizeof(tok))) break;
-            *out = atoi(tok);
-            assigned++;
+        if (*fmt != '%') {
+            c = fgetc(stream);
+            if (c == EOF) {
+                input_failed = 1;
+                break;
+            }
+            if (c != (unsigned char)*fmt) {
+                ungetc(c, stream);
+                break;
+            }
+            fmt++;
+            continue;
+        }
+
+        fmt++;
+        if (*fmt == '*') {
+            suppress = 1;
+            fmt++;
+        }
+        while (*fmt >= '0' && *fmt <= '9') {
+            width = width * 10 + (*fmt++ - '0');
+        }
+        if (*fmt == 'l') {
+            longmod = 1;
+            fmt++;
+        }
+
+        if (*fmt == 'd' || *fmt == 'u' || *fmt == 'x' || *fmt == 'X') {
+            char* end = 0;
+            int base = (*fmt == 'x' || *fmt == 'X') ? 16 : 10;
+            count = 0;
+            do {
+                c = fgetc(stream);
+            } while (c != EOF && scan_isspace(c));
+            if (c == EOF) {
+                input_failed = 1;
+                break;
+            }
+            while (c != EOF && !scan_isspace(c) &&
+                   (!width || count < width) &&
+                   count + 1 < (int)sizeof(tok)) {
+                tok[count++] = (char)c;
+                c = fgetc(stream);
+            }
+            if (c != EOF) ungetc(c, stream);
+            tok[count] = '\0';
+            if (count == 0) break;
+            if (*fmt == 'u' || *fmt == 'x' || *fmt == 'X') {
+                unsigned long value = strtoul(tok, &end, base);
+                if (end == tok) break;
+                if (!suppress) {
+                    if (longmod) {
+                        unsigned long* out = va_arg(ap, unsigned long*);
+                        *out = value;
+                    } else {
+                        unsigned int* out = va_arg(ap, unsigned int*);
+                        *out = (unsigned int)value;
+                    }
+                    assigned++;
+                }
+            } else {
+                long value = strtol(tok, &end, base);
+                if (end == tok) break;
+                if (!suppress) {
+                    if (longmod) {
+                        long* out = va_arg(ap, long*);
+                        *out = value;
+                    } else {
+                        int* out = va_arg(ap, int*);
+                        *out = (int)value;
+                    }
+                    assigned++;
+                }
+            }
+            matched = 1;
         } else if (*fmt == 'f') {
-            float* out = va_arg(ap, float*);
-            if (!scan_token(stream, tok, sizeof(tok))) break;
-            *out = (float)atof(tok);
-            assigned++;
+            char* end = 0;
+            count = 0;
+            if (!scan_token(stream, tok, sizeof(tok))) {
+                input_failed = 1;
+                break;
+            }
+            if (!suppress) {
+                double value = strtod(tok, &end);
+                if (end == tok) break;
+                if (longmod) {
+                    double* out = va_arg(ap, double*);
+                    *out = value;
+                } else {
+                    float* out = va_arg(ap, float*);
+                    *out = (float)value;
+                }
+                assigned++;
+            }
+            matched = 1;
         } else if (*fmt == 's') {
-            char* out = va_arg(ap, char*);
-            if (!scan_token(stream, out, 128)) break;
-            assigned++;
+            char* out = suppress ? 0 : va_arg(ap, char*);
+            count = 0;
+            do {
+                c = fgetc(stream);
+            } while (c != EOF && scan_isspace(c));
+            if (c == EOF) {
+                input_failed = 1;
+                break;
+            }
+            while (c != EOF && !scan_isspace(c) && (!width || count < width)) {
+                if (!suppress) out[count] = (char)c;
+                count++;
+                c = fgetc(stream);
+            }
+            if (c != EOF) ungetc(c, stream);
+            if (count == 0) break;
+            if (!suppress) {
+                out[count] = '\0';
+                assigned++;
+            }
+            matched = 1;
+        } else if (*fmt == '[') {
+            char set[64];
+            int neg = 0;
+            int si = 0;
+            char* out = suppress ? 0 : va_arg(ap, char*);
+            fmt++;
+            if (*fmt == '^') {
+                neg = 1;
+                fmt++;
+            }
+            while (*fmt && *fmt != ']' && si + 1 < (int)sizeof(set)) {
+                set[si++] = *fmt++;
+            }
+            set[si] = '\0';
+            if (*fmt != ']') break;
+            count = 0;
+            c = fgetc(stream);
+            while (c != EOF && (!width || count < width)) {
+                int in = char_in_set(c, set);
+                if ((in && neg) || (!in && !neg)) break;
+                if (!suppress) out[count] = (char)c;
+                count++;
+                c = fgetc(stream);
+            }
+            if (c != EOF) ungetc(c, stream);
+            if (count == 0) break;
+            if (!suppress) {
+                out[count] = '\0';
+                assigned++;
+            }
+            matched = 1;
         }
         if (*fmt) {
             fmt++;
         }
     }
     va_end(ap);
-    return assigned ? assigned : EOF;
+    if (assigned) return assigned;
+    if (matched) return 0;
+    return input_failed ? EOF : 0;
 }

@@ -1504,6 +1504,7 @@ void sh_selftest(void) {
     sh_selftest_exec_expect("rsrcprobe", "usr/libexec/tests/rsrcprobe", 0);
     sh_selftest_exec_expect("sessprobe", "usr/libexec/tests/sessprobe", 0);
     sh_selftest_exec_expect("mountprobe", "usr/libexec/tests/mountprobe", 0);
+    sh_selftest_exec_expect("netbbprobe", "usr/libexec/tests/netbbprobe", 0);
     sh_selftest_exec_expect("busybox true", "usr/bin/busybox true", 0);
     sh_selftest_exec_expect("busybox false", "usr/bin/busybox false", 1);
     sh_selftest_exec_expect("busybox echo", "usr/bin/busybox echo busybox-echo-ok", 0);
@@ -1522,6 +1523,9 @@ void sh_selftest(void) {
     sh_selftest_exec_expect("busybox free", "usr/bin/busybox free", 0);
     sh_selftest_exec_expect("busybox ps", "usr/bin/busybox ps", 0);
     sh_selftest_exec_expect("busybox date", "usr/bin/busybox date", 0);
+    sh_selftest_exec_expect("busybox ifconfig", "usr/bin/busybox ifconfig eth0", 0);
+    sh_selftest_exec_expect("busybox route", "usr/bin/busybox route -n", 0);
+    sh_selftest_exec_expect("busybox ping", "usr/bin/busybox ping 10.0.2.2", 0);
     sh_selftest_exec("busybox fallback grep", "grep MemTotal /proc/meminfo");
     sh_selftest_exec("busybox dev null", "usr/bin/busybox cat /dev/null");
     sh_selftest_exec_expect("busybox dd zero", "usr/bin/busybox dd if=/dev/zero of=/tmp/busybox-zero.bin bs=4 count=1", 0);

@@ -46,6 +46,7 @@ Shared errno values:
 | `ESRCH` | 3 | no such process |
 | `EINTR` | 4 | interrupted system call |
 | `EIO` | 5 | input/output error |
+| `ENXIO` | 6 | no such device or address |
 | `EBADF` | 9 | bad file descriptor |
 | `ECHILD` | 10 | no child processes |
 | `EAGAIN` / `EWOULDBLOCK` | 11 | resource temporarily unavailable |
@@ -54,6 +55,7 @@ Shared errno values:
 | `EFAULT` | 14 | bad user address |
 | `EBUSY` | 16 | resource busy |
 | `EEXIST` | 17 | file exists |
+| `ENODEV` | 19 | no such device |
 | `ENOTDIR` | 20 | not a directory |
 | `EISDIR` | 21 | is a directory |
 | `EINVAL` | 22 | invalid argument |
@@ -66,6 +68,8 @@ Shared errno values:
 | `EPROTO` | 71 | protocol error |
 | `EOVERFLOW` | 75 | value too large |
 | `EMSGSIZE` | 90 | message too long |
+| `EPROTONOSUPPORT` | 93 | protocol not supported |
+| `EOPNOTSUPP` | 95 | operation not supported |
 | `EADDRINUSE` | 98 | address already in use |
 | `ENETUNREACH` | 101 | network unreachable |
 | `ECONNRESET` | 104 | connection reset |
@@ -402,7 +406,11 @@ Queries whether an ext2 path exists and whether it resolves to a file or directo
 int sys_socket(int domain, int type, int protocol);
 ```
 
-Creates a stream socket handle. The current implementation accepts `AF_INET`, `SOCK_STREAM`, and either `0` or `IPPROTO_TCP`.
+Creates a socket handle. The TCP stream path accepts `AF_INET`,
+`SOCK_STREAM`, and either `0` or `IPPROTO_TCP`. The networking compatibility
+path also accepts `AF_INET`/`SOCK_DGRAM` as a control/datagram descriptor for
+network ioctls, and `AF_INET`/`SOCK_RAW`/`IPPROTO_ICMP` for raw ICMP echo
+traffic used by BusyBox `ping`.
 
 ---
 
@@ -488,6 +496,47 @@ read wait queue until data arrives or the connection closes, or return EOF
 immediately after local `SHUT_RD`. Connected TCP streams are looked up from the
 global 4-tuple TCP table, use a lazy PMM-backed 4 KiB receive ring, and
 advertise the remaining receive window to the peer.
+
+---
+
+### SYS_SENDTO (143)
+
+```c
+int sys_sendto(int fd,
+               const void* buf,
+               uint32_t len,
+               unsigned int flags,
+               const struct sockaddr* dest,
+               socklen_t destlen);
+```
+
+Sends socket payloads with an explicit destination. TCP stream descriptors
+without a destination are forwarded to `SYS_SEND`; raw ICMP descriptors wrap
+the supplied ICMP bytes in an IPv4 packet and route them through the existing
+IPv4/ARP next-hop path. UDP descriptors build IPv4/UDP datagrams, bind an
+ephemeral source port when needed, and use the same route/ARP path. UDP
+checksums are currently omitted.
+
+---
+
+### SYS_RECVFROM (144)
+
+```c
+int sys_recvfrom(int fd,
+                 void* buf,
+                 uint32_t len,
+                 unsigned int flags,
+                 struct sockaddr* src,
+                 socklen_t* srclen);
+```
+
+Receives socket payloads and optionally writes the peer IPv4 source address.
+TCP stream descriptors without a source buffer are forwarded to `SYS_RECV`.
+Raw ICMP descriptors block until an ICMP IPv4 packet is delivered by the NIC
+receive path, then return the IPv4 header plus ICMP payload, matching the shape
+expected by BusyBox `ping`. UDP descriptors receive queued IPv4/UDP datagrams
+for their bound local port; the first queue is intentionally small and sized for
+DNS-style traffic rather than high-throughput UDP applications.
 
 ---
 
@@ -1195,6 +1244,25 @@ values are:
 Addresses are host-order IPv4 values in the same format used by the kernel
 network drivers. These settings are runtime-only; they are not persisted to
 disk.
+
+### SYS_NET_IOCTL (145)
+
+```c
+int sys_net_ioctl(int fd, unsigned long request, void* arg);
+```
+
+Handles the Linux-shaped network ioctls used by classic BusyBox networking
+applets. The kernel exposes one primary interface, `eth0`, backed by
+`SYS_NETINFO`/`SYS_NET_OP` state. Supported requests include `SIOCGIFCONF`,
+`SIOCGIFFLAGS`, `SIOCGIFADDR`, `SIOCGIFNETMASK`, `SIOCGIFBRDADDR`,
+`SIOCGIFHWADDR`, `SIOCGIFMTU`, selected no-op setters, `SIOCSIFADDR`,
+`SIOCSIFNETMASK`, `SIOCADDRT`, and `SIOCDELRT`. Route ioctls currently manage
+the runtime default IPv4 gateway. `/proc/net/dev` and `/proc/net/route` are
+rendered from the same state.
+
+Loopback, rtnetlink, IPv6, and multi-interface behavior remain out of scope for
+this syscall slice. DNS-over-UDP is implemented in libc on top of the UDP
+socket path when the runtime network state has a DNS server.
 
 ### SYS_BLOCK_READ_SECTOR (81)
 

@@ -1,0 +1,20 @@
+NETBBPROBE(1)
+
+NAME
+    netbbprobe - test BusyBox-facing network compatibility paths
+
+SYNOPSIS
+    netbbprobe
+
+DESCRIPTION
+    netbbprobe is a guest regression probe for the classic BusyBox networking
+    surface. It checks eth0 interface discovery, ifconfig-style ioctls, runtime
+    IPv4 address and netmask updates, default-route add/delete, /proc/net/dev,
+    /proc/net/route, UDP datagram basics, localhost and numeric IPv4 resolver
+    paths, and error behavior for network ioctls on non-socket descriptors.
+
+    The probe is installed under /usr/libexec/tests and is normally run by the
+    host-driven selftest suite rather than by hand.
+
+SEE ALSO
+    busybox(1), compatprobe(1), selftest(1), smallos(7)

@@ -6,7 +6,9 @@
 typedef struct process process_t;
 typedef enum {
     SOCKET_KIND_NONE = 0,
-    SOCKET_KIND_TCP  = 1
+    SOCKET_KIND_TCP  = 1,
+    SOCKET_KIND_UDP  = 2,
+    SOCKET_KIND_RAW_ICMP = 3
 } socket_kind_t;
 
 typedef enum {
@@ -34,6 +36,7 @@ typedef struct {
 } socket_stats_t;
 
 socket_t*      socket_create_tcp(void);
+socket_t*      socket_create_kind(socket_kind_t kind);
 void           socket_retain(socket_t* sock);
 void           socket_release(socket_t* sock);
 void           socket_get_stats(socket_stats_t* out);
@@ -46,6 +49,23 @@ unsigned int   socket_peer_ip(socket_t* sock);
 unsigned int   socket_peer_port(socket_t* sock);
 
 int            socket_bind_tcp(socket_t* sock, unsigned int port);
+int            socket_bind_udp(socket_t* sock, unsigned int port);
+int            socket_connect_udp(socket_t* sock,
+                                  unsigned int remote_ip,
+                                  unsigned int remote_port);
+int            socket_udp_ensure_bound(socket_t* sock);
+int            socket_udp_recv_ready(socket_t* sock);
+int            socket_udp_recv(socket_t* sock,
+                               void* buf,
+                               unsigned int len,
+                               unsigned int* out_src_ip,
+                               unsigned int* out_src_port);
+int            socket_udp_deliver(unsigned int src_ip,
+                                  unsigned int src_port,
+                                  unsigned int dst_ip,
+                                  unsigned int dst_port,
+                                  const void* payload,
+                                  unsigned int len);
 int            socket_listen_tcp(socket_t* sock, int backlog);
 int            socket_connect_tcp(socket_t* sock,
                                   unsigned int remote_ip,
@@ -60,6 +80,14 @@ int            socket_tcp_recv(socket_t* sock, void* buf, unsigned int len);
 int            socket_tcp_send_ready(socket_t* sock);
 int            socket_tcp_send(socket_t* sock, const void* buf, unsigned int len);
 int            socket_shutdown_tcp(socket_t* sock, int how);
+int            socket_raw_icmp_recv_ready(socket_t* sock);
+int            socket_raw_icmp_recv(socket_t* sock,
+                                    void* buf,
+                                    unsigned int len,
+                                    unsigned int* out_src_ip);
+int            socket_raw_icmp_deliver(const void* packet,
+                                       unsigned int len,
+                                       unsigned int src_ip);
 short          socket_poll(socket_t* sock, short events);
 int            socket_wait(socket_t* sock, process_t* proc, short events);
 void           socket_wait_clear_process(process_t* proc);

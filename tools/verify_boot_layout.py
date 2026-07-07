@@ -63,8 +63,8 @@ def main() -> int:
     loader2_load_addr = (loader2_segment << 4) + loader2_offset
     stage2_stack_top_phys = loader2_load_addr + stage2_stack_top
     expected_stage2_stack_top = 0xFF00
-    expected_stage2_stack_top_32 = 0x1FF000
-    expected_kernel_boot_stack_top = 0x1FF000
+    expected_stage2_stack_top_32 = 0x3FF000
+    expected_kernel_boot_stack_top = 0x3FF000
 
     expect(boot_sector_size == 512, f"BOOT_SECTOR_SIZE must be 512, got {boot_sector_size}")
     expect(kernel_offset == 0x1000, f"KERNEL_OFFSET must be 0x1000, got 0x{kernel_offset:x}")

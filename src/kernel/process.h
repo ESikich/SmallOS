@@ -180,6 +180,9 @@ int        process_fd_open_file_mode(process_t* proc,
                                      int readable,
                                      int writable);
 int        process_fd_open_socket(process_t* proc, const char* name);
+int        process_fd_open_socket_kind(process_t* proc,
+                                       const char* name,
+                                       int socket_kind);
 int        process_fd_open_special(process_t* proc, int kind, const char* name);
 int        process_fd_open_virtual(process_t* proc,
                                    const char* name,

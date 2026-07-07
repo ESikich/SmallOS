@@ -5,6 +5,12 @@
 
 int ipv4_ping(u32 sender_ip, u32 target_ip);
 int ipv4_ping_via_gateway(u32 sender_ip, u32 target_ip, u32 gateway_ip);
+int ipv4_send_payload(u32 sender_ip,
+                      u32 target_ip,
+                      u32 next_hop_ip,
+                      u8 protocol,
+                      const u8* payload,
+                      u32 payload_len);
 int ipv4_handle_frame(const u8* frame, u32 len);
 void ipv4_print_ip(u32 ip);
 int ipv4_parse_ip(const char* text, u32* out_ip);

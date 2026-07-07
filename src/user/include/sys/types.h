@@ -24,5 +24,6 @@ typedef unsigned int useconds_t;
 typedef unsigned int uid_t;
 typedef unsigned int gid_t;
 typedef int pid_t;
+typedef char* caddr_t;
 
 #endif /* USER_SYS_TYPES_H */

@@ -494,7 +494,10 @@ enum {
     SYS_MOUNT           = 139, /* mount filesystem at target path */
     SYS_UMOUNT2         = 140, /* unmount target path with flags */
     SYS_STATFS          = 141, /* copy filesystem stats for path */
-    SYS_FSTATFS         = 142  /* copy filesystem stats for fd */
+    SYS_FSTATFS         = 142, /* copy filesystem stats for fd */
+    SYS_SENDTO          = 143, /* datagram/raw send with destination */
+    SYS_RECVFROM        = 144, /* datagram/raw receive with source */
+    SYS_NET_IOCTL       = 145  /* network interface/route ioctl */
 };
 
 #endif

@@ -54,7 +54,7 @@ Loaded by BIOS at `0x0000:0x7C00`.
 
 * Initialize segment registers and a temporary stage-1 stack at `0x9000`
 * Print a compact, one-cell-inset status banner via BIOS `int 0x10`
-* Load stage 2 from disk to `0x40000`
+* Load stage 2 from disk to `0x80000`
 * Transfer control to stage 2
 
 ## BIOS Disk Read
@@ -101,7 +101,7 @@ QEMU/ESXi smoke harnesses.
 
 ## Location
 
-Loaded to `0x4000:0x0000` (physical `0x40000`).
+Loaded to `0x8000:0x0000` (physical `0x80000`).
 
 ## Responsibilities
 
@@ -117,10 +117,10 @@ Loaded to `0x4000:0x0000` (physical `0x40000`).
 
 ## Safe Kernel Size
 
-Loader2 now sits at `0x40000`. The kernel loads to `0x1000`. Stage 2 now uses a loader-segment stack, so the real-mode `SP` is `0xFF00` while the physical stack top is `0x4FF00`. The kernel must not grow large enough to overwrite the loader during the INT 0x13 read:
+Loader2 now sits at `0x80000`. The kernel loads to `0x1000`. Stage 2 uses a loader-segment real-mode stack, so `SP` is `0xFF00` while the physical stack top is `0x8FF00`. The protected-mode kernel-entry stack is `0x3FF000`, below the first user-code PDE boundary. The kernel must not grow large enough to overwrite the loader during the INT 0x13 read:
 
 ```text
-safe kernel size = (0x40000 - 0x1000) / 512 = 504 sectors = 252 KiB
+safe kernel size = (0x80000 - 0x1000) / 512 = 1016 sectors = 508 KiB
 ```
 
 That is still the practical envelope for the current layout, but the build no longer enforces a hard ceiling. If the kernel grows too large, stage 2 will overwrite itself while reading from disk. Any future layout bump must update both the loader placement and the stage-2 stack contract.
@@ -143,7 +143,7 @@ The Makefile reads these declarations during image construction rather than rede
 
 * `boot.bin` is exactly 512 bytes
 * `loader2.bin` is exactly `LOADER2_SIZE_BYTES` bytes
-* loader2 still loads at `0x40000`
+* loader2 still loads at `0x80000`
 * the generated stage-2 stack and the kernel boot stack match the current contract
 
 This keeps the hand-rolled boot path explicit: the build fails before QEMU starts if the fixed boot-stage layout drifts.
@@ -281,7 +281,7 @@ The Makefile still generates `build/gen/loader2.gen.asm`, but only the stack-top
 
 ```text
 __STAGE2_STACK_TOP__    0xFF00
-__STAGE2_STACK_TOP_32__ 0x1FF000
+__STAGE2_STACK_TOP_32__ 0x3FF000
 ```
 
 ---
@@ -314,14 +314,14 @@ init_pm:
     mov fs, ax
     mov gs, ax
 
-    mov ebp, 0x1FF000
+    mov ebp, 0x3FF000
     mov esp, ebp
 
     mov eax, 0x1000
     jmp eax
 ```
 
-Segment registers loaded, stack set to `0x1FF000`, then execution jumps to the kernel entry point.
+Segment registers loaded, stack set to `0x3FF000`, then execution jumps to the kernel entry point.
 
 The loader2 GDT is temporary. Early in `kernel_main()`, the kernel installs its own GDT with `gdt_init()` before interrupts are enabled. Relying on the loader2 GDT for interrupt handling results in a triple fault.
 
@@ -392,15 +392,15 @@ immediately triple-faults.
 # Memory Map During Boot
 
 ```text
-0x00007C00   stage 1 (boot.asm) — done after jump to 0x40000
-0x00040000   stage 2 (loader2.asm) — done after jump to 0x1000
+0x00007C00   stage 1 (boot.asm) — done after jump to 0x80000
+0x00080000   stage 2 (loader2.asm) — done after jump to 0x1000
 0x00001000   kernel entry point (_start in kernel_entry.asm)
 0x00090000   loader-written boot info
 0x00091000   copied BIOS font
 0x00100000   kernel .bss start (NOLOAD; zeroed by kernel_entry.asm)
 ~0x00190000  current kernel .bss end; varies with static buffers
 ~0x00190000  bump allocator start, page-aligned from bss_end
-0x001FF000   stack top (set up by loader2's init_pm)
+0x003FF000   stack top (set up by loader2's init_pm)
 ```
 
 ---
@@ -616,7 +616,7 @@ PS/2 and VMware mouse input.
 # Summary
 
 ```text
-Stage 1  →  load stage 2 (CHS, fixed-size loader, to 0x40000)
+Stage 1  →  load stage 2 (CHS, fixed-size loader, to 0x80000)
 Stage 2  →  LBA extension check
          →  read partition table metadata at 0x7C00
          →  derive kernel_lba from partition entry 0

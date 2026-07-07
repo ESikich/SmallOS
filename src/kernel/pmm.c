@@ -16,7 +16,9 @@
  *
  * The PMM owns 0x200000–0x7FFFFFF for reclaimable page-frame allocations such
  * as per-process page directories, private page tables, user ELF pages, and
- * user stacks.
+ * user stacks. Kernel bump allocations and the boot stack may occupy frames
+ * inside this window; pmm_reserve_boot_ranges() and pmm_reserve_range() keep
+ * those frames out of the reclaimable pool.
  *
  * Bitmap: 32256 bits = 4032 bytes, static in BSS (zeroed before kernel_main).
  * E820 initialization starts with all frames used, frees only BIOS-reported
@@ -160,10 +162,11 @@ static void pmm_reserve_boot_ranges(void) {
 
     pmm_mark_range_used(0x00000000u, 0x00001000u);
     pmm_mark_range_used(0x00007C00u, 0x00007E00u);
-    pmm_mark_range_used(0x00040000u, 0x00041000u);
+    pmm_mark_range_used(0x00080000u, 0x00082000u);
     pmm_mark_range_used(BOOT_INFO_PHYS, BOOT_INFO_PHYS + sizeof(boot_info_t));
     pmm_mark_range_used(BOOT_FONT_PHYS, BOOT_FONT_PHYS + 0x1000u);
-    pmm_mark_range_used(0x001FF000u, 0x00200000u);
+    pmm_mark_range_used(KERNEL_BOOT_STACK_TOP - PMM_FRAME_SIZE,
+                        KERNEL_BOOT_STACK_TOP);
     pmm_mark_range_used(0x00100000u, memory_get_heap_top());
 
     if (boot_info_framebuffer_valid()) {

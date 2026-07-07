@@ -1,7 +1,7 @@
 ; loader2.asm
 ;
 ; Stage 2 loader contract:
-;   - loaded by boot sector to physical 0x40000
+;   - loaded by boot sector to physical 0x80000
 ;   - occupies exactly 16 sectors (8192 bytes)
 ;   - kernel and ext2 partitions are described by the MBR partition table
 ;   - kernel is loaded to physical 0x1000
@@ -9,10 +9,10 @@
 ;   - after loading, stage 2 enters 32-bit protected mode
 ;   - then jumps to kernel entry at 0x1000
 
-[org 0x40000]
+[org 0x80000]
 bits 16
 
-LOADER2_SEGMENT      equ 0x4000
+LOADER2_SEGMENT      equ 0x8000
 KERNEL_OFFSET        equ 0x1000
 KERNEL_SEGMENT       equ KERNEL_OFFSET / 16
 KERNEL_READ_CHUNK    equ 127        ; 127 sectors = 65024 bytes, fits below 64 KiB

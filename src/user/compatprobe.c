@@ -11,6 +11,7 @@
 #include "libgen.h"
 #include "fnmatch.h"
 #include "netdb.h"
+#include "arpa/inet.h"
 #include "pwd.h"
 #include "grp.h"
 #include "termios.h"
@@ -295,13 +296,27 @@ static void probe_stubs(void) {
     int ngroups;
     sigset_t set;
     struct sigaction sa;
+    struct hostent* he;
+    struct addrinfo* ai = 0;
+    struct addrinfo hints;
 
     check("getrlimit nofile", getrlimit(RLIMIT_NOFILE, &lim) == 0 &&
                               lim.rlim_cur > 0 &&
                               lim.rlim_max >= lim.rlim_cur);
-    check("getaddrinfo noname", getaddrinfo("smallos.invalid", 0, 0, 0) == EAI_NONAME);
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_flags = AI_NUMERICHOST;
+    check("getaddrinfo noname", getaddrinfo("smallos.invalid", 0, &hints, &ai) ==
+                                  EAI_NONAME);
     errno = 0;
-    check("gethostbyname enosys", gethostbyname("smallos.invalid") == 0 && errno == ENOSYS);
+    check("gethostbyname noname", gethostbyname("bad..name") == 0 && errno == ENOENT);
+    he = gethostbyname("localhost");
+    check("gethostbyname localhost", he && he->h_addrtype == AF_INET &&
+                                      he->h_length == 4 &&
+                                      *(unsigned int*)he->h_addr == htonl(INADDR_LOOPBACK));
+    check("getaddrinfo numeric", getaddrinfo("127.0.0.1", "80", 0, &ai) == 0 &&
+                                  ai && ai->ai_family == AF_INET &&
+                                  ai->ai_addrlen == sizeof(struct sockaddr_in));
 
     pw = getpwuid(0);
     check("root passwd uid", pw && strcmp(pw->pw_name, "root") == 0);

@@ -299,7 +299,9 @@ The runtime provides a small POSIX-shaped surface:
 - `environ`, `getenv`, and `main(argc, argv, envp)` through `crt/crt0.c`
 - `time`, `gettimeofday`, `clock_gettime`, `clock_settime`
 - regex, fnmatch, basename/dirname, passwd/group, and getopt helpers
-- socket, poll, epoll, timerfd, and signalfd wrappers used by guest services
+- socket, `sendto`, `recvfrom`, `getsockopt(SO_ERROR)`, network `ioctl`,
+  `if_nametoindex`, `if_indextoname`, poll, epoll, timerfd, and signalfd
+  wrappers used by guest services and BusyBox network applets
 
 `access(path, mode)` now checks the caller's real uid/gid against the stored
 mode bits reported by `stat`. Kernel syscalls enforce execute permission for
@@ -311,6 +313,13 @@ Directory-fd wrappers resolve relative paths against directory file
 descriptors, reject non-directory base fds with `ENOTDIR`, and let absolute
 paths override the supplied base fd. `fstatat` and `utimensat` honor
 `AT_SYMLINK_NOFOLLOW`; `unlinkat` honors `AT_REMOVEDIR`.
+
+The resolver accepts numeric IPv4 addresses and `localhost` without network
+traffic, checks `/etc/hosts` when present, and can issue UDP DNS A-record
+queries through the configured IPv4 DNS server. IPv6 remains unsupported and
+returns the normal `EAI_FAMILY` path. The network `ioctl` wrapper routes
+classic Linux-shaped `SIOC*` interface and route requests to kernel `eth0`
+state for BusyBox `ifconfig` and `route`.
 
 The runtime is also where SmallOS grows its hosted C surface. Older ports such
 as Fractint are useful completeness tests: when they need a normal libc, libm,
@@ -504,11 +513,15 @@ Native `/bin` tools stay first in command lookup; if a bare command is missing,
 the shell runs `/usr/bin/busybox <command> ...`.
 
 The current compatibility wave enables BusyBox `mount`/`umount` for
-`proc`/`devtmpfs` pseudo mounts but deliberately leaves arbitrary filesystem
-mounting, init, login/getty, raw-socket-heavy tools, authentication semantics,
-and complete Linux device behavior disabled or stubbed. New BusyBox applets
-should grow the shared runtime, headers, and virtual filesystem behavior when
-they reveal a portable Unix expectation.
+`proc`/`devtmpfs` pseudo mounts, classic networking tools (`ifconfig`, `route`,
+and IPv4 `ping`), and the first TCP applets (`nc`, plain HTTP `wget`, and
+`httpd`). Those applets are backed by kernel network ioctls, state-backed
+`/proc/net/dev` and `/proc/net/route`, raw ICMP sockets, UDP DNS traffic, and
+the existing SmallOS IPv4/TCP path. Arbitrary filesystem mounting, init,
+login/getty, authentication semantics, rtnetlink `ip`, HTTPS/TLS, and complete
+Linux device behavior remain disabled or stubbed. New BusyBox applets should
+grow the shared runtime, headers, and virtual filesystem behavior when they
+reveal a portable Unix expectation.
 
 ---
 
@@ -582,6 +595,8 @@ Runtime coverage currently lives in guest ELF probes:
 - `mountprobe` - state-backed mount listings, per-mount `statfs`/`fstatfs`,
   dynamic `proc`/`devtmpfs` pseudo mounts, gated ext2 stacking, and busy
   unmount failures
+- `netbbprobe` - BusyBox-facing `eth0` interface/route ioctls,
+  `/proc/net/dev`, `/proc/net/route`, and localhost/numeric resolver behavior
 - `stdioprobe` - EOF/error state, `clearerr`, `fflush`, invalid stdio ops
 - `dirprobe` - root and nested directory iteration, EOF, invalid/missing dirs
 - `errnoprobe` - wrapper `errno` behavior

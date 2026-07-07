@@ -18,7 +18,8 @@ POSIX edge-semantics work.
 - Process fd tables are PMM-backed, start at 16 slots, grow to the default
   128-fd limit, and are freed on process teardown.
 - Socket fds point at `socket_t` objects that own TCP listener and connection
-  state.
+  state, UDP datagram bind/receive state for resolver-style traffic, and
+  raw-ICMP descriptors for the BusyBox networking compatibility surface.
 - Passive TCP listeners live in a small listener table, while accepted and
   active streams live in a PMM-backed global connection table keyed by local IP,
   local port, remote IP, and remote port.
@@ -46,6 +47,14 @@ POSIX edge-semantics work.
   listener and connection counts, RX/TX ring usage, allocated ring capacity,
   and global RX/TX caps. `ip` and `ipconfig` also expose the runtime IPv4
   address, route, DNS, DHCP server, and lease state used by outbound sockets.
+- BusyBox `ifconfig`, `route`, and IPv4 `ping` are enabled through
+  Linux-shaped `eth0` interface/route ioctls, state-backed `/proc/net/dev` and
+  `/proc/net/route`, and raw ICMP `sendto`/`recvfrom` descriptors. UDP
+  send/receive is available for DNS-sized IPv4 datagrams, and libc resolver
+  lookups can issue DNS A-record queries using the configured DNS server.
+  Basic BusyBox TCP applets are enabled too: `nc`, plain HTTP `wget`, and
+  `httpd` run over the existing IPv4/TCP socket path. Rtnetlink `ip` remains a
+  future compatibility gate.
 - The boot-started cserve instance uses `max_conn = 28`; the default cserve
   smoke gate holds 24 keep-alive clients and adds one slow-reader connection.
 
@@ -163,8 +172,10 @@ Coverage highlights:
 - `make cserve-smoke` uses the boot-started cserve instance, fetches the large
   static fixture, checks a 404, holds keep-alive clients, exercises a slow
   reader, and captures `netinfo`.
+- `make busybox-net-smoke` checks BusyBox `httpd`, plain HTTP `wget`, and `nc`
+  through host/guest TCP paths.
 - `make verify-network` runs the socket EOF, socket parallel, FTP, FTP loop,
-  and cserve smoke targets in sequence.
+  cserve, and BusyBox network smoke targets in sequence.
 
 ## Future Work
 
@@ -173,6 +184,10 @@ Later networking work can build on it in these areas:
 
 - DHCP-backed outbound `connect()` coverage in QEMU user networking, plus
   TAP-mode coverage for bridged or routed host setups.
+- Broader UDP behavior beyond the first DNS-sized datagram queue.
+- Broader BusyBox TCP coverage beyond the current `nc`, plain HTTP `wget`, and
+  `httpd` host smoke.
+- Minimal rtnetlink for BusyBox `ip addr`, `ip link`, and `ip route`.
 - Production TCP polish, including broader congestion, window, and recovery
   behavior.
 - Broader close-state and retransmission fuzzing beyond the focused EOF smoke.

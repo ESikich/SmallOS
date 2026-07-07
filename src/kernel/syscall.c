@@ -24,6 +24,7 @@
 #include "uapi_errno.h"
 #include "uapi_dirent.h"
 #include "uapi_socket.h"
+#include "uapi_net.h"
 #include "uapi_epoll.h"
 #include "uapi_display.h"
 #include "uapi_input.h"
@@ -167,6 +168,7 @@ static int sys_utimens_kpath_impl(const char* kpath,
                                   const struct user_timespec* times,
                                   int nofollow);
 static unsigned int process_ram_bytes(process_t* proc);
+static unsigned int net_route_next_hop(unsigned int target_ip);
 
 static int path_is_sep(char c) {
     return c == '/' || c == '\\';
@@ -518,6 +520,27 @@ static void vbuf_put_uint(char* out, unsigned int cap, unsigned int* pos, unsign
     }
 }
 
+static void vbuf_put_hex8(char* out, unsigned int cap, unsigned int* pos, unsigned int value) {
+    static const char hexdigits[] = "0123456789ABCDEF";
+    for (int shift = 28; shift >= 0; shift -= 4) {
+        vbuf_putc(out, cap, pos, hexdigits[(value >> shift) & 0xFu]);
+    }
+}
+
+static unsigned int proc_route_hex_ip(unsigned int ip) {
+    return ((ip & 0x000000FFu) << 24)
+         | ((ip & 0x0000FF00u) << 8)
+         | ((ip & 0x00FF0000u) >> 8)
+         | ((ip & 0xFF000000u) >> 24);
+}
+
+static void vbuf_put_proc_route_ip(char* out,
+                                   unsigned int cap,
+                                   unsigned int* pos,
+                                   unsigned int ip) {
+    vbuf_put_hex8(out, cap, pos, proc_route_hex_ip(ip));
+}
+
 static void vbuf_put_kb_line(char* out,
                              unsigned int cap,
                              unsigned int* pos,
@@ -704,7 +727,8 @@ static int virtual_path_is_dir(const char* path) {
     char translated[PROCESS_FD_NAME_MAX];
 
     path = virtual_effective_path(path, translated, sizeof(translated));
-    if (path_eq(path, "proc") || path_eq(path, "dev") || path_eq(path, "dev/fd")) {
+    if (path_eq(path, "proc") || path_eq(path, "proc/net") ||
+        path_eq(path, "dev") || path_eq(path, "dev/fd")) {
         return 1;
     }
     if (virtual_proc_pid_path(path, &proc, &leaf)) {
@@ -793,6 +817,49 @@ static unsigned int virtual_build_proc_content(const char* path,
     }
     if (path_eq(path, "proc/filesystems")) {
         vbuf_puts(out, cap, &pos, "nodev\tproc\nnodev\tdevtmpfs\next2\n");
+        return pos;
+    }
+    if (path_eq(path, "proc/net/dev")) {
+        nic_stats_t stats;
+        const net_ipv4_config_t* cfg = net_ipv4_config();
+        nic_get_stats(&stats);
+        vbuf_puts(out, cap, &pos, "Inter-|   Receive                                                |  Transmit\n");
+        vbuf_puts(out, cap, &pos, " face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n");
+        vbuf_puts(out, cap, &pos, "  eth0:");
+        vbuf_put_uint(out, cap, &pos, stats.rx_packets * 64u);
+        vbuf_putc(out, cap, &pos, ' ');
+        vbuf_put_uint(out, cap, &pos, stats.rx_packets);
+        vbuf_putc(out, cap, &pos, ' ');
+        vbuf_put_uint(out, cap, &pos, stats.rx_errors);
+        vbuf_puts(out, cap, &pos, " 0 0 0 0 0 ");
+        vbuf_put_uint(out, cap, &pos, stats.tx_packets * 64u);
+        vbuf_putc(out, cap, &pos, ' ');
+        vbuf_put_uint(out, cap, &pos, stats.tx_packets);
+        vbuf_putc(out, cap, &pos, ' ');
+        vbuf_put_uint(out, cap, &pos, stats.tx_errors);
+        vbuf_puts(out, cap, &pos, " 0 0 0 0 0\n");
+        (void)cfg;
+        return pos;
+    }
+    if (path_eq(path, "proc/net/route")) {
+        const net_ipv4_config_t* cfg = net_ipv4_config();
+        vbuf_puts(out, cap, &pos, "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n");
+        if (cfg && cfg->configured) {
+            if (cfg->gateway != 0u) {
+                vbuf_puts(out, cap, &pos, "eth0\t");
+                vbuf_put_proc_route_ip(out, cap, &pos, 0u);
+                vbuf_putc(out, cap, &pos, '\t');
+                vbuf_put_proc_route_ip(out, cap, &pos, cfg->gateway);
+                vbuf_puts(out, cap, &pos, "\t0003\t0\t0\t0\t");
+                vbuf_put_proc_route_ip(out, cap, &pos, 0u);
+                vbuf_puts(out, cap, &pos, "\t0\t0\t0\n");
+            }
+            vbuf_puts(out, cap, &pos, "eth0\t");
+            vbuf_put_proc_route_ip(out, cap, &pos, cfg->ip & cfg->netmask);
+            vbuf_puts(out, cap, &pos, "\t00000000\t0001\t0\t0\t0\t");
+            vbuf_put_proc_route_ip(out, cap, &pos, cfg->netmask);
+            vbuf_puts(out, cap, &pos, "\t0\t0\t0\n");
+        }
         return pos;
     }
 
@@ -2176,14 +2243,25 @@ static int sys_socket_impl(int domain, int type, int protocol) {
     int fd;
     int sock_type = type & SOCK_TYPE_MASK;
     unsigned int fd_flags = 0u;
+    socket_kind_t kind = SOCKET_KIND_NONE;
 
     if (!proc) return -EINVAL;
-    if (domain != AF_INET) return -EINVAL;
-    if (sock_type != SOCK_STREAM) return -EINVAL;
+    if (domain != AF_INET) return -EAFNOSUPPORT;
     if ((type & ~(SOCK_TYPE_MASK | SOCK_NONBLOCK | SOCK_CLOEXEC)) != 0) return -EINVAL;
-    if (protocol != 0 && protocol != IPPROTO_TCP) return -EINVAL;
+    if (sock_type == SOCK_STREAM) {
+        if (protocol != 0 && protocol != IPPROTO_TCP) return -EPROTONOSUPPORT;
+        kind = SOCKET_KIND_TCP;
+    } else if (sock_type == SOCK_DGRAM) {
+        if (protocol != 0 && protocol != IPPROTO_UDP) return -EPROTONOSUPPORT;
+        kind = SOCKET_KIND_UDP;
+    } else if (sock_type == SOCK_RAW) {
+        if (protocol != IPPROTO_ICMP) return -EPROTONOSUPPORT;
+        kind = SOCKET_KIND_RAW_ICMP;
+    } else {
+        return -EPROTONOSUPPORT;
+    }
 
-    fd = process_fd_open_socket(proc, "socket");
+    fd = process_fd_open_socket_kind(proc, "socket", kind);
     if (fd < 0) return fd;
     if ((type & SOCK_NONBLOCK) != 0) {
         fd_entry_t* ent = process_fd_get(proc, fd);
@@ -2209,7 +2287,11 @@ static int sys_bind_impl(int fd, const struct sockaddr* addr, unsigned int addrl
     int sa_rc = copy_user_sockaddr_in(&sa, addr, addrlen);
     if (sa_rc < 0) return sa_rc;
 
-    sa_rc = socket_bind_tcp(ent->socket, swap_u16(sa.sin_port));
+    if (socket_kind(ent->socket) == SOCKET_KIND_UDP) {
+        sa_rc = socket_bind_udp(ent->socket, swap_u16(sa.sin_port));
+    } else {
+        sa_rc = socket_bind_tcp(ent->socket, swap_u16(sa.sin_port));
+    }
     if (sa_rc < 0) return sa_rc;
     ent->socket_port = socket_local_port(ent->socket);
     ent->socket_state = PROCESS_SOCKET_STATE_BOUND;
@@ -2346,6 +2428,14 @@ static int sys_connect_impl(int fd, const struct sockaddr* addr, unsigned int ad
 
     remote_ip = swap_u32(sa.sin_addr.s_addr);
     remote_port = swap_u16(sa.sin_port);
+    if (socket_kind(ent->socket) == SOCKET_KIND_UDP) {
+        rc = socket_connect_udp(ent->socket, remote_ip, remote_port);
+        if (rc < 0) return rc;
+        ent->socket_state = PROCESS_SOCKET_STATE_CONNECTED;
+        ent->socket_port = socket_local_port(ent->socket);
+        return 0;
+    }
+
     rc = socket_connect_tcp(ent->socket, remote_ip, remote_port);
     if (rc == -EALREADY && (ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u) {
         return -EALREADY;
@@ -2392,6 +2482,13 @@ static int sys_connect_impl(int fd, const struct sockaddr* addr, unsigned int ad
     return 0;
 }
 
+static int sys_udp_send_socket(fd_entry_t* ent,
+                               const void* buf,
+                               unsigned int len,
+                               const struct sockaddr* dest_addr,
+                               unsigned int addrlen);
+static void net_write_u16_be(unsigned char* buf, unsigned int off, unsigned int value);
+
 static int sys_send_impl(int fd, const void* buf, unsigned int len) {
     process_t* proc = (process_t*)sched_current();
     fd_entry_t* ent;
@@ -2402,7 +2499,136 @@ static int sys_send_impl(int fd, const void* buf, unsigned int len) {
 
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
+    if (socket_kind(ent->socket) == SOCKET_KIND_UDP) {
+        return sys_udp_send_socket(ent, buf, len, 0, 0u);
+    }
     return process_fd_write(ent, (const char*)buf, len);
+}
+
+static int sys_raw_icmp_recv_socket(process_t* proc,
+                                    fd_entry_t* ent,
+                                    void* buf,
+                                    unsigned int len,
+                                    unsigned int flags,
+                                    unsigned int* out_src_ip) {
+    if (!proc || !ent || !buf) return -EINVAL;
+    if (!socket_raw_icmp_recv_ready(ent->socket) &&
+        ((ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u ||
+         (flags & MSG_DONTWAIT) != 0u)) {
+        return -EAGAIN;
+    }
+
+    while (!socket_raw_icmp_recv_ready(ent->socket)) {
+        int wait_rc;
+        proc->state = PROCESS_STATE_WAITING;
+        wait_rc = socket_wait(ent->socket, proc, POLLIN);
+        if (wait_rc < 0) {
+            proc->state = PROCESS_STATE_RUNNING;
+            socket_wait_clear_process(proc);
+            return wait_rc;
+        }
+        if (socket_raw_icmp_recv_ready(ent->socket)) {
+            proc->state = PROCESS_STATE_RUNNING;
+            break;
+        }
+        sys_wait_until_current_running(proc);
+        socket_wait_clear_process(proc);
+    }
+    socket_wait_clear_process(proc);
+
+    return socket_raw_icmp_recv(ent->socket, buf, len, out_src_ip);
+}
+
+static int sys_udp_send_socket(fd_entry_t* ent,
+                               const void* buf,
+                               unsigned int len,
+                               const struct sockaddr* dest_addr,
+                               unsigned int addrlen) {
+    const net_ipv4_config_t* cfg = net_ipv4_config();
+    struct sockaddr_in sa;
+    unsigned int target_ip;
+    unsigned int target_port;
+    unsigned int next_hop;
+    unsigned int local_port;
+    unsigned char packet[1488];
+    int rc;
+
+    if (!ent || !buf || socket_kind(ent->socket) != SOCKET_KIND_UDP) return -EINVAL;
+    if (!cfg || !cfg->configured) return -ENETUNREACH;
+    if (len > sizeof(packet) - 8u) return -EMSGSIZE;
+
+    if (dest_addr) {
+        rc = copy_user_sockaddr_in(&sa, dest_addr, addrlen);
+        if (rc < 0) return rc;
+        target_ip = swap_u32(sa.sin_addr.s_addr);
+        target_port = swap_u16(sa.sin_port);
+    } else {
+        if (socket_state(ent->socket) != SOCKET_STATE_CONNECTED) return -EDESTADDRREQ;
+        target_ip = socket_peer_ip(ent->socket);
+        target_port = socket_peer_port(ent->socket);
+    }
+    if (target_ip == 0u || target_port == 0u || target_port > 0xFFFFu) {
+        return -EDESTADDRREQ;
+    }
+
+    rc = socket_udp_ensure_bound(ent->socket);
+    if (rc < 0) return rc;
+    local_port = socket_local_port(ent->socket);
+    if (local_port == 0u) return -EINVAL;
+
+    if (copy_from_user(packet + 8u, buf, len) < 0) return -EFAULT;
+    net_write_u16_be(packet, 0u, local_port);
+    net_write_u16_be(packet, 2u, target_port);
+    net_write_u16_be(packet, 4u, len + 8u);
+    net_write_u16_be(packet, 6u, 0u);
+
+    next_hop = net_route_next_hop(target_ip);
+    if (!next_hop) return -ENETUNREACH;
+    rc = ipv4_send_payload(cfg->ip,
+                           target_ip,
+                           next_hop,
+                           IPPROTO_UDP,
+                           packet,
+                           len + 8u);
+    return rc < 0 ? rc : (int)len;
+}
+
+static int sys_udp_recv_socket(process_t* proc,
+                               fd_entry_t* ent,
+                               void* buf,
+                               unsigned int len,
+                               unsigned int flags,
+                               unsigned int* out_src_ip,
+                               unsigned int* out_src_port) {
+    if (!proc || !ent || !buf || socket_kind(ent->socket) != SOCKET_KIND_UDP) {
+        return -EINVAL;
+    }
+
+    if (!socket_udp_recv_ready(ent->socket) &&
+        ((ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u ||
+         (flags & MSG_DONTWAIT) != 0u)) {
+        return -EAGAIN;
+    }
+
+    while (!socket_udp_recv_ready(ent->socket)) {
+        int wait_rc;
+        proc->state = PROCESS_STATE_WAITING;
+        wait_rc = socket_wait(ent->socket, proc, POLLIN);
+        if (wait_rc < 0) {
+            proc->state = PROCESS_STATE_RUNNING;
+            socket_wait_clear_process(proc);
+            return wait_rc;
+        }
+        if (socket_udp_recv_ready(ent->socket)) {
+            proc->state = PROCESS_STATE_RUNNING;
+            break;
+        }
+        sys_wait_until_current_running(proc);
+        socket_wait_clear_process(proc);
+    }
+    socket_wait_clear_process(proc);
+
+    return socket_udp_recv(ent->socket, buf, len, out_src_ip, out_src_port);
 }
 
 static int sys_recv_impl(syscall_regs_t* regs, int fd, void* buf, unsigned int len) {
@@ -2416,6 +2642,14 @@ static int sys_recv_impl(syscall_regs_t* regs, int fd, void* buf, unsigned int l
 
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
+    if (socket_kind(ent->socket) == SOCKET_KIND_RAW_ICMP) {
+        (void)regs;
+        return sys_raw_icmp_recv_socket(proc, ent, buf, len, 0u, 0);
+    }
+    if (socket_kind(ent->socket) == SOCKET_KIND_UDP) {
+        (void)regs;
+        return sys_udp_recv_socket(proc, ent, buf, len, 0u, 0, 0);
+    }
     if (socket_state(ent->socket) != SOCKET_STATE_CONNECTED &&
         socket_state(ent->socket) != SOCKET_STATE_CONNECTING) return -EINVAL;
 
@@ -2462,6 +2696,138 @@ static int sys_recv_impl(syscall_regs_t* regs, int fd, void* buf, unsigned int l
 
     rc = socket_tcp_recv(ent->socket, buf, len);
     return rc < 0 ? -ECONNRESET : rc;
+}
+
+static int sys_sendto_impl(int fd,
+                           const void* buf,
+                           unsigned int len,
+                           unsigned int flags,
+                           const struct sockaddr* dest_addr,
+                           unsigned int addrlen) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+
+    if (!proc) return -EINVAL;
+    if (len == 0u) return 0;
+    if (!user_buf_ok((unsigned int)buf, len)) return -EFAULT;
+    if ((flags & ~(MSG_DONTWAIT | MSG_NOSIGNAL)) != 0u) return -EINVAL;
+
+    ent = process_fd_get(proc, fd);
+    if (!socket_fd_is_socket(ent)) return -EBADF;
+
+    if (socket_kind(ent->socket) == SOCKET_KIND_TCP) {
+        if (dest_addr) return -EISCONN;
+        return process_fd_write(ent, (const char*)buf, len);
+    }
+
+    if (socket_kind(ent->socket) == SOCKET_KIND_RAW_ICMP) {
+        struct sockaddr_in sa;
+        const net_ipv4_config_t* cfg = net_ipv4_config();
+        unsigned int target_ip;
+        unsigned int next_hop;
+        unsigned char packet[1480];
+        int rc = copy_user_sockaddr_in(&sa, dest_addr, addrlen);
+        if (rc < 0) return rc;
+        if (!cfg || !cfg->configured) return -ENETUNREACH;
+        if (len > sizeof(packet)) return -EMSGSIZE;
+        if (copy_from_user(packet, buf, len) < 0) return -EFAULT;
+        target_ip = swap_u32(sa.sin_addr.s_addr);
+        next_hop = net_route_next_hop(target_ip);
+        if (!next_hop) return -ENETUNREACH;
+        rc = ipv4_send_payload(cfg->ip,
+                               target_ip,
+                               next_hop,
+                               IPPROTO_ICMP,
+                               packet,
+                               len);
+        return rc < 0 ? rc : (int)len;
+    }
+
+    if (socket_kind(ent->socket) == SOCKET_KIND_UDP) {
+        return sys_udp_send_socket(ent, buf, len, dest_addr, addrlen);
+    }
+
+    return -EOPNOTSUPP;
+}
+
+static int sys_recvfrom_impl(syscall_regs_t* regs,
+                             int fd,
+                             void* buf,
+                             unsigned int len,
+                             unsigned int flags,
+                             struct sockaddr* src_addr,
+                             unsigned int* addrlen) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+
+    if (!proc) return -EINVAL;
+    if (len == 0u) return 0;
+    if (!user_buf_ok((unsigned int)buf, len)) return -EFAULT;
+    if ((flags & ~(MSG_DONTWAIT | MSG_NOSIGNAL)) != 0u) return -EINVAL;
+
+    ent = process_fd_get(proc, fd);
+    if (!socket_fd_is_socket(ent)) return -EBADF;
+
+    if (socket_kind(ent->socket) == SOCKET_KIND_TCP) {
+        int rc;
+        if (src_addr || addrlen) return -EISCONN;
+        rc = sys_recv_impl(regs, fd, buf, len);
+        return rc;
+    }
+
+    if (socket_kind(ent->socket) == SOCKET_KIND_RAW_ICMP) {
+        unsigned int src_ip = 0u;
+        int rc;
+
+        rc = sys_raw_icmp_recv_socket(proc, ent, buf, len, flags, &src_ip);
+        if (rc < 0) return rc;
+        if (src_addr && addrlen) {
+            struct sockaddr_in sa;
+            unsigned int user_addrlen = 0u;
+            if (read_user_u32(&user_addrlen, addrlen) < 0) return -EFAULT;
+            if (user_addrlen < sizeof(sa)) return -EINVAL;
+            if (!user_buf_ok((unsigned int)src_addr, sizeof(sa))) return -EFAULT;
+            k_memset(&sa, 0, sizeof(sa));
+            sa.sin_family = AF_INET;
+            sa.sin_addr.s_addr = swap_u32(src_ip);
+            if (copy_to_user(src_addr, &sa, sizeof(sa)) < 0 ||
+                write_user_u32(addrlen, sizeof(sa)) < 0) {
+                return -EFAULT;
+            }
+        }
+        return rc;
+    }
+
+    if (socket_kind(ent->socket) == SOCKET_KIND_UDP) {
+        unsigned int src_ip = 0u;
+        unsigned int src_port = 0u;
+        int rc = sys_udp_recv_socket(proc, ent, buf, len, flags, &src_ip, &src_port);
+        if (rc < 0) return rc;
+        if (src_addr && addrlen) {
+            struct sockaddr_in sa;
+            unsigned int user_addrlen = 0u;
+            if (read_user_u32(&user_addrlen, addrlen) < 0) return -EFAULT;
+            if (user_addrlen < sizeof(sa)) return -EINVAL;
+            if (!user_buf_ok((unsigned int)src_addr, sizeof(sa))) return -EFAULT;
+            k_memset(&sa, 0, sizeof(sa));
+            sa.sin_family = AF_INET;
+            sa.sin_port = swap_u16((unsigned short)src_port);
+            sa.sin_addr.s_addr = swap_u32(src_ip);
+            if (copy_to_user(src_addr, &sa, sizeof(sa)) < 0 ||
+                write_user_u32(addrlen, sizeof(sa)) < 0) {
+                return -EFAULT;
+            }
+        } else if (src_addr || addrlen) {
+            return -EFAULT;
+        }
+        return rc;
+    }
+
+    if (src_addr || addrlen) {
+        if (!src_addr || !addrlen) return -EFAULT;
+        if (!user_buf_ok((unsigned int)addrlen, sizeof(*addrlen))) return -EFAULT;
+    }
+    return (flags & MSG_DONTWAIT) != 0u ? -EAGAIN : -EOPNOTSUPP;
 }
 
 static short sys_poll_revents_for_fd(process_t* proc, struct pollfd* pfd) {
@@ -3115,7 +3481,10 @@ static int virtual_dirent_at(const char* path,
                              unsigned int* out_size,
                              int* out_is_dir) {
     static const char* const proc_entries[] = {
-        "meminfo", "uptime", "stat", "mounts", "filesystems", "self"
+        "meminfo", "uptime", "stat", "mounts", "filesystems", "net", "self"
+    };
+    static const char* const proc_net_entries[] = {
+        "dev", "route"
     };
     static const char* const pid_entries[] = {
         "stat", "status", "cmdline", "comm"
@@ -3138,7 +3507,7 @@ static int virtual_dirent_at(const char* path,
         unsigned int proc_count = sizeof(proc_entries) / sizeof(proc_entries[0]);
         if (index < proc_count) {
             name = proc_entries[index];
-            is_dir = path_eq(name, "self");
+            is_dir = path_eq(name, "self") || path_eq(name, "net");
         } else {
             process_t* procs[SYS_PROCINFO_MAX];
             int count = sched_snapshot_all(procs, SYS_PROCINFO_MAX);
@@ -3157,6 +3526,9 @@ static int virtual_dirent_at(const char* path,
         if (index >= sizeof(dev_entries) / sizeof(dev_entries[0])) return 0;
         name = dev_entries[index];
         is_dir = path_eq(name, "fd");
+    } else if (path_eq(path, "proc/net")) {
+        if (index >= sizeof(proc_net_entries) / sizeof(proc_net_entries[0])) return 0;
+        name = proc_net_entries[index];
     } else if (path_eq(path, "dev/fd")) {
         if (index >= sizeof(fd_entries) / sizeof(fd_entries[0])) return 0;
         name = fd_entries[index];
@@ -3321,6 +3693,242 @@ static int sys_getsockname_impl(int fd, struct sockaddr* addr, unsigned int* add
         return -EFAULT;
     }
     return 0;
+}
+
+static int net_ifreq_name_is_eth0(const char* name) {
+    return name && k_strcmp(name, "eth0");
+}
+
+static void net_set_sockaddr_in(struct sockaddr* out, unsigned int ip) {
+    struct sockaddr_in* in = (struct sockaddr_in*)out;
+    k_memset(out, 0, sizeof(*out));
+    in->sin_family = AF_INET;
+    in->sin_addr.s_addr = swap_u32(ip);
+}
+
+static unsigned int net_sockaddr_ip(const struct sockaddr* addr) {
+    const struct sockaddr_in* in = (const struct sockaddr_in*)addr;
+    if (!addr || addr->sa_family != AF_INET) return 0u;
+    return swap_u32(in->sin_addr.s_addr);
+}
+
+static unsigned int net_route_next_hop(unsigned int target_ip) {
+    const net_ipv4_config_t* cfg = net_ipv4_config();
+    if (!cfg || !cfg->configured) return 0u;
+    if (cfg->netmask != 0u &&
+        (target_ip & cfg->netmask) == (cfg->ip & cfg->netmask)) {
+        return target_ip;
+    }
+    return cfg->gateway ? cfg->gateway : target_ip;
+}
+
+static void net_write_u16_be(unsigned char* buf, unsigned int off, unsigned int value) {
+    buf[off] = (unsigned char)((value >> 8) & 0xFFu);
+    buf[off + 1u] = (unsigned char)(value & 0xFFu);
+}
+
+static void net_fill_eth0_ifreq(struct ifreq* ifr, unsigned int request) {
+    const net_ipv4_config_t* cfg = net_ipv4_config();
+    const u8* mac = nic_mac();
+    unsigned int flags = IFF_BROADCAST | IFF_MULTICAST;
+
+    k_memset(ifr, 0, sizeof(*ifr));
+    k_memcpy(ifr->ifr_name, "eth0", 5u);
+    if (cfg && cfg->configured) flags |= IFF_UP;
+    if (nic_link_up()) flags |= IFF_RUNNING;
+
+    switch (request) {
+    case SIOCGIFFLAGS:
+        ifr->ifr_flags = (short)flags;
+        break;
+    case SIOCGIFADDR:
+        net_set_sockaddr_in(&ifr->ifr_addr, cfg && cfg->configured ? cfg->ip : 0u);
+        break;
+    case SIOCGIFDSTADDR:
+        net_set_sockaddr_in(&ifr->ifr_dstaddr, cfg ? cfg->gateway : 0u);
+        break;
+    case SIOCGIFBRDADDR:
+        net_set_sockaddr_in(&ifr->ifr_broadaddr,
+                            cfg && cfg->configured
+                              ? ((cfg->ip & cfg->netmask) | (~cfg->netmask))
+                              : 0u);
+        break;
+    case SIOCGIFNETMASK:
+        net_set_sockaddr_in(&ifr->ifr_netmask,
+                            cfg && cfg->configured ? cfg->netmask : 0u);
+        break;
+    case SIOCGIFHWADDR:
+        k_memset(&ifr->ifr_hwaddr, 0, sizeof(ifr->ifr_hwaddr));
+        ifr->ifr_hwaddr.sa_family = ARPHRD_ETHER;
+        if (mac) k_memcpy(ifr->ifr_hwaddr.sa_data, mac, 6u);
+        break;
+    case SIOCGIFMTU:
+        ifr->ifr_mtu = 1500;
+        break;
+    case SIOCGIFMETRIC:
+        ifr->ifr_metric = 0;
+        break;
+    case SIOCGIFTXQLEN:
+        ifr->ifr_qlen = 1000;
+        break;
+    case SIOCGIFNAME:
+        break;
+    default:
+        break;
+    }
+}
+
+static int net_apply_ifreq_setter(unsigned int request, const struct ifreq* ifr) {
+    const net_ipv4_config_t* cfg = net_ipv4_config();
+    unsigned int ip = cfg ? cfg->ip : 0u;
+    unsigned int netmask = cfg && cfg->netmask ? cfg->netmask : 0xFFFFFF00u;
+    unsigned int gateway = cfg ? cfg->gateway : 0u;
+    unsigned int dns = cfg ? cfg->dns : 0u;
+    unsigned int dhcp_server = cfg ? cfg->dhcp_server : 0u;
+    unsigned int lease_seconds = cfg ? cfg->lease_seconds : 0u;
+
+    switch (request) {
+    case SIOCSIFFLAGS:
+    case SIOCSIFBRDADDR:
+    case SIOCSIFDSTADDR:
+    case SIOCSIFMETRIC:
+    case SIOCSIFMTU:
+    case SIOCSIFTXQLEN:
+        return 0;
+    case SIOCSIFADDR:
+        ip = net_sockaddr_ip(&ifr->ifr_addr);
+        if (ip == 0u) return -EINVAL;
+        break;
+    case SIOCSIFNETMASK:
+        netmask = net_sockaddr_ip(&ifr->ifr_netmask);
+        if (netmask == 0u) return -EINVAL;
+        break;
+    default:
+        return -ENOTTY;
+    }
+
+    net_ipv4_configure(ip, netmask, gateway, dns, dhcp_server, lease_seconds);
+    return 0;
+}
+
+static int net_ioctl_ifconf(void* argp) {
+    struct ifconf ifc;
+    struct ifreq ifr;
+
+    if (!argp) return -EFAULT;
+    if (!user_buf_ok((unsigned int)argp, sizeof(ifc))) return -EFAULT;
+    if (copy_from_user(&ifc, argp, sizeof(ifc)) < 0) return -EFAULT;
+
+    if (ifc.ifc_len >= (int)sizeof(ifr) && ifc.ifc_buf) {
+        if (!user_buf_ok((unsigned int)ifc.ifc_buf, sizeof(ifr))) return -EFAULT;
+        net_fill_eth0_ifreq(&ifr, SIOCGIFADDR);
+        if (copy_to_user(ifc.ifc_buf, &ifr, sizeof(ifr)) < 0) return -EFAULT;
+    }
+    ifc.ifc_len = (int)sizeof(ifr);
+    if (copy_to_user(argp, &ifc, sizeof(ifc)) < 0) return -EFAULT;
+    return 0;
+}
+
+static int net_ioctl_ifreq(unsigned int request, void* argp) {
+    struct ifreq ifr;
+
+    if (!argp) return -EFAULT;
+    if (!user_buf_ok((unsigned int)argp, sizeof(ifr))) return -EFAULT;
+    if (copy_from_user(&ifr, argp, sizeof(ifr)) < 0) return -EFAULT;
+
+    if (request == SIOCGIFNAME) {
+        if (ifr.ifr_ifindex != 1) return -ENODEV;
+        net_fill_eth0_ifreq(&ifr, request);
+        return copy_to_user(argp, &ifr, sizeof(ifr)) < 0 ? -EFAULT : 0;
+    }
+
+    if (!net_ifreq_name_is_eth0(ifr.ifr_name)) return -ENODEV;
+    switch (request) {
+    case SIOCGIFFLAGS:
+    case SIOCGIFADDR:
+    case SIOCGIFDSTADDR:
+    case SIOCGIFBRDADDR:
+    case SIOCGIFNETMASK:
+    case SIOCGIFHWADDR:
+    case SIOCGIFMTU:
+    case SIOCGIFMETRIC:
+    case SIOCGIFTXQLEN:
+        net_fill_eth0_ifreq(&ifr, request);
+        return copy_to_user(argp, &ifr, sizeof(ifr)) < 0 ? -EFAULT : 0;
+    case SIOCSIFFLAGS:
+    case SIOCSIFADDR:
+    case SIOCSIFDSTADDR:
+    case SIOCSIFBRDADDR:
+    case SIOCSIFNETMASK:
+    case SIOCSIFMETRIC:
+    case SIOCSIFMTU:
+    case SIOCSIFTXQLEN:
+        return net_apply_ifreq_setter(request, &ifr);
+    default:
+        return -ENOTTY;
+    }
+}
+
+static int net_ioctl_route(unsigned int request, void* argp) {
+    struct rtentry rt;
+    const net_ipv4_config_t* cfg;
+    unsigned int dst;
+    unsigned int gateway;
+    unsigned int netmask;
+
+    if (!argp) return -EFAULT;
+    if (!user_buf_ok((unsigned int)argp, sizeof(rt))) return -EFAULT;
+    if (copy_from_user(&rt, argp, sizeof(rt)) < 0) return -EFAULT;
+
+    cfg = net_ipv4_config();
+    if (!cfg || !cfg->configured) return -ENETUNREACH;
+
+    dst = net_sockaddr_ip(&rt.rt_dst);
+    gateway = net_sockaddr_ip(&rt.rt_gateway);
+    netmask = net_sockaddr_ip(&rt.rt_genmask);
+
+    if (request == SIOCADDRT) {
+        if ((rt.rt_flags & RTF_GATEWAY) == 0u) return 0;
+        if (dst != 0u || gateway == 0u) return -EINVAL;
+        net_ipv4_configure(cfg->ip,
+                           cfg->netmask,
+                           gateway,
+                           cfg->dns,
+                           cfg->dhcp_server,
+                           cfg->lease_seconds);
+        return 0;
+    }
+
+    if (request == SIOCDELRT) {
+        if (dst != 0u || (netmask != 0u && netmask != 0xFFFFFFFFu)) return -EINVAL;
+        net_ipv4_configure(cfg->ip,
+                           cfg->netmask,
+                           0u,
+                           cfg->dns,
+                           cfg->dhcp_server,
+                           cfg->lease_seconds);
+        return 0;
+    }
+    return -ENOTTY;
+}
+
+static int sys_net_ioctl_impl(int fd, unsigned int request, void* argp) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+
+    if (!proc) return -EINVAL;
+    ent = process_fd_get(proc, fd);
+    if (!socket_fd_is_socket(ent)) return -EBADF;
+
+    if (request == SIOCGIFCONF) return net_ioctl_ifconf(argp);
+    if (request == SIOCADDRT || request == SIOCDELRT) {
+        return net_ioctl_route(request, argp);
+    }
+    if ((request >= SIOCGIFNAME && request <= SIOCGIFHWADDR) ||
+        request == SIOCGIFTXQLEN || request == SIOCSIFTXQLEN) {
+        return net_ioctl_ifreq(request, argp);
+    }
+    return -ENOTTY;
 }
 
 static int sys_writefd_impl(int fd, const char* buf, unsigned int len) {
@@ -5437,6 +6045,25 @@ void syscall_handler_main(syscall_regs_t* regs) {
                                                     regs->edx);
             break;
 
+        case SYS_SENDTO:
+            regs->eax = (unsigned int)sys_sendto_impl((int)regs->ebx,
+                                                      (const void*)regs->ecx,
+                                                      regs->edx,
+                                                      regs->esi,
+                                                      (const struct sockaddr*)regs->edi,
+                                                      regs->ebp);
+            break;
+
+        case SYS_RECVFROM:
+            regs->eax = (unsigned int)sys_recvfrom_impl(regs,
+                                                        (int)regs->ebx,
+                                                        (void*)regs->ecx,
+                                                        regs->edx,
+                                                        regs->esi,
+                                                        (struct sockaddr*)regs->edi,
+                                                        (unsigned int*)regs->ebp);
+            break;
+
         case SYS_POLL:
             regs->eax = (unsigned int)sys_poll_impl(regs,
                                                     (struct pollfd*)regs->ebx,
@@ -5837,6 +6464,13 @@ void syscall_handler_main(syscall_regs_t* regs) {
         case SYS_NET_OP:
             regs->eax = (unsigned int)sys_net_op_impl(
                             (sys_net_op_request_t*)regs->ebx);
+            break;
+
+        case SYS_NET_IOCTL:
+            regs->eax = (unsigned int)sys_net_ioctl_impl(
+                            (int)regs->ebx,
+                            regs->ecx,
+                            (void*)regs->edx);
             break;
 
         case SYS_BLOCK_READ_SECTOR:

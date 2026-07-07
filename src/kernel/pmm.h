@@ -23,6 +23,9 @@
  *                          page directories, and private page tables.
  *                          126 MB = 32256 frames = 4032 bytes of bitmap.
  *                          E820 limits which frames are actually free.
+ *                          Kernel bump allocations and the boot stack can
+ *                          reserve frames inside this range before PMM hands
+ *                          them to reclaimable users.
  *                          pmm_alloc_frame() returns physical addresses;
  *                          kernel code must use paging_phys_to_kernel_virt()
  *                          before dereferencing PMM-backed memory.

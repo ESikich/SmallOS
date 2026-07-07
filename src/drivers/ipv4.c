@@ -4,6 +4,7 @@
 #include "net.h"
 #include "nic.h"
 #include "../kernel/klib.h"
+#include "../kernel/uapi_errno.h"
 #include "../kernel/timer.h"
 #include "terminal.h"
 
@@ -161,6 +162,48 @@ static void ipv4_build_echo_request(u8* frame,
     ipv4_write_u16_be(frame, 40, seq);
     k_memcpy(&frame[42], payload, sizeof(payload) - 1u);
     ipv4_write_u16_be(frame, 36, ipv4_checksum16(&frame[34], icmp_len));
+}
+
+int ipv4_send_payload(u32 sender_ip,
+                      u32 target_ip,
+                      u32 next_hop_ip,
+                      u8 protocol,
+                      const u8* payload,
+                      u32 payload_len) {
+    u8 target_mac[6];
+    u8 frame[1600];
+    u32 total_len;
+    u32 frame_len;
+
+    if (!sender_ip || !target_ip || !next_hop_ip || !payload) return -EINVAL;
+    if (payload_len > 1480u) return -EMSGSIZE;
+    if (!arp_resolve(sender_ip, next_hop_ip, target_mac)) return -EHOSTUNREACH;
+
+    total_len = 20u + payload_len;
+    frame_len = 14u + total_len;
+    if (frame_len < IPV4_PACKET_SIZE) frame_len = IPV4_PACKET_SIZE;
+    k_memset(frame, 0, frame_len);
+
+    for (unsigned int i = 0; i < 6; i++) {
+        frame[i] = target_mac[i];
+        frame[6 + i] = nic_mac()[i];
+    }
+    ipv4_write_u16_be(frame, 12, IPV4_ETHERTYPE);
+
+    frame[14] = IPV4_VERSION_IHL;
+    frame[15] = 0;
+    ipv4_write_u16_be(frame, 16, (u16)total_len);
+    ipv4_write_u16_be(frame, 18, (u16)(timer_get_ticks() & 0xFFFFu));
+    ipv4_write_u16_be(frame, 20, 0x4000u);
+    frame[22] = IPV4_TTL;
+    frame[23] = protocol;
+    ipv4_write_u16_be(frame, 24, 0);
+    ipv4_write_u32_be(frame, 26, sender_ip);
+    ipv4_write_u32_be(frame, 30, target_ip);
+    ipv4_write_u16_be(frame, 24, ipv4_checksum16(&frame[14], 20));
+    k_memcpy(&frame[34], payload, payload_len);
+
+    return nic_send(frame, frame_len) ? 0 : -EIO;
 }
 
 static int ipv4_parse_echo_reply(const u8* frame,

@@ -6,6 +6,7 @@
 #include "nic.h"
 #include "ntp.h"
 #include "tcp.h"
+#include "../kernel/socket.h"
 #include "../kernel/types.h"
 #include "terminal.h"
 
@@ -24,6 +25,13 @@ static volatile int s_net_poll_locked = 0;
 
 static u16 net_read_u16_be(const u8* buf, u32 off) {
     return (u16)(((u16)buf[off] << 8) | (u16)buf[off + 1]);
+}
+
+static u32 net_read_u32_be(const u8* buf, u32 off) {
+    return ((u32)buf[off] << 24)
+         | ((u32)buf[off + 1] << 16)
+         | ((u32)buf[off + 2] << 8)
+         | (u32)buf[off + 3];
 }
 
 int net_poll_once(void) {
@@ -48,11 +56,37 @@ int net_poll_once(void) {
         (void)arp_handle_frame(s_net_frame, len);
     } else if (ether_type == NET_ETHERTYPE_IPV4 && len >= 34u) {
         if (s_net_frame[23] == NET_IPV4_PROTO_ICMP) {
+            u32 ihl = (u32)(s_net_frame[14] & 0x0Fu) * 4u;
+            u32 total_len = net_read_u16_be(s_net_frame, 16);
+            if (ihl >= 20u && total_len >= ihl + 8u && 14u + total_len <= len) {
+                u32 src_ip = ((u32)s_net_frame[26] << 24)
+                           | ((u32)s_net_frame[27] << 16)
+                           | ((u32)s_net_frame[28] << 8)
+                           | (u32)s_net_frame[29];
+                (void)socket_raw_icmp_deliver(&s_net_frame[14], total_len, src_ip);
+            }
             (void)ipv4_handle_frame(s_net_frame, len);
         } else if (s_net_frame[23] == NET_IPV4_PROTO_TCP) {
             (void)tcp_handle_ipv4_frame(s_net_frame, len);
         } else if (s_net_frame[23] == NET_IPV4_PROTO_UDP) {
-            if (!dhcp_handle_ipv4_frame(s_net_frame, len)) {
+            u32 ihl = (u32)(s_net_frame[14] & 0x0Fu) * 4u;
+            u32 total_len = net_read_u16_be(s_net_frame, 16);
+            int delivered = 0;
+            if (ihl >= 20u && total_len >= ihl + 8u && 14u + total_len <= len) {
+                u32 udp_off = 14u + ihl;
+                u16 src_port = net_read_u16_be(s_net_frame, udp_off);
+                u16 dst_port = net_read_u16_be(s_net_frame, udp_off + 2u);
+                u16 udp_len = net_read_u16_be(s_net_frame, udp_off + 4u);
+                if (udp_len >= 8u && udp_off + udp_len <= len) {
+                    delivered = socket_udp_deliver(net_read_u32_be(s_net_frame, 26u),
+                                                   src_port,
+                                                   net_read_u32_be(s_net_frame, 30u),
+                                                   dst_port,
+                                                   &s_net_frame[udp_off + 8u],
+                                                   (u32)udp_len - 8u);
+                }
+            }
+            if (!delivered && !dhcp_handle_ipv4_frame(s_net_frame, len)) {
                 (void)ntp_handle_ipv4_frame(s_net_frame, len);
             }
         }
