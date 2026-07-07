@@ -40,9 +40,10 @@ BusyBox-backed Unix compatibility layer inside the guest.
   UDP/NTP clock sync, UDP DNS resolver traffic, runtime `ip`/`ipconfig`
   inspection and configuration,
   Linux-shaped `eth0` interface/route ioctls for BusyBox `ifconfig` and
-  `route`, raw ICMP sockets for BusyBox `ping`, BusyBox `nc`/plain HTTP
-  `wget`/`httpd`, a compact TCP service task, passive sockets, `poll`/`epoll`
-  readiness, FTP, echo, and HTTP server smoke paths.
+  `route`, minimal rtnetlink for BusyBox `ip link`/`ip addr`/`ip route`, raw
+  ICMP sockets for BusyBox `ping`, BusyBox `nc`/plain HTTP `wget`/`httpd`, a
+  compact TCP service task, passive sockets, `poll`/`epoll` readiness, FTP,
+  echo, and HTTP server smoke paths.
 - Guest userland includes familiar commands such as `ls`, `tree`, `cat`,
   `more`, `man`, `pwd`, `touch`, `mkdir`, `rm`, `cp`, `mv`, `edit`, `date`, `ip`,
   `ipconfig`, `uptime`, `halt`, and `reboot`, plus diagnostics such as
@@ -51,7 +52,7 @@ BusyBox-backed Unix compatibility layer inside the guest.
 - BusyBox is staged as `usr/bin/busybox`; native `/bin` tools remain first in
   shell command lookup, while BusyBox fills gaps such as `grep`, `sed`, `awk`,
   `df`, `du`, `free`, `ps`, `tar`, `gzip`, `gunzip`, checksum tools, and
-  `hexdump`, network applets such as `ifconfig`, `route`, `ping`, `nc`,
+  `hexdump`, network applets such as `ifconfig`, `route`, `ip`, `ping`, `nc`,
   plain HTTP `wget`, and `httpd`, plus link/node utilities such as `ln`,
   `link`, `readlink`, `mkfifo`, and
   `mknod`. `/bin/sh` launches BusyBox `ash` for script-style compatibility
@@ -241,10 +242,11 @@ ip dhcp
 ipconfig /all
 ```
 
-BusyBox `ifconfig`, `route`, and IPv4 `ping` use the same `eth0` state through
-Linux-shaped network ioctls and `/proc/net`. Libc resolver calls support
-numeric IPv4, `localhost`, optional `/etc/hosts`, and DNS A-record lookups via
-the configured DNS server.
+BusyBox `ifconfig`, `route`, `ip link`, `ip addr`, `ip route`, and IPv4 `ping`
+use the same `eth0` state through Linux-shaped network ioctls, minimal
+rtnetlink, and `/proc/net`. Libc resolver calls support numeric IPv4,
+`localhost`, optional `/etc/hosts`, and DNS A-record lookups via the configured
+DNS server.
 
 VMware ESXi deploys use the same VMDK and the same DHCP/NIC path:
 

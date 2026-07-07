@@ -8,7 +8,8 @@ typedef enum {
     SOCKET_KIND_NONE = 0,
     SOCKET_KIND_TCP  = 1,
     SOCKET_KIND_UDP  = 2,
-    SOCKET_KIND_RAW_ICMP = 3
+    SOCKET_KIND_RAW_ICMP = 3,
+    SOCKET_KIND_NETLINK_ROUTE = 4
 } socket_kind_t;
 
 typedef enum {
@@ -88,6 +89,21 @@ int            socket_raw_icmp_recv(socket_t* sock,
 int            socket_raw_icmp_deliver(const void* packet,
                                        unsigned int len,
                                        unsigned int src_ip);
+int            socket_bind_netlink(socket_t* sock,
+                                   unsigned int pid,
+                                   unsigned int groups);
+unsigned int   socket_netlink_pid(socket_t* sock);
+unsigned int   socket_netlink_groups(socket_t* sock);
+int            socket_netlink_queue(socket_t* sock,
+                                    const void* packet,
+                                    unsigned int len);
+int            socket_netlink_recv_ready(socket_t* sock);
+int            socket_netlink_recv(socket_t* sock,
+                                   void* buf,
+                                   unsigned int len,
+                                   unsigned int* out_src_pid,
+                                   unsigned int* out_src_groups,
+                                   unsigned int peek);
 short          socket_poll(socket_t* sock, short events);
 int            socket_wait(socket_t* sock, process_t* proc, short events);
 void           socket_wait_clear_process(process_t* proc);

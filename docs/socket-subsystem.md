@@ -47,14 +47,14 @@ POSIX edge-semantics work.
   listener and connection counts, RX/TX ring usage, allocated ring capacity,
   and global RX/TX caps. `ip` and `ipconfig` also expose the runtime IPv4
   address, route, DNS, DHCP server, and lease state used by outbound sockets.
-- BusyBox `ifconfig`, `route`, and IPv4 `ping` are enabled through
-  Linux-shaped `eth0` interface/route ioctls, state-backed `/proc/net/dev` and
-  `/proc/net/route`, and raw ICMP `sendto`/`recvfrom` descriptors. UDP
+- BusyBox `ifconfig`, `route`, `ip link`, `ip addr`, `ip route`, and IPv4
+  `ping` are enabled through Linux-shaped `eth0` interface/route ioctls,
+  minimal rtnetlink, state-backed `/proc/net/dev` and `/proc/net/route`, and
+  raw ICMP `sendto`/`recvfrom` descriptors. UDP
   send/receive is available for DNS-sized IPv4 datagrams, and libc resolver
   lookups can issue DNS A-record queries using the configured DNS server.
   Basic BusyBox TCP applets are enabled too: `nc`, plain HTTP `wget`, and
-  `httpd` run over the existing IPv4/TCP socket path. Rtnetlink `ip` remains a
-  future compatibility gate.
+  `httpd` run over the existing IPv4/TCP socket path.
 - The boot-started cserve instance uses `max_conn = 28`; the default cserve
   smoke gate holds 24 keep-alive clients and adds one slow-reader connection.
 
@@ -187,7 +187,8 @@ Later networking work can build on it in these areas:
 - Broader UDP behavior beyond the first DNS-sized datagram queue.
 - Broader BusyBox TCP coverage beyond the current `nc`, plain HTTP `wget`, and
   `httpd` host smoke.
-- Minimal rtnetlink for BusyBox `ip addr`, `ip link`, and `ip route`.
+- Broader rtnetlink coverage for BusyBox `ip rule`, `ip neigh`, tunnel modes,
+  multi-interface systems, and loopback once those kernel features exist.
 - Production TCP polish, including broader congestion, window, and recovery
   behavior.
 - Broader close-state and retransmission fuzzing beyond the focused EOF smoke.

@@ -841,7 +841,8 @@ set rather than full Linux emulation. `ash` is enabled as `/bin/sh`, standalone
 applets are enabled, and common text, archive, process, filesystem, and
 diagnostic commands are available, including gzip/gunzip, checksum helpers,
 hard/symbolic link tools, `readlink`, `mkfifo`, `mknod`, `ifconfig`, `route`,
-IPv4 `ping`, `nc`, plain HTTP `wget`, and `httpd`.
+`ip link`/`ip addr`/`ip route`, IPv4 `ping`, `nc`, plain HTTP `wget`, and
+`httpd`.
 Native SmallOS commands remain preferred in shell lookup; BusyBox is the
 fallback for missing applets.
 
@@ -998,8 +999,9 @@ Shipped ext2 programs:
   per-mount `statfs`/`fstatfs`, dynamic `proc`/`devtmpfs` pseudo mounts,
   gated ext2 stacking, and busy unmount failures
 - `usr/libexec/tests/netbbprobe` - exercise BusyBox-facing `eth0`
-  interface/route ioctls, `/proc/net/dev`, `/proc/net/route`, UDP datagram
-  basics, and localhost/numeric resolver compatibility
+  interface/route ioctls, minimal rtnetlink dumps, `/proc/net/dev`,
+  `/proc/net/route`, UDP datagram basics, and localhost/numeric resolver
+  compatibility
 - `usr/libexec/tests/badptrprobe` - exercise unmapped user pointers, page-crossing buffers/structs, and wrapped syscall byte counts
 - `usr/libexec/tests/sleep_test` - exercise SYS_SLEEP semantics
 - `usr/libexec/tests/ptrguard` - exercise syscall pointer validation

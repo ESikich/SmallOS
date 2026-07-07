@@ -13,6 +13,8 @@
 #define SOCKET_RAW_ICMP_MAX_PACKET 1600u
 #define SOCKET_UDP_MAX_PACKET      576u
 #define SOCKET_UDP_QUEUE_MAX       8u
+#define SOCKET_NETLINK_MAX_PACKET  4096u
+#define SOCKET_NETLINK_QUEUE_MAX   4u
 #define SOCKET_UDP_EPHEMERAL_FIRST 49152u
 #define SOCKET_UDP_EPHEMERAL_LAST  65535u
 
@@ -25,6 +27,8 @@ struct socket {
     unsigned short local_port;
     unsigned int remote_ip;
     unsigned short remote_port;
+    unsigned int nl_pid;
+    unsigned int nl_groups;
     unsigned int conn_id;
     wait_queue_t read_waiters;
     wait_queue_t write_waiters;
@@ -41,12 +45,22 @@ typedef struct udp_packet {
     unsigned char payload[SOCKET_UDP_MAX_PACKET];
 } udp_packet_t;
 
+typedef struct {
+    socket_t* owner;
+    unsigned int used;
+    unsigned int src_pid;
+    unsigned int src_groups;
+    unsigned int len;
+    unsigned char payload[SOCKET_NETLINK_MAX_PACKET];
+} netlink_packet_t;
+
 static socket_t s_sockets[SOCKET_MAX];
 static unsigned char s_raw_icmp_packet[SOCKET_RAW_ICMP_MAX_PACKET];
 static unsigned int s_raw_icmp_len;
 static unsigned int s_raw_icmp_src_ip;
 static unsigned int s_raw_icmp_valid;
 static udp_packet_t s_udp_packets[SOCKET_UDP_QUEUE_MAX];
+static netlink_packet_t s_netlink_packets[SOCKET_NETLINK_QUEUE_MAX];
 static unsigned int s_next_udp_ephemeral = SOCKET_UDP_EPHEMERAL_FIRST;
 
 static void socket_tcp_use(socket_t* sock) {
@@ -63,7 +77,8 @@ static void socket_tcp_use(socket_t* sock) {
 socket_t* socket_create_kind(socket_kind_t kind) {
     if (kind != SOCKET_KIND_TCP &&
         kind != SOCKET_KIND_UDP &&
-        kind != SOCKET_KIND_RAW_ICMP) {
+        kind != SOCKET_KIND_RAW_ICMP &&
+        kind != SOCKET_KIND_NETLINK_ROUTE) {
         return 0;
     }
     for (unsigned int i = 0; i < SOCKET_MAX; i++) {
@@ -511,6 +526,94 @@ int socket_raw_icmp_deliver(const void* packet,
     return 1;
 }
 
+int socket_bind_netlink(socket_t* sock,
+                        unsigned int pid,
+                        unsigned int groups) {
+    if (!sock || sock->kind != SOCKET_KIND_NETLINK_ROUTE) return -EINVAL;
+    if (sock->state != SOCKET_STATE_OPEN && sock->state != SOCKET_STATE_BOUND) {
+        return -EINVAL;
+    }
+    sock->nl_pid = pid;
+    sock->nl_groups = groups;
+    sock->state = SOCKET_STATE_BOUND;
+    return 0;
+}
+
+unsigned int socket_netlink_pid(socket_t* sock) {
+    return (sock && sock->kind == SOCKET_KIND_NETLINK_ROUTE) ? sock->nl_pid : 0u;
+}
+
+unsigned int socket_netlink_groups(socket_t* sock) {
+    return (sock && sock->kind == SOCKET_KIND_NETLINK_ROUTE) ? sock->nl_groups : 0u;
+}
+
+static netlink_packet_t* socket_netlink_slot(socket_t* sock, int create) {
+    netlink_packet_t* free_slot = 0;
+
+    if (!sock) return 0;
+    for (unsigned int i = 0; i < SOCKET_NETLINK_QUEUE_MAX; i++) {
+        if (s_netlink_packets[i].used && s_netlink_packets[i].owner == sock) {
+            return &s_netlink_packets[i];
+        }
+        if (!s_netlink_packets[i].used && !free_slot) {
+            free_slot = &s_netlink_packets[i];
+        }
+    }
+    if (!create || !free_slot) return 0;
+    k_memset(free_slot, 0, sizeof(*free_slot));
+    free_slot->used = 1u;
+    free_slot->owner = sock;
+    return free_slot;
+}
+
+int socket_netlink_queue(socket_t* sock,
+                         const void* packet,
+                         unsigned int len) {
+    netlink_packet_t* slot;
+
+    if (!sock || sock->kind != SOCKET_KIND_NETLINK_ROUTE || !packet) return -EINVAL;
+    if (len == 0u || len > SOCKET_NETLINK_MAX_PACKET) return -EMSGSIZE;
+    slot = socket_netlink_slot(sock, 1);
+    if (!slot) return -ENOMEM;
+    slot->src_pid = 0u;
+    slot->src_groups = 0u;
+    slot->len = len;
+    k_memcpy(slot->payload, packet, len);
+    wait_queue_wake_all(&sock->read_waiters);
+    return (int)len;
+}
+
+int socket_netlink_recv_ready(socket_t* sock) {
+    netlink_packet_t* slot;
+    if (!sock || sock->kind != SOCKET_KIND_NETLINK_ROUTE) return 0;
+    slot = socket_netlink_slot(sock, 0);
+    return slot && slot->used && slot->len != 0u;
+}
+
+int socket_netlink_recv(socket_t* sock,
+                        void* buf,
+                        unsigned int len,
+                        unsigned int* out_src_pid,
+                        unsigned int* out_src_groups,
+                        unsigned int peek) {
+    netlink_packet_t* slot;
+    unsigned int copy_len;
+
+    if (!sock || sock->kind != SOCKET_KIND_NETLINK_ROUTE || !buf) return -EINVAL;
+    slot = socket_netlink_slot(sock, 0);
+    if (!slot || !slot->used || slot->len == 0u) return -EAGAIN;
+
+    copy_len = slot->len;
+    if (copy_len > len) copy_len = len;
+    k_memcpy(buf, slot->payload, copy_len);
+    if (out_src_pid) *out_src_pid = slot->src_pid;
+    if (out_src_groups) *out_src_groups = slot->src_groups;
+    if (!peek) {
+        k_memset(slot, 0, sizeof(*slot));
+    }
+    return (int)copy_len;
+}
+
 static int socket_udp_packet_matches(socket_t* sock, udp_packet_t* packet) {
     if (!sock || !packet || !packet->used || sock->kind != SOCKET_KIND_UDP) return 0;
     if (sock->local_port == 0u || packet->dst_port != sock->local_port) return 0;
@@ -612,6 +715,15 @@ short socket_poll(socket_t* sock, short events) {
     short revents = 0;
 
     if (!sock || sock->kind == SOCKET_KIND_NONE) return POLLERR;
+    if (sock->kind == SOCKET_KIND_NETLINK_ROUTE) {
+        if ((events & POLLIN) && socket_netlink_recv_ready(sock)) {
+            revents |= POLLIN;
+        }
+        if ((events & POLLOUT) != 0) {
+            revents |= POLLOUT;
+        }
+        return revents;
+    }
     if (sock->kind == SOCKET_KIND_UDP) {
         if ((events & POLLIN) && socket_udp_recv_ready(sock)) {
             revents |= POLLIN;
@@ -675,6 +787,16 @@ int socket_wait(socket_t* sock, process_t* proc, short events) {
     int rc = 0;
 
     if (!sock || !proc) return -EINVAL;
+    if (sock->kind == SOCKET_KIND_NETLINK_ROUTE) {
+        if ((events & POLLIN) != 0) {
+            rc = wait_queue_add(&sock->read_waiters, proc);
+        }
+        if (rc >= 0 && (events & POLLOUT) != 0) {
+            rc = wait_queue_add(&sock->write_waiters, proc);
+        }
+        if (rc < 0) wait_queue_remove_proc(proc);
+        return rc;
+    }
     if (sock->kind == SOCKET_KIND_UDP) {
         if ((events & POLLIN) != 0) {
             rc = wait_queue_add(&sock->read_waiters, proc);
@@ -757,6 +879,11 @@ void socket_wake_tcp_connection(unsigned int port,
 
 void socket_close(socket_t* sock) {
     if (!sock || sock->refs == 0u) return;
+
+    if (sock->kind == SOCKET_KIND_NETLINK_ROUTE) {
+        netlink_packet_t* slot = socket_netlink_slot(sock, 0);
+        if (slot) k_memset(slot, 0, sizeof(*slot));
+    }
 
     wait_queue_wake_all(&sock->accept_waiters);
     wait_queue_wake_all(&sock->read_waiters);

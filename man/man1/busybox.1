@@ -25,12 +25,12 @@ SCOPE
     ext2-backed hard links, symbolic links, readlink, chmod/chown-style
     metadata, truncate, and stat-visible FIFO/character/block/socket nodes are
     implemented for filesystem applets. Kernel-backed pseudo mount management,
-    classic eth0 interface/route ioctls, /proc/net/dev, /proc/net/route, raw
-    IPv4 ICMP sockets, UDP DNS resolver traffic, and IPv4/TCP sockets are
-    implemented for mount, ifconfig, route, ping, nc, plain HTTP wget, and
-    httpd. Init/login/getty behavior, authentication semantics, rtnetlink ip,
-    HTTPS/TLS, and complete /dev device behavior remain outside this
-    compatibility wave.
+    classic eth0 interface/route ioctls, minimal rtnetlink, /proc/net/dev,
+    /proc/net/route, raw IPv4 ICMP sockets, UDP DNS resolver traffic, and
+    IPv4/TCP sockets are implemented for mount, ifconfig, route, ip link,
+    ip addr, ip route, ping, nc, plain HTTP wget, and httpd. Init/login/getty
+    behavior, authentication semantics, ip rule/neigh/tunnel, HTTPS/TLS, and
+    complete /dev device behavior remain outside this compatibility wave.
 
 FILES
     /usr/bin/busybox

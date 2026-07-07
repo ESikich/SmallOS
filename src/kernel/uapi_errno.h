@@ -46,6 +46,7 @@
 #define EDESTADDRREQ  89
 #define ENETUNREACH  101
 #define EADDRINUSE    98
+#define EADDRNOTAVAIL 99
 #define EISCONN      106
 #define ECONNRESET   104
 #define ETIMEDOUT    110

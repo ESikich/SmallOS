@@ -846,6 +846,40 @@ int sendto(int fd, const void* buf, size_t len, int flags,
                                      addrlen));
 }
 
+ssize_t sendmsg(int fd, const struct msghdr* msg, int flags) {
+    unsigned char tmp[8192];
+    size_t total = 0;
+
+    if (!msg || (!msg->msg_iov && msg->msg_iovlen != 0u)) {
+        set_errno(EFAULT);
+        return -1;
+    }
+    if (msg->msg_control || msg->msg_controllen != 0u) {
+        set_errno(EOPNOTSUPP);
+        return -1;
+    }
+    for (size_t i = 0; i < msg->msg_iovlen; i++) {
+        const unsigned char* base = (const unsigned char*)msg->msg_iov[i].iov_base;
+        size_t len = msg->msg_iov[i].iov_len;
+        if (!base && len != 0u) {
+            set_errno(EFAULT);
+            return -1;
+        }
+        if (len > sizeof(tmp) - total) {
+            set_errno(EMSGSIZE);
+            return -1;
+        }
+        memcpy(tmp + total, base, len);
+        total += len;
+    }
+    return sendto(fd,
+                  tmp,
+                  total,
+                  flags,
+                  (const struct sockaddr*)msg->msg_name,
+                  msg->msg_namelen);
+}
+
 int recv(int fd, void* buf, size_t len, int flags) {
     (void)flags;
     return errno_from_raw(sys_recv(fd, buf, len));
@@ -859,6 +893,55 @@ int recvfrom(int fd, void* buf, size_t len, int flags,
                                        (uint32_t)flags,
                                        src_addr,
                                        addrlen));
+}
+
+ssize_t recvmsg(int fd, struct msghdr* msg, int flags) {
+    unsigned char tmp[8192];
+    size_t total = 0;
+    size_t copied = 0;
+    socklen_t namelen = 0;
+    int n;
+
+    if (!msg || (!msg->msg_iov && msg->msg_iovlen != 0u)) {
+        set_errno(EFAULT);
+        return -1;
+    }
+    if (msg->msg_control || msg->msg_controllen != 0u) {
+        set_errno(EOPNOTSUPP);
+        return -1;
+    }
+    for (size_t i = 0; i < msg->msg_iovlen; i++) {
+        if (!msg->msg_iov[i].iov_base && msg->msg_iov[i].iov_len != 0u) {
+            set_errno(EFAULT);
+            return -1;
+        }
+        if (msg->msg_iov[i].iov_len > sizeof(tmp) - total) {
+            set_errno(EMSGSIZE);
+            return -1;
+        }
+        total += msg->msg_iov[i].iov_len;
+    }
+
+    namelen = msg->msg_namelen;
+    n = recvfrom(fd,
+                 tmp,
+                 total,
+                 flags,
+                 (struct sockaddr*)msg->msg_name,
+                 msg->msg_name ? &namelen : 0);
+    if (n < 0) return -1;
+    if (msg->msg_name) {
+        msg->msg_namelen = namelen;
+    }
+    msg->msg_flags = 0;
+    for (size_t i = 0; i < msg->msg_iovlen && copied < (size_t)n; i++) {
+        size_t avail = (size_t)n - copied;
+        size_t take = msg->msg_iov[i].iov_len;
+        if (take > avail) take = avail;
+        memcpy(msg->msg_iov[i].iov_base, tmp + copied, take);
+        copied += take;
+    }
+    return n;
 }
 
 int poll(struct pollfd* fds, nfds_t nfds, int timeout) {
@@ -1068,7 +1151,7 @@ int ioctl(int fd, unsigned long request, ...) {
     }
     if ((request >= SIOCADDRT && request <= SIOCGIFHWADDR) ||
         request == SIOCGIFCONF || request == SIOCGIFTXQLEN ||
-        request == SIOCSIFTXQLEN) {
+        request == SIOCSIFTXQLEN || request == SIOCGIFINDEX) {
         return errno_from_raw(sys_net_ioctl(fd, (uint32_t)request, arg));
     }
 

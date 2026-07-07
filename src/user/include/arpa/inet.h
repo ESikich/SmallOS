@@ -5,6 +5,7 @@
 #include "../stddef.h"
 
 #define INET_ADDRSTRLEN 16
+#define INET6_ADDRSTRLEN 46
 
 static inline unsigned short htons(unsigned short value) {
     return (unsigned short)((value << 8) | (value >> 8));
@@ -133,6 +134,20 @@ static inline const char* inet_ntop(int af, const void* src, char* dst, socklen_
     }
     dst[i] = '\0';
     return dst;
+}
+
+static inline int inet_pton(int af, const char* src, void* dst) {
+    if (af == AF_INET) {
+        struct in_addr in;
+        if (!inet_aton(src, &in)) {
+            return 0;
+        }
+        if (dst) {
+            ((struct in_addr*)dst)->s_addr = in.s_addr;
+        }
+        return 1;
+    }
+    return 0;
 }
 
 #endif /* USER_ARPA_INET_H */

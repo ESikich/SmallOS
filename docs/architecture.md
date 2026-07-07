@@ -936,7 +936,7 @@ ext2 filesystem — user programs loaded from ATA, USB storage, or the boot RAM 
 run/runimg infrastructure removed — direct shell execution is the primary external program path, and `SYS_EXEC` reuses that same foreground ELF execution machinery
 interactive shell with builtin job control plus `/bin` command binaries such as meminfo / memmap / cpuz / top / ataread / ls / tree / fsread / mkdir / rmdir
 guest TinyCC compiler path — `usr/bin/tcc` runs inside SmallOS through `crt0` and TinyCC's normal `main`, then compiles guest C samples during `make test`
-guest BusyBox path — `usr/bin/busybox` provides fallback Unix applets, `/bin/sh` runs BusyBox `ash`, virtual `/proc`, `/proc/net`, and `/dev` expose the small Linux-like status/device surface those tools need, ext2 supplies the link/symlink/metadata/node operations used by filesystem applets, and kernel network ioctls/raw ICMP/UDP DNS/IPv4 TCP back `ifconfig`, `route`, `ping`, `nc`, plain HTTP `wget`, and `httpd`
+guest BusyBox path — `usr/bin/busybox` provides fallback Unix applets, `/bin/sh` runs BusyBox `ash`, virtual `/proc`, `/proc/net`, and `/dev` expose the small Linux-like status/device surface those tools need, ext2 supplies the link/symlink/metadata/node operations used by filesystem applets, and kernel network ioctls/rtnetlink/raw ICMP/UDP DNS/IPv4 TCP back `ifconfig`, `route`, `ip`, `ping`, `nc`, plain HTTP `wget`, and `httpd`
 ```
 
 Foundation for:

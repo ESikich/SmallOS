@@ -8,6 +8,8 @@
 #include "string.h"
 #include "sys/ioctl.h"
 #include "sys/socket.h"
+#include "linux/netlink.h"
+#include "linux/rtnetlink.h"
 #include "unistd.h"
 
 static int failures = 0;
@@ -36,6 +38,98 @@ static int read_contains(const char* path, const char* needle) {
     if (n < 0) return 0;
     buf[n] = '\0';
     return strstr(buf, needle) != 0;
+}
+
+static void parse_rtattrs(struct rtattr* attrs[], int max,
+                          struct rtattr* rta, int len) {
+    int i;
+
+    for (i = 0; i <= max; i++) attrs[i] = 0;
+    while (RTA_OK(rta, len)) {
+        if (rta->rta_type <= max) attrs[rta->rta_type] = rta;
+        rta = RTA_NEXT(rta, len);
+    }
+}
+
+static int netlink_dump_has(int request_type, int response_type, int attr_type) {
+    int nlfd;
+    struct sockaddr_nl sa;
+    struct {
+        struct nlmsghdr nlh;
+        struct rtgenmsg gen;
+    } req;
+    char buf[4096];
+    struct iovec iov;
+    struct msghdr msg;
+    int seen = 0;
+
+    nlfd = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
+    if (nlfd < 0) return 0;
+
+    memset(&sa, 0, sizeof(sa));
+    sa.nl_family = AF_NETLINK;
+    if (bind(nlfd, (struct sockaddr*)&sa, sizeof(sa)) < 0) {
+        close(nlfd);
+        return 0;
+    }
+
+    memset(&req, 0, sizeof(req));
+    req.nlh.nlmsg_len = sizeof(req);
+    req.nlh.nlmsg_type = request_type;
+    req.nlh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ROOT | NLM_F_MATCH;
+    req.nlh.nlmsg_seq = 77u + (unsigned int)request_type;
+    req.gen.rtgen_family = AF_UNSPEC;
+    if (send(nlfd, &req, sizeof(req), 0) != (int)sizeof(req)) {
+        close(nlfd);
+        return 0;
+    }
+
+    memset(&iov, 0, sizeof(iov));
+    memset(&msg, 0, sizeof(msg));
+    iov.iov_base = buf;
+    iov.iov_len = sizeof(buf);
+    msg.msg_name = &sa;
+    msg.msg_namelen = sizeof(sa);
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+
+    while (!seen) {
+        int n = recvmsg(nlfd, &msg, 0);
+        struct nlmsghdr* h;
+        int left;
+
+        if (n <= 0) break;
+        left = n;
+        h = (struct nlmsghdr*)buf;
+        while (NLMSG_OK(h, left)) {
+            if (h->nlmsg_type == NLMSG_DONE) {
+                close(nlfd);
+                return seen;
+            }
+            if (h->nlmsg_type == response_type) {
+                if (response_type == RTM_NEWLINK) {
+                    struct ifinfomsg* ifi = (struct ifinfomsg*)NLMSG_DATA(h);
+                    struct rtattr* attrs[IFLA_MAX + 1];
+                    parse_rtattrs(attrs, IFLA_MAX, IFLA_RTA(ifi), IFLA_PAYLOAD(h));
+                    seen = ifi->ifi_index == 1 && attrs[attr_type] != 0;
+                } else if (response_type == RTM_NEWADDR) {
+                    struct ifaddrmsg* ifa = (struct ifaddrmsg*)NLMSG_DATA(h);
+                    struct rtattr* attrs[IFA_MAX + 1];
+                    parse_rtattrs(attrs, IFA_MAX, IFA_RTA(ifa), IFA_PAYLOAD(h));
+                    seen = ifa->ifa_index == 1 && attrs[attr_type] != 0;
+                } else if (response_type == RTM_NEWROUTE) {
+                    struct rtmsg* rtm = (struct rtmsg*)NLMSG_DATA(h);
+                    struct rtattr* attrs[RTA_MAX + 1];
+                    parse_rtattrs(attrs, RTA_MAX, RTM_RTA(rtm), RTM_PAYLOAD(h));
+                    seen = rtm->rtm_family == AF_INET && attrs[attr_type] != 0;
+                }
+            }
+            h = NLMSG_NEXT(h, left);
+        }
+    }
+
+    close(nlfd);
+    return seen;
 }
 
 int main(void) {
@@ -83,6 +177,8 @@ int main(void) {
     check("ioctl mtu", ioctl(fd, SIOCGIFMTU, &ifr) == 0 && ifr.ifr_mtu == 1500);
     check("ioctl hwaddr", ioctl(fd, SIOCGIFHWADDR, &ifr) == 0 &&
                           ifr.ifr_hwaddr.sa_family == ARPHRD_ETHER);
+    check("ioctl ifindex", ioctl(fd, SIOCGIFINDEX, &ifr) == 0 &&
+                           ifr.ifr_ifindex == 1);
 
     memset(&ifr, 0, sizeof(ifr));
     strcpy(ifr.ifr_name, "eth0");
@@ -115,6 +211,12 @@ int main(void) {
 
     check("proc net dev eth0", read_contains("/proc/net/dev", "eth0"));
     check("proc net route header", read_contains("/proc/net/route", "Iface"));
+    check("netlink link dump", netlink_dump_has(RTM_GETLINK, RTM_NEWLINK,
+                                                IFLA_IFNAME));
+    check("netlink addr dump", netlink_dump_has(RTM_GETADDR, RTM_NEWADDR,
+                                                IFA_LOCAL));
+    check("netlink route dump", netlink_dump_has(RTM_GETROUTE, RTM_NEWROUTE,
+                                                 RTA_OIF));
 
     udpfd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
     check("udp socket", udpfd >= 0);

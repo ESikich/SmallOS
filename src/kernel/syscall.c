@@ -25,6 +25,7 @@
 #include "uapi_dirent.h"
 #include "uapi_socket.h"
 #include "uapi_net.h"
+#include "uapi_netlink.h"
 #include "uapi_epoll.h"
 #include "uapi_display.h"
 #include "uapi_input.h"
@@ -77,6 +78,7 @@
 #define SYS_MOUNT_MS_MANDLOCK    64u
 #define SYS_MOUNT_MS_DIRSYNC     128u
 #define SYS_MOUNT_MS_NOSYMFOLLOW 256u
+#define SYS_NETLINK_MAX_PACKET 4096u
 #define SYS_MOUNT_MS_NOATIME     1024u
 #define SYS_MOUNT_MS_NODIRATIME  2048u
 #define SYS_MOUNT_MS_BIND        4096u
@@ -169,6 +171,16 @@ static int sys_utimens_kpath_impl(const char* kpath,
                                   int nofollow);
 static unsigned int process_ram_bytes(process_t* proc);
 static unsigned int net_route_next_hop(unsigned int target_ip);
+static int sys_netlink_send_user(fd_entry_t* ent,
+                                 const void* buf,
+                                 unsigned int len);
+static int sys_netlink_recv_user(process_t* proc,
+                                 fd_entry_t* ent,
+                                 void* buf,
+                                 unsigned int len,
+                                 unsigned int flags,
+                                 struct sockaddr* src_addr,
+                                 unsigned int* addrlen);
 
 static int path_is_sep(char c) {
     return c == '/' || c == '\\';
@@ -2246,9 +2258,14 @@ static int sys_socket_impl(int domain, int type, int protocol) {
     socket_kind_t kind = SOCKET_KIND_NONE;
 
     if (!proc) return -EINVAL;
-    if (domain != AF_INET) return -EAFNOSUPPORT;
     if ((type & ~(SOCK_TYPE_MASK | SOCK_NONBLOCK | SOCK_CLOEXEC)) != 0) return -EINVAL;
-    if (sock_type == SOCK_STREAM) {
+    if (domain == AF_NETLINK) {
+        if (protocol != NETLINK_ROUTE) return -EPROTONOSUPPORT;
+        if (sock_type != SOCK_RAW && sock_type != SOCK_DGRAM) return -EPROTONOSUPPORT;
+        kind = SOCKET_KIND_NETLINK_ROUTE;
+    } else if (domain != AF_INET) {
+        return -EAFNOSUPPORT;
+    } else if (sock_type == SOCK_STREAM) {
         if (protocol != 0 && protocol != IPPROTO_TCP) return -EPROTONOSUPPORT;
         kind = SOCKET_KIND_TCP;
     } else if (sock_type == SOCK_DGRAM) {
@@ -2284,6 +2301,15 @@ static int sys_bind_impl(int fd, const struct sockaddr* addr, unsigned int addrl
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
     if (socket_state(ent->socket) != SOCKET_STATE_OPEN) return -EINVAL;
+    if (socket_kind(ent->socket) == SOCKET_KIND_NETLINK_ROUTE) {
+        struct sockaddr_nl nl;
+        if (!addr || addrlen < sizeof(nl)) return -EINVAL;
+        if (!user_buf_ok((unsigned int)addr, sizeof(nl))) return -EFAULT;
+        if (copy_from_user(&nl, addr, sizeof(nl)) < 0) return -EFAULT;
+        if (nl.nl_family != AF_NETLINK) return -EINVAL;
+        if (nl.nl_pid == 0u) nl.nl_pid = (unsigned int)proc->pid;
+        return socket_bind_netlink(ent->socket, nl.nl_pid, nl.nl_groups);
+    }
     int sa_rc = copy_user_sockaddr_in(&sa, addr, addrlen);
     if (sa_rc < 0) return sa_rc;
 
@@ -2482,6 +2508,451 @@ static int sys_connect_impl(int fd, const struct sockaddr* addr, unsigned int ad
     return 0;
 }
 
+typedef struct {
+    unsigned char* buf;
+    unsigned int cap;
+    unsigned int len;
+    unsigned int seq;
+    unsigned int pid;
+    unsigned int multi;
+} netlink_builder_t;
+
+static unsigned int net_mask_from_prefix(unsigned int prefix) {
+    if (prefix == 0u) return 0u;
+    if (prefix >= 32u) return 0xFFFFFFFFu;
+    return 0xFFFFFFFFu << (32u - prefix);
+}
+
+static unsigned int net_prefix_from_mask(unsigned int mask) {
+    unsigned int prefix = 0u;
+    for (int bit = 31; bit >= 0; bit--) {
+        if ((mask & (1u << (unsigned int)bit)) == 0u) break;
+        prefix++;
+    }
+    return prefix;
+}
+
+static unsigned int net_eth0_flags(void) {
+    const net_ipv4_config_t* cfg = net_ipv4_config();
+    unsigned int flags = IFF_BROADCAST | IFF_MULTICAST;
+    if (cfg && cfg->configured) flags |= IFF_UP;
+    if (nic_link_up()) flags |= IFF_RUNNING;
+    return flags;
+}
+
+static void* nl_begin(netlink_builder_t* b,
+                      unsigned int type,
+                      unsigned int payload_len,
+                      unsigned int flags) {
+    unsigned int off;
+    unsigned int total;
+    struct nlmsghdr* nlh;
+
+    if (!b || !b->buf) return 0;
+    off = NLMSG_ALIGN(b->len);
+    total = NLMSG_LENGTH(payload_len);
+    if (off + total > b->cap) return 0;
+    if (off > b->len) {
+        k_memset(b->buf + b->len, 0, off - b->len);
+    }
+    nlh = (struct nlmsghdr*)(b->buf + off);
+    k_memset(nlh, 0, total);
+    nlh->nlmsg_len = total;
+    nlh->nlmsg_type = (unsigned short)type;
+    nlh->nlmsg_flags = (unsigned short)(flags | (b->multi ? NLM_F_MULTI : 0u));
+    nlh->nlmsg_seq = b->seq;
+    nlh->nlmsg_pid = b->pid;
+    b->len = off + total;
+    return NLMSG_DATA(nlh);
+}
+
+static int nl_attr_put(netlink_builder_t* b,
+                       struct nlmsghdr* nlh,
+                       unsigned int type,
+                       const void* data,
+                       unsigned int len) {
+    unsigned int msg_off;
+    unsigned int attr_off;
+    unsigned int attr_len = RTA_LENGTH(len);
+    struct rtattr* rta;
+
+    if (!b || !nlh || !data) return -EINVAL;
+    msg_off = (unsigned int)((unsigned char*)nlh - b->buf);
+    attr_off = msg_off + NLMSG_ALIGN(nlh->nlmsg_len);
+    if (attr_off + attr_len > b->cap) return -EMSGSIZE;
+    if (attr_off > b->len) {
+        k_memset(b->buf + b->len, 0, attr_off - b->len);
+    }
+    rta = (struct rtattr*)(b->buf + attr_off);
+    k_memset(rta, 0, RTA_ALIGN(attr_len));
+    rta->rta_type = (unsigned short)type;
+    rta->rta_len = (unsigned short)attr_len;
+    k_memcpy(RTA_DATA(rta), data, len);
+    nlh->nlmsg_len = NLMSG_ALIGN(nlh->nlmsg_len) + attr_len;
+    b->len = msg_off + nlh->nlmsg_len;
+    return 0;
+}
+
+static int nl_attr_put_u32(netlink_builder_t* b,
+                           struct nlmsghdr* nlh,
+                           unsigned int type,
+                           unsigned int value) {
+    return nl_attr_put(b, nlh, type, &value, sizeof(value));
+}
+
+static int nl_attr_put_str(netlink_builder_t* b,
+                           struct nlmsghdr* nlh,
+                           unsigned int type,
+                           const char* value) {
+    return nl_attr_put(b, nlh, type, value, (unsigned int)k_strlen(value) + 1u);
+}
+
+static int nl_put_done(netlink_builder_t* b) {
+    return nl_begin(b, NLMSG_DONE, 0u, 0u) ? 0 : -EMSGSIZE;
+}
+
+static int nl_put_ack(netlink_builder_t* b,
+                      const struct nlmsghdr* req,
+                      int error) {
+    struct nlmsgerr* err = (struct nlmsgerr*)nl_begin(b, NLMSG_ERROR,
+                                                      sizeof(*err), 0u);
+    if (!err) return -EMSGSIZE;
+    err->error = error;
+    if (req) {
+        err->msg = *req;
+    } else {
+        k_memset(&err->msg, 0, sizeof(err->msg));
+    }
+    return 0;
+}
+
+static int nl_put_link(netlink_builder_t* b) {
+    struct ifinfomsg* ifi;
+    struct nlmsghdr* nlh;
+    const u8* mac = nic_mac();
+    unsigned char bcast[ETH_ALEN];
+    unsigned int mtu = 1500u;
+    unsigned char operstate = 6u;
+
+    ifi = (struct ifinfomsg*)nl_begin(b, RTM_NEWLINK, sizeof(*ifi), 0u);
+    if (!ifi) return -EMSGSIZE;
+    nlh = (struct nlmsghdr*)((unsigned char*)ifi - NLMSG_LENGTH(0));
+    ifi->ifi_family = AF_UNSPEC;
+    ifi->ifi_type = ARPHRD_ETHER;
+    ifi->ifi_index = 1;
+    ifi->ifi_flags = net_eth0_flags();
+    ifi->ifi_change = 0xFFFFFFFFu;
+
+    k_memset(bcast, 0xFF, sizeof(bcast));
+    if (nl_attr_put_str(b, nlh, IFLA_IFNAME, "eth0") < 0) return -EMSGSIZE;
+    if (mac && nl_attr_put(b, nlh, IFLA_ADDRESS, mac, ETH_ALEN) < 0) return -EMSGSIZE;
+    if (nl_attr_put(b, nlh, IFLA_BROADCAST, bcast, ETH_ALEN) < 0) return -EMSGSIZE;
+    if (nl_attr_put_u32(b, nlh, IFLA_MTU, mtu) < 0) return -EMSGSIZE;
+    if (nl_attr_put(b, nlh, IFLA_OPERSTATE, &operstate, sizeof(operstate)) < 0) {
+        return -EMSGSIZE;
+    }
+    return 0;
+}
+
+static int nl_put_addr(netlink_builder_t* b) {
+    const net_ipv4_config_t* cfg = net_ipv4_config();
+    struct ifaddrmsg* ifa;
+    struct nlmsghdr* nlh;
+    unsigned int ip_be;
+    unsigned int bcast_be;
+
+    if (!cfg || !cfg->configured || cfg->ip == 0u) return 0;
+    ifa = (struct ifaddrmsg*)nl_begin(b, RTM_NEWADDR, sizeof(*ifa), 0u);
+    if (!ifa) return -EMSGSIZE;
+    nlh = (struct nlmsghdr*)((unsigned char*)ifa - NLMSG_LENGTH(0));
+    ifa->ifa_family = AF_INET;
+    ifa->ifa_prefixlen = (unsigned char)net_prefix_from_mask(cfg->netmask);
+    ifa->ifa_flags = IFA_F_PERMANENT;
+    ifa->ifa_scope = RT_SCOPE_UNIVERSE;
+    ifa->ifa_index = 1u;
+
+    ip_be = swap_u32(cfg->ip);
+    bcast_be = swap_u32((cfg->ip & cfg->netmask) | (~cfg->netmask));
+    if (nl_attr_put_u32(b, nlh, IFA_ADDRESS, ip_be) < 0) return -EMSGSIZE;
+    if (nl_attr_put_u32(b, nlh, IFA_LOCAL, ip_be) < 0) return -EMSGSIZE;
+    if (nl_attr_put_u32(b, nlh, IFA_BROADCAST, bcast_be) < 0) return -EMSGSIZE;
+    if (nl_attr_put_str(b, nlh, IFA_LABEL, "eth0") < 0) return -EMSGSIZE;
+    return 0;
+}
+
+static int nl_put_route(netlink_builder_t* b,
+                        unsigned int dst,
+                        unsigned int prefix,
+                        unsigned int gateway,
+                        unsigned int scope,
+                        unsigned int proto) {
+    const net_ipv4_config_t* cfg = net_ipv4_config();
+    struct rtmsg* rtm;
+    struct nlmsghdr* nlh;
+    unsigned int ifindex = 1u;
+
+    if (!cfg || !cfg->configured) return 0;
+    rtm = (struct rtmsg*)nl_begin(b, RTM_NEWROUTE, sizeof(*rtm), 0u);
+    if (!rtm) return -EMSGSIZE;
+    nlh = (struct nlmsghdr*)((unsigned char*)rtm - NLMSG_LENGTH(0));
+    rtm->rtm_family = AF_INET;
+    rtm->rtm_dst_len = (unsigned char)prefix;
+    rtm->rtm_table = RT_TABLE_MAIN;
+    rtm->rtm_protocol = (unsigned char)proto;
+    rtm->rtm_scope = (unsigned char)scope;
+    rtm->rtm_type = RTN_UNICAST;
+
+    if (prefix != 0u) {
+        unsigned int dst_be = swap_u32(dst);
+        if (nl_attr_put_u32(b, nlh, RTA_DST, dst_be) < 0) return -EMSGSIZE;
+    }
+    if (gateway != 0u) {
+        unsigned int gw_be = swap_u32(gateway);
+        if (nl_attr_put_u32(b, nlh, RTA_GATEWAY, gw_be) < 0) return -EMSGSIZE;
+    }
+    if (nl_attr_put_u32(b, nlh, RTA_OIF, ifindex) < 0) return -EMSGSIZE;
+    if (cfg->ip != 0u) {
+        unsigned int src_be = swap_u32(cfg->ip);
+        if (nl_attr_put_u32(b, nlh, RTA_PREFSRC, src_be) < 0) return -EMSGSIZE;
+    }
+    return 0;
+}
+
+static void nl_parse_attrs(struct rtattr** attrs,
+                           unsigned int max,
+                           struct rtattr* rta,
+                           int len) {
+    for (unsigned int i = 0; i <= max; i++) attrs[i] = 0;
+    while (RTA_OK(rta, len)) {
+        if (rta->rta_type <= max) attrs[rta->rta_type] = rta;
+        rta = RTA_NEXT(rta, len);
+    }
+}
+
+static unsigned int nl_attr_u32(struct rtattr* rta) {
+    unsigned int out = 0u;
+    if (rta && RTA_PAYLOAD(rta) >= (int)sizeof(out)) {
+        k_memcpy(&out, RTA_DATA(rta), sizeof(out));
+    }
+    return out;
+}
+
+static int nl_apply_addr(const struct nlmsghdr* nlh, int del) {
+    const net_ipv4_config_t* cfg = net_ipv4_config();
+    const struct ifaddrmsg* ifa = (const struct ifaddrmsg*)NLMSG_DATA(nlh);
+    struct rtattr* attrs[IFA_MAX + 1u];
+    unsigned int ip = cfg ? cfg->ip : 0u;
+    unsigned int netmask = cfg && cfg->netmask ? cfg->netmask : 0xFFFFFF00u;
+    unsigned int gateway = cfg ? cfg->gateway : 0u;
+    unsigned int dns = cfg ? cfg->dns : 0u;
+    unsigned int dhcp_server = cfg ? cfg->dhcp_server : 0u;
+    unsigned int lease_seconds = cfg ? cfg->lease_seconds : 0u;
+    unsigned int ip_be;
+
+    if (nlh->nlmsg_len < NLMSG_LENGTH(sizeof(*ifa))) return -EINVAL;
+    if (ifa->ifa_family != AF_INET || ifa->ifa_index != 1u) return -ENODEV;
+    nl_parse_attrs(attrs, IFA_MAX, IFA_RTA(ifa), IFA_PAYLOAD(nlh));
+    ip_be = nl_attr_u32(attrs[IFA_LOCAL] ? attrs[IFA_LOCAL] : attrs[IFA_ADDRESS]);
+    if (del) {
+        if (ip_be != 0u && cfg && swap_u32(ip_be) != cfg->ip) return -EADDRNOTAVAIL;
+        net_ipv4_configure(0u, netmask, gateway, dns, dhcp_server, lease_seconds);
+        return 0;
+    }
+    ip = swap_u32(ip_be);
+    if (ip == 0u) return -EINVAL;
+    netmask = net_mask_from_prefix(ifa->ifa_prefixlen);
+    net_ipv4_configure(ip, netmask, gateway, dns, dhcp_server, lease_seconds);
+    return 0;
+}
+
+static int nl_apply_route(const struct nlmsghdr* nlh, int del) {
+    const net_ipv4_config_t* cfg = net_ipv4_config();
+    const struct rtmsg* rtm = (const struct rtmsg*)NLMSG_DATA(nlh);
+    struct rtattr* attrs[RTA_MAX + 1u];
+    unsigned int dst = 0u;
+    unsigned int gateway = 0u;
+
+    if (!cfg || !cfg->configured) return -ENETUNREACH;
+    if (nlh->nlmsg_len < NLMSG_LENGTH(sizeof(*rtm))) return -EINVAL;
+    if (rtm->rtm_family != AF_INET) return -EAFNOSUPPORT;
+    nl_parse_attrs(attrs, RTA_MAX, RTM_RTA(rtm), RTM_PAYLOAD(nlh));
+    if (attrs[RTA_DST]) dst = swap_u32(nl_attr_u32(attrs[RTA_DST]));
+    if (attrs[RTA_GATEWAY]) gateway = swap_u32(nl_attr_u32(attrs[RTA_GATEWAY]));
+    if (attrs[RTA_OIF] && nl_attr_u32(attrs[RTA_OIF]) != 1u) return -ENODEV;
+
+    if (rtm->rtm_dst_len != 0u || dst != 0u) {
+        return del ? 0 : -EOPNOTSUPP;
+    }
+    net_ipv4_configure(cfg->ip,
+                       cfg->netmask,
+                       del ? 0u : gateway,
+                       cfg->dns,
+                       cfg->dhcp_server,
+                       cfg->lease_seconds);
+    return 0;
+}
+
+static int nl_build_response(socket_t* sock,
+                             const unsigned char* req_buf,
+                             unsigned int req_len,
+                             unsigned char* resp,
+                             unsigned int resp_cap) {
+    netlink_builder_t b;
+    struct nlmsghdr* nlh;
+    int remaining;
+    int rc = 0;
+
+    if (!sock || !req_buf || !resp || req_len < sizeof(struct nlmsghdr)) return -EINVAL;
+    nlh = (struct nlmsghdr*)req_buf;
+    remaining = (int)req_len;
+    if (!NLMSG_OK(nlh, remaining)) return -EINVAL;
+
+    k_memset(&b, 0, sizeof(b));
+    b.buf = resp;
+    b.cap = resp_cap;
+    b.seq = nlh->nlmsg_seq;
+    b.pid = socket_netlink_pid(sock);
+
+    switch (nlh->nlmsg_type) {
+    case RTM_GETLINK:
+        b.multi = 1u;
+        rc = nl_put_link(&b);
+        if (rc == 0) rc = nl_put_done(&b);
+        break;
+    case RTM_GETADDR:
+        b.multi = 1u;
+        rc = nl_put_addr(&b);
+        if (rc == 0) rc = nl_put_done(&b);
+        break;
+    case RTM_GETROUTE:
+    {
+        const net_ipv4_config_t* cfg = net_ipv4_config();
+        b.multi = 1u;
+        if (cfg && cfg->configured) {
+            unsigned int prefix = net_prefix_from_mask(cfg->netmask);
+            unsigned int network = cfg->ip & cfg->netmask;
+            if (prefix != 0u) {
+                rc = nl_put_route(&b, network, prefix, 0u,
+                                  RT_SCOPE_LINK, RTPROT_KERNEL);
+            }
+            if (rc == 0 && cfg->gateway != 0u) {
+                rc = nl_put_route(&b, 0u, 0u, cfg->gateway,
+                                  RT_SCOPE_UNIVERSE, RTPROT_DHCP);
+            }
+        }
+        if (rc == 0) rc = nl_put_done(&b);
+        break;
+    }
+    case RTM_NEWADDR:
+        rc = nl_apply_addr(nlh, 0);
+        (void)nl_put_ack(&b, nlh, rc < 0 ? rc : 0);
+        break;
+    case RTM_DELADDR:
+        rc = nl_apply_addr(nlh, 1);
+        (void)nl_put_ack(&b, nlh, rc < 0 ? rc : 0);
+        break;
+    case RTM_NEWROUTE:
+        rc = nl_apply_route(nlh, 0);
+        (void)nl_put_ack(&b, nlh, rc < 0 ? rc : 0);
+        break;
+    case RTM_DELROUTE:
+        rc = nl_apply_route(nlh, 1);
+        (void)nl_put_ack(&b, nlh, rc < 0 ? rc : 0);
+        break;
+    case RTM_SETLINK:
+    case RTM_NEWLINK:
+        (void)nl_put_ack(&b, nlh, 0);
+        break;
+    default:
+        (void)nl_put_ack(&b, nlh, -EOPNOTSUPP);
+        break;
+    }
+
+    if (b.len == 0u) return rc < 0 ? rc : -EINVAL;
+    return socket_netlink_queue(sock, b.buf, b.len) < 0 ? -ENOMEM : (int)req_len;
+}
+
+static int sys_netlink_send_user(fd_entry_t* ent,
+                                 const void* buf,
+                                 unsigned int len) {
+    static unsigned char req[SYS_NETLINK_MAX_PACKET];
+    static unsigned char resp[SYS_NETLINK_MAX_PACKET];
+
+    if (!ent || !ent->socket || socket_kind(ent->socket) != SOCKET_KIND_NETLINK_ROUTE) {
+        return -EINVAL;
+    }
+    if (!buf || len == 0u) return -EINVAL;
+    if (len > sizeof(req)) return -EMSGSIZE;
+    if (copy_from_user(req, buf, len) < 0) return -EFAULT;
+    k_memset(resp, 0, sizeof(resp));
+    return nl_build_response(ent->socket, req, len, resp, sizeof(resp));
+}
+
+static int sys_netlink_recv_user(process_t* proc,
+                                 fd_entry_t* ent,
+                                 void* buf,
+                                 unsigned int len,
+                                 unsigned int flags,
+                                 struct sockaddr* src_addr,
+                                 unsigned int* addrlen) {
+    static unsigned char packet[SYS_NETLINK_MAX_PACKET];
+    unsigned int src_pid = 0u;
+    unsigned int src_groups = 0u;
+    unsigned int peek = (flags & MSG_PEEK) != 0u;
+    int rc;
+
+    if (!proc || !ent || !buf) return -EINVAL;
+    if (socket_kind(ent->socket) != SOCKET_KIND_NETLINK_ROUTE) return -EINVAL;
+    if (!socket_netlink_recv_ready(ent->socket) &&
+        ((ent->flags & SYS_FD_FLAG_NONBLOCK) != 0u ||
+         (flags & MSG_DONTWAIT) != 0u)) {
+        return -EAGAIN;
+    }
+    while (!socket_netlink_recv_ready(ent->socket)) {
+        int wait_rc;
+        proc->state = PROCESS_STATE_WAITING;
+        wait_rc = socket_wait(ent->socket, proc, POLLIN);
+        if (wait_rc < 0) {
+            proc->state = PROCESS_STATE_RUNNING;
+            socket_wait_clear_process(proc);
+            return wait_rc;
+        }
+        if (socket_netlink_recv_ready(ent->socket)) {
+            proc->state = PROCESS_STATE_RUNNING;
+            break;
+        }
+        sys_wait_until_current_running(proc);
+        socket_wait_clear_process(proc);
+    }
+    socket_wait_clear_process(proc);
+
+    rc = socket_netlink_recv(ent->socket, packet, sizeof(packet),
+                             &src_pid, &src_groups, peek);
+    if (rc < 0) return rc;
+    if ((unsigned int)rc > len) {
+        rc = (int)len;
+    }
+    if (copy_to_user(buf, packet, (unsigned int)rc) < 0) return -EFAULT;
+    if (src_addr && addrlen) {
+        struct sockaddr_nl sa;
+        unsigned int user_addrlen = 0u;
+        if (read_user_u32(&user_addrlen, addrlen) < 0) return -EFAULT;
+        if (user_addrlen < sizeof(sa)) return -EINVAL;
+        if (!user_buf_ok((unsigned int)src_addr, sizeof(sa))) return -EFAULT;
+        k_memset(&sa, 0, sizeof(sa));
+        sa.nl_family = AF_NETLINK;
+        sa.nl_pid = src_pid;
+        sa.nl_groups = src_groups;
+        if (copy_to_user(src_addr, &sa, sizeof(sa)) < 0 ||
+            write_user_u32(addrlen, sizeof(sa)) < 0) {
+            return -EFAULT;
+        }
+    } else if (src_addr || addrlen) {
+        return -EFAULT;
+    }
+    return rc;
+}
+
 static int sys_udp_send_socket(fd_entry_t* ent,
                                const void* buf,
                                unsigned int len,
@@ -2499,6 +2970,9 @@ static int sys_send_impl(int fd, const void* buf, unsigned int len) {
 
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
+    if (socket_kind(ent->socket) == SOCKET_KIND_NETLINK_ROUTE) {
+        return sys_netlink_send_user(ent, buf, len);
+    }
     if (socket_kind(ent->socket) == SOCKET_KIND_UDP) {
         return sys_udp_send_socket(ent, buf, len, 0, 0u);
     }
@@ -2642,6 +3116,9 @@ static int sys_recv_impl(syscall_regs_t* regs, int fd, void* buf, unsigned int l
 
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
+    if (socket_kind(ent->socket) == SOCKET_KIND_NETLINK_ROUTE) {
+        return sys_netlink_recv_user(proc, ent, buf, len, 0u, 0, 0);
+    }
     if (socket_kind(ent->socket) == SOCKET_KIND_RAW_ICMP) {
         (void)regs;
         return sys_raw_icmp_recv_socket(proc, ent, buf, len, 0u, 0);
@@ -2715,6 +3192,17 @@ static int sys_sendto_impl(int fd,
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
 
+    if (socket_kind(ent->socket) == SOCKET_KIND_NETLINK_ROUTE) {
+        if (dest_addr) {
+            struct sockaddr_nl nl;
+            if (addrlen < sizeof(nl)) return -EINVAL;
+            if (!user_buf_ok((unsigned int)dest_addr, sizeof(nl))) return -EFAULT;
+            if (copy_from_user(&nl, dest_addr, sizeof(nl)) < 0) return -EFAULT;
+            if (nl.nl_family != AF_NETLINK) return -EINVAL;
+        }
+        return sys_netlink_send_user(ent, buf, len);
+    }
+
     if (socket_kind(ent->socket) == SOCKET_KIND_TCP) {
         if (dest_addr) return -EISCONN;
         return process_fd_write(ent, (const char*)buf, len);
@@ -2767,6 +3255,10 @@ static int sys_recvfrom_impl(syscall_regs_t* regs,
 
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
+
+    if (socket_kind(ent->socket) == SOCKET_KIND_NETLINK_ROUTE) {
+        return sys_netlink_recv_user(proc, ent, buf, len, flags, src_addr, addrlen);
+    }
 
     if (socket_kind(ent->socket) == SOCKET_KIND_TCP) {
         int rc;
@@ -3677,6 +4169,22 @@ static int sys_getsockname_impl(int fd, struct sockaddr* addr, unsigned int* add
     ent = process_fd_get(proc, fd);
     if (!socket_fd_is_socket(ent)) return -EBADF;
     if (!addr || !addrlen) return -EFAULT;
+    if (socket_kind(ent->socket) == SOCKET_KIND_NETLINK_ROUTE) {
+        struct sockaddr_nl nl;
+        unsigned int user_addrlen = 0;
+        if (read_user_u32(&user_addrlen, addrlen) < 0) return -EFAULT;
+        if (user_addrlen < sizeof(nl)) return -EINVAL;
+        if (!user_buf_ok((unsigned int)addr, sizeof(nl))) return -EFAULT;
+        k_memset(&nl, 0, sizeof(nl));
+        nl.nl_family = AF_NETLINK;
+        nl.nl_pid = socket_netlink_pid(ent->socket);
+        nl.nl_groups = socket_netlink_groups(ent->socket);
+        if (copy_to_user(addr, &nl, sizeof(nl)) < 0 ||
+            write_user_u32(addrlen, sizeof(nl)) < 0) {
+            return -EFAULT;
+        }
+        return 0;
+    }
     {
         unsigned int user_addrlen = 0;
         if (read_user_u32(&user_addrlen, addrlen) < 0) return -EFAULT;
@@ -3764,6 +4272,9 @@ static void net_fill_eth0_ifreq(struct ifreq* ifr, unsigned int request) {
         break;
     case SIOCGIFMTU:
         ifr->ifr_mtu = 1500;
+        break;
+    case SIOCGIFINDEX:
+        ifr->ifr_ifindex = 1;
         break;
     case SIOCGIFMETRIC:
         ifr->ifr_metric = 0;
@@ -3853,6 +4364,7 @@ static int net_ioctl_ifreq(unsigned int request, void* argp) {
     case SIOCGIFMTU:
     case SIOCGIFMETRIC:
     case SIOCGIFTXQLEN:
+    case SIOCGIFINDEX:
         net_fill_eth0_ifreq(&ifr, request);
         return copy_to_user(argp, &ifr, sizeof(ifr)) < 0 ? -EFAULT : 0;
     case SIOCSIFFLAGS:
@@ -3925,7 +4437,8 @@ static int sys_net_ioctl_impl(int fd, unsigned int request, void* argp) {
         return net_ioctl_route(request, argp);
     }
     if ((request >= SIOCGIFNAME && request <= SIOCGIFHWADDR) ||
-        request == SIOCGIFTXQLEN || request == SIOCSIFTXQLEN) {
+        request == SIOCGIFTXQLEN || request == SIOCSIFTXQLEN ||
+        request == SIOCGIFINDEX) {
         return net_ioctl_ifreq(request, argp);
     }
     return -ENOTTY;
@@ -3940,6 +4453,11 @@ static int sys_writefd_impl(int fd, const char* buf, unsigned int len) {
 
     fd_entry_t* ent = process_fd_get(proc, fd);
     if (!ent) return -EBADF;
+    if (ent->kind == PROCESS_HANDLE_KIND_SOCKET &&
+        ent->socket &&
+        socket_kind(ent->socket) == SOCKET_KIND_NETLINK_ROUTE) {
+        return sys_netlink_send_user(ent, buf, len);
+    }
     return process_fd_write(ent, buf, len);
 }
 

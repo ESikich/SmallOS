@@ -1526,6 +1526,9 @@ void sh_selftest(void) {
     sh_selftest_exec_expect("busybox ifconfig", "usr/bin/busybox ifconfig eth0", 0);
     sh_selftest_exec_expect("busybox route", "usr/bin/busybox route -n", 0);
     sh_selftest_exec_expect("busybox ping", "usr/bin/busybox ping 10.0.2.2", 0);
+    sh_selftest_exec_expect("busybox ip link", "usr/bin/busybox ip link", 0);
+    sh_selftest_exec_expect("busybox ip addr", "usr/bin/busybox ip addr", 0);
+    sh_selftest_exec_expect("busybox ip route", "usr/bin/busybox ip route", 0);
     sh_selftest_exec("busybox fallback grep", "grep MemTotal /proc/meminfo");
     sh_selftest_exec("busybox dev null", "usr/bin/busybox cat /dev/null");
     sh_selftest_exec_expect("busybox dd zero", "usr/bin/busybox dd if=/dev/zero of=/tmp/busybox-zero.bin bs=4 count=1", 0);

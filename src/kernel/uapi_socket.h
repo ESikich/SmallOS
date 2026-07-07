@@ -31,11 +31,15 @@ struct sockaddr_in {
 #define AF_LOCAL     AF_UNIX
 #define AF_INET      2
 #define AF_INET6     10
+#define AF_NETLINK   16
+#define AF_PACKET    17
 #define PF_UNSPEC    AF_UNSPEC
 #define PF_UNIX      AF_UNIX
 #define PF_LOCAL     AF_LOCAL
 #define PF_INET      AF_INET
 #define PF_INET6     AF_INET6
+#define PF_NETLINK   AF_NETLINK
+#define PF_PACKET    AF_PACKET
 #define SOCK_STREAM  1
 #define SOCK_DGRAM   2
 #define SOCK_RAW     3
@@ -49,8 +53,12 @@ struct sockaddr_in {
 #define IPPROTO_TCP  6
 #define IPPROTO_UDP  17
 
+#define NETLINK_ROUTE 0
+
 #define MSG_DONTWAIT 0x40u
+#define MSG_PEEK     0x02u
 #define MSG_NOSIGNAL 0x4000u
+#define MSG_TRUNC    0x20u
 
 #define SOL_SOCKET   1
 #define SO_REUSEADDR 2
