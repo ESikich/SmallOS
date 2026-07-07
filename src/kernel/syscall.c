@@ -539,6 +539,32 @@ static void vbuf_put_hex8(char* out, unsigned int cap, unsigned int* pos, unsign
     }
 }
 
+static void vbuf_put_hex2(char* out, unsigned int cap, unsigned int* pos, unsigned int value) {
+    static const char hexdigits[] = "0123456789abcdef";
+    vbuf_putc(out, cap, pos, hexdigits[(value >> 4) & 0xFu]);
+    vbuf_putc(out, cap, pos, hexdigits[value & 0xFu]);
+}
+
+static void vbuf_put_ipv4(char* out, unsigned int cap, unsigned int* pos, unsigned int ip) {
+    vbuf_put_uint(out, cap, pos, (ip >> 24) & 0xFFu);
+    vbuf_putc(out, cap, pos, '.');
+    vbuf_put_uint(out, cap, pos, (ip >> 16) & 0xFFu);
+    vbuf_putc(out, cap, pos, '.');
+    vbuf_put_uint(out, cap, pos, (ip >> 8) & 0xFFu);
+    vbuf_putc(out, cap, pos, '.');
+    vbuf_put_uint(out, cap, pos, ip & 0xFFu);
+}
+
+static void vbuf_put_mac(char* out,
+                         unsigned int cap,
+                         unsigned int* pos,
+                         const unsigned char* mac) {
+    for (unsigned int i = 0; i < ETH_ALEN; i++) {
+        if (i) vbuf_putc(out, cap, pos, ':');
+        vbuf_put_hex2(out, cap, pos, mac ? mac[i] : 0u);
+    }
+}
+
 static unsigned int proc_route_hex_ip(unsigned int ip) {
     return ((ip & 0x000000FFu) << 24)
          | ((ip & 0x0000FF00u) << 8)
@@ -873,6 +899,30 @@ static unsigned int virtual_build_proc_content(const char* path,
             vbuf_put_proc_route_ip(out, cap, &pos, cfg->netmask);
             vbuf_puts(out, cap, &pos, "\t0\t0\t0\n");
         }
+        return pos;
+    }
+    if (path_eq(path, "proc/net/arp")) {
+        unsigned int sender_ip = 0u;
+        unsigned int target_ip = 0u;
+        unsigned char mac[ETH_ALEN];
+
+        vbuf_puts(out, cap, &pos, "IP address       HW type     Flags       HW address            Mask     Device\n");
+        if (arp_cache_get(&sender_ip, &target_ip, mac) &&
+            sender_ip != 0u && target_ip != 0u) {
+            vbuf_put_ipv4(out, cap, &pos, target_ip);
+            vbuf_puts(out, cap, &pos, "     0x1         0x2         ");
+            vbuf_put_mac(out, cap, &pos, mac);
+            vbuf_puts(out, cap, &pos, "     *        eth0\n");
+        }
+        return pos;
+    }
+    if (path_eq(path, "proc/net/tcp") || path_eq(path, "proc/net/udp") ||
+        path_eq(path, "proc/net/raw")) {
+        vbuf_puts(out, cap, &pos, "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n");
+        return pos;
+    }
+    if (path_eq(path, "proc/net/unix")) {
+        vbuf_puts(out, cap, &pos, "Num       RefCount Protocol Flags    Type St Inode Path\n");
         return pos;
     }
 
@@ -4100,7 +4150,7 @@ static int virtual_dirent_at(const char* path,
         "meminfo", "uptime", "stat", "mounts", "filesystems", "net", "self"
     };
     static const char* const proc_net_entries[] = {
-        "dev", "route"
+        "arp", "dev", "raw", "route", "tcp", "udp", "unix"
     };
     static const char* const pid_entries[] = {
         "stat", "status", "cmdline", "comm"

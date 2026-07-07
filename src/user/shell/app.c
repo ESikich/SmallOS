@@ -1533,6 +1533,13 @@ void sh_selftest(void) {
     sh_selftest_exec_expect("busybox ip neigh",
                             "usr/bin/busybox ip neigh show | usr/bin/busybox grep 10.0.2.2",
                             0);
+    sh_selftest_exec_expect("busybox hostname", "usr/bin/busybox hostname", 0);
+    sh_selftest_exec_expect("busybox dnsdomainname", "usr/bin/busybox dnsdomainname", 0);
+    sh_selftest_exec_expect("busybox ipcalc", "usr/bin/busybox ipcalc -m 10.0.2.15", 0);
+    sh_selftest_exec_expect("busybox netstat route", "usr/bin/busybox netstat -r", 0);
+    sh_selftest_exec_expect("busybox netstat", "usr/bin/busybox netstat", 0);
+    sh_selftest_exec_expect("busybox nslookup localhost", "usr/bin/busybox nslookup localhost", 0);
+    sh_selftest_exec_expect("busybox arp", "usr/bin/busybox arp -n", 0);
     sh_selftest_exec("busybox fallback grep", "grep MemTotal /proc/meminfo");
     sh_selftest_exec("busybox dev null", "usr/bin/busybox cat /dev/null");
     sh_selftest_exec_expect("busybox dd zero", "usr/bin/busybox dd if=/dev/zero of=/tmp/busybox-zero.bin bs=4 count=1", 0);

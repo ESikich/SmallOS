@@ -57,7 +57,9 @@ struct addrinfo {
 extern int h_errno;
 
 struct hostent* gethostbyname(const char* name);
+struct hostent* gethostbyaddr(const void* addr, socklen_t len, int type);
 struct servent* getservbyname(const char* name, const char* proto);
+struct servent* getservbyport(int port, const char* proto);
 const char* hstrerror(int err);
 int getaddrinfo(const char* node, const char* service,
                 const struct addrinfo* hints, struct addrinfo** res);

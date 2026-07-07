@@ -28,13 +28,15 @@ SCOPE
     metadata, truncate, and stat-visible FIFO/character/block/socket nodes are
     implemented for filesystem applets. Kernel-backed pseudo mount management,
     classic eth0/loopback interface and route ioctls, minimal rtnetlink,
-    /proc/net/dev, /proc/net/route, ARP-neighbor reporting, raw IPv4 ICMP
-    sockets, UDP DNS resolver traffic, and IPv4/TCP sockets are implemented
-    for mount, ifconfig, route, ip link, ip addr, ip route, ip neigh, ping,
-    nc, plain HTTP wget, and httpd. BusyBox ash can use jobs, fg, bg, Ctrl+Z,
-    and SIGCONT/SIGTSTP-style stopped jobs. Init/login/getty behavior,
-    authentication semantics, ip rule/tunnel, HTTPS/TLS, and complete /dev
-    device behavior remain outside this compatibility wave.
+    /proc/net/dev, /proc/net/route, /proc/net/arp, ARP-neighbor reporting, raw
+    IPv4 ICMP sockets, UDP DNS resolver traffic, and IPv4/TCP sockets are
+    implemented for mount, ifconfig, route, arp, hostname, dnsdomainname,
+    ipcalc, netstat, nslookup, pscan, whois, ip link, ip addr, ip route,
+    ip neigh, ping, nc, plain HTTP wget, and httpd. BusyBox ash can use jobs, fg, bg,
+    Ctrl+Z, and SIGCONT/SIGTSTP-style stopped jobs. Init/login/getty behavior,
+    authentication semantics, DHCP/FTP/TFTP/telnet service applets,
+    ip rule/tunnel, HTTPS/TLS, and complete /dev device behavior remain outside
+    this compatibility wave.
 
 FILES
     /usr/bin/busybox

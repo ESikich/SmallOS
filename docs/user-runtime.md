@@ -323,7 +323,9 @@ returns the normal `EAI_FAMILY` path. The network `ioctl` wrapper routes
 classic Linux-shaped `SIOC*` interface and route requests to kernel `eth0` and
 loopback state for BusyBox `ifconfig` and `route`. Minimal `AF_NETLINK` route
 sockets serve link, address, route, and ARP-neighbor state to BusyBox
-`ip link`, `ip addr`, `ip route`, and `ip neigh`.
+`ip link`, `ip addr`, `ip route`, and `ip neigh`. `/proc/net/arp` exposes the
+resolved ARP cache to BusyBox `arp`, and libc resolver/service shims cover
+BusyBox `hostname`, `ipcalc`, `netstat -r`, `nslookup`, `pscan`, and `whois`.
 
 The runtime is also where SmallOS grows its hosted C surface. Older ports such
 as Fractint are useful completeness tests: when they need a normal libc, libm,
@@ -522,12 +524,15 @@ the shell runs `/usr/bin/busybox <command> ...`.
 The current compatibility wave enables BusyBox `ash` job control, BusyBox
 `mount`/`umount` for `proc`/`devtmpfs` pseudo mounts, classic networking tools
 (`ifconfig`, `route`, and IPv4 `ping`), BusyBox `ip link`/`ip addr`/`ip route`/
-`ip neigh`, and the first TCP applets (`nc`, plain HTTP `wget`, and `httpd`).
-Those applets are backed by kernel stopped-job/process-group semantics, kernel
-network ioctls, minimal rtnetlink, state-backed `/proc/net/dev` and
-`/proc/net/route`, ARP-neighbor reporting, raw ICMP sockets, UDP DNS traffic,
-and the existing SmallOS IPv4/TCP path. Arbitrary filesystem mounting, init,
-login/getty, authentication semantics, BusyBox `ip` rule/tunnel modes,
+`ip neigh`, ARP/hostname/calculation/inspection tools (`arp`, `hostname`,
+`dnsdomainname`, `ipcalc`, `netstat -r`, `nslookup`, `pscan`, and `whois`), and
+the first TCP applets (`nc`, plain HTTP `wget`, and `httpd`). Those applets are
+backed by kernel stopped-job/process-group semantics, kernel network ioctls,
+minimal rtnetlink, state-backed `/proc/net/dev`, `/proc/net/route`, and
+`/proc/net/arp`, ARP-neighbor reporting, raw ICMP sockets, UDP DNS traffic, and
+the existing SmallOS IPv4/TCP path. Arbitrary filesystem mounting, init,
+login/getty, authentication semantics, BusyBox DHCP daemons/clients, FTP/TFTP
+applets, telnet/telnetd, inetd/tcpsvd/udpsvd, `ip` rule/tunnel modes,
 multi-interface and IPv6 behavior, HTTPS/TLS, and complete Linux device
 behavior remain disabled or stubbed. New BusyBox applets should grow the shared
 runtime, headers, and virtual filesystem behavior when they reveal a portable

@@ -33,6 +33,7 @@
 #include "regex.h"
 #include "arpa/inet.h"
 #include "fcntl.h"
+#include "resolv.h"
 #include "unistd.h"
 #include "errno.h"
 #include "signal.h"
@@ -44,6 +45,7 @@
 
 int errno = 0;
 int h_errno = 0;
+struct __res_state _res;
 char* __smallos_empty_env[] = { 0 };
 char** environ = __smallos_empty_env;
 static int s_environ_owned = 0;
@@ -54,6 +56,21 @@ int opterr = 1;
 int optopt = 0;
 
 static void set_errno(int value);
+
+int res_init(void) {
+    sys_netinfo_t info;
+    unsigned int dns = 0u;
+
+    memset(&_res, 0, sizeof(_res));
+    if (sys_netinfo(&info) >= 0 && info.ipv4_configured && info.dns != 0u) {
+        dns = info.dns;
+    }
+    _res.nscount = 1;
+    _res.nsaddr_list[0].sin_family = AF_INET;
+    _res.nsaddr_list[0].sin_port = htons(53);
+    _res.nsaddr_list[0].sin_addr.s_addr = htonl(dns);
+    return 0;
+}
 
 void __smallos_set_environ(char** envp) {
     environ = envp ? envp : __smallos_empty_env;
@@ -1895,6 +1912,8 @@ int getrusage(int who, struct rusage* usage) {
     return errno_from_raw(sys_getrusage(who, (sys_rusage_t*)usage));
 }
 
+static char s_hostname[65] = "smallos";
+
 static void uts_copy(char* dst, const char* src) {
     size_t i = 0;
     while (src[i] && i < 64u) {
@@ -1910,11 +1929,45 @@ int uname(struct utsname* name) {
         return -1;
     }
     uts_copy(name->sysname, "SmallOS");
-    uts_copy(name->nodename, "smallos");
+    uts_copy(name->nodename, s_hostname);
     uts_copy(name->release, "0.1");
     uts_copy(name->version, "SmallOS syscall ABI v1");
     uts_copy(name->machine, "i386");
     uts_copy(name->domainname, "local");
+    return 0;
+}
+
+int gethostname(char* name, size_t len) {
+    size_t host_len;
+
+    if (!name) {
+        set_errno(EFAULT);
+        return -1;
+    }
+    if (len == 0u) {
+        set_errno(EINVAL);
+        return -1;
+    }
+    host_len = strlen(s_hostname);
+    if (host_len + 1u > len) {
+        set_errno(ENAMETOOLONG);
+        return -1;
+    }
+    memcpy(name, s_hostname, host_len + 1u);
+    return 0;
+}
+
+int sethostname(const char* name, size_t len) {
+    if (!name) {
+        set_errno(EFAULT);
+        return -1;
+    }
+    if (len > 64u) {
+        set_errno(ENAMETOOLONG);
+        return -1;
+    }
+    memcpy(s_hostname, name, len);
+    s_hostname[len] = '\0';
     return 0;
 }
 
@@ -1950,9 +2003,96 @@ struct hostent* gethostbyname(const char* name) {
     return &host;
 }
 
+struct hostent* gethostbyaddr(const void* addr, socklen_t len, int type) {
+    static struct hostent host;
+    static char namebuf[32];
+    static char* aliases[] = { 0 };
+    static char* addr_list[2];
+    static unsigned int addr_storage;
+    struct in_addr in;
+
+    if (!addr || type != AF_INET || len != sizeof(unsigned int)) {
+        h_errno = HOST_NOT_FOUND;
+        set_errno(EINVAL);
+        return 0;
+    }
+
+    memcpy(&addr_storage, addr, sizeof(addr_storage));
+    if (addr_storage == htonl(INADDR_LOOPBACK)) {
+        strcpy(namebuf, "localhost");
+    } else {
+        in.s_addr = addr_storage;
+        strncpy(namebuf, inet_ntoa(in), sizeof(namebuf) - 1u);
+        namebuf[sizeof(namebuf) - 1u] = '\0';
+    }
+
+    addr_list[0] = (char*)&addr_storage;
+    addr_list[1] = 0;
+    host.h_name = namebuf;
+    host.h_aliases = aliases;
+    host.h_addrtype = AF_INET;
+    host.h_length = sizeof(addr_storage);
+    host.h_addr_list = addr_list;
+    h_errno = 0;
+    return &host;
+}
+
+typedef struct builtin_service {
+    unsigned short port;
+    const char* proto;
+    const char* name;
+} builtin_service_t;
+
+static const builtin_service_t s_builtin_services[] = {
+    { 20, "tcp", "ftp-data" },
+    { 21, "tcp", "ftp" },
+    { 22, "tcp", "ssh" },
+    { 23, "tcp", "telnet" },
+    { 43, "tcp", "whois" },
+    { 53, "tcp", "domain" },
+    { 53, "udp", "domain" },
+    { 67, "udp", "bootps" },
+    { 68, "udp", "bootpc" },
+    { 69, "udp", "tftp" },
+    { 80, "tcp", "http" },
+    { 123, "udp", "ntp" },
+    { 443, "tcp", "https" },
+    { 18081, "tcp", "smallos-http" },
+};
+
+static struct servent* serv_from_builtin(const builtin_service_t* entry, int port) {
+    static struct servent service;
+    static char* aliases[] = { 0 };
+
+    service.s_name = (char*)entry->name;
+    service.s_aliases = aliases;
+    service.s_port = port;
+    service.s_proto = (char*)entry->proto;
+    return &service;
+}
+
 struct servent* getservbyname(const char* name, const char* proto) {
-    (void)name;
-    (void)proto;
+    if (!name) {
+        set_errno(ENOENT);
+        return 0;
+    }
+    for (size_t i = 0; i < sizeof(s_builtin_services) / sizeof(s_builtin_services[0]); i++) {
+        if (strcmp(s_builtin_services[i].name, name) != 0) continue;
+        if (proto && strcmp(proto, s_builtin_services[i].proto) != 0) continue;
+        return serv_from_builtin(&s_builtin_services[i], htons(s_builtin_services[i].port));
+    }
+    set_errno(ENOENT);
+    return 0;
+}
+
+struct servent* getservbyport(int port, const char* proto) {
+    unsigned short host_port = ntohs((unsigned short)port);
+
+    for (size_t i = 0; i < sizeof(s_builtin_services) / sizeof(s_builtin_services[0]); i++) {
+        if (s_builtin_services[i].port != host_port) continue;
+        if (proto && strcmp(proto, s_builtin_services[i].proto) != 0) continue;
+        return serv_from_builtin(&s_builtin_services[i], port);
+    }
     set_errno(ENOENT);
     return 0;
 }
@@ -1998,10 +2138,19 @@ const char* hstrerror(int err) {
 
 static int resolve_builtin_ipv4(const char* name, unsigned int* out_addr) {
     unsigned int addr;
+    sys_netinfo_t info;
 
     if (!name || !out_addr) return 0;
     if (strcmp(name, "localhost") == 0) {
         *out_addr = htonl(INADDR_LOOPBACK);
+        return 1;
+    }
+    if (strcmp(name, s_hostname) == 0) {
+        if (sys_netinfo(&info) >= 0 && info.ipv4_configured && info.ip != 0u) {
+            *out_addr = htonl(info.ip);
+        } else {
+            *out_addr = htonl(INADDR_LOOPBACK);
+        }
         return 1;
     }
     addr = inet_addr(name);

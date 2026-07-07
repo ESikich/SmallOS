@@ -844,8 +844,9 @@ job control, standalone
 applets are enabled, and common text, archive, process, filesystem, and
 diagnostic commands are available, including gzip/gunzip, checksum helpers,
 hard/symbolic link tools, `readlink`, `mkfifo`, `mknod`, `ifconfig`, `route`,
+`arp`, `hostname`, `dnsdomainname`, `ipcalc`, `netstat`, `nslookup`, `pscan`,
 `ip link`/`ip addr`/`ip route`/`ip neigh`, IPv4 `ping`, `nc`, plain HTTP
-`wget`, and `httpd`.
+`wget`, `whois`, and `httpd`.
 Native SmallOS commands remain preferred in shell lookup; BusyBox is the
 fallback for missing applets.
 

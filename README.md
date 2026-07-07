@@ -41,9 +41,11 @@ BusyBox-backed Unix compatibility layer inside the guest.
   inspection and configuration,
   Linux-shaped `eth0`/`lo` interface/route ioctls for BusyBox `ifconfig` and
   `route`, minimal rtnetlink for BusyBox `ip link`/`ip addr`/`ip route`/
-  `ip neigh`, raw ICMP sockets for BusyBox `ping`, BusyBox `nc`/plain HTTP `wget`/`httpd`, a
-  compact TCP service task, passive sockets, `poll`/`epoll` readiness, FTP,
-  echo, and HTTP server smoke paths.
+  `ip neigh`, `/proc/net/arp` for BusyBox `arp`, resolver/service helpers for
+  BusyBox `hostname`/`ipcalc`/`netstat`/`nslookup`/`pscan`, raw ICMP sockets
+  for BusyBox `ping`, BusyBox `nc`/plain HTTP `wget`/`whois`/`httpd`, a compact
+  TCP service task, passive sockets, `poll`/`epoll` readiness, FTP, echo, WHOIS,
+  and HTTP server smoke paths.
 - Guest userland includes familiar commands such as `ls`, `tree`, `cat`,
   `more`, `man`, `pwd`, `touch`, `mkdir`, `rm`, `cp`, `mv`, `edit`, `date`, `ip`,
   `ipconfig`, `uptime`, `halt`, and `reboot`, plus diagnostics such as
@@ -52,8 +54,9 @@ BusyBox-backed Unix compatibility layer inside the guest.
 - BusyBox is staged as `usr/bin/busybox`; native `/bin` tools remain first in
   shell command lookup, while BusyBox fills gaps such as `grep`, `sed`, `awk`,
   `df`, `du`, `free`, `ps`, `tar`, `gzip`, `gunzip`, checksum tools, and
-  `hexdump`, network applets such as `ifconfig`, `route`, `ip`, `ping`, `nc`,
-  plain HTTP `wget`, and `httpd`, plus link/node utilities such as `ln`,
+  `hexdump`, network applets such as `ifconfig`, `route`, `arp`, `ip`,
+  `hostname`, `ipcalc`, `netstat`, `nslookup`, `pscan`, `ping`, `nc`, plain
+  HTTP `wget`, `whois`, and `httpd`, plus link/node utilities such as `ln`,
   `link`, `readlink`, `mkfifo`, and
   `mknod`. `/bin/sh` launches BusyBox `ash` with basic POSIX job-control
   support for script-style compatibility without replacing `/bin/shell`.
@@ -244,10 +247,11 @@ ip dhcp
 ipconfig /all
 ```
 
-BusyBox `ifconfig`, `route`, `ip link`, `ip addr`, `ip route`, `ip neigh`, and
-IPv4 `ping` use the same `eth0`, loopback, route, and ARP-neighbor state
-through Linux-shaped network ioctls, minimal rtnetlink, and `/proc/net`.
-Libc resolver calls support numeric IPv4,
+BusyBox `ifconfig`, `route`, `arp`, `ip link`, `ip addr`, `ip route`,
+`ip neigh`, `hostname`, `ipcalc`, `netstat -r`, `nslookup`, `pscan`, `whois`,
+and IPv4 `ping` use the same `eth0`, loopback, route, DNS, and ARP-neighbor
+state through Linux-shaped network ioctls, minimal rtnetlink, `/proc/net`, and
+libc resolver/service helpers. Libc resolver calls support numeric IPv4,
 `localhost`, optional `/etc/hosts`, and DNS A-record lookups via the configured
 DNS server.
 

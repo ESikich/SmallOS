@@ -1272,8 +1272,10 @@ applets. The kernel exposes one primary interface, `eth0`, backed by
 `SIOCGIFFLAGS`, `SIOCGIFADDR`, `SIOCGIFNETMASK`, `SIOCGIFBRDADDR`,
 `SIOCGIFHWADDR`, `SIOCGIFMTU`, selected no-op setters, `SIOCSIFADDR`,
 `SIOCSIFNETMASK`, `SIOCADDRT`, and `SIOCDELRT`. Route ioctls currently manage
-the runtime default IPv4 gateway. `/proc/net/dev` and `/proc/net/route` are
-rendered from the same state.
+the runtime default IPv4 gateway. `/proc/net/dev`, `/proc/net/route`, and
+`/proc/net/arp` are rendered from the same state; header-only
+`/proc/net/tcp`, `/proc/net/udp`, `/proc/net/raw`, and `/proc/net/unix` files
+let BusyBox `netstat` run cleanly even before fuller socket table enumeration.
 
 IPv6 and multi-interface behavior remain out of scope for this syscall slice.
 Minimal rtnetlink is available through `AF_NETLINK` route sockets for BusyBox

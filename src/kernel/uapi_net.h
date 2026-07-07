@@ -94,6 +94,9 @@
 #define SIOCSIFNAME     0x8923u
 #define SIOCGIFHWADDR   0x8927u
 #define SIOCSIFHWADDR   0x8924u
+#define SIOCDARP        0x8953u
+#define SIOCGARP        0x8954u
+#define SIOCSARP        0x8955u
 #define SIOCGIFTXQLEN   0x8942u
 #define SIOCSIFTXQLEN   0x8943u
 #define SIOCGIFINDEX    0x8933u
@@ -110,6 +113,12 @@
 #define RTF_WINDOW  0x0080u
 #define RTF_IRTT    0x0100u
 #define RTF_REJECT  0x0200u
+
+#define ATF_COM         0x02u
+#define ATF_PERM        0x04u
+#define ATF_PUBL        0x08u
+#define ATF_USETRAILERS 0x10u
+#define ATF_NETMASK     0x20u
 
 struct ifmap {
     unsigned long mem_start;
@@ -182,5 +191,13 @@ struct rtentry {
 };
 
 #define rt_mss rt_mtu
+
+struct arpreq {
+    struct sockaddr arp_pa;
+    struct sockaddr arp_ha;
+    int arp_flags;
+    struct sockaddr arp_netmask;
+    char arp_dev[IFNAMSIZ];
+};
 
 #endif /* UAPI_NET_H */

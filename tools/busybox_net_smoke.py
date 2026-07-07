@@ -12,6 +12,7 @@ import time
 
 WGET_BODY = b"busybox-net-ok\n"
 NC_BODY = b"smallos-nc-ok\n"
+WHOIS_BODY = b"Domain Name: smallos.test\r\nsmallos-whois-ok\r\n"
 
 
 def wait_for_path(path, timeout_s):
@@ -230,6 +231,42 @@ def start_echo_server(port):
     return done, state
 
 
+def start_whois_server(port):
+    ready = threading.Event()
+    done = threading.Event()
+    state = {"error": None}
+
+    def worker():
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
+                srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                srv.bind(("127.0.0.1", port))
+                srv.listen(1)
+                ready.set()
+                conn, _ = srv.accept()
+                with conn:
+                    conn.settimeout(5.0)
+                    data = b""
+                    while b"\n" not in data:
+                        chunk = conn.recv(128)
+                        if not chunk:
+                            break
+                        data += chunk
+                    if b"smallos.test" not in data:
+                        raise RuntimeError(f"whois query mismatch: {data!r}")
+                    conn.sendall(WHOIS_BODY)
+        except Exception as exc:
+            state["error"] = exc
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    if not ready.wait(5.0):
+        raise RuntimeError("timed out starting whois server")
+    return done, state
+
+
 def fetch_guest_http(port, timeout_s):
     with connect_tcp("127.0.0.1", port, timeout_s) as sock:
         sock.sendall(
@@ -263,6 +300,7 @@ def main():
     parser.add_argument("--guest-http-port", type=int, default=18081)
     parser.add_argument("--host-http-port", type=int, default=18080)
     parser.add_argument("--host-echo-port", type=int, default=18082)
+    parser.add_argument("--host-whois-port", type=int, default=18083)
     parser.add_argument("--timeout", type=float, default=120.0)
     args = parser.parse_args()
 
@@ -300,6 +338,67 @@ def main():
                 args.timeout,
                 "busybox-net-ok",
             )
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                f"usr/bin/busybox pscan -p {args.host_http_port} -P {args.host_http_port} 10.0.2.2 | usr/bin/busybox grep open",
+                args.timeout,
+                "\ttcp\topen\t",
+            )
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                "usr/bin/busybox hostname",
+                args.timeout,
+                "smallos",
+            )
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                "usr/bin/busybox ipcalc -m 10.0.2.15 | usr/bin/busybox grep NETMASK",
+                args.timeout,
+                "NETMASK=",
+            )
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                "usr/bin/busybox netstat -r | usr/bin/busybox grep eth0",
+                args.timeout,
+                "10.0.2.2",
+            )
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                "usr/bin/busybox netstat | usr/bin/busybox grep Active",
+                args.timeout,
+                "Internet connections",
+            )
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                "usr/bin/busybox nslookup localhost | usr/bin/busybox grep Address",
+                args.timeout,
+                "127.0.0.1",
+            )
+            whois_done, whois_state = start_whois_server(args.host_whois_port)
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                f"usr/bin/busybox whois -h 10.0.2.2 -p {args.host_whois_port} smallos.test | usr/bin/busybox grep whois-ok",
+                args.timeout,
+                "smallos-whois-ok",
+            )
+            if not whois_done.wait(5.0):
+                raise RuntimeError("timed out waiting for host whois server")
+            if whois_state["error"] is not None:
+                raise whois_state["error"]
 
             echo_done, echo_state = start_echo_server(args.host_echo_port)
             offset, _ = run_guest_command(
@@ -308,7 +407,6 @@ def main():
                 offset,
                 f"echo smallos-nc-ok | usr/bin/busybox nc 10.0.2.2 {args.host_echo_port} | usr/bin/busybox grep smallos-nc-ok",
                 args.timeout,
-                "smallos-nc-ok",
             )
             if not echo_done.wait(5.0):
                 raise RuntimeError("timed out waiting for host echo server")
@@ -329,7 +427,15 @@ def main():
                 offset,
                 "usr/bin/busybox ip neigh show | usr/bin/busybox grep 10.0.2.2",
                 args.timeout,
-                "10.0.2.2",
+                "52:55:0a:00:02:02",
+            )
+            offset, _ = run_guest_command(
+                monitor,
+                log,
+                offset,
+                "usr/bin/busybox arp -n | usr/bin/busybox grep 52:55",
+                args.timeout,
+                "on eth0",
             )
             print("busybox network smoke PASS")
             exit_status = 0

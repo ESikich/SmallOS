@@ -85,6 +85,8 @@ unsigned int sleep(unsigned int seconds);
 unsigned int alarm(unsigned int seconds);
 void sync(void);
 int isatty(int fd);
+int gethostname(char* name, size_t len);
+int sethostname(const char* name, size_t len);
 int getopt(int argc, char* const argv[], const char* optstring);
 long sysconf(int name);
 __attribute__((noreturn)) void _exit(int status);

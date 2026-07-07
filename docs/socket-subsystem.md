@@ -47,15 +47,16 @@ POSIX edge-semantics work.
   listener and connection counts, RX/TX ring usage, allocated ring capacity,
   and global RX/TX caps. `ip` and `ipconfig` also expose the runtime IPv4
   address, route, DNS, DHCP server, and lease state used by outbound sockets.
-- BusyBox `ifconfig`, `route`, `ip link`, `ip addr`, `ip route`, `ip neigh`,
-  and IPv4 `ping` are enabled through Linux-shaped `eth0`/loopback
-  interface/route ioctls, minimal rtnetlink, state-backed `/proc/net/dev` and
-  `/proc/net/route`, ARP-neighbor reporting, and raw ICMP `sendto`/`recvfrom`
-  descriptors. UDP
+- BusyBox `ifconfig`, `route`, `arp`, `hostname`, `ipcalc`, `netstat -r`,
+  `nslookup`, `pscan`, `whois`, `ip link`, `ip addr`, `ip route`, `ip neigh`,
+  and IPv4 `ping` are enabled through Linux-shaped `eth0`/loopback interface/route
+  ioctls, minimal rtnetlink, state-backed `/proc/net/dev`, `/proc/net/route`,
+  `/proc/net/arp`, resolver/service helpers, ARP-neighbor reporting, and raw
+  ICMP `sendto`/`recvfrom` descriptors. UDP
   send/receive is available for DNS-sized IPv4 datagrams, and libc resolver
   lookups can issue DNS A-record queries using the configured DNS server.
-  Basic BusyBox TCP applets are enabled too: `nc`, plain HTTP `wget`, and
-  `httpd` run over the existing IPv4/TCP socket path.
+  Basic BusyBox TCP applets are enabled too: `nc`, plain HTTP `wget`, `whois`,
+  and `httpd` run over the existing IPv4/TCP socket path.
 - The boot-started cserve instance uses `max_conn = 28`; the default cserve
   smoke gate holds 24 keep-alive clients and adds one slow-reader connection.
 
@@ -173,8 +174,8 @@ Coverage highlights:
 - `make cserve-smoke` uses the boot-started cserve instance, fetches the large
   static fixture, checks a 404, holds keep-alive clients, exercises a slow
   reader, and captures `netinfo`.
-- `make busybox-net-smoke` checks BusyBox `httpd`, plain HTTP `wget`, and `nc`
-  through host/guest TCP paths.
+- `make busybox-net-smoke` checks BusyBox `httpd`, plain HTTP `wget`, `pscan`,
+  `whois`, `nc`, and ARP/neighbor reporting through host/guest TCP paths.
 - `make verify-network` runs the socket EOF, socket parallel, FTP, FTP loop,
   cserve, and BusyBox network smoke targets in sequence.
 
@@ -186,8 +187,9 @@ Later networking work can build on it in these areas:
 - DHCP-backed outbound `connect()` coverage in QEMU user networking, plus
   TAP-mode coverage for bridged or routed host setups.
 - Broader UDP behavior beyond the first DNS-sized datagram queue.
-- Broader BusyBox TCP coverage beyond the current `nc`, plain HTTP `wget`, and
-  `httpd` host smoke.
+- Broader BusyBox client/server coverage beyond the current `nc`, plain HTTP
+  `wget`, `whois`, `pscan`, and `httpd` host smoke, including FTP/TFTP,
+  telnet, inetd, and tcp/udp service applets.
 - Broader rtnetlink coverage for BusyBox `ip rule`, tunnel modes,
   multi-interface systems, and IPv6 once those kernel features exist.
 - Production TCP polish, including broader congestion, window, and recovery
