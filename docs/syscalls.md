@@ -1830,8 +1830,9 @@ int sys_setgid(uint32_t gid);
 
 Changes the caller's real and effective uid or gid. Root can switch to any id.
 Non-root callers may only set the id to their current real or effective id.
-SmallOS does not yet model saved ids, setuid/setgid inode bits, password
-authentication state, or full supplementary-group transitions.
+SmallOS does not yet model saved ids, setuid/setgid inode bits, or full
+supplementary-group transitions; password verification is handled in userland
+by native `/bin/login` and `/bin/passwd` against `/etc/shadow`.
 
 ---
 

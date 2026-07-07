@@ -70,8 +70,8 @@ BusyBox is downloaded into `.state/downloads/`, patched from
 `tools/configure_busybox_smalos.sh`, and built in a profile-local object tree.
 The installed binary is `usr/bin/busybox`. The image also includes `/bin/sh`,
 a tiny launcher that execs `busybox sh`, so BusyBox `ash` can serve script-like
-workloads and basic job control while the native `/bin/shell` remains the boot
-shell.
+workloads and basic job control while native `/bin/login` owns the boot prompt
+and starts `/bin/shell` after shadow-backed `root` authentication.
 
 Wolfenstein 3-D data files are not tracked. `make wolf3d-shareware-data`
 downloads the public Wolfenstein 3-D Shareware v1.4 zip from Wolf3D.net into
@@ -1025,6 +1025,8 @@ Shipped ext2 programs:
   `src/user/crt/crt0.c`
 - `usr/bin/busybox` - BusyBox multi-call binary used as the broad Unix applet
   layer
+- `bin/login` - native SmallOS login prompt used by normal boot
+- `bin/passwd` - native SmallOS password setter for `/etc/shadow`
 - `bin/sh` - launcher that execs `/usr/bin/busybox sh`
 - `/usr/include` - public libc/POSIX/SmallOS headers and kernel UAPI headers
 - `/usr/lib` - `crt0.o`, `libc.a`, `libm.a`, and `libposix.a` for guest builds
@@ -1032,8 +1034,9 @@ Shipped ext2 programs:
 - `/lib/libc.so` - combined shared libc/POSIX/libm runtime for dynamic executables
 - `/lib/libdynfini.so` - focused DSO lifecycle probe library
 - `/usr/lib/libdlplug*.so`, `/usr/lib/libdldiamond*.so`, and `/usr/lib/smallos/plugins/*.so` - internal runtime-loading probe libraries
-- `/etc/passwd` and `/etc/group` - root entries for file-backed user/group
-  lookup
+- `/etc/passwd`, `/etc/shadow`, and `/etc/group` - root entries for
+  file-backed user/group lookup and shadow-backed login; the sample root shadow
+  password starts empty and can be changed with `passwd`
 - `usr/share/examples/tinycc/tccmath.c`, `usr/share/examples/tinycc/tccagg.c`, `usr/share/examples/tinycc/tcctree.c`, `usr/share/examples/tinycc/tccmini.c`, `usr/share/examples/tinycc/tccsysroot.c`, `usr/share/examples/tinycc/tccposix.c` - guest compiler test inputs used by the shell selftests
 
 ## Properties

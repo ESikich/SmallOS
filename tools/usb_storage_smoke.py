@@ -13,7 +13,8 @@ DEFAULT_MARKERS = (
     "dev=usb0",
     "boot: PASS ext2: volume mounted from USB",
     "SmallOS ready",
-    "Launching user shell",
+    "Launching login",
+    "SmallOS login:",
     "SmallOS user shell",
     "/> ",
 )
@@ -43,6 +44,21 @@ def connect_monitor(path, timeout_s):
 
 def monitor_send(sock, cmd):
     sock.sendall((cmd + "\n").encode("ascii"))
+
+
+def send_key(sock, key):
+    monitor_send(sock, f"sendkey {key}")
+
+
+def send_text(sock, text):
+    for ch in text:
+        if ch == " ":
+            send_key(sock, "spc")
+        elif "a" <= ch <= "z" or "0" <= ch <= "9":
+            send_key(sock, ch)
+        else:
+            raise RuntimeError(f"unsupported key for send_text: {ch!r}")
+        time.sleep(0.05)
 
 
 def shutdown_qemu(sock, pidfile):
@@ -107,6 +123,7 @@ def main():
     marker_pos = 0
     transcript = ""
     offset = 0
+    sent_login = False
 
     with open(args.serial, "r", encoding="utf-8", errors="replace") as log:
         while time.time() < deadline:
@@ -117,6 +134,10 @@ def main():
                 sys.stdout.write(chunk)
                 sys.stdout.flush()
                 transcript += chunk
+                if "SmallOS login:" in transcript and not sent_login:
+                    send_text(sock, "root")
+                    send_key(sock, "ret")
+                    sent_login = True
 
                 while marker_index < len(markers):
                     found_at = transcript.find(markers[marker_index], marker_pos)

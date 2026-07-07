@@ -5,8 +5,10 @@ NAME
 
 DESCRIPTION
     SmallOS boots a protected-mode kernel, mounts an ext2 filesystem, and
-    launches the user shell. User programs are installed under /bin, /usr/bin,
-    /usr/sbin, or /usr/libexec/tests.
+    launches native /bin/login. The sample image stores root in /etc/passwd and
+    /etc/shadow with an initially empty shadow password; passwd(1) can set a
+    SmallOS hash. User programs are installed under /bin, /usr/bin, /usr/sbin,
+    or /usr/libexec/tests.
 
     Commands can usually be run by basename from the shell. The shell searches
     common program directories.
@@ -15,7 +17,7 @@ FILESYSTEM
     The root filesystem is ext2. Common paths include:
 
     /bin
-        Core user commands.
+        Core user commands, including login and the native shell.
 
     /usr/bin
         Demo and development commands.

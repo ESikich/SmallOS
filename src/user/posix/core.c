@@ -2513,7 +2513,7 @@ static struct passwd s_root_passwd = {
     0,
     "root",
     "/",
-    "/bin/sh"
+    "/bin/shell"
 };
 
 static struct group s_root_group = {

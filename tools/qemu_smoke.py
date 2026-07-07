@@ -117,11 +117,16 @@ def main():
     buf = ""
 
     with open(args.serial, "r", encoding="utf-8", errors="replace") as log:
+        sent_login = False
         while time.time() < deadline:
             chunk, log_offset = read_new(log, log_offset)
             if chunk:
                 tee_stdout(chunk)
                 buf += chunk
+                if "SmallOS login:" in buf and not sent_login:
+                    send_text(sock, "root")
+                    send_key(sock, "ret")
+                    sent_login = True
                 if "> " in buf:
                     break
                 if len(buf) > 8192:
@@ -138,6 +143,7 @@ def main():
 
         saw_marker = False
         saw_reboot_banner = False
+        sent_reboot_login = False
         marker = "Rebooting..." if args.command == "reboot" else "System halted."
         post_marker = ""
 
@@ -155,6 +161,10 @@ def main():
                 elif args.command == "reboot" and saw_marker:
                     post_marker += chunk
                 if args.command == "reboot" and saw_marker:
+                    if "SmallOS login:" in post_marker and not sent_reboot_login:
+                        send_text(sock, "root")
+                        send_key(sock, "ret")
+                        sent_reboot_login = True
                     if "SmallOS" in post_marker and "> " in post_marker:
                         saw_reboot_banner = True
                         break

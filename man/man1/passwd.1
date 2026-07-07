@@ -1,0 +1,35 @@
+PASSWD(1)
+
+NAME
+    passwd - set or clear a SmallOS shadow password
+
+SYNOPSIS
+    passwd [user]
+    passwd -d user
+
+DESCRIPTION
+    passwd is the native SmallOS password utility. With no user argument it
+    updates the current user's /etc/shadow entry. Root may name another user.
+
+    Password entry disables terminal echo. Empty new passwords and mismatched
+    confirmation entries are rejected.
+
+    Passwords are stored in /etc/shadow with the SmallOS-only hash format:
+
+        $smallos-sha256$<salt>$<hex-digest>
+
+    Salt generation uses available time, pid, uid, and rand() state. This is
+    sufficient for the current SmallOS milestone, but it is not production-grade
+    entropy and is not compatible with Linux crypt hash formats.
+
+    Root can clear a password for development recovery:
+
+        passwd -d root
+
+FILES
+    /bin/passwd
+    /etc/passwd
+    /etc/shadow
+
+SEE ALSO
+    login(1), shell(1), smallos(7)

@@ -9,7 +9,7 @@ SYNOPSIS
 
 DESCRIPTION
     shell starts the interactive SmallOS command shell. It is normally launched
-    at boot after the kernel mounts ext2.
+    by /bin/login after the kernel mounts ext2 and the user logs in.
 
     The shell resolves external commands from /bin, /usr/bin, and /usr/sbin.
     Native SmallOS commands remain preferred. If a bare command is not found,
@@ -68,4 +68,4 @@ PIPES
         command1 | command2 | command3
 
 SEE ALSO
-    busybox(1), sh(1), cd(1), jobs(1), fg(1), bg(1)
+    login(1), busybox(1), sh(1), cd(1), jobs(1), fg(1), bg(1)

@@ -128,7 +128,7 @@ Inside `kernel_main()`:
 13. `tcp_init()` — create and enqueue the TCP/network service kernel task
 14. `process_create_kernel_task("bootnet", ...)` — if a NIC is present, request DHCP IPv4 configuration from the attached network and then run best-effort NTP through the DHCP gateway. The runtime network config is shared by ARP, TCP, NTP, `netinfo`, and the `/bin/ip` and `/bin/ipconfig` configuration tools. Static IPv4 settings use the same `SYS_NET_OP` path and remain runtime-only.
 15. `process_create_kernel_task("bootsvc", ...)` — wait until ext2 is mounted and the splash has been presented, then queue the default FTP and cserve user services. Service status is appended to `/var/log/boot.txt` without drawing over the splash.
-16. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` mounts writable ATA, read-only USB mass storage, or loader2 RAM fallback, saves the accumulated boot log to `/var/log/boot.txt` when the filesystem is writable, loads `/bin/shell` suspended, and runs `/bin/bootsplash boot/splash.bmp`. While that splash remains visible, `bootseq` probes OHCI boot keyboard/mouse HID, starts the retrying USB HID service, captures input diagnostics, and refreshes the boot log. It then clears the splash, prints the welcome/time/network/memory summary plus `SmallOS ready`, and releases the shell. If that fails or exits, it reports that no kernel shell fallback is linked and idles.
+16. `process_create_kernel_task("bootseq", ...)` - create the post-diagnostics boot sequence task. `bootseq` mounts writable ATA, read-only USB mass storage, or loader2 RAM fallback, saves the accumulated boot log to `/var/log/boot.txt` when the filesystem is writable, loads `/bin/login` suspended, and runs `/bin/bootsplash boot/splash.bmp`. While that splash remains visible, `bootseq` probes OHCI boot keyboard/mouse HID, starts the retrying USB HID service, captures input diagnostics, and refreshes the boot log. It then clears the splash, prints the welcome/time/network/memory summary plus `SmallOS ready`, and releases login. The native login prompt uses `/etc/passwd` and `/etc/shadow`, starts `/bin/shell` for the sample empty-shadow `root` account, and is relaunched after logout; if login cannot load, `bootseq` falls back to `/bin/shell` when available.
 17. `sched_enqueue(boot_proc)` — make the boot sequence task runnable
 18. `process_start_reaper()` — create and enqueue the zombie reaper kernel task
 19. `sched_start(boot_proc)` - switch from the boot stack into the boot sequence task with interrupts still masked
@@ -577,11 +577,11 @@ values for arrows, Home/End, Insert/Delete, PageUp/PageDown, F1-F4, and common
 control keys. Fractint and `mandel` use this shared path instead of carrying
 program-local ANSI escape parsers.
 
-The boot sequence launches `/bin/shell` as the interactive shell. The old
-kernel shell is no longer linked into the kernel image. `/bin/sh` is a tiny
-launcher for BusyBox `ash` with basic job control, and `/usr/bin/busybox` fills
-missing Unix applets after native `/bin`, `/usr/bin`, and `/usr/sbin` command
-lookup.
+The boot sequence launches native `/bin/login` as the interactive gate. The old
+kernel shell is no longer linked into the kernel image. A successful shadow-
+backed root login starts `/bin/shell`; `/bin/sh` is a tiny launcher for BusyBox
+`ash` with basic job control, and `/usr/bin/busybox` fills missing Unix applets
+after native `/bin`, `/usr/bin`, and `/usr/sbin` command lookup.
 
 Mouse input is intentionally lower-level today. `mouse.c` initializes the PS/2
 auxiliary port, decodes 3-byte relative-motion packets on IRQ12, drains VMware

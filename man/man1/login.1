@@ -1,0 +1,44 @@
+LOGIN(1)
+
+NAME
+    login - authenticate and start a SmallOS shell session
+
+SYNOPSIS
+    login [--] [user]
+
+DESCRIPTION
+    login is the native SmallOS console login program. Normal boot launches
+    /bin/login after the filesystem, splash, input, and welcome summary are
+    ready.
+
+    With no user argument, login prompts:
+
+        SmallOS login:
+
+    The default image stages root through /etc/passwd and /etc/shadow:
+
+        /etc/passwd: root:x:0:0:root:/:/bin/shell
+        /etc/shadow: root::0:0:99999:7:::
+
+    An empty shadow password logs in without a password prompt. A non-empty
+    SmallOS shadow hash prompts for "Password:" with terminal echo disabled.
+    Locked entries starting with ! or * and unsupported hash formats are
+    rejected with "Login incorrect".
+
+    On success, login applies the account uid, gid, HOME, USER, LOGNAME, and
+    SHELL values, changes to the account home directory, and execs the account
+    shell. When that shell exits, the boot sequence starts login again.
+
+EXAMPLES
+    login root
+    login -- root
+
+FILES
+    /bin/login
+    /etc/passwd
+    /etc/shadow
+    /etc/group
+    /bin/shell
+
+SEE ALSO
+    passwd(1), shell(1), sh(1), busybox(1)

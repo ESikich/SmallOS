@@ -53,8 +53,10 @@ user shell command
 
 Important current-state facts:
 
-- the default **shell** is `/bin/shell`, a scheduler-owned ring-3 user
-  process launched by `bootseq`; no kernel shell fallback is linked
+- the default foreground boot program is native `/bin/login`, a scheduler-owned
+  ring-3 user process launched by `bootseq`; successful login starts
+  `/bin/shell`, and `bootseq` has an emergency shell fallback if login cannot
+  load
 - **keyboard IRQ1** decodes scancodes and calls a registered `keyboard_consumer_fn` — it makes no routing decisions itself; USB boot keyboards inject translated set-1 scancodes into the same path
 - the **process consumer** (`process_key_consumer` in `process.c`) pushes ASCII into `kb_buf`; Ctrl+C is delivered as raw byte `0x03` to a foreground `SYS_READ_RAW` prompt reader, and otherwise targets the foreground process group as a terminal signal
 - Ctrl+Z either detaches a native shell-owned foreground job back to the shell
@@ -132,13 +134,15 @@ SYS_MOUSE_READ copies state to userland and clears dx/dy
 After kernel diagnostics, `kernel_main()` creates `bootnet`, `bootsvc`, and
 `bootseq` kernel tasks and enters the scheduler on `bootseq`. `bootseq` mounts
 ext2, saves `/var/log/boot.txt`, switches async chatter to log-only mode, loads
-`/bin/shell` suspended, and runs `/bin/bootsplash boot/splash.bmp`.
+`/bin/login` suspended, and runs `/bin/bootsplash boot/splash.bmp`.
 While the splash remains visible, boot input/HID diagnostics finish and
 `bootnet`/`bootsvc` append DHCP, NTP, FTP, and cserve status to the boot log.
 `bootseq` then clears the splash, prints a welcome/time/network/memory summary
-plus `SmallOS ready`, and launches `/bin/shell` as the default user shell.
-If that user shell exits or cannot be loaded, `bootseq` reports that no kernel
-shell fallback is linked and idles.
+plus `SmallOS ready`, and launches `/bin/login`. The native login prompt checks
+`/etc/passwd` and `/etc/shadow`; the sample root shadow password starts empty
+and can be changed with `/bin/passwd`. Successful login starts `/bin/shell`;
+when the shell exits, `bootseq` launches login again. If `/bin/login` cannot be
+loaded, `bootseq` falls back to an emergency `/bin/shell` when available.
 
 ---
 
@@ -200,9 +204,10 @@ That means `argv[0]` inside the process is the command token as typed. For
 
 There is **no active `runimg` command path** in the current shell command table.
 The shell also supports `shell -c "command args"` for non-interactive command
-execution; libc `system()` uses that path. `/bin/sh` is separate: it launches
-BusyBox `ash` for script-style POSIX compatibility, including basic stopped
-job control, without replacing the native interactive `/bin/shell`.
+execution; libc `system()` uses that path. `/bin/login` is the normal boot gate
+and starts the native shell after authentication. `/bin/sh` is separate: it
+launches BusyBox `ash` for script-style POSIX compatibility, including basic
+stopped job control, without replacing the native interactive `/bin/shell`.
 
 The same path is used by the guest TinyCC smoke tests:
 

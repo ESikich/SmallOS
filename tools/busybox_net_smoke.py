@@ -88,14 +88,19 @@ def tee_stdout(text):
         sys.stdout.flush()
 
 
-def wait_for_prompt(log, timeout_s, offset=0):
+def wait_for_prompt(monitor, log, timeout_s, offset=0):
     deadline = time.time() + timeout_s
     buf = ""
+    sent_login = False
     while time.time() < deadline:
         chunk, offset = read_new(log, offset)
         if chunk:
             tee_stdout(chunk)
             buf += chunk
+            if "SmallOS login:" in buf and not sent_login:
+                send_text(monitor, "root")
+                send_key(monitor, "ret")
+                sent_login = True
             if "> " in buf:
                 return offset, buf
             if len(buf) > 8192:
@@ -128,7 +133,7 @@ def run_guest_command(monitor, log, offset, command, timeout_s, marker=None):
     if marker:
         offset, buf = wait_for_log(log, offset, marker, timeout_s)
         return offset, buf
-    return wait_for_prompt(log, timeout_s, offset)
+    return wait_for_prompt(monitor, log, timeout_s, offset)
 
 
 def connect_tcp(host, port, timeout_s):
@@ -503,7 +508,7 @@ def main():
             raise RuntimeError(f"timed out waiting for serial log: {args.serial}")
         monitor = connect_monitor(args.monitor, args.timeout)
         with open(args.serial, "r", encoding="utf-8", errors="replace") as log:
-            offset, _ = wait_for_prompt(log, args.timeout)
+            offset, _ = wait_for_prompt(monitor, log, args.timeout)
 
             offset, _ = run_guest_command(
                 monitor,

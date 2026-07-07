@@ -993,12 +993,17 @@ static void boot_sequence_task_main(void) {
     dhcp_set_verbose(0);
 
     /*
-     * Keep this ordering for real Wyse USB boot: the shell image is loaded
+     * Keep this ordering for real Wyse USB boot: the login image is loaded
      * from USB storage before boot HID is claimed, but it stays suspended so
      * all boot/HID diagnostics are captured before the first prompt appears.
      */
-    char* user_shell_argv[] = { "shell", 0 };
-    process_t* user_shell_proc = elf_run_named_suspended("bin/shell", 1, user_shell_argv);
+    char* login_argv[] = { "login", 0 };
+    process_t* login_proc = elf_run_named_suspended("bin/login", 1, login_argv);
+    process_t* fallback_shell_proc = 0;
+    if (!login_proc) {
+        char* fallback_shell_argv[] = { "shell", 0 };
+        fallback_shell_proc = elf_run_named_suspended("bin/shell", 1, fallback_shell_argv);
+    }
 
     boot_show_splash();
     s_boot_splash_ready = 1;
@@ -1024,19 +1029,41 @@ static void boot_sequence_task_main(void) {
     terminal_clear();
     terminal_print_welcome_summary();
 
-    if (user_shell_proc) {
-        terminal_puts("Launching user shell\n");
+    for (;;) {
+        if (login_proc) {
+            terminal_puts("Launching login\n");
+            /*
+             * Install the console reader before releasing the suspended login.
+             * Real PS/2 and USB keyboard input can arrive as soon as the prompt
+             * is visible, so the consumer must already point at the user
+             * process.
+             */
+            process_set_foreground(login_proc);
+            login_proc->state = PROCESS_STATE_RUNNING;
+            process_wait(login_proc);
+            terminal_puts("Login session ended\n");
+        } else if (fallback_shell_proc) {
+            terminal_puts("Login unavailable; launching emergency shell\n");
+            process_set_foreground(fallback_shell_proc);
+            fallback_shell_proc->state = PROCESS_STATE_RUNNING;
+            process_wait(fallback_shell_proc);
+            terminal_puts("Emergency shell exited\n");
+            fallback_shell_proc = 0;
+        } else {
+            terminal_puts("Login unavailable; no emergency shell fallback is linked\n");
+            break;
+        }
+
         /*
-         * Install the console reader before releasing the suspended shell.
-         * Real PS/2 and USB keyboard input can arrive as soon as the prompt is
-         * visible, so the consumer must already point at the user process.
+         * After logout, load a fresh login image for the next session. This
+         * keeps the console usable after the shell exits while preserving the
+         * pre-HID preload for the first prompt.
          */
-        process_set_foreground(user_shell_proc);
-        user_shell_proc->state = PROCESS_STATE_RUNNING;
-        process_wait(user_shell_proc);
-        terminal_puts("User shell exited; no kernel shell fallback is linked\n");
-    } else {
-        terminal_puts("User shell unavailable; no kernel shell fallback is linked\n");
+        login_proc = elf_run_named_suspended("bin/login", 1, login_argv);
+        if (!login_proc) {
+            char* fallback_shell_argv[] = { "shell", 0 };
+            fallback_shell_proc = elf_run_named_suspended("bin/shell", 1, fallback_shell_argv);
+        }
     }
 
     process_t* current = sched_current();

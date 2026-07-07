@@ -516,6 +516,12 @@ remain out of scope for now.
 
 # BusyBox Expectations
 
+Native `/bin/login` is the normal boot gate. It reads `/etc/passwd` and
+`/etc/shadow`, accepts the sample empty-shadow `root` account, applies uid/gid
+and login environment variables, then starts the account shell (`/bin/shell` in
+the default image). Native `/bin/passwd` sets `$smallos-sha256$` shadow hashes
+and can clear root's password with `passwd -d root` for development recovery.
+
 `usr/bin/busybox` is built as the broad Unix applet layer. The configuration
 keeps the native SmallOS command set intact and enables BusyBox where it fills
 compatibility gaps: `ash` as `/bin/sh`, standalone applets, core file tools,
@@ -538,9 +544,9 @@ stopped-job/process-group semantics, kernel network ioctls, minimal rtnetlink,
 state-backed `/proc/net/dev`, `/proc/net/route`, and `/proc/net/arp`,
 ARP-neighbor reporting, raw ICMP sockets, UDP DNS/TFTP traffic, UDP
 `SO_REUSEADDR`/`MSG_PEEK` service compatibility, credential syscalls,
-`/etc/passwd`/`/etc/group`, and terminal/session compatibility wrappers for
-BusyBox `init`/`login`/`getty`. Arbitrary filesystem mounting, real BusyBox
-PID-1 boot supervision, password authentication semantics, BusyBox DHCP
+`/etc/passwd`/`/etc/shadow`/`/etc/group`, and terminal/session compatibility
+wrappers for BusyBox `init`/`login`/`getty`. Arbitrary filesystem mounting, real BusyBox
+PID-1 boot supervision, Linux-compatible password hash semantics, BusyBox DHCP
 daemons/clients, telnet/telnetd, inetd, richer TFTP server modes, AF_PACKET
 applets, `ip` rule/tunnel modes, multi-interface and IPv6 behavior, HTTPS/TLS,
 and complete Linux device behavior remain disabled or stubbed. New BusyBox applets should

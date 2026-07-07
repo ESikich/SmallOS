@@ -49,9 +49,12 @@ BusyBox-backed Unix compatibility layer inside the guest.
   and HTTP server smoke paths.
 - Guest userland includes familiar commands such as `ls`, `tree`, `cat`,
   `more`, `man`, `pwd`, `touch`, `mkdir`, `rm`, `cp`, `mv`, `edit`, `date`, `ip`,
-  `ipconfig`, `uptime`, `halt`, and `reboot`, plus diagnostics such as
+  `ipconfig`, `login`, `passwd`, `uptime`, `halt`, and `reboot`, plus diagnostics such as
   `cpuz`, `usbinfo`, `usbports`, `usbpower`, `mousetest`, and demos/ports such
   as `mandel`, `plasma`, `fractint`, and `wolf3d`.
+- Normal boot now hands the console to native `/bin/login`. The sample image
+  stages `root:x` in `/etc/passwd` with an empty `/etc/shadow` password so
+  development boots remain passwordless until `passwd` sets a SmallOS hash.
 - BusyBox is staged as `usr/bin/busybox`; native `/bin` tools remain first in
   shell command lookup, while BusyBox fills gaps such as `grep`, `sed`, `awk`,
   `df`, `du`, `free`, `ps`, `tar`, `gzip`, `gunzip`, checksum tools, and

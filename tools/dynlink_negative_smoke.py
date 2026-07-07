@@ -117,14 +117,19 @@ def check_errors(buf):
             raise RuntimeError(f"guest failure marker seen: {marker}")
 
 
-def wait_for_prompt(log, offset, deadline):
+def wait_for_prompt(monitor, log, offset, deadline):
     buf = ""
+    sent_login = False
     while time.time() < deadline:
         chunk, offset = read_new(log, offset)
         if chunk:
             tee_stdout(chunk)
             buf += chunk
             check_errors(buf)
+            if "SmallOS login:" in buf and not sent_login:
+                send_text(monitor, "root")
+                send_key(monitor, "ret")
+                sent_login = True
             if "/> " in buf:
                 return offset
             if len(buf) > 65536:
@@ -211,7 +216,7 @@ def run_scenario(args):
         deadline = time.time() + args.timeout
 
         with serial.open("r", encoding="utf-8", errors="replace") as log:
-            offset = wait_for_prompt(log, 0, deadline)
+            offset = wait_for_prompt(sock, log, 0, deadline)
             print(f"\n[dynlink-negative:{args.scenario}] {scenario['command']}")
             send_text(sock, scenario["command"])
             send_key(sock, "ret")

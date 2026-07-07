@@ -36,11 +36,12 @@ SCOPE
     ip neigh, ping, nc, plain HTTP wget, ftpget, ftpput, tftp, tcpsvd,
     udpsvd, tftpd, and httpd. BusyBox ash can use jobs, fg, bg, Ctrl+Z,
     and SIGCONT/SIGTSTP-style stopped jobs. BusyBox init/login/getty applets
-    are present with SmallOS terminal/session/credential compatibility, but the
-    system still boots through the native boot sequence and does not provide
-    real password authentication. DHCP/telnet/inetd service applets, AF_PACKET
-    applets, ip rule/tunnel, IPv6, HTTPS/TLS, and complete /dev device behavior
-    remain outside this compatibility wave.
+    are present with SmallOS terminal/session/credential compatibility, while
+    normal boot uses native /bin/login and native /bin/passwd manages
+    /etc/shadow. Linux-compatible password hash formats remain outside this
+    wave. DHCP/telnet/inetd service applets, AF_PACKET applets, ip rule/tunnel,
+    IPv6, HTTPS/TLS, and complete /dev device behavior remain outside this
+    compatibility wave.
 
 FILES
     /usr/bin/busybox

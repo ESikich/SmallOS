@@ -74,14 +74,19 @@ def tee_stdout(text):
         sys.stdout.flush()
 
 
-def wait_for_prompt(log, timeout_s, offset=0):
+def wait_for_prompt(monitor, log, timeout_s, offset=0):
     deadline = time.time() + timeout_s
     buf = ""
+    sent_login = False
     while time.time() < deadline:
         chunk, offset = read_new(log, offset)
         if chunk:
             tee_stdout(chunk)
             buf += chunk
+            if "SmallOS login:" in buf and not sent_login:
+                send_text(monitor, "root")
+                send_key(monitor, "ret")
+                sent_login = True
             if "> " in buf:
                 return offset
             if len(buf) > 8192:
@@ -297,7 +302,7 @@ def run_cserve_smoke(args):
     ok = False
     try:
         with open(args.serial, "r", encoding="utf-8", errors="replace") as log:
-            offset = wait_for_prompt(log, args.timeout)
+            offset = wait_for_prompt(monitor, log, args.timeout)
 
             run_cserve_http_checks(args)
 

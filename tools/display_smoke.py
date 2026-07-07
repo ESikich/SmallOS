@@ -40,6 +40,21 @@ def monitor_send(sock, cmd):
     sock.sendall((cmd + "\n").encode("ascii"))
 
 
+def send_key(sock, key):
+    monitor_send(sock, f"sendkey {key}")
+
+
+def send_text(sock, text):
+    for ch in text:
+        if ch == " ":
+            send_key(sock, "spc")
+        elif "a" <= ch <= "z" or "0" <= ch <= "9":
+            send_key(sock, ch)
+        else:
+            raise RuntimeError(f"unsupported key for send_text: {ch!r}")
+        time.sleep(0.05)
+
+
 def read_new(log, offset):
     log.seek(offset)
     chunk = log.read()
@@ -52,10 +67,11 @@ def tee_stdout(text):
         sys.stdout.flush()
 
 
-def wait_for_serial_truth(serial_path, mode, timeout_s):
+def wait_for_serial_truth(sock, serial_path, mode, timeout_s):
     deadline = time.time() + timeout_s
     offset = 0
     buf = ""
+    sent_login = False
 
     with open(serial_path, "r", encoding="utf-8", errors="replace") as log:
         while time.time() < deadline:
@@ -63,6 +79,10 @@ def wait_for_serial_truth(serial_path, mode, timeout_s):
             if chunk:
                 tee_stdout(chunk)
                 buf += chunk
+                if "SmallOS login:" in buf and not sent_login:
+                    send_text(sock, "root")
+                    send_key(sock, "ret")
+                    sent_login = True
 
                 if mode == "vga" and FRAMEBUFFER_MARKER in buf:
                     raise RuntimeError("framebuffer backend selected despite DISPLAY_BACKEND=vga")
@@ -216,7 +236,7 @@ def run(args):
 
     sock = connect_monitor(args.monitor, args.timeout)
     try:
-        wait_for_serial_truth(args.serial, args.mode, args.timeout)
+        wait_for_serial_truth(sock, args.serial, args.mode, args.timeout)
         take_screenshot(sock, args.screenshot, args.timeout)
         width, height, non_black = parse_ppm(args.screenshot)
 

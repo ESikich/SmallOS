@@ -14,7 +14,7 @@ BIOS
  → protected mode
  → kernel_entry.asm  (zeros BSS, calls kernel_main)
  → kernel_main()     (display-muted diagnostics, async network/services, task queueing)
- → bootseq task      (mount/log save, shell preload, splash cover, welcome, shell resume)
+ → bootseq task      (mount/log save, login preload, splash cover, welcome, login prompt)
 ```
 
 ---
@@ -220,8 +220,8 @@ During early storage probing, the kernel temporarily unmasks only timer IRQ0.
 That keeps `[ms=... tick=... cyc=...]` boot timestamps advancing while avoiding
 keyboard/mouse/process IRQ delivery before the scheduler owns a current task.
 
-After the filesystem is mounted and the user shell image has been loaded, the
-boot sequence probes OHCI boot HID devices. The shell process stays suspended
+After the filesystem is mounted and the native login image has been loaded, the
+boot sequence probes OHCI boot HID devices. The login process stays suspended
 until this first HID pass finishes, so the serial log captures either
 `usb: boot keyboard port=N`, `usb: boot mouse port=N`, or
 `usb: WARN boot HID unavailable` before the first prompt. A failed first pass is
@@ -635,14 +635,14 @@ Kernel   →  zero BSS
 Bootseq  →  mount ext2 from ATA, USB storage, or boot RAM fallback
          →  save /var/log/boot.txt when the filesystem is writable
          →  switch async DHCP/NTP/service messages to log-only mode
-         →  load /bin/shell suspended
+         →  load /bin/login suspended
          →  run /bin/bootsplash boot/splash.bmp
          →  probe OHCI boot keyboard/mouse HID and queue retrying usb service
 Bootnet  →  dhcp_configure, then best-effort ntp_sync through the DHCP gateway
 Bootsvc  →  after ext2 and splash are ready, start boot FTP and cserve services
 Bootseq  →  print welcome/time/network/memory summary and SmallOS ready
-         →  foreground and resume /bin/shell
-         →  idle if the user shell exits or fails
+         →  foreground and resume /bin/login
+         →  relaunch login after logout, or emergency /bin/shell if login fails
 ```
 
 Boot code is the most fragile part of the system. Failures here are often silent — no terminal, no debug output, just a reboot loop or a hung screen.

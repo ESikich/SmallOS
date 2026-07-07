@@ -184,6 +184,163 @@ def saw_prompt_after(buf, marker):
     return marker_at >= 0 and prompt_at > marker_at
 
 
+def wait_for_login_prompt(sock, log, offset, deadline, echo=True, exercise_failure=False):
+    buf = ""
+    sent_bad = False
+    saw_bad_failure = not exercise_failure
+    sent_root = False
+    bad_prompt_at = -1
+
+    while time.time() < deadline:
+        chunk, offset = read_new(log, offset)
+        if chunk:
+            if echo:
+                tee_stdout(chunk)
+            buf += chunk
+            if "SmallOS login:" in buf and not sent_bad and exercise_failure:
+                bad_prompt_at = buf.rfind("SmallOS login:")
+                send_text(sock, "nosuchuser\n")
+                sent_bad = True
+            if sent_bad and "Login incorrect" in buf:
+                saw_bad_failure = True
+            if "SmallOS login:" in buf and saw_bad_failure and not sent_root:
+                last_prompt = buf.rfind("SmallOS login:")
+                last_failure = buf.rfind("Login incorrect")
+                if not exercise_failure or (last_prompt > last_failure and last_prompt > bad_prompt_at):
+                    send_text(sock, "root\n")
+                    sent_root = True
+            if sent_root and "/> " in buf and "SmallOS user shell" in buf:
+                return offset, buf, saw_bad_failure
+            if len(buf) > TRANSCRIPT_LIMIT:
+                buf = buf[-TRANSCRIPT_TRIM:]
+        else:
+            time.sleep(0.05)
+
+    raise TranscriptTimeout("timed out waiting for login and shell prompt", buf)
+
+
+def run_login_arg_regression(sock, log, start_offset, deadline, command, echo=True):
+    offset = start_offset
+    buf = ""
+
+    send_text(sock, command + "\n")
+    while time.time() < deadline:
+        chunk, offset = read_new(log, offset)
+        if chunk:
+            if echo:
+                tee_stdout(chunk)
+            buf += chunk
+            if "SmallOS user shell" in buf and "/> " in buf:
+                break
+            if len(buf) > TRANSCRIPT_LIMIT:
+                buf = buf[-TRANSCRIPT_TRIM:]
+        else:
+            time.sleep(0.05)
+    else:
+        if echo:
+            print_transcript_tail("login-arg", buf)
+        return False, offset
+
+    send_text(sock, "exit\n")
+    buf = ""
+    while time.time() < deadline:
+        chunk, offset = read_new(log, offset)
+        if chunk:
+            if echo:
+                tee_stdout(chunk)
+            buf += chunk
+            if "/> " in buf:
+                return True, offset
+            if len(buf) > TRANSCRIPT_LIMIT:
+                buf = buf[-TRANSCRIPT_TRIM:]
+        else:
+            time.sleep(0.05)
+
+    if echo:
+        print_transcript_tail("login-arg-exit", buf)
+    return False, offset
+
+
+def wait_for_text(log, start_offset, deadline, marker, echo=True, title="wait"):
+    offset = start_offset
+    buf = ""
+
+    while time.time() < deadline:
+        chunk, offset = read_new(log, offset)
+        if chunk:
+            if echo:
+                tee_stdout(chunk)
+            buf += chunk
+            if marker in buf:
+                return True, offset, buf
+            if len(buf) > TRANSCRIPT_LIMIT:
+                buf = buf[-TRANSCRIPT_TRIM:]
+        else:
+            time.sleep(0.05)
+
+    if echo:
+        print_transcript_tail(title, buf)
+    return False, offset, buf
+
+
+def run_shadow_auth_regression(sock, log, start_offset, deadline, echo=True):
+    offset = start_offset
+
+    clear_prompt_line(sock)
+    send_text(sock, "passwd\n")
+    ok, offset, _ = wait_for_text(log, offset, deadline, "New password:", echo, "passwd-new")
+    if not ok:
+        return False, offset
+    send_text(sock, "alpha1\n")
+    ok, offset, _ = wait_for_text(log, offset, deadline, "Retype new password:", echo, "passwd-retype")
+    if not ok:
+        return False, offset
+    send_text(sock, "beta1\n")
+    ok, offset, _ = wait_for_text(
+        log, offset, deadline, "passwd: passwords do not match", echo, "passwd-mismatch"
+    )
+    if not ok:
+        return False, offset
+
+    send_text(sock, "passwd\n")
+    ok, offset, _ = wait_for_text(log, offset, deadline, "New password:", echo, "passwd-set-new")
+    if not ok:
+        return False, offset
+    send_text(sock, "secret1\n")
+    ok, offset, _ = wait_for_text(log, offset, deadline, "Retype new password:", echo, "passwd-set-retype")
+    if not ok:
+        return False, offset
+    send_text(sock, "secret1\n")
+    ok, offset, _ = wait_for_text(log, offset, deadline, "passwd: password updated", echo, "passwd-set")
+    if not ok:
+        return False, offset
+
+    send_text(sock, "exit\n")
+    ok, offset, _ = wait_for_text(log, offset, deadline, "SmallOS login:", echo, "passwd-logout")
+    if not ok:
+        return False, offset
+    send_text(sock, "root\n")
+    ok, offset, _ = wait_for_text(log, offset, deadline, "Password:", echo, "passwd-login-prompt")
+    if not ok:
+        return False, offset
+    send_text(sock, "wrong1\n")
+    ok, offset, _ = wait_for_text(log, offset, deadline, "Login incorrect", echo, "passwd-login-bad")
+    if not ok:
+        return False, offset
+    send_text(sock, "root\n")
+    ok, offset, _ = wait_for_text(log, offset, deadline, "Password:", echo, "passwd-login-good-prompt")
+    if not ok:
+        return False, offset
+    send_text(sock, "secret1\n")
+    ok, offset, _ = wait_for_text(log, offset, deadline, "SmallOS user shell", echo, "passwd-login-good")
+    if not ok:
+        return False, offset
+
+    send_text(sock, "passwd -d root\n")
+    ok, offset, _ = wait_for_text(log, offset, deadline, "passwd: password cleared", echo, "passwd-clear")
+    return ok, offset
+
+
 def load_cases():
     cases = []
 
@@ -653,26 +810,21 @@ def main():
 
     with open(args.serial, "r", encoding="utf-8", errors="replace") as log:
         if args.summary:
-            status_begin("boot: shell prompt")
-        while time.time() < deadline:
-            chunk, log_offset = read_new(log, log_offset)
-            if chunk:
-                if echo:
-                    tee_stdout(chunk)
-                buf += chunk
-                if "> " in buf:
-                    if args.summary:
-                        status_end(True)
-                    break
-                if len(buf) > TRANSCRIPT_LIMIT:
-                    buf = buf[-TRANSCRIPT_TRIM:]
-            else:
-                time.sleep(0.05)
-        else:
+            status_begin("boot: login")
+        try:
+            log_offset, buf, login_failure_pass = wait_for_login_prompt(
+                sock, log, log_offset, deadline, echo=echo, exercise_failure=True
+            )
+        except TranscriptTimeout as exc:
             if args.summary:
                 status_end(False)
-                print_transcript_tail("boot", buf)
-            print("timed out waiting for shell prompt", file=sys.stderr)
+                print_transcript_tail("boot", exc.transcript)
+            print(str(exc), file=sys.stderr)
+            return shutdown_qemu(sock, args.pidfile, False)
+        if args.summary:
+            status_end(login_failure_pass)
+        if not login_failure_pass:
+            print("login negative path did not report Login incorrect", file=sys.stderr)
             return shutdown_qemu(sock, args.pidfile, False)
 
         boot_pass, boot_missing = verify_boot_splash(buf, report=not args.summary)
@@ -771,6 +923,57 @@ def main():
         if args.summary:
             status_end(connect_pass)
         overall_pass = overall_pass and connect_pass
+
+        if args.summary:
+            status_begin("interactive: login root")
+        login_root_pass, log_offset = run_login_arg_regression(
+            sock, log, log_offset, deadline, "bin/login root", echo=echo
+        )
+        if args.summary:
+            status_end(login_root_pass)
+        overall_pass = overall_pass and login_root_pass
+
+        if args.summary:
+            status_begin("interactive: login -- root")
+        login_dash_root_pass, log_offset = run_login_arg_regression(
+            sock, log, log_offset, deadline, "bin/login -- root", echo=echo
+        )
+        if args.summary:
+            status_end(login_dash_root_pass)
+        overall_pass = overall_pass and login_dash_root_pass
+
+        if args.summary:
+            status_begin("interactive: shadow passwd")
+        shadow_pass, log_offset = run_shadow_auth_regression(
+            sock, log, log_offset, deadline, echo=echo
+        )
+        if args.summary:
+            status_end(shadow_pass)
+        overall_pass = overall_pass and shadow_pass
+
+        if args.summary:
+            status_begin("interactive: logout returns login")
+        send_text(sock, "exit\n")
+        logout_buf = ""
+        logout_pass = False
+        while time.time() < deadline:
+            chunk, log_offset = read_new(log, log_offset)
+            if chunk:
+                if echo:
+                    tee_stdout(chunk)
+                logout_buf += chunk
+                if "SmallOS login:" in logout_buf:
+                    logout_pass = True
+                    break
+                if len(logout_buf) > TRANSCRIPT_LIMIT:
+                    logout_buf = logout_buf[-TRANSCRIPT_TRIM:]
+            else:
+                time.sleep(0.05)
+        if args.summary:
+            status_end(logout_pass)
+        if not logout_pass:
+            print_transcript_tail("logout", logout_buf)
+        overall_pass = overall_pass and logout_pass
 
     result = shutdown_qemu(sock, args.pidfile, overall_pass)
     if args.summary:

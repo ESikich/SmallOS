@@ -79,15 +79,16 @@ the post-diagnostics boot sequence starts.
 After core diagnostics, `kernel_main()` queues `bootnet`, `bootsvc`, `bootseq`,
 and the zombie reaper, then enters the scheduler on `bootseq`. The boot
 sequence mounts ext2, saves the current log to `/var/log/boot.txt`, switches
-DHCP/NTP/service chatter to log-only mode, preloads `/bin/shell` suspended,
+DHCP/NTP/service chatter to log-only mode, preloads `/bin/login` suspended,
 and runs `/bin/bootsplash boot/splash.bmp`. The splash remains on screen
 while input/HID diagnostics finish and the async network/service tasks append
 their status to `/var/log/boot.txt`. Only after capture ends does `bootseq`
 re-enable display output, clear the splash, print the welcome/time/network/memory
-summary plus `SmallOS ready`, and release the shell. If that user shell exits or
-fails to load, `bootseq` reports that no kernel shell fallback is linked and
-parks itself. This keeps framebuffer splash rendering and interactive shell work
-in userland.
+summary plus `SmallOS ready`, and release login. Native `/bin/login` reads
+`/etc/passwd` plus `/etc/shadow`, starts `/bin/shell` for the default
+empty-shadow `root` account, and is relaunched after logout; if login cannot
+load, `bootseq` falls back to `/bin/shell` when available. This keeps
+framebuffer splash rendering, login, and interactive shell work in userland.
 
 Descriptor slots are owned by `process.c`, not the syscall dispatcher. fd `0`,
 `1`, and `2` are real console handles created with each process and may be
@@ -324,7 +325,7 @@ meminfo              ← still identical after second run
 
 ## Scheduler Rules
 
-`sched_init()` must be called **after `idt_init()` and before `sti`**. It initialises the scheduler table. The shell is not registered here; `kernel_main()` queues the `bootseq` task, and `bootseq` launches the user shell after the startup splash hands off to the welcome screen. If the user shell exits or fails to load, `bootseq` idles without a shell. If `sched_init()` is called after `sti`, the first timer tick may fire with an uninitialised scheduler state.
+`sched_init()` must be called **after `idt_init()` and before `sti`**. It initialises the scheduler table. Login is not registered here; `kernel_main()` queues the `bootseq` task, and `bootseq` launches `/bin/login` after the startup splash hands off to the welcome screen. If login exits after a shell session, `bootseq` relaunches it; if login cannot load, `bootseq` falls back to `/bin/shell` when available. If `sched_init()` is called after `sti`, the first timer tick may fire with an uninitialised scheduler state.
 
 `sched_enqueue(proc)` — call after `proc->state = RUNNING` when handing a task to the scheduler. The boot sequence task follows this path in `kernel_main()`, and ELF launches do as well.
 
