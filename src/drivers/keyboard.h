@@ -137,7 +137,7 @@ void keyboard_set_consumer(keyboard_consumer_fn fn);
 
 /*
  * Raw ASCII ring buffer — written by the process-mode consumer,
- * drained by SYS_READ in syscall.c.
+ * drained by the fd/syscall terminal read path.
  */
 int  keyboard_buf_available(void);
 char keyboard_buf_pop(void);

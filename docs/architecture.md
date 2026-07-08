@@ -219,7 +219,7 @@ for GUI shell sessions, with the GUI process holding the master side and the
 user shell inheriting the slave side on fd `0`/`1`/`2`; PTYs also carry
 kernel-backed termios state, window size, and foreground process-group fields
 used by `tcgetattr`, `tcsetattr`, `TIOCGWINSZ`, `TIOCSPGRP`, and `TIOCGPGRP`.
-`syscall.c` therefore stays focused on user-pointer validation and dispatch
+The syscall layer therefore stays focused on user-pointer validation and dispatch
 instead of knowing the internals of each resource type.
 
 The user-space view of this fd table, including POSIX wrappers, stdio stream

@@ -125,6 +125,17 @@ void _start(int argc, char** argv) {
         fsmap_req.out_clusters = 0;
         check_int("fsmap page-cross states", -EFAULT,
                   sys_fsmap(&fsmap_req));
+        check_int("clock_gettime page-cross ts", -EFAULT,
+                  sys_clock_gettime(CLOCK_MONOTONIC,
+                                    page_cross_ptr(sizeof(struct timespec))));
+        check_int("procinfo page-cross out", -EFAULT,
+                  sys_procinfo((sys_procinfo_t*)page_cross_ptr(sizeof(sys_procinfo_t))));
+        check_int("netinfo page-cross out", -EFAULT,
+                  sys_netinfo((sys_netinfo_t*)page_cross_ptr(sizeof(sys_netinfo_t))));
+        check_int("usbinfo page-cross out", -EFAULT,
+                  sys_usbinfo((sys_usbinfo_t*)page_cross_ptr(sizeof(sys_usbinfo_t))));
+        check_int("statfs proc page-cross out", -EFAULT,
+                  sys_statfs("proc", (sys_statfs_t*)page_cross_ptr(sizeof(sys_statfs_t))));
     }
 
     pfd.fd = -1;

@@ -118,7 +118,7 @@ large inline arrays.
 - `tcp.c` owns passive TCP listeners, the global 4-tuple connection table, RX/TX
   rings, active-open handshakes, retransmission timers, FIN paths, and TCP
   resource accounting.
-- `syscall.c` owns user pointer validation and syscall-level argument handling
+- The syscall layer owns user pointer validation and syscall-level argument handling
   before dispatching to process/socket/TCP helpers.
 
 ### Resource Limits

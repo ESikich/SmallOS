@@ -1941,6 +1941,13 @@ the new end; growing zero-fills the newly exposed range.
 void syscall_handler_main(syscall_regs_t* regs);
 ```
 
+`src/kernel/syscall.c` owns only the `int 0x80` dispatcher: it reads
+`regs->eax`, maps saved registers to typed internal calls, and writes the raw
+kernel return value back to `regs->eax`. Syscall implementations live in the
+`src/kernel/syscall_*.c` family files behind the private
+`src/kernel/syscall_internal.h` header. Public syscall ABI definitions remain in
+`src/kernel/syscall.h` and `src/kernel/uapi_syscall.h`.
+
 ---
 
 ## Register Frame Layout

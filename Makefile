@@ -242,6 +242,13 @@ KERNEL_C_SRCS=\
 	$(KERNEL_DIR)/scheduler.c \
 	$(EXEC_DIR)/elf_loader.c \
 	$(KERNEL_DIR)/syscall.c \
+	$(KERNEL_DIR)/syscall_user.c \
+	$(KERNEL_DIR)/syscall_fd.c \
+	$(KERNEL_DIR)/syscall_time.c \
+	$(KERNEL_DIR)/syscall_proc.c \
+	$(KERNEL_DIR)/syscall_fs.c \
+	$(KERNEL_DIR)/syscall_net.c \
+	$(KERNEL_DIR)/syscall_device.c \
 	$(KERNEL_DIR)/gdt.c \
 	$(KERNEL_DIR)/paging.c \
 	$(DRIVERS_DIR)/ata.c \

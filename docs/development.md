@@ -319,7 +319,7 @@ meminfo              ← still identical after second run
 * Do not rely on shell input buffers for process data.
 * All user-process arguments must be copied into process-owned storage before execution.
 * Pointers passed into a process must remain valid for the entire lifetime of that process.
-* Descriptor lifetime is owned by `process.c`; file behavior is owned by `vfs.c`; `syscall.c` should only validate arguments and dispatch through handle or VFS ops.
+* Descriptor lifetime is owned by `process.c`; file behavior is owned by `vfs.c`; the syscall layer should only validate arguments and dispatch through handle or VFS ops.
 
 ---
 

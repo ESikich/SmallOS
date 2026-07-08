@@ -11,7 +11,7 @@ It reflects the current code in:
 - `src/exec/elf_loader.c`
 - `src/kernel/process.c`
 - `src/kernel/scheduler.c`
-- `src/kernel/syscall.c`
+- the `src/kernel/syscall*.c` syscall layer
 
 ---
 
@@ -423,7 +423,7 @@ small process registry, and automatic zombie reaping:
 
 # SYS_EXEC, Fork, And Execve
 
-`sys_exec_impl()` in `src/kernel/syscall.c` is **spawn-style**:
+`sys_exec_impl()` in the syscall layer is **spawn-style**:
 
 - copy program name into a kernel buffer
 - call `elf_run_named()`
@@ -460,7 +460,7 @@ close/ACK sequence completes or the FIN_WAIT cleanup interval expires.
 Each process also carries cwd state, so user path syscalls resolve relative
 paths before entering VFS or ELF loading.
 ext2-backed file behavior and path operations sit behind `vfs.c`, so
-`syscall.c` stays focused on validation and dispatch instead of handle
+the syscall layer stays focused on validation and dispatch instead of handle
 lifetime or resource-specific behavior.
 
 ---

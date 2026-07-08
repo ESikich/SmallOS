@@ -425,7 +425,7 @@ At runtime, the kernel:
 5. commits changed bitmaps, inodes, directory blocks, and file blocks
 
 This small VFS boundary is enough for compiler-style tools to emit generated artifacts such as `/var/tmp/compiler.out` without exposing ext2 details to every syscall path.
-It is also enough for SmallOS-hosted compiler binaries to create temp files, rename outputs into place, and inspect candidate paths before writing. The next filesystem rewrite can grow this boundary into mount-style backends without pushing that complexity back into `syscall.c`.
+It is also enough for SmallOS-hosted compiler binaries to create temp files, rename outputs into place, and inspect candidate paths before writing. The next filesystem rewrite can grow this boundary into mount-style backends without pushing that complexity back into the syscall layer.
 
 ## Creating and Removing Directories
 
