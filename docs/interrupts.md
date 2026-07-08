@@ -31,12 +31,24 @@ idt_set_gate(vector, handler, 0x08, flags);
 ## Active Entries
 
 ```text
-0    → ISR0 (divide error)
-5    → ISR5 (bound range exceeded)
-6    → ISR6 (invalid opcode)
-13   → ISR13 (general protection fault)
-14   → page fault
-8    → ISR8 (double fault)
+0    → #DE divide error
+1    → #DB debug
+2    → NMI
+3    → #BP breakpoint
+4    → #OF overflow
+5    → #BR bound range exceeded
+6    → #UD invalid opcode
+7    → #NM device not available
+8    → #DF double fault
+10   → #TS invalid TSS
+11   → #NP segment not present
+12   → #SS stack segment
+13   → #GP general protection fault
+14   → #PF page fault
+16   → #MF x87 floating-point fault
+17   → #AC alignment check
+19   → #XM SIMD floating-point fault
+20   → #VE virtualization exception
 32   → IRQ0 (timer)
 33   → IRQ1 (keyboard)
 44   → IRQ12 (mouse)
@@ -45,9 +57,13 @@ idt_set_gate(vector, handler, 0x08, flags);
 
 Exception handlers log the faulting `EIP`, the interrupted `CS`, and mode
 (`user` vs `kernel`). User-mode faults also report the interrupted user
-`ESP`, `SS`, and `EFLAGS`; page faults additionally log `CR2`. User-mode
-faults terminate the current process so the shell keeps running; kernel-mode
-faults still halt the machine so the last error context is preserved.
+`ESP`, `SS`, and `EFLAGS`; page faults additionally log `CR2` plus decoded
+not-present/protection, read/write, user/supervisor, reserved-bit, and
+instruction-fetch flags. User-mode faults terminate the current process with a
+signal-shaped wait status so the shell keeps running; kernel-mode faults still
+halt the machine so the last error context is preserved. The most recent
+handled fault is rendered at `/proc/lastfault`; before the first fault it
+reports `state: none`.
 
 ---
 

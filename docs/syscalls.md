@@ -1514,7 +1514,8 @@ int sys_procinfo(sys_procinfo_t* out_info);
 
 Copies a scheduler/process diagnostic snapshot into `out_info`. The snapshot
 contains the current tick count, the number of copied tasks, and one
-`sys_procinfo_entry_t` per scheduled process up to `SYS_PROCINFO_MAX`. Each
+`sys_procinfo_entry_t` per scheduled process up to `SYS_PROCINFO_MAX` (32,
+matching `SCHED_MAX_PROCS`). Each
 entry includes pid, parent pid, process group, state, accumulated CPU timer
 ticks, estimated task-owned RAM bytes, user heap bytes, and display name.
 Stopped processes are reported as the `T` state in `/proc`-style views.
@@ -1524,6 +1525,13 @@ table frames, and private user page-directory/page-table/user frames. Kernel
 mappings shared into every process are not charged per process. `/bin/top`
 uses repeated snapshots to compute per-refresh CPU percentages and render the
 live process table.
+
+`/proc/lastfault` is a virtual diagnostic file, not a syscall. It reports the
+most recent unhandled CPU exception seen by the common fault dispatcher:
+sequence number, vector, mnemonic, pid, process name, user/kernel mode,
+faulting instruction state, error code when present, and page-fault `CR2` plus
+decoded page-fault flags. Before any fault is recorded it reports
+`state: none`.
 
 ---
 

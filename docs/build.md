@@ -1029,7 +1029,7 @@ Shipped ext2 programs:
 - `usr/libexec/tests/spinwkr` - helper spawned by the preemption regression
 - `usr/libexec/tests/preempt_test` - prove timer-driven preemption
 - `usr/libexec/tests/crtprobe` - verify `main(argc, argv)` via `crt0`
-- `usr/libexec/tests/fault` - fault probe (ud/gp/de/br/pf)
+- `usr/libexec/tests/fault` - fault probe (ud/gp/de/br/bp/of/pf)
 - `usr/bin/tcc` - SmallOS-hosted TinyCC compiler binary linked through
   `src/user/crt/crt0.c`
 - `usr/bin/busybox` - BusyBox multi-call binary used as the broad Unix applet

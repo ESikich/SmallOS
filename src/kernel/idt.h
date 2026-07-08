@@ -22,11 +22,8 @@ struct idt_ptr {
 
 void idt_init(void);
 void idt_set_gate(unsigned char num, unsigned int base, unsigned short sel, unsigned char flags);
-void divide_error_handler_main(unsigned int esp);
-void bound_range_handler_main(unsigned int esp);
-void invalid_opcode_handler_main(unsigned int esp);
-void general_protection_handler_main(unsigned int esp);
-void page_fault_handler_main(unsigned int esp);
+void fault_handler_main(unsigned int esp, unsigned int vector);
+unsigned int idt_lastfault_render(char* out, unsigned int cap);
 void irq0_handler_main(unsigned int esp);
 void irq1_handler_main(unsigned int esp);
 void irq5_handler_main(unsigned int esp);

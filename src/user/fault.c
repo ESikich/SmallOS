@@ -46,6 +46,25 @@ static void trigger_br(void) {
     __asm__ volatile("bound %0, %1" : "+r"(idx) : "m"(bounds));
 }
 
+static void trigger_bp(void) {
+    /* INT3 is the canonical breakpoint exception instruction. */
+    u_puts("fault: triggering #BP\n");
+    __asm__ volatile("int3");
+}
+
+static void trigger_of(void) {
+    /* INTO raises #OF when the overflow flag is set. */
+    u_puts("fault: triggering #OF\n");
+    __asm__ volatile(
+        "mov $0x7fffffff, %%eax\n"
+        "add $1, %%eax\n"
+        "into\n"
+        :
+        :
+        : "eax"
+    );
+}
+
 static void trigger_pf(void) {
     /* Null dereference exercises the user page-fault handler. */
     u_puts("fault: triggering #PF\n");
@@ -62,6 +81,10 @@ void _start(int argc, char** argv) {
         trigger_de();
     } else if (str_eq(mode, "br")) {
         trigger_br();
+    } else if (str_eq(mode, "bp")) {
+        trigger_bp();
+    } else if (str_eq(mode, "of")) {
+        trigger_of();
     } else if (str_eq(mode, "pf")) {
         trigger_pf();
     } else {

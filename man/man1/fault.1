@@ -4,10 +4,15 @@ NAME
     fault - trigger a controlled user fault
 
 SYNOPSIS
-    fault
+    fault [ud|gp|de|br|bp|of|pf]
 
 DESCRIPTION
-    Used to verify kernel fault handling for user processes.
+    Used to verify kernel fault handling for user processes.  Each mode
+    triggers a controlled CPU exception and lets the kernel terminate only
+    the faulting process.
+
+    After a run, cat /proc/lastfault to inspect the kernel's latest fault
+    snapshot.
 
 NOTES
     This is primarily a diagnostic or self-test helper, but it is documented so installed programs are discoverable.

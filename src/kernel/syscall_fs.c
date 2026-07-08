@@ -1,4 +1,5 @@
 #include "syscall_internal.h"
+#include "idt.h"
 #include "klib.h"
 #include "paging.h"
 #include "pmm.h"
@@ -478,6 +479,9 @@ static unsigned int virtual_build_proc_content(const char* path,
         vbuf_put_uint(out, cap, &pos, ticks);
         vbuf_putc(out, cap, &pos, '\n');
         return pos;
+    }
+    if (path_eq(path, "proc/lastfault")) {
+        return idt_lastfault_render(out, cap);
     }
     if (path_eq(path, "proc/mounts")) {
         return mount_build_proc_content(out, cap);
@@ -1094,7 +1098,7 @@ static int virtual_dirent_at(const char* path,
                              unsigned int* out_size,
                              int* out_is_dir) {
     static const char* const proc_entries[] = {
-        "meminfo", "uptime", "stat", "mounts", "filesystems", "net", "self"
+        "meminfo", "uptime", "stat", "lastfault", "mounts", "filesystems", "net", "self"
     };
     static const char* const proc_net_entries[] = {
         "arp", "dev", "raw", "route", "tcp", "udp", "unix"

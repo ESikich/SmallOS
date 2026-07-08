@@ -46,6 +46,16 @@ FILESYSTEM
     /var/log
         Service and boot logs.
 
+VIRTUAL FILES
+    The kernel also exposes diagnostic files under /proc:
+
+    /proc/lastfault
+        Text snapshot of the most recent handled CPU exception.  It reports
+        the fault sequence, vector and mnemonic, process, privilege mode,
+        instruction state, error code when present, and decoded page-fault
+        flags for #PF.  Before any fault has been recorded it returns a short
+        "none" snapshot.
+
 GRAPHICS
     SmallOS exposes a 32-bit XRGB framebuffer through display syscalls and the
     user-space gfx helper.  Frame-paced ports can map page-flip framebuffer

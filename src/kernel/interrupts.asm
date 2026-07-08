@@ -7,22 +7,30 @@ global irq1_stub
 global irq5_stub
 global irq12_stub
 global isr0_stub
+global isr1_stub
+global isr2_stub
+global isr3_stub
+global isr4_stub
 global isr5_stub
 global isr6_stub
+global isr7_stub
 global isr13_stub
 global isr14_stub
 global isr128_stub
 global isr8_stub
+global isr10_stub
+global isr11_stub
+global isr12_stub
+global isr16_stub
+global isr17_stub
+global isr19_stub
+global isr20_stub
 
 extern irq0_handler_main
 extern irq1_handler_main
 extern irq5_handler_main
 extern irq12_handler_main
-extern divide_error_handler_main
-extern bound_range_handler_main
-extern invalid_opcode_handler_main
-extern general_protection_handler_main
-extern page_fault_handler_main
+extern fault_handler_main
 extern syscall_handler_main
 
 gdt_flush:
@@ -42,6 +50,63 @@ idt_flush:
     mov eax, [esp + 4]
     lidt [eax]
     ret
+
+%macro ISR_NOERR 1
+isr%1_stub:
+    pusha
+    push ds
+    push es
+    push fs
+    push gs
+
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+
+    mov eax, esp
+    push dword %1
+    push eax
+    call fault_handler_main
+    add esp, 8
+
+    pop gs
+    pop fs
+    pop es
+    pop ds
+    popa
+    iretd
+%endmacro
+
+%macro ISR_ERR 1
+isr%1_stub:
+    pusha
+    push ds
+    push es
+    push fs
+    push gs
+
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+
+    mov eax, esp
+    push dword %1
+    push eax
+    call fault_handler_main
+    add esp, 8
+
+    pop gs
+    pop fs
+    pop es
+    pop ds
+    popa
+    add esp, 4
+    iretd
+%endmacro
 
 ; irq0_stub — timer IRQ handler
 ;
@@ -166,127 +231,23 @@ irq12_stub:
     popa
     iretd
 
-isr0_stub:
-    pusha
-    push ds
-    push es
-    push fs
-    push gs
-
-    mov ax, 0x10
-    mov ds, ax
-    mov es, ax
-    mov fs, ax
-    mov gs, ax
-
-    push esp
-    call divide_error_handler_main
-    add esp, 4
-
-    pop gs
-    pop fs
-    pop es
-    pop ds
-    popa
-    iretd
-
-isr5_stub:
-    pusha
-    push ds
-    push es
-    push fs
-    push gs
-
-    mov ax, 0x10
-    mov ds, ax
-    mov es, ax
-    mov fs, ax
-    mov gs, ax
-
-    push esp
-    call bound_range_handler_main
-    add esp, 4
-
-    pop gs
-    pop fs
-    pop es
-    pop ds
-    popa
-    iretd
-
-isr6_stub:
-    pusha
-    push ds
-    push es
-    push fs
-    push gs
-
-    mov ax, 0x10
-    mov ds, ax
-    mov es, ax
-    mov fs, ax
-    mov gs, ax
-
-    push esp
-    call invalid_opcode_handler_main
-    add esp, 4
-
-    pop gs
-    pop fs
-    pop es
-    pop ds
-    popa
-    iretd
-
-isr13_stub:
-    pusha
-    push ds
-    push es
-    push fs
-    push gs
-
-    mov ax, 0x10
-    mov ds, ax
-    mov es, ax
-    mov fs, ax
-    mov gs, ax
-
-    push esp
-    call general_protection_handler_main
-    add esp, 4
-
-    pop gs
-    pop fs
-    pop es
-    pop ds
-    popa
-    add esp, 4
-    iretd
-
-isr14_stub:
-    pusha
-    push ds
-    push es
-    push fs
-    push gs
-
-    mov ax, 0x10
-    mov ds, ax
-    mov es, ax
-    mov fs, ax
-    mov gs, ax
-
-    push esp
-    call page_fault_handler_main
-    add esp, 4
-
-    pop gs
-    pop fs
-    pop es
-    pop ds
-    popa
-    add esp, 4
-    iretd
+ISR_NOERR 0
+ISR_NOERR 1
+ISR_NOERR 2
+ISR_NOERR 3
+ISR_NOERR 4
+ISR_NOERR 5
+ISR_NOERR 6
+ISR_NOERR 7
+ISR_ERR   10
+ISR_ERR   11
+ISR_ERR   12
+ISR_ERR   13
+ISR_ERR   14
+ISR_NOERR 16
+ISR_ERR   17
+ISR_NOERR 19
+ISR_ERR   20
 
 isr8_stub:
     ; Double fault is an emergency stop.  Write a visible marker and halt

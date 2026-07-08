@@ -234,7 +234,7 @@ A round-robin preemptive scheduler runs on every timer tick. The hardware rate i
 
 ## Process table
 
-Fixed array of up to 8 `process_t*` entries stored in `s_table[SCHED_MAX_PROCS]`.
+Fixed array of up to 32 `process_t*` entries stored in `s_table[SCHED_MAX_PROCS]`.
 
 There is **no reserved slot 0** and no static sentinel `process_t`. The scheduler
 treats the table as a simple dynamic array:
@@ -368,7 +368,24 @@ reaper task (permanent kernel task):
 ## IDT entries
 
 ```text
-8    → ISR8 (double fault — VGA marker '8' white-on-red at row 1 col 12 + halt)
+0    → #DE divide error
+1    → #DB debug
+2    → NMI
+3    → #BP breakpoint
+4    → #OF overflow
+5    → #BR bound range exceeded
+6    → #UD invalid opcode
+7    → #NM device not available
+8    → #DF double fault — VGA `DF!` marker and halt
+10   → #TS invalid TSS
+11   → #NP segment not present
+12   → #SS stack segment
+13   → #GP general protection
+14   → #PF page fault
+16   → #MF x87 floating-point fault
+17   → #AC alignment check
+19   → #XM SIMD floating-point fault
+20   → #VE virtualization exception
 32   → IRQ0 (timer, DPL=0)
 33   → IRQ1 (keyboard, DPL=0)
 44   → IRQ12 (mouse, DPL=0)

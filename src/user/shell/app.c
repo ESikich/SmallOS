@@ -1642,10 +1642,19 @@ void sh_selftest(void) {
     sh_selftest_exec("wolf3d-srcprobe demo", "usr/libexec/tests/wolf3d-srcprobe --demo-preamble");
     sh_selftest_exec("wolf3d-srcprobe level-completed", "usr/libexec/tests/wolf3d-srcprobe --level-completed");
     sh_selftest_exec("fault ud", "usr/libexec/tests/fault ud");
+    sh_selftest_exec("lastfault ud", "cat /proc/lastfault");
     sh_selftest_exec("fault gp", "usr/libexec/tests/fault gp");
+    sh_selftest_exec("lastfault gp", "cat /proc/lastfault");
     sh_selftest_exec("fault de", "usr/libexec/tests/fault de");
+    sh_selftest_exec("lastfault de", "cat /proc/lastfault");
     sh_selftest_exec("fault br", "usr/libexec/tests/fault br");
+    sh_selftest_exec("lastfault br", "cat /proc/lastfault");
+    sh_selftest_exec("fault bp", "usr/libexec/tests/fault bp");
+    sh_selftest_exec("lastfault bp", "cat /proc/lastfault");
+    sh_selftest_exec("fault of", "usr/libexec/tests/fault of");
+    sh_selftest_exec("lastfault of", "cat /proc/lastfault");
     sh_selftest_exec("fault pf", "usr/libexec/tests/fault pf");
+    sh_selftest_exec("lastfault pf", "cat /proc/lastfault");
 
     if (s_selftest_failures) {
         u_puts("selftest: FAIL\n");

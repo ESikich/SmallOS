@@ -80,7 +80,7 @@ typedef struct sys_meminfo {
     unsigned int ro_file_cache_mapped_refs;
 } sys_meminfo_t;
 
-#define SYS_PROCINFO_MAX 16u
+#define SYS_PROCINFO_MAX 32u
 
 typedef struct sys_procinfo_entry {
     unsigned int pid;
