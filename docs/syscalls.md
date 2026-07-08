@@ -1744,7 +1744,9 @@ int sys_munmap(void* addr, uint32_t length);
 ```
 
 Unmaps pages from a user mapping range. Partial-page addresses are rounded to
-page boundaries by the kernel.
+page boundaries by the kernel. Removing a subrange splits the owning VM
+metadata as needed, so the remaining pages keep their contents and permissions
+and the gap can be reused by a later fixed-address private mapping.
 
 ### SYS_MPROTECT (99)
 
@@ -1756,8 +1758,10 @@ Updates read/write protection on user VM areas, splitting and merging internal
 metadata as needed. Permissions cannot exceed the mapping's recorded maximum;
 for example, read-only shared-cache file pages cannot be made writable, while
 private mappings created with write capability can be made writable and will
-resolve copy-on-write pages lazily. Execute permission is accepted but not
-separately enforced on current paging hardware.
+resolve copy-on-write pages lazily. A private page made read-only before
+`fork()` can later regain write permission independently in parent and child.
+Execute permission is accepted but not separately enforced on current paging
+hardware.
 
 ---
 

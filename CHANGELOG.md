@@ -25,6 +25,9 @@ wrappers in `src/user/posix`.
   * Made tab completion treat duplicate visible candidates as one match, so built-in commands that also exist as `/bin/*.elf` can still complete with the expected trailing space.
   * Recorded shell history before tokenization so recalled commands keep their full argument string, including commands that later fail.
   * Let Ctrl+C at the user shell prompt reach the raw shell editor as byte `0x03` instead of terminating the shell process group; foreground programs still receive normal terminal-interrupt handling.
+* **VM regression coverage** (`src/user/cowprobe.c`, `tests/elfs/cowprobe.py`, `docs/`)
+  * Added `cowprobe` to the per-ELF QEMU regression suite instead of relying only on the broad shell selftest transcript.
+  * Extended `cowprobe` coverage for partial `munmap()` VMA splitting with fixed-address remapping, plus `mprotect()`/`fork()` interactions where read-only private pages can regain write permission independently in parent and child.
 * **Diagnostic commands as userland ELFs** (`src/user/{meminfo,memmap,cpuz,netinfo,dhcp,netsend,netrecv,arpgw,ping,pinggw,pingpublic,netcheck,ataread,usbinfo,usbports,usbdiag,usbpeek,usbpower,usbmouse,mousetest}.c`, `src/shell/commands.c`, `src/user/shell/app.c`, `Makefile`, `docs/`)
   * Moved memory, E820, network, ATA, USB, and mouse diagnostic command presentation out of the user shell and kernel fallback shell into standalone `/bin/*.elf` programs.
   * Added `/bin/cpuz.elf`, a CPU-Z-style hardware summary that combines CPUID data with existing memory, display, USB, network, and storage diagnostic syscalls.

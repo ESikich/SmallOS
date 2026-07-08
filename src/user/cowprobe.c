@@ -153,6 +153,85 @@ static void file_private_check(void) {
     munmap(page, 4096);
 }
 
+static void munmap_split_check(void) {
+    char* area = (char*)mmap(0, 3u * 4096u, PROT_READ | PROT_WRITE,
+                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    char* middle;
+    int ok = 0;
+
+    if (area == MAP_FAILED) {
+        puts("cowprobe munmap split: FAIL");
+        failures++;
+        return;
+    }
+
+    area[0] = 'A';
+    area[4096] = 'B';
+    area[8192] = 'C';
+
+    if (munmap(area + 4096, 4096) == 0) {
+        middle = (char*)mmap(area + 4096, 4096, PROT_READ | PROT_WRITE,
+                             MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+        if (middle == area + 4096) {
+            middle[0] = 'M';
+            ok = area[0] == 'A' && middle[0] == 'M' && area[8192] == 'C';
+        }
+    }
+
+    passfail("cowprobe munmap split", ok);
+    (void)munmap(area, 4096);
+    (void)munmap(area + 4096, 4096);
+    (void)munmap(area + 8192, 4096);
+}
+
+static void mprotect_fork_check(void) {
+    char* page = (char*)mmap(0, 4096, PROT_READ | PROT_WRITE,
+                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    pid_t child;
+    int status = 0;
+    int ok = 0;
+
+    if (page == MAP_FAILED) {
+        puts("cowprobe mprotect fork: FAIL");
+        failures++;
+        return;
+    }
+
+    page[0] = 'R';
+    if (mprotect(page, 4096, PROT_READ) != 0) {
+        puts("cowprobe mprotect fork: FAIL");
+        failures++;
+        munmap(page, 4096);
+        return;
+    }
+
+    child = fork();
+    if (child < 0) {
+        puts("cowprobe mprotect fork: FAIL");
+        failures++;
+        munmap(page, 4096);
+        return;
+    }
+    if (child == 0) {
+        if (mprotect(page, 4096, PROT_READ | PROT_WRITE) != 0) {
+            exit(5);
+        }
+        page[0] = 'C';
+        exit(page[0] == 'C' ? 12 : 6);
+    }
+
+    if (waitpid(child, &status, 0) == child &&
+        status == (12 << 8) &&
+        page[0] == 'R' &&
+        mprotect(page, 4096, PROT_READ | PROT_WRITE) == 0) {
+        page[0] = 'P';
+        ok = page[0] == 'P';
+    }
+
+    passfail("cowprobe mprotect fork", ok);
+    munmap(page, 4096);
+}
+
 int main(void) {
     char* heap;
     char* anon;
@@ -169,6 +248,8 @@ int main(void) {
     demand_mmap_check();
     fork_chain_check();
     file_private_check();
+    munmap_split_check();
+    mprotect_fork_check();
 
     heap = (char*)malloc(BIG_SIZE);
     if (!heap) {

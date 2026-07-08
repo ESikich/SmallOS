@@ -441,7 +441,9 @@ private user pages, then duplicates the fd table as shared descriptor entries.
 The parent receives the child pid, while the child resumes from the same syscall
 frame with return value `0`. `SYS_EXECVE` then replaces the current user image
 in-place, preserving pid, cwd, process group, and descriptors that do not have
-`FD_CLOEXEC` set.
+`FD_CLOEXEC` set. The `cowprobe` regression covers COW writes across globals,
+heap, stack, anonymous/file-private mappings, partial `munmap()` splits, and
+`mprotect()` permission restoration after fork.
 
 The file, console, and socket syscalls used by shell tools, TinyCC, and the
 FTP/TCP smoke apps now share the dynamic PMM-backed process handle table owned

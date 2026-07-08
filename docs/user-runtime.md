@@ -668,7 +668,9 @@ Runtime coverage currently lives in guest ELF probes:
 - `pipeprobe` - pipe read/write, EOF, `EPIPE`, nonblocking behavior, `PIPE_BUF`, poll readiness, and blocking transfer wakeups
 - `dupprobe` - `dup`, `dup2`, shared file offsets/status flags, and independent `FD_CLOEXEC`
 - `forkprobe` - parent/child return values, copied memory independence, `waitpid`, and inherited shared file offsets
-- `cowprobe` - copy-on-write fork isolation for globals, heap, mmap-anonymous pages, stack writes, mprotect write restoration, and lazy frame allocation
+- `cowprobe` - copy-on-write fork isolation for globals, heap,
+  mmap-anonymous pages, stack writes, lazy frame allocation, partial
+  `munmap`/fixed remap behavior, and `mprotect` write restoration across fork
 - `execveprobe` - replacing `execve` image handoff and argv delivery
 
 Run the full acceptance suite with:
