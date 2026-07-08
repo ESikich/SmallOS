@@ -196,7 +196,14 @@ static void probe_unix_layer(void) {
     DIR* dir;
     struct dirent* ent;
     int saw_meminfo = 0;
+    int saw_proc_net = 0;
+    int saw_proc_self = 0;
+    int saw_proc_net_tcp = 0;
     int saw_null = 0;
+    int saw_urandom = 0;
+    int saw_fd = 0;
+    int saw_fd_0 = 0;
+    int saw_pts = 0;
     int fd;
     int fd2;
     int cwd_fd;
@@ -227,10 +234,30 @@ static void probe_unix_layer(void) {
             if (strcmp(ent->d_name, "meminfo") == 0) {
                 saw_meminfo = 1;
             }
+            if (strcmp(ent->d_name, "net") == 0) {
+                saw_proc_net = 1;
+            }
+            if (strcmp(ent->d_name, "self") == 0) {
+                saw_proc_self = 1;
+            }
         }
         closedir(dir);
     }
     check("proc lists meminfo", saw_meminfo);
+    check("proc lists net", saw_proc_net);
+    check("proc lists self", saw_proc_self);
+
+    dir = opendir("/proc/net");
+    check("opendir proc net", dir != 0);
+    if (dir) {
+        while ((ent = readdir(dir)) != 0) {
+            if (strcmp(ent->d_name, "tcp") == 0) {
+                saw_proc_net_tcp = 1;
+            }
+        }
+        closedir(dir);
+    }
+    check("proc net lists tcp", saw_proc_net_tcp);
 
     dir = opendir("/dev");
     check("opendir dev", dir != 0);
@@ -239,10 +266,40 @@ static void probe_unix_layer(void) {
             if (strcmp(ent->d_name, "null") == 0) {
                 saw_null = 1;
             }
+            if (strcmp(ent->d_name, "urandom") == 0) {
+                saw_urandom = 1;
+            }
+            if (strcmp(ent->d_name, "fd") == 0) {
+                saw_fd = 1;
+            }
+            if (strcmp(ent->d_name, "pts") == 0) {
+                saw_pts = 1;
+            }
         }
         closedir(dir);
     }
     check("dev lists null", saw_null);
+    check("dev lists urandom", saw_urandom);
+    check("dev lists fd", saw_fd);
+    check("dev lists pts", saw_pts);
+
+    dir = opendir("/dev/fd");
+    check("opendir dev fd", dir != 0);
+    if (dir) {
+        while ((ent = readdir(dir)) != 0) {
+            if (strcmp(ent->d_name, "0") == 0) {
+                saw_fd_0 = 1;
+            }
+        }
+        closedir(dir);
+    }
+    check("dev fd lists 0", saw_fd_0);
+
+    dir = opendir("/dev/pts");
+    check("opendir dev pts", dir != 0);
+    if (dir) {
+        closedir(dir);
+    }
 
     fd = open("/dev/null", O_RDWR);
     check("open dev null", fd >= 0);

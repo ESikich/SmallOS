@@ -4191,7 +4191,7 @@ static int virtual_dirent_at(const char* path,
         "stat", "status", "cmdline", "comm"
     };
     static const char* const dev_entries[] = {
-        "null", "zero", "tty", "console", "fd"
+        "null", "zero", "urandom", "tty", "console", "fd", "pts"
     };
     static const char* const fd_entries[] = {
         "0", "1", "2"
@@ -4226,7 +4226,7 @@ static int virtual_dirent_at(const char* path,
     } else if (path_eq(path, "dev")) {
         if (index >= sizeof(dev_entries) / sizeof(dev_entries[0])) return 0;
         name = dev_entries[index];
-        is_dir = path_eq(name, "fd");
+        is_dir = path_eq(name, "fd") || path_eq(name, "pts");
     } else if (path_eq(path, "proc/net")) {
         if (index >= sizeof(proc_net_entries) / sizeof(proc_net_entries[0])) return 0;
         name = proc_net_entries[index];

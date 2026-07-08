@@ -1050,6 +1050,7 @@ Shipped ext2 programs:
 * fixed-size volume defined by `tools/mkext2.c`
 * root directory is intended to stay directory-only during normal use
 * `bin/` contains command-style app binaries found first by bare shell command lookup
+* `proc/` and `dev/` are seeded mountpoint directories; their visible contents are provided by the kernel's virtual proc/dev providers rather than stored ext2 files
 * `usr/bin/` contains demos, development tools, and larger user-facing programs such as `hello`, `plasma`, `mandel`, `fractint`, `tcc`, and `busybox`
 * `usr/libexec/tests/` contains the remaining shipped test binaries; most probes, including `displayprobe`, are staged dynamically
 * `usr/sbin/` contains guest service binaries; `tcpecho`, `sockeof`, `ftpd`, and `tinyssh-start` are staged dynamically, while `cserve` and the TinySSH binaries are staged as static service ELFs; BusyBox service applets such as `tcpsvd`, `udpsvd`, `tftpd`, and `udhcpd` live under `usr/bin/busybox`, although the DHCP server applet is not run by automated smoke tests
