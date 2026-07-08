@@ -65,9 +65,10 @@ variant. That variant defaults to the SmallOS guest sysroot: `/usr/include`
 for headers and `/usr/lib` for `crt0.o`, `libc.a`, `libm.a`, and
 `libposix.a`.
 
-BusyBox is downloaded into `.state/downloads/`, patched from
-`patches/busybox/smallos.patch`, configured by
-`tools/configure_busybox_smalos.sh`, and built in a profile-local object tree.
+BusyBox is downloaded into `.state/downloads/`, gets SmallOS platform
+capability overrides from `patches/busybox/smallos.patch`, links SmallOS-owned
+port objects such as the `udhcpc` DHCP wrapper, is configured by
+`tools/configure_busybox_smalos.sh`, and is built in a profile-local object tree.
 The installed binary is `usr/bin/busybox`. The image also includes `/bin/sh`,
 a tiny launcher that execs `busybox sh`, so BusyBox `ash` can serve script-like
 workloads and basic job control while native `/bin/login` owns the boot prompt

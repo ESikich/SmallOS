@@ -1280,9 +1280,9 @@ values are:
 | `SYS_NET_OP_CONFIGURE` | Install a runtime static IPv4 config from `target_ip`, `netmask`, `gateway`, `dns`, `dhcp_server`, and `lease_seconds`. |
 | `SYS_NET_OP_CLEAR_CONFIG` | Clear the runtime IPv4 config. |
 
-The BusyBox `udhcpc` applet is patched to use `SYS_NET_OP_DHCP` for `eth0`,
-matching the native `dhcp` and `ip dhcp` commands without opening raw packet
-sockets.
+The BusyBox `udhcpc` applet is linked through a SmallOS wrapper that uses
+`SYS_NET_OP_DHCP` for `eth0`, matching the native `dhcp` and `ip dhcp`
+commands without opening raw packet sockets.
 
 Addresses are host-order IPv4 values in the same format used by the kernel
 network drivers. These settings are runtime-only; they are not persisted to
@@ -1311,9 +1311,9 @@ Minimal rtnetlink is available through `AF_NETLINK` route sockets for BusyBox
 advanced policy-route behavior remain unsupported. DNS-over-UDP is implemented
 in libc on top of the UDP socket path when the runtime network state has a DNS
 server, and the same UDP path is covered by BusyBox `tftp` client and
-`udpsvd`/`tftpd` service smoke. BusyBox `udhcpc` is patched to call
-`SYS_NET_OP_DHCP` for `eth0`; BusyBox `udhcpd` is built but not exercised by
-the smoke suite.
+`udpsvd`/`tftpd` service smoke. BusyBox `udhcpc` is linked to the native
+`SYS_NET_OP_DHCP` wrapper for `eth0`; BusyBox `udhcpd` is built but not
+exercised by the smoke suite.
 
 ### SYS_BLOCK_READ_SECTOR (81)
 

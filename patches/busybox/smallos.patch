@@ -1,34 +1,8 @@
-diff --git a/applets/applets.c b/applets/applets.c
-index e422b10..09827c1 100644
---- a/applets/applets.c
-+++ b/applets/applets.c
-@@ -8,6 +8,20 @@
-  */
- #include "busybox.h"
--
-+#if defined(SMALLOS)
-+extern char **environ;
-+void __smallos_set_environ(char **envp);
-+void exit(int code) NORETURN;
-+int main(int argc, char **argv);
-+
-+void _start(int argc, char **argv, char **envp);
-+void _start(int argc, char **argv, char **envp)
-+{
-+	environ = envp;
-+	__smallos_set_environ(envp);
-+	exit(main(argc, argv));
-+}
-+#endif
-+
- #if ENABLE_BUILD_LIBBUSYBOX
- int main(int argc UNUSED_PARAM, char **argv)
- {
 diff --git a/include/platform.h b/include/platform.h
 index 69914fc..68fa3f3 100644
 --- a/include/platform.h
 +++ b/include/platform.h
-@@ -431,6 +431,31 @@
+@@ -432,7 +432,32 @@
  #define HAVE_DEV_FD 1
  #define DEV_FD_PREFIX "/dev/fd/"
 -
@@ -61,48 +35,3 @@ index 69914fc..68fa3f3 100644
  #if defined(__UCLIBC__)
  # if UCLIBC_VERSION < KERNEL_VERSION(0, 9, 32)
  #  undef HAVE_STRVERSCMP
-diff --git a/networking/udhcp/dhcpc.c b/networking/udhcp/dhcpc.c
-index 7a4f319..2e8f9c4 100644
---- a/networking/udhcp/dhcpc.c
-+++ b/networking/udhcp/dhcpc.c
-@@ -50,0 +51,26 @@
-+#if defined(SMALLOS)
-+# include "uapi_syscall.h"
-+
-+static int smallos_syscall1(int num, unsigned int arg1)
-+{
-+	int ret;
-+	__asm__ volatile("int $0x80"
-+		: "=a"(ret)
-+		: "a"(num), "b"(arg1)
-+		: "memory");
-+	return ret;
-+}
-+
-+static int smallos_dhcp_configure(void)
-+{
-+	sys_net_op_request_t req;
-+	memset(&req, 0, sizeof(req));
-+	req.op = SYS_NET_OP_DHCP;
-+	return smallos_syscall1(SYS_NET_OP, (unsigned int)&req);
-+}
-+
-+static int smallos_udhcpc_interface_supported(const char *interface)
-+{
-+	return strcmp(interface, "eth0") == 0;
-+}
-+#endif
-@@ -1328,0 +1355,13 @@
-+
-+#if defined(SMALLOS)
-+	if (!smallos_udhcpc_interface_supported(client_data.interface)) {
-+		bb_error_msg("SmallOS udhcpc supports eth0 only");
-+		return 1;
-+	}
-+	if (smallos_dhcp_configure() > 0) {
-+		bb_simple_info_msg("lease acquired via SmallOS DHCP");
-+		return 0;
-+	}
-+	bb_simple_error_msg("no lease");
-+	return 1;
-+#endif

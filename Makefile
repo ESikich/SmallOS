@@ -123,6 +123,7 @@ BUSYBOX_PATCH_STAMP=$(BUSYBOX_SRC_DIR)/.smallos-patched
 BUSYBOX_OUT_DIR=$(OBJ_DIR)/busybox-smalos
 BUSYBOX_CONFIG_STAMP=$(BUSYBOX_OUT_DIR)/.smallos-configured
 BUSYBOX_SMALOS_BIN=$(BIN_DIR)/busybox.elf
+BUSYBOX_UDHCPC_OBJ=$(OBJ_DIR)/user/ports/busybox_udhcpc.o
 TINYSSH_COMMIT=3d93382cde06c109d5d274fa2dddea064e543c85
 TINYSSH_URL=https://github.com/janmojzis/tinyssh/archive/$(TINYSSH_COMMIT).tar.gz
 TINYSSH_TARBALL=$(STATE_DIR)/downloads/tinyssh-$(TINYSSH_COMMIT).tar.gz
@@ -501,6 +502,7 @@ OBJ_SUBDIRS=$(sort \
 	$(dir $(GUI_OBJS)) \
 	$(dir $(USER_SHELL_OBJS)) \
 	$(dir $(FRACTINT_OBJS)) \
+	$(dir $(BUSYBOX_UDHCPC_OBJ)) \
 )
 
 BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(dir $(IMG_FILE)) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
@@ -787,13 +789,13 @@ $(BUSYBOX_PATCH_STAMP): $(BUSYBOX_TARBALL) patches/busybox/smallos.patch | dirs
 	patch -d $(BUSYBOX_SRC_DIR) -p1 < patches/busybox/smallos.patch
 	touch $@
 
-$(BUSYBOX_CONFIG_STAMP): $(BUSYBOX_PATCH_STAMP) tools/configure_busybox_smalos.sh $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
+$(BUSYBOX_CONFIG_STAMP): $(BUSYBOX_PATCH_STAMP) tools/configure_busybox_smalos.sh $(USER_CRT0_OBJ) $(BUSYBOX_UDHCPC_OBJ) $(USER_LIB_ARCHIVES) | dirs
 	rm -rf $(BUSYBOX_OUT_DIR)
 	mkdir -p $(BUSYBOX_OUT_DIR)
 	tools/configure_busybox_smalos.sh $(CURDIR) $(CURDIR)/$(BUSYBOX_SRC_DIR) $(CURDIR)/$(BUSYBOX_OUT_DIR) $(CC) $(LIBGCC_FILE) $(OBJ_DIR)
 	touch $@
 
-$(BUSYBOX_SMALOS_BIN): $(BUSYBOX_CONFIG_STAMP) $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
+$(BUSYBOX_SMALOS_BIN): $(BUSYBOX_CONFIG_STAMP) $(USER_CRT0_OBJ) $(BUSYBOX_UDHCPC_OBJ) $(USER_LIB_ARCHIVES) | dirs
 	$(MAKE) -C $(BUSYBOX_SRC_DIR) O=$(CURDIR)/$(BUSYBOX_OUT_DIR) ARCH=i386 CC="$(CC)" busybox
 	cp $(BUSYBOX_OUT_DIR)/busybox $@
 
@@ -801,11 +803,10 @@ $(TINYSSH_TARBALL): | dirs
 	mkdir -p $(dir $@)
 	curl -L --fail -o $@ $(TINYSSH_URL)
 
-$(TINYSSH_CONFIG_STAMP): $(TINYSSH_TARBALL) tools/configure_tinyssh_smalos.sh patches/tinyssh/smallos.diff | dirs
+$(TINYSSH_CONFIG_STAMP): $(TINYSSH_TARBALL) tools/configure_tinyssh_smalos.sh | dirs
 	rm -rf $(TINYSSH_SRC_DIR)
 	mkdir -p $(TINYSSH_SRC_DIR)
 	tar -xzf $(TINYSSH_TARBALL) --strip-components=1 -C $(TINYSSH_SRC_DIR)
-	patch -d $(TINYSSH_SRC_DIR) -p1 < patches/tinyssh/smallos.diff
 	tools/configure_tinyssh_smalos.sh $(TINYSSH_SRC_DIR)
 	touch $@
 

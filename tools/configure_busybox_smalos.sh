@@ -56,7 +56,7 @@ unsetconf() {
 gcc_include=$("$cc" -m32 -print-file-name=include)
 libgcc_dir=$(dirname "$libgcc")
 extra_cflags="-m32 -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdinc -isystem $gcc_include -I$repo/src/user/include -I$repo/src/kernel -DSMALLOS"
-extra_ldflags="-m32 -no-pie -nostdlib -nostartfiles -Wl,--allow-multiple-definition -Wl,-Ttext-segment,0x400000 -Wl,-e,_start -L$repo/$obj_dir/user/lib -L$libgcc_dir -Wl,--whole-archive -lposix -lc -lm -Wl,--no-whole-archive -lgcc"
+extra_ldflags="-m32 -no-pie -nostdlib -nostartfiles -Wl,--allow-multiple-definition -Wl,-Ttext-segment,0x400000 -Wl,-e,_start -Wl,--wrap=udhcpc_main $repo/$obj_dir/user/crt/crt0.o $repo/$obj_dir/user/ports/busybox_udhcpc.o -L$repo/$obj_dir/user/lib -L$libgcc_dir -Wl,--whole-archive -lposix -lc -lm -Wl,--no-whole-archive -lgcc"
 extra_ldlibs=""
 
 setconf CONFIG_BUSYBOX y

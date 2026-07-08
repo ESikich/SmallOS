@@ -2,7 +2,7 @@ diff --git a/libtcc.c b/libtcc.c
 index 10e65fb..602f849 100644
 --- a/libtcc.c
 +++ b/libtcc.c
-@@ -725,6 +725,7 @@ PUB_FUNC void _tcc_error(const char *fmt, ...)
+@@ -721,6 +721,7 @@ PUB_FUNC void _tcc_error(const char *fmt, ...)
      va_start(ap, fmt);
      error1(ERROR_ERROR, fmt, ap);
      exit(1);
@@ -11,23 +11,10 @@ index 10e65fb..602f849 100644
  #define _tcc_error use_tcc_error_noabort
  
 diff --git a/tcc.h b/tcc.h
-index 2884259..d92dbf4 100644
+index 2884259..448df52 100644
 --- a/tcc.h
 +++ b/tcc.h
-@@ -45,6 +45,12 @@
- # ifndef CONFIG_TCC_STATIC
- #  include <dlfcn.h>
- # endif
-+/*
-+ * Some build configurations end up without a visible prototype for open()
-+ * even though the TinyCC sources use it in the ELF output path.
-+ * Declare it explicitly here so SmallOS guest builds stay warning-free.
-+ */
-+extern int open(const char *pathname, int flags, ...);
- /* XXX: need to define this to use them in non ISOC99 context */
- extern float strtof (const char *__nptr, char **__endptr);
- extern long double strtold (const char *__nptr, char **__endptr);
-@@ -183,7 +189,8 @@
+@@ -183,7 +183,8 @@
  #endif
  
  /* only native compiler supports -run */
@@ -37,7 +24,7 @@ index 2884259..d92dbf4 100644
      && defined __APPLE__ == defined TCC_TARGET_MACHO
  # if defined __i386__ && defined TCC_TARGET_I386
  #  define TCC_IS_NATIVE
-@@ -311,6 +318,10 @@
+@@ -311,6 +312,10 @@
  #  define CONFIG_TCC_ELFINTERP "/lib/ld-linux.so.3"
  #  define CONFIG_TCC_ELFINTERP_ARMHF "/lib/ld-linux-armhf.so.3"
  # else
@@ -63,8 +50,7 @@ index 0950365..b2efb0d 100644
  #elif TARGETOS_FreeBSD || TARGETOS_NetBSD
      if (s1->output_type != TCC_OUTPUT_DLL)
  #if TARGETOS_FreeBSD
-@@ -1797,6 +1801,8 @@ ST_FUNC void tccelf_add_crtend(TCCState *s1)
-     if (s1->output_type == TCC_OUTPUT_DLL)
+@@ -1798,6 +1802,8 @@ ST_FUNC void tccelf_add_crtend(TCCState *s1)
          tcc_add_crt(s1, "crtendS.o");
      else
          tcc_add_crt(s1, "crtend.o");
@@ -72,7 +58,8 @@ index 0950365..b2efb0d 100644
 +    (void)s1;
  #elif TARGETOS_FreeBSD || TARGETOS_NetBSD
      if (s1->output_type == TCC_OUTPUT_DLL)
-@@ -1851,18 +1857,25 @@ ST_FUNC void tcc_add_runtime(TCCState *s1)
+         tcc_add_crt(s1, "crtendS.o");
+@@ -1851,6 +1857,12 @@ ST_FUNC void tcc_add_runtime(TCCState *s1)
  #endif
          if (lpthread)
              tcc_add_library(s1, "pthread");
@@ -85,16 +72,11 @@ index 0950365..b2efb0d 100644
          tcc_add_library(s1, "c");
  #ifdef TCC_LIBGCC
          if (!s1->static_link) {
-             if (TCC_LIBGCC[0] == '/')
-                 tcc_add_file(s1, TCC_LIBGCC);
-             else
-                 tcc_add_dll(s1, TCC_LIBGCC, AFF_PRINT_ERROR);
-         }
- #endif
- #if defined TCC_TARGET_ARM && TARGETOS_FreeBSD
-         tcc_add_library(s1, "gcc_s"); // unwind code
+@@ -1865,6 +1877,7 @@ ST_FUNC void tcc_add_runtime(TCCState *s1)
  #endif
          if (TCC_LIBTCC1[0])
              tcc_add_support(s1, TCC_LIBTCC1);
 +#endif
  #ifndef TCC_TARGET_MACHO
+         if (s1->output_type != TCC_OUTPUT_MEMORY)
+             tccelf_add_crtend(s1);
