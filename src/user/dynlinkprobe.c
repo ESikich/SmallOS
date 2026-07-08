@@ -59,7 +59,8 @@ static int check_file_mmap(void) {
     }
 
     errno = 0;
-    if (mprotect(page, 4096, PROT_READ | PROT_WRITE) < 0 && errno == ENOSYS) {
+    if (mprotect(page, 4096, PROT_READ | PROT_WRITE) < 0 &&
+        (errno == ENOSYS || errno == EINVAL)) {
         puts("dynlinkprobe mmap-mprotect-write: PASS");
     } else {
         puts("dynlinkprobe mmap-mprotect-write: FAIL");
@@ -77,10 +78,19 @@ static int check_file_mmap(void) {
 
     errno = 0;
     bad = mmap(0, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
-    if (bad == MAP_FAILED && errno == ENOSYS) {
-        puts("dynlinkprobe mmap-write-reject: PASS");
+    if (bad != MAP_FAILED &&
+        ((unsigned char*)bad)[0] == 0x7f &&
+        ((unsigned char*)bad)[1] == 'E') {
+        ((unsigned char*)bad)[0] = 'X';
+        if (((unsigned char*)bad)[0] == 'X') {
+            puts("dynlinkprobe mmap-write-private: PASS");
+        } else {
+            puts("dynlinkprobe mmap-write-private: FAIL");
+            ok = 0;
+        }
+        munmap(bad, 4096);
     } else {
-        puts("dynlinkprobe mmap-write-reject: FAIL");
+        puts("dynlinkprobe mmap-write-private: FAIL");
         if (bad != MAP_FAILED) munmap(bad, 4096);
         ok = 0;
     }

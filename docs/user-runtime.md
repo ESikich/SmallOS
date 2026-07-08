@@ -172,7 +172,10 @@ ordinary characters plus ANSI-style special-key sequences for arrows,
 Home/End, Delete, PageUp/PageDown, and function keys. `term_keys.h`, backed by
 `libc.a`, turns those byte sequences into stable `TERM_KEY_*` values and owns
 the nonblocking fd `0` poll/raw-read details for apps that want single-key
-controls without carrying their own escape-sequence decoder. The same public
+controls without carrying their own escape-sequence decoder. Console fd `0`
+also wakes sleeping `poll()`/`select()` callers through the keyboard waiter, so
+interactive tools that use POSIX-style readiness APIs do not need a separate
+SmallOS input path. The same public
 helper exposes `term_key_read_console()` for pager-style controls when fd `0`
 is a pipe, plus `term_get_size()` for programs that need the current terminal
 row/column geometry without including raw syscall headers.
@@ -541,7 +544,9 @@ process/filesystem diagnostics. Filesystem-facing applets such as `ln`,
 `link`, `readlink`, `mkfifo`, `mknod`, `chmod`, `chown`, `chgrp`, `touch`,
 `stat`, and `find -type` exercise the real ext2 metadata and node support.
 Native `/bin` tools stay first in command lookup; if a bare command is missing,
-the shell runs `/usr/bin/busybox <command> ...`.
+the shell runs `/usr/bin/busybox <command> ...`. Interactive BusyBox `ash`
+uses the ordinary console/PTY descriptor path, including termios state,
+foreground process groups, and `poll()`/`select()` wakeups on stdin.
 
 TinySSH is staged under `/usr/sbin` and started during boot through
 `tinyssh-start`, which creates host keys on first run and execs BusyBox
@@ -662,6 +667,7 @@ Runtime coverage currently lives in guest ELF probes:
 - `pipeprobe` - pipe read/write, EOF, `EPIPE`, nonblocking behavior, `PIPE_BUF`, poll readiness, and blocking transfer wakeups
 - `dupprobe` - `dup`, `dup2`, shared file offsets/status flags, and independent `FD_CLOEXEC`
 - `forkprobe` - parent/child return values, copied memory independence, `waitpid`, and inherited shared file offsets
+- `cowprobe` - copy-on-write fork isolation for globals, heap, mmap-anonymous pages, stack writes, mprotect write restoration, and lazy frame allocation
 - `execveprobe` - replacing `execve` image handoff and argv delivery
 
 Run the full acceptance suite with:

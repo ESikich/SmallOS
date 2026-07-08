@@ -854,8 +854,9 @@ bridges the kernel `_start(argc, argv)` launch ABI to TinyCC's normal
 
 BusyBox ships as `usr/bin/busybox`, configured for a useful Unix compatibility
 set rather than full Linux emulation. `ash` is enabled as `/bin/sh` with basic
-job control, standalone
-applets are enabled, and common text, archive, process, filesystem, and
+job control and interactive console input through the kernel termios and
+poll/select wakeup paths. Standalone applets are enabled, and common text,
+archive, process, filesystem, and
 diagnostic commands are available, including gzip/gunzip, checksum helpers,
 hard/symbolic link tools, `readlink`, `mkfifo`, `mknod`, `ifconfig`, `route`,
 `arp`, `hostname`, `dnsdomainname`, `ipcalc`, `netstat`, `nslookup`, `pscan`,

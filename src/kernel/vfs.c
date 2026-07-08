@@ -730,6 +730,113 @@ int vfs_file_map_ro_page(fd_entry_t* ent,
     return 0;
 }
 
+int vfs_read_path_at(const char* path, u32 offset, u8* out, u32 len, u32* out_read) {
+    u32 read_len = 0;
+    unsigned int flags;
+    int ok;
+
+    if (out_read) *out_read = 0;
+    if (!path || !out) return -EINVAL;
+    if (len == 0u) return 0;
+
+    flags = vfs_irq_save();
+    ok = ext2_read_at_path(path, offset, out, len, &read_len);
+    vfs_irq_restore(flags);
+    if (!ok) return -EIO;
+    if (out_read) *out_read = read_len;
+    return 0;
+}
+
+int vfs_file_map_ro_page_path(const char* path,
+                              u32 file_offset,
+                              u32* out_frame,
+                              u32* out_bytes) {
+    sys_stat_info_t st;
+    vfs_ro_map_entry_t* cached;
+    vfs_ro_map_entry_t* slot;
+    u32 frame;
+    u32 bytes;
+    u32 read = 0;
+    unsigned int flags;
+
+    if (out_frame) *out_frame = 0;
+    if (out_bytes) *out_bytes = 0;
+    if (!path || !out_frame || !out_bytes) return -EINVAL;
+    if ((file_offset & (PAGE_SIZE - 1u)) != 0u) return -EINVAL;
+    if (!vfs_stat_info(path, &st)) return -ENOENT;
+    if (st.is_dir || file_offset >= st.size) return -EINVAL;
+
+    bytes = st.size - file_offset;
+    if (bytes > PAGE_SIZE) bytes = PAGE_SIZE;
+
+    flags = vfs_irq_save();
+    cached = vfs_ro_map_find(path, &st, file_offset);
+    if (cached) {
+        if (!pmm_retain_frame(cached->frame)) {
+            vfs_irq_restore(flags);
+            return -EIO;
+        }
+        *out_frame = cached->frame;
+        *out_bytes = bytes;
+        vfs_irq_restore(flags);
+        return 0;
+    }
+    vfs_irq_restore(flags);
+
+    frame = pmm_alloc_frame();
+    if (!frame) return -ENOMEM;
+    vfs_zero_frame(frame);
+    if (vfs_read_path_at(path,
+                         file_offset,
+                         (u8*)paging_phys_to_kernel_virt(frame),
+                         bytes,
+                         &read) < 0 || read != bytes) {
+        pmm_release_frame(frame);
+        return -EIO;
+    }
+
+    flags = vfs_irq_save();
+    cached = vfs_ro_map_find(path, &st, file_offset);
+    if (cached) {
+        pmm_release_frame(frame);
+        if (!pmm_retain_frame(cached->frame)) {
+            vfs_irq_restore(flags);
+            return -EIO;
+        }
+        *out_frame = cached->frame;
+        *out_bytes = bytes;
+        vfs_irq_restore(flags);
+        return 0;
+    }
+    slot = vfs_ro_map_victim();
+    if (!slot) {
+        pmm_release_frame(frame);
+        vfs_irq_restore(flags);
+        return -ENOMEM;
+    }
+
+    k_memset(slot, 0, sizeof(*slot));
+    slot->used = 1;
+    k_strncpy(slot->name, path, sizeof(slot->name));
+    slot->ino = st.ino;
+    slot->size = st.size;
+    slot->mtime = st.mtime;
+    slot->ctime = st.ctime;
+    slot->file_offset = file_offset;
+    slot->frame = frame;
+
+    if (!pmm_retain_frame(frame)) {
+        vfs_ro_map_drop_entry(slot);
+        vfs_irq_restore(flags);
+        return -EIO;
+    }
+
+    *out_frame = frame;
+    *out_bytes = bytes;
+    vfs_irq_restore(flags);
+    return 0;
+}
+
 void vfs_file_map_cache_stats(u32* out_pages, u32* out_mapped_refs) {
     u32 pages = 0;
     u32 refs = 0;

@@ -126,6 +126,12 @@ static void fault_handler_common(const char* tag,
     unsigned int cr2 = has_cr2 ? pf_get_cr2() : 0;
     process_t* proc = sched_current();
 
+    if (has_cr2 && has_err && proc && proc->pd != 0 && (cs & 3u) == 3u) {
+        if (process_vm_handle_fault(proc, cr2, err)) {
+            return;
+        }
+    }
+
     terminal_puts(tag);
     terminal_puts(" eip=");
     terminal_put_hex(eip);

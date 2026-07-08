@@ -432,48 +432,6 @@ int sys_kill_impl(syscall_regs_t* regs, int pid, int signum) {
  * the historical output primitive for user-space tools.
  */
 
-static int heap_page_table_empty(u32* pt) {
-    for (unsigned int i = 0; i < 1024u; i++) {
-        if (pt[i] & PAGE_PRESENT) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-/*
- * heap_unmap_page(pd, virt)
- *
- * Unmap the page containing virt from the given user page directory.
- * If the page table becomes empty, free it as well.
- */
-static void heap_unmap_page(u32* pd, unsigned int virt) {
-    unsigned int pd_index = virt >> 22;
-    unsigned int pt_index = (virt >> 12) & 0x3FFu;
-
-    u32* pd_virt = (u32*)paging_phys_to_kernel_virt((u32)pd);
-    u32 pde = pd_virt[pd_index];
-    if (!(pde & PAGE_PRESENT)) {
-        return;
-    }
-
-    u32 pt_phys = pde & ~0xFFFu;
-    u32* pt = (u32*)paging_phys_to_kernel_virt(pt_phys);
-    u32 pte = pt[pt_index];
-    if (!(pte & PAGE_PRESENT)) {
-        return;
-    }
-
-    pmm_free_frame(pte & ~0xFFFu);
-    pt[pt_index] = 0;
-    __asm__ __volatile__("invlpg (%0)" : : "r"(virt) : "memory");
-
-    if (heap_page_table_empty(pt)) {
-        pd_virt[pd_index] = 0;
-        pmm_free_frame(pt_phys);
-    }
-}
-
 /*
  * sys_brk_impl(new_brk)
  *
@@ -502,24 +460,23 @@ unsigned int sys_brk_impl(unsigned int new_brk) {
         return new_brk;
     }
 
-    u32* pd = proc->pd;
-
     if (new_brk > cur_brk) {
         unsigned int map_start = PAGE_ALIGN(cur_brk);
         unsigned int map_end = PAGE_ALIGN(new_brk);
-        unsigned int mapped = map_start;
-
-        for (unsigned int addr = map_start; addr < map_end; addr += PAGE_SIZE) {
-            u32 frame = pmm_alloc_frame();
-            if (!frame) {
-                for (unsigned int undo = map_start; undo < mapped; undo += PAGE_SIZE) {
-                    heap_unmap_page(pd, undo);
-                }
-                return cur_brk;
-            }
-            k_memset(paging_phys_to_kernel_virt(frame), 0, PAGE_SIZE);
-            paging_map_page(pd, addr, frame, PAGE_WRITE | PAGE_USER);
-            mapped = addr + PAGE_SIZE;
+        if (map_start < map_end &&
+            !process_vm_add(proc,
+                            map_start,
+                            map_end,
+                            PROCESS_VM_PROT_READ | PROCESS_VM_PROT_WRITE,
+                            PROCESS_VM_PROT_READ | PROCESS_VM_PROT_WRITE,
+                            PROCESS_VM_KIND_HEAP,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0)) {
+            return cur_brk;
         }
 
         proc->heap_brk = new_brk;
@@ -530,28 +487,14 @@ unsigned int sys_brk_impl(unsigned int new_brk) {
         unsigned int unmap_start = PAGE_ALIGN(new_brk);
         unsigned int unmap_end = PAGE_ALIGN(cur_brk);
 
-        for (unsigned int addr = unmap_start; addr < unmap_end; addr += PAGE_SIZE) {
-            heap_unmap_page(pd, addr);
+        if (unmap_start < unmap_end &&
+            !process_vm_remove_range(proc, unmap_start, unmap_end)) {
+            return cur_brk;
         }
 
         proc->heap_brk = new_brk;
         return new_brk;
     }
-}
-
-static int user_page_present_in_pd(u32* pd, unsigned int addr) {
-    u32* pd_virt;
-    u32 pde;
-    u32* pt;
-    u32 pte;
-
-    if (!pd) return 0;
-    pd_virt = (u32*)paging_phys_to_kernel_virt((u32)pd);
-    pde = pd_virt[addr >> 22];
-    if (!(pde & PAGE_PRESENT)) return 0;
-    pt = (u32*)paging_phys_to_kernel_virt(pde & ~0xFFFu);
-    pte = pt[(addr >> 12) & 0x3FFu];
-    return (pte & PAGE_PRESENT) != 0u;
 }
 
 static int user_mapping_range_ok(unsigned int start, unsigned int length) {
@@ -564,6 +507,18 @@ static int user_mapping_range_ok(unsigned int start, unsigned int length) {
     if (end < start) return 0;
     if (start < USER_MMAP_BASE) return 0;
     if (end > USER_INTERP_BASE) return 0;
+    return 1;
+}
+
+static int user_vm_range_ok(unsigned int start, unsigned int length) {
+    unsigned int end;
+
+    if (length == 0u) return 0;
+    if ((start & (PAGE_SIZE - 1u)) != 0u) return 0;
+    end = start + PAGE_ALIGN(length);
+    if (end < start) return 0;
+    if (start < USER_CODE_BASE) return 0;
+    if (end > USER_STACK_TOP) return 0;
     return 1;
 }
 
@@ -581,25 +536,13 @@ static int sys_mmap_pick_start(process_t* proc,
     } else {
         start = PAGE_ALIGN(proc->mmap_next ? proc->mmap_next : USER_MMAP_BASE);
         while (start + size <= USER_INTERP_BASE) {
-            int occupied = 0;
-            for (unsigned int page = start; page < start + size; page += PAGE_SIZE) {
-                if (user_page_present_in_pd(proc->pd, page)) {
-                    occupied = 1;
-                    break;
-                }
-            }
-            if (!occupied) break;
+            if (process_vm_range_free(proc, start, start + size)) break;
             start += size;
         }
     }
 
     if (!user_mapping_range_ok(start, size)) return -ENOMEM;
-
-    for (unsigned int page = start; page < start + size; page += PAGE_SIZE) {
-        if (user_page_present_in_pd(proc->pd, page)) {
-            return -EEXIST;
-        }
-    }
+    if (!process_vm_range_free(proc, start, start + size)) return -EEXIST;
 
     *out_start = start;
     return 0;
@@ -609,57 +552,62 @@ static int sys_mmap_anon_impl(process_t* proc,
                               unsigned int start,
                               unsigned int size,
                               unsigned int prot) {
-    unsigned int page_flags = PAGE_USER | ((prot & SYS_PROT_WRITE) ? PAGE_WRITE : 0u);
-
-    for (unsigned int page = start; page < start + size; page += PAGE_SIZE) {
-        u32 frame = pmm_alloc_frame();
-        if (!frame) {
-            for (unsigned int undo = start; undo < page; undo += PAGE_SIZE) {
-                heap_unmap_page(proc->pd, undo);
-            }
-            return -ENOMEM;
-        }
-        k_memset(paging_phys_to_kernel_virt(frame), 0, PAGE_SIZE);
-        paging_map_page(proc->pd, page, frame, page_flags);
+    if (!process_vm_add(proc,
+                        start,
+                        start + size,
+                        prot,
+                        prot,
+                        PROCESS_VM_KIND_ANON,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0)) {
+        return -ENOMEM;
     }
     return 0;
 }
 
-static int sys_mmap_file_ro_impl(process_t* proc,
-                                 unsigned int start,
-                                 unsigned int size,
-                                 int fd,
-                                 unsigned int offset) {
+static int sys_mmap_file_impl(process_t* proc,
+                              unsigned int start,
+                              unsigned int size,
+                              unsigned int prot,
+                              int fd,
+                              unsigned int offset) {
     fd_entry_t* ent;
     u32 file_size = 0;
     int is_dir = 0;
+    u32 bytes;
 
     if ((offset & (PAGE_SIZE - 1u)) != 0u) return -EINVAL;
     ent = process_fd_get(proc, fd);
     if (!ent) return -EBADF;
-    if (ent->kind != PROCESS_HANDLE_KIND_FILE || !ent->readable ||
-        ent->writable || ent->is_dir) {
+    if (ent->kind != PROCESS_HANDLE_KIND_FILE || !ent->readable || ent->is_dir) {
         return -EBADF;
     }
     if (vfs_file_stat_fd(ent, &file_size, &is_dir) < 0 || is_dir) return -EBADF;
     if (offset >= file_size) return -EINVAL;
-    if (size > PAGE_ALIGN(file_size - offset)) return -EINVAL;
 
-    for (unsigned int mapped = 0; mapped < size; mapped += PAGE_SIZE) {
-        u32 frame = 0;
-        u32 bytes = 0;
-        int rc = vfs_file_map_ro_page(ent, offset + mapped, &frame, &bytes);
-        (void)bytes;
-        if (rc < 0) {
-            for (unsigned int undo = 0; undo < mapped; undo += PAGE_SIZE) {
-                heap_unmap_page(proc->pd, start + undo);
-            }
-            return rc;
-        }
-        paging_map_page(proc->pd,
-                        start + mapped,
-                        frame,
-                        PAGE_USER | PAGE_SHARED_RO_FILE);
+    bytes = file_size - offset;
+    if (bytes > size) bytes = size;
+    unsigned int max_prot = prot;
+    if (prot & SYS_PROT_WRITE) {
+        max_prot |= SYS_PROT_READ;
+    }
+    if (!process_vm_add(proc,
+                        start,
+                        start + size,
+                        prot,
+                        max_prot,
+                        PROCESS_VM_KIND_FILE_PRIVATE,
+                        0,
+                        ent->name,
+                        start,
+                        start + bytes,
+                        offset,
+                        file_size)) {
+        return -ENOMEM;
     }
     return 0;
 }
@@ -687,12 +635,12 @@ int sys_mmap_impl(unsigned int addr,
     if (rc < 0) return rc;
 
     if (flags & SYS_MAP_ANON) {
+        if ((prot & ~(SYS_PROT_READ | SYS_PROT_WRITE | SYS_PROT_EXEC)) != 0u) return -EINVAL;
         rc = sys_mmap_anon_impl(proc, start, size, prot);
     } else {
-        if ((prot & SYS_PROT_WRITE) != 0u) return -ENOSYS;
         if ((prot & SYS_PROT_READ) == 0u) return -EINVAL;
-        if ((prot & ~(SYS_PROT_READ | SYS_PROT_EXEC)) != 0u) return -EINVAL;
-        rc = sys_mmap_file_ro_impl(proc, start, size, fd, offset);
+        if ((prot & ~(SYS_PROT_READ | SYS_PROT_WRITE | SYS_PROT_EXEC)) != 0u) return -EINVAL;
+        rc = sys_mmap_file_impl(proc, start, size, prot, fd, offset);
     }
     if (rc < 0) return rc;
 
@@ -709,46 +657,22 @@ int sys_munmap_impl(unsigned int addr, unsigned int length) {
     if (!proc || !proc->pd) return -EINVAL;
     if (length == 0u) return -EINVAL;
     size = PAGE_ALIGN(length);
-    if (!user_mapping_range_ok(addr, size)) return -EINVAL;
+    if (!user_vm_range_ok(addr, size)) return -EINVAL;
 
-    for (unsigned int page = addr; page < addr + size; page += PAGE_SIZE) {
-        if (user_page_present_in_pd(proc->pd, page)) {
-            heap_unmap_page(proc->pd, page);
-        }
-    }
-    return 0;
+    return process_vm_remove_range(proc, addr, addr + size) ? 0 : -EINVAL;
 }
 
 int sys_mprotect_impl(unsigned int addr, unsigned int length, unsigned int prot) {
     process_t* proc = (process_t*)sched_current();
     unsigned int size;
-    u32* pd_virt;
 
     if (!proc || !proc->pd) return -EINVAL;
     if (length == 0u) return -EINVAL;
     size = PAGE_ALIGN(length);
-    if (!user_mapping_range_ok(addr, size)) return -EINVAL;
+    if (!user_vm_range_ok(addr, size)) return -EINVAL;
+    if ((prot & ~(SYS_PROT_READ | SYS_PROT_WRITE | SYS_PROT_EXEC)) != 0u) return -EINVAL;
 
-    pd_virt = (u32*)paging_phys_to_kernel_virt((u32)proc->pd);
-    for (unsigned int page = addr; page < addr + size; page += PAGE_SIZE) {
-        u32 pde = pd_virt[page >> 22];
-        u32* pt;
-        u32 idx;
-        if (!(pde & PAGE_PRESENT)) return -ENOMEM;
-        pt = (u32*)paging_phys_to_kernel_virt(pde & ~0xFFFu);
-        idx = (page >> 12) & 0x3FFu;
-        if (!(pt[idx] & PAGE_PRESENT)) return -ENOMEM;
-        if ((pt[idx] & PAGE_SHARED_RO_FILE) && (prot & SYS_PROT_WRITE)) {
-            return -ENOSYS;
-        }
-        if (prot & SYS_PROT_WRITE) {
-            pt[idx] |= PAGE_WRITE;
-        } else {
-            pt[idx] &= ~PAGE_WRITE;
-        }
-        __asm__ __volatile__("invlpg (%0)" : : "r"(page) : "memory");
-    }
-    return 0;
+    return process_vm_protect(proc, addr, addr + size, prot) ? 0 : -EINVAL;
 }
 
 /* ------------------------------------------------------------------ */

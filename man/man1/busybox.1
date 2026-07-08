@@ -22,7 +22,8 @@ DESCRIPTION
 
     /bin/sh is a tiny launcher for BusyBox ash. Basic job-control behavior is
     backed by SmallOS process groups, stopped child reporting, and terminal
-    Ctrl+Z handling.
+    Ctrl+Z handling. Interactive ash input uses the SmallOS console/PTY
+    readiness path, including poll/select wakeups on stdin.
 
 SCOPE
     This is a useful Unix compatibility layer, not full Linux emulation.
@@ -36,7 +37,8 @@ SCOPE
     ipcalc, netstat, nslookup, pscan, whois, ip link, ip addr, ip route,
     ip neigh, ping, nc, plain HTTP wget, ftpget, ftpput, tftp, tcpsvd,
     udpsvd, tftpd, httpd, and udhcpc. BusyBox ash can use jobs, fg, bg,
-    Ctrl+Z, and SIGCONT/SIGTSTP-style stopped jobs. BusyBox init/login/getty applets
+    Ctrl+Z, SIGCONT/SIGTSTP-style stopped jobs, and interactive prompt input
+    through console/PTY poll/select wakeups. BusyBox init/login/getty applets
     are present with SmallOS terminal/session/credential compatibility, while
     normal boot uses native /bin/login and native /bin/passwd manages
     /etc/shadow. Linux-compatible password hash formats remain outside this

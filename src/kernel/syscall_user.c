@@ -113,10 +113,8 @@ int path_build_from(const char* base, const char* path, char* out, unsigned int 
 /* Copy-from-user validation                                          */
 /* ------------------------------------------------------------------ */
 
-static u32* current_user_pd(void) {
-    process_t* proc = (process_t*)sched_current();
-    if (!proc) return 0;
-    return proc->pd;
+static process_t* current_user_proc(void) {
+    return (process_t*)sched_current();
 }
 
 /*
@@ -138,6 +136,16 @@ int user_page_mapped(u32* pd, unsigned int addr) {
     return 1;
 }
 
+static int user_page_access_ok(process_t* proc, unsigned int addr, int write) {
+    if (!proc || !proc->pd) return 0;
+    if (addr < USER_CODE_BASE || addr >= USER_STACK_TOP) return 0;
+    if (user_page_mapped(proc->pd, addr)) {
+        if (!write) return 1;
+        return process_vm_fault_in_page(proc, addr, 1);
+    }
+    return process_vm_fault_in_page(proc, addr, write);
+}
+
 /*
  * user_buf_ok(ptr, len)
  *
@@ -151,15 +159,37 @@ int user_buf_ok(unsigned int ptr, unsigned int len) {
     if (len == 0)                   return 0;
     if (len > USER_STACK_TOP - ptr) return 0;
 
-    u32* pd = current_user_pd();
-    if (!pd) return 0;
+    process_t* proc = current_user_proc();
+    if (!proc || !proc->pd) return 0;
 
     unsigned int start_page = ptr & ~(PAGE_SIZE - 1u);
     unsigned int end_page = (ptr + len - 1u) & ~(PAGE_SIZE - 1u);
     unsigned int page = start_page;
 
     while (1) {
-        if (!user_page_mapped(pd, page)) return 0;
+        if (!user_page_access_ok(proc, page, 0)) return 0;
+        if (page == end_page) break;
+        page += PAGE_SIZE;
+    }
+
+    return 1;
+}
+
+int user_buf_write_ok(unsigned int ptr, unsigned int len) {
+    if (ptr < USER_CODE_BASE)       return 0;
+    if (ptr >= USER_STACK_TOP)      return 0;
+    if (len == 0)                   return 0;
+    if (len > USER_STACK_TOP - ptr) return 0;
+
+    process_t* proc = current_user_proc();
+    if (!proc || !proc->pd) return 0;
+
+    unsigned int start_page = ptr & ~(PAGE_SIZE - 1u);
+    unsigned int end_page = (ptr + len - 1u) & ~(PAGE_SIZE - 1u);
+    unsigned int page = start_page;
+
+    while (1) {
+        if (!user_page_access_ok(proc, page, 1)) return 0;
         if (page == end_page) break;
         page += PAGE_SIZE;
     }
@@ -191,7 +221,7 @@ int copy_from_user(void* dst, const void* src, unsigned int len) {
 int copy_to_user(void* dst, const void* src, unsigned int len) {
     if (len == 0u) return 0;
     if (!dst || !src) return -EFAULT;
-    if (!user_buf_ok((unsigned int)dst, len)) return -EFAULT;
+    if (!user_buf_write_ok((unsigned int)dst, len)) return -EFAULT;
     k_memcpy(dst, src, len);
     return 0;
 }
@@ -217,13 +247,13 @@ int copy_user_cstr(char* dst, unsigned int dst_size, const char* src) {
     unsigned int ptr = (unsigned int)src;
     if (ptr < USER_CODE_BASE || ptr >= USER_STACK_TOP) return -EFAULT;
 
-    u32* pd = current_user_pd();
-    if (!pd) return -EFAULT;
+    process_t* proc = current_user_proc();
+    if (!proc || !proc->pd) return -EFAULT;
 
     for (unsigned int i = 0; i < dst_size; i++) {
         unsigned int addr = ptr + i;
         if (addr < USER_CODE_BASE || addr >= USER_STACK_TOP) return -EFAULT;
-        if (!user_page_mapped(pd, addr)) return -EFAULT;
+        if (!user_page_access_ok(proc, addr, 0)) return -EFAULT;
 
         dst[i] = src[i];
         if (dst[i] == '\0') {

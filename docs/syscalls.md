@@ -571,10 +571,12 @@ int sys_poll(struct pollfd* fds, nfds_t nfds, int timeout);
 
 Checks readiness by asking each handle's `poll` operation. Current handle
 support includes socket readiness, writable console descriptors, readable
-console input when a key is already buffered, and basic file readability /
-writability. `timeout` follows the POSIX millisecond convention and is rounded
-up to the configured timer tick rate for sleeping waits. Socket polls register
-with socket-owned accept/read/write queues while sleeping.
+console input, pipes, PTYs, timerfd/signalfd-style handles, and basic file
+readability/writability. `timeout` follows the POSIX millisecond convention and
+is rounded up to the configured timer tick rate for sleeping waits. Sleeping
+socket polls register with socket-owned accept/read/write queues; sleeping
+console polls register the process as the keyboard waiter so interactive
+`poll()`/`select()` users such as BusyBox `ash` wake on the next keypress.
 
 ---
 
@@ -776,9 +778,11 @@ int sys_epoll_wait(int epfd, struct epoll_event* events,
 
 Scans watched descriptors through their handle `poll` operations and sleeps
 until readiness or timeout. Socket watches register with socket-owned
-accept/read/write wait queues while sleeping, and timerfd/signalfd-style
-handles register with per-handle read wait queues. Expired timerfds are woken
-from the timer IRQ path instead of by epoll-specific deadline scanning.
+accept/read/write wait queues while sleeping, console input watches register
+with the same keyboard waiter used by blocking console reads, and
+timerfd/signalfd-style handles register with per-handle read wait queues.
+Expired timerfds are woken from the timer IRQ path instead of by
+epoll-specific deadline scanning.
 
 ---
 
@@ -1184,11 +1188,12 @@ returns `-EINVAL`.
 int sys_fork(void);
 ```
 
-Clones the current user process with eager address-space copying. The parent
-receives the child pid, and the child resumes from the same syscall frame with
-return value `0`. User memory is copied so later writes are independent. The fd
-table is duplicated as descriptors pointing to the same shared open-file
-descriptions, preserving shared file offsets and status flags.
+Clones the current user process by cloning its VM areas and copy-on-write
+sharing private user pages. The parent receives the child pid, and the child
+resumes from the same syscall frame with return value `0`. Later private writes
+fault in independent frames. The fd table is duplicated as descriptors pointing
+to the same shared open-file descriptions, preserving shared file offsets and
+status flags.
 
 ---
 
@@ -1714,13 +1719,15 @@ void* sys_mmap(void* addr, uint32_t length, uint32_t prot, uint32_t flags,
                int fd, uint32_t offset);
 ```
 
-Creates private user mappings. Anonymous mappings keep using `MAP_ANON`; file
-mappings currently support only read-only/private mappings from a readable
-regular file descriptor with a page-aligned `offset`. Writable file mappings
-are rejected, and `mprotect(PROT_WRITE)` is rejected on shared read-only file
-cache pages. Eligible file-backed pages are refcounted and may be shared across
-processes and `fork()`. `PROT_EXEC` is accepted for ABI shape, but current x86
-paging only enforces present/user/write bits.
+Creates private user mappings. Anonymous mappings keep using `MAP_ANON` and are
+materialized on first access. File mappings support readable regular file
+descriptors with page-aligned offsets; `MAP_PRIVATE | PROT_WRITE` mappings are
+backed by private frames on write and never update the source file. Read-only
+file pages that cannot later become writable may use the shared read-only file
+cache, while writable/private pages are demand-loaded from the path recorded at
+`mmap()` time and keep working after the original fd is closed. `PROT_EXEC` is
+accepted and tracked for ABI/runtime policy, but current x86 paging only
+enforces present/user/write bits.
 
 ### SYS_MUNMAP (98)
 
@@ -1737,8 +1744,12 @@ page boundaries by the kernel.
 int sys_mprotect(void* addr, uint32_t length, uint32_t prot);
 ```
 
-Updates read/write protection on user mapping pages. Execute permission is
-accepted but not separately enforced on current paging hardware.
+Updates read/write protection on user VM areas, splitting and merging internal
+metadata as needed. Permissions cannot exceed the mapping's recorded maximum;
+for example, read-only shared-cache file pages cannot be made writable, while
+private mappings created with write capability can be made writable and will
+resolve copy-on-write pages lazily. Execute permission is accepted but not
+separately enforced on current paging hardware.
 
 ---
 

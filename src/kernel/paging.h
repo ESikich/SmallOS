@@ -11,6 +11,7 @@
 #define PAGE_PCD        0x010
 #define PAGE_PAT        0x080
 #define PAGE_SHARED_RO_FILE 0x200 /* software bit: refcounted read-only file cache */
+#define PAGE_COW        0x400 /* software bit: copy-on-write private user page */
 
 /*
  * With IA32_PAT entry 1 programmed to WC, PWT=1/PCD=0/PAT=0 selects
@@ -123,7 +124,9 @@ u32* paging_get_kernel_pd(void);
  * Returns 0 (via paging_panic — halts) on allocation failure.
  */
 u32* process_pd_create(void);
-u32* process_pd_clone_user(u32* src_pd);
+u32* process_pd_clone_user(u32* src_pd,
+                           int (*page_may_write)(void* ctx, u32 virt),
+                           void* ctx);
 
 /*
  * process_pd_destroy(pd)
@@ -149,6 +152,20 @@ void process_pd_destroy(u32* pd);
  * page directory itself, private user page tables, and present user frames.
  */
 unsigned int process_pd_count_private_frames(u32* pd);
+
+int paging_user_page_present(u32* pd, u32 virt);
+int paging_user_page_get(u32* pd, u32 virt, u32* out_phys, u32* out_flags);
+int paging_user_page_set_flags(u32* pd, u32 virt, u32 clear_flags, u32 set_flags);
+int paging_unmap_user_page(u32* pd, u32 virt);
+
+/*
+ * paging_resolve_cow_fault(pd, fault_addr)
+ *
+ * Resolve a user write-protection fault on a PAGE_COW mapping. Returns 1 when
+ * the fault was handled and the faulting instruction should be retried.
+ * Returns 0 for non-COW faults or allocation failure.
+ */
+int paging_resolve_cow_fault(u32* pd, u32 fault_addr);
 
 /*
  * paging_switch(pd)

@@ -17,7 +17,8 @@ DESCRIPTION
     job table, and selftest built-ins. Use sh when a Unix script or applet
     expects BusyBox ash. Ash has basic job-control support using SmallOS
     process groups, Ctrl+Z stopped jobs, fg/bg, and waitpid WUNTRACED
-    reporting.
+    reporting. Interactive input uses SmallOS console/PTY termios and
+    poll/select wakeups on stdin.
 
 EXAMPLES
     sh -c 'echo ok'

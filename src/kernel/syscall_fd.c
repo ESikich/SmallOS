@@ -197,6 +197,14 @@ static unsigned int sys_poll_timeout_ticks(int timeout_ms) {
     return timer_ms_to_ticks_round_up((unsigned int)timeout_ms);
 }
 
+static void sys_poll_clear_waits(process_t* proc) {
+    socket_wait_clear_process(proc);
+    wait_queue_remove_proc(proc);
+    if (keyboard_get_waiting_process() == (void*)proc) {
+        keyboard_set_waiting_process(0);
+    }
+}
+
 int sys_poll_impl(syscall_regs_t* regs, struct pollfd* fds,
                          unsigned int nfds, int timeout) {
     process_t* proc = (process_t*)sched_current();
@@ -218,14 +226,12 @@ int sys_poll_impl(syscall_regs_t* regs, struct pollfd* fds,
     for (;;) {
         unsigned int ready = sys_poll_snapshot(proc, fds, nfds);
         if (ready != 0u) {
-            socket_wait_clear_process(proc);
-            wait_queue_remove_proc(proc);
+            sys_poll_clear_waits(proc);
             return (int)ready;
         }
 
         if (!infinite_wait && (int)(timer_get_ticks() - deadline) >= 0) {
-            socket_wait_clear_process(proc);
-            wait_queue_remove_proc(proc);
+            sys_poll_clear_waits(proc);
             return 0;
         }
 
@@ -236,24 +242,21 @@ int sys_poll_impl(syscall_regs_t* regs, struct pollfd* fds,
             int wait_rc = sys_poll_register_fd_waits(proc, fds, nfds);
             if (wait_rc < 0) {
                 proc->state = PROCESS_STATE_RUNNING;
-                socket_wait_clear_process(proc);
-                wait_queue_remove_proc(proc);
+                sys_poll_clear_waits(proc);
                 return wait_rc;
             }
         }
         ready = sys_poll_snapshot(proc, fds, nfds);
         if (ready != 0u) {
             proc->state = PROCESS_STATE_RUNNING;
-            socket_wait_clear_process(proc);
-            wait_queue_remove_proc(proc);
+            sys_poll_clear_waits(proc);
             return (int)ready;
         }
 
         (void)regs;
         sys_wait_until_current_running(proc);
 
-        socket_wait_clear_process(proc);
-        wait_queue_remove_proc(proc);
+        sys_poll_clear_waits(proc);
     }
 }
 
@@ -455,7 +458,7 @@ static int epoll_register_fd_waits(process_t* proc, epoll_watch_t* watches) {
                              proc,
                              (short)(watches[i].events & 0xFFFFu));
         if (rc < 0) {
-            socket_wait_clear_process(proc);
+            sys_poll_clear_waits(proc);
             return rc;
         }
     }
@@ -502,14 +505,12 @@ int sys_epoll_wait_impl(syscall_regs_t* regs,
                                                       (unsigned int)maxevents)
                                      : 0u;
         if (ready != 0u) {
-            socket_wait_clear_process(proc);
-            wait_queue_remove_proc(proc);
+            sys_poll_clear_waits(proc);
             return (int)ready;
         }
 
         if (!infinite_wait && (int)(timer_get_ticks() - timeout_deadline) >= 0) {
-            socket_wait_clear_process(proc);
-            wait_queue_remove_proc(proc);
+            sys_poll_clear_waits(proc);
             return 0;
         }
 
@@ -530,8 +531,7 @@ int sys_epoll_wait_impl(syscall_regs_t* regs,
             int wait_rc = epoll_register_fd_waits(proc, watches);
             if (wait_rc < 0) {
                 proc->state = PROCESS_STATE_RUNNING;
-                socket_wait_clear_process(proc);
-                wait_queue_remove_proc(proc);
+                sys_poll_clear_waits(proc);
                 return wait_rc;
             }
         }
@@ -540,16 +540,14 @@ int sys_epoll_wait_impl(syscall_regs_t* regs,
                         : 0u;
         if (ready != 0u) {
             proc->state = PROCESS_STATE_RUNNING;
-            socket_wait_clear_process(proc);
-            wait_queue_remove_proc(proc);
+            sys_poll_clear_waits(proc);
             return (int)ready;
         }
 
         (void)regs;
         sys_wait_until_current_running(proc);
 
-        socket_wait_clear_process(proc);
-        wait_queue_remove_proc(proc);
+        sys_poll_clear_waits(proc);
     }
 }
 

@@ -35,6 +35,34 @@ typedef enum {
 #define PROCESS_FD_NAME_MAX         128      /* max path length stored in fd entry */
 #define PROCESS_FD_CACHE_PAGES      1024     /* 4 MB small-file read cache / 4 KB pages */
 
+#define PROCESS_VM_PROT_READ  1u
+#define PROCESS_VM_PROT_WRITE 2u
+#define PROCESS_VM_PROT_EXEC  4u
+
+#define PROCESS_VM_AREA_MAX 96u
+
+typedef enum {
+    PROCESS_VM_KIND_ANON = 1,
+    PROCESS_VM_KIND_HEAP = 2,
+    PROCESS_VM_KIND_STACK = 3,
+    PROCESS_VM_KIND_FILE_PRIVATE = 4,
+    PROCESS_VM_KIND_ELF = 5
+} process_vm_kind_t;
+
+typedef struct process_vm_area {
+    u32 start;
+    u32 end;
+    u32 prot;
+    u32 max_prot;
+    u32 kind;
+    u32 flags;
+    u32 file_start;
+    u32 file_end;
+    u32 file_offset;
+    u32 file_size;
+    char path[PROCESS_FD_NAME_MAX];
+} process_vm_area_t;
+
 typedef struct fd_entry fd_entry_t;
 typedef struct socket socket_t;
 
@@ -143,6 +171,7 @@ typedef struct process {
     unsigned int    sleep_until;
     void          (*kernel_entry)(void);
     unsigned int    user_entry;
+    unsigned int    user_stack_esp;
     int             user_argc;
     char*           user_argv[PROCESS_MAX_ARGS + 1];
     char            user_arg_data[PROCESS_ARG_BYTES];
@@ -162,6 +191,11 @@ typedef struct process {
     unsigned int    fd_limit;           /* maximum allowed slots for this proc */
     u32             fd_table_frame;     /* first PMM frame backing fds */
     u32             fd_table_frames;    /* contiguous frame count backing fds */
+    process_vm_area_t* vm_areas;        /* PMM-backed VM-area metadata */
+    u32             vm_area_frame;
+    u32             vm_area_frames;
+    unsigned int    vm_area_count;
+    unsigned int    vm_area_capacity;
 } process_t;
 
 /* ------------------------------------------------------------------ */
@@ -240,6 +274,29 @@ int        process_set_args(process_t* proc, int argc, char** argv);
 int        process_set_env(process_t* proc, int envc, char** envp);
 int        process_set_auxv(process_t* proc, int auxc, const unsigned int* auxv_pairs);
 int        process_set_default_env(process_t* proc);
+
+int        process_vm_init(process_t* proc);
+void       process_vm_free(process_t* proc);
+void       process_vm_clear(process_t* proc);
+int        process_vm_clone(process_t* dst, process_t* src);
+int        process_vm_add(process_t* proc,
+                          u32 start,
+                          u32 end,
+                          u32 prot,
+                          u32 max_prot,
+                          u32 kind,
+                          u32 flags,
+                          const char* path,
+                          u32 file_start,
+                          u32 file_end,
+                          u32 file_offset,
+                          u32 file_size);
+int        process_vm_range_free(process_t* proc, u32 start, u32 end);
+int        process_vm_remove_range(process_t* proc, u32 start, u32 end);
+int        process_vm_protect(process_t* proc, u32 start, u32 end, u32 prot);
+int        process_vm_handle_fault(process_t* proc, u32 fault_addr, u32 err);
+int        process_vm_fault_in_page(process_t* proc, u32 addr, int write);
+int        process_vm_page_may_write(void* ctx, u32 virt);
 
 process_t* process_get_current(void);
 

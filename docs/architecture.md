@@ -320,7 +320,7 @@ SYS_EXEC (parent-waitable spawn):
 
 SYS_FORK + SYS_EXECVE (POSIX-shaped):
   process_fork_from_syscall()
-  eager-copy user address space
+  clone VM areas and copy-on-write share private user pages
   duplicate fd table entries    → shared open-file descriptions
   parent returns child pid
   child returns 0 from same syscall frame
@@ -560,13 +560,14 @@ keyboard IRQ → keyboard_handle_irq()
   Ctrl+C → raw byte for SYS_READ_RAW prompt readers,
            otherwise signal/terminate foreground group
   ↓
-  SYS_READ drains kb_buf for the foreground user process
+  SYS_READ / SYS_READ_RAW drain kb_buf for the foreground user process
+  SYS_POLL / SYS_EPOLL_WAIT on console fd 0 register the same keyboard waiter
 ```
 
 The active consumer is managed by `keyboard_set_consumer()`:
 - `process_set_foreground(proc)` clears `kb_buf` (discarding any stale input, e.g. the Enter that launched the foreground program), records the foreground process group, then registers `process_key_consumer` when a user process takes the foreground
 - `process_set_foreground_preserve_input(proc)` keeps already-buffered input while refreshing the same foreground owner; bootseq uses an explicit `process_set_foreground(shell)` before resuming the suspended user shell so PS/2 and USB keyboard events are routed to the prompt immediately
-- `process_key_consumer` pushes ASCII into `kb_buf`; after each push it checks `keyboard_get_waiting_process()` and, if a process is parked in `PROCESS_STATE_WAITING`, sets it back to `PROCESS_STATE_RUNNING` and clears the waiter slot so the scheduler picks it up
+- `process_key_consumer` pushes ASCII into `kb_buf`; after each push it checks `keyboard_get_waiting_process()` and, if a process is parked in `PROCESS_STATE_WAITING`, sets it back to `PROCESS_STATE_RUNNING` and clears the waiter slot so the scheduler picks it up. The waiter may come from blocking `SYS_READ`, `SYS_READ_RAW`, or sleeping `SYS_POLL`/`SYS_EPOLL_WAIT` on a console descriptor.
 - Ctrl+C is normally handled by `process_key_consumer` as a terminal interrupt for the foreground process group. Matching signalfds receive `SIGINT`; otherwise the group gets exit status `130`, pending console/socket waits are cleared, and any actively running member is switched away from the IRQ1 frame. If the foreground console owner is parked in `SYS_READ_RAW`, as the user shell is while editing its prompt, Ctrl+C is queued as byte `0x03` so the editor can cancel the current line without killing the shell.
 - Ctrl+Z keeps the native shell's detachable `fg` behavior for shell-owned jobs,
   and otherwise delivers `SIGTSTP` to the foreground process group. Stopped
@@ -580,8 +581,10 @@ Userland programs that need decoded special keys should use the public
 `term_keys.h` helper installed in `/usr/include` and backed by `libc.a`. It
 reads fd `0` through `SYS_READ_RAW`/`SYS_POLL` and returns stable `TERM_KEY_*`
 values for arrows, Home/End, Insert/Delete, PageUp/PageDown, F1-F4, and common
-control keys. Fractint and `mandel` use this shared path instead of carrying
-program-local ANSI escape parsers.
+control keys. Console `SYS_POLL` participates in the keyboard wakeup path, so
+nonblocking checks and blocking poll/select-style prompt editors observe the
+same keypress stream. Fractint and `mandel` use this shared path instead of
+carrying program-local ANSI escape parsers.
 
 The boot sequence launches native `/bin/login` as the interactive gate. The old
 kernel shell is no longer linked into the kernel image. A successful shadow-
@@ -888,7 +891,7 @@ build/obj/<profile>/kernel/sched_switch.o
 
 * PIE executable placement is deterministic; ASLR/randomized bases are not implemented yet
 * `SYS_EXEC` is legacy async spawn; userland receives a pid and can collect it with `waitpid()`
-* `SYS_FORK` uses eager address-space copying; copy-on-write is not implemented yet
+* `MAP_SHARED` and hardware-enforced execute permissions are not implemented; `PROT_EXEC` is tracked in VM metadata for loader/runtime policy
 
 ---
 
@@ -937,7 +940,7 @@ SYS_OPEN / SYS_OPEN_MODE / SYS_OPEN_CREATE_MODE / SYS_OPENAT_CREATE_MODE / SYS_C
 SYS_BRK / user heap — per-process heap break managed in user space through `SYS_BRK` and a shared user allocator
 SYS_OPEN_WRITE / SYS_WRITEFD / SYS_LSEEK / SYS_FSYNC / SYS_UNLINK / SYS_UNLINKAT / SYS_RENAME / SYS_RENAMEAT / SYS_STAT / SYS_STAT_FULL / SYS_FSTATAT_FULL / SYS_LSTAT_FULL / SYS_LINK / SYS_LINKAT / SYS_SYMLINK / SYS_SYMLINKAT / SYS_READLINK / SYS_READLINKAT / SYS_CHMOD / SYS_CHOWN / SYS_UTIMENS / SYS_UTIMENSAT / SYS_MKDIRAT / SYS_MKNOD / SYS_FTRUNCATE / SYS_FCHMOD / SYS_FCHOWN / SYS_FUTIMENS / SYS_GETUID / SYS_SETUID / SYS_GETGID / SYS_SETGID / SYS_UMASK — VFS-backed writable file handles plus path metadata, credentials, umask, directory-fd resolution, and file management for compiler-style tools and BusyBox/POSIX applets; dirty writable handles flush on close, append/read-write modes preserve existing bytes, link counts and symlink traversal are maintained by ext2, permissions are enforced from ext2 mode bits and process credentials, and stdout/stderr writes also use fd-backed console handles
 SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_ACCEPT4 / SYS_CONNECT / SYS_SEND / SYS_RECV / SYS_SHUTDOWN / SYS_GETSOCKNAME / SYS_GETPEERNAME — socket ABI for passive TCP servers, FTP userland, and client-style active opens; fd handles point at kernel socket objects, TCP streams are backed by a global 4-tuple TCP table plus lazy 4 KiB RX rings and 16 KiB TX rings, basic `shutdown()` half-close state is implemented, and socket readiness plugs into the same handle poll path
-SYS_PIPE / SYS_PIPE2 / SYS_DUP* / SYS_FCNTL / SYS_POLL / SYS_EPOLL_* / SYS_TIMERFD_* / SYS_SIGNALFD — pipes, descriptor duplication, descriptor flags, and event-loop shims for shell pipelines and cserve-style guest services; socket waits register on socket wait queues, timerfd handles register read waiters that timer IRQs can wake when timerfds expire, and signalfd handles can be woken by kernel SIGINT/SIGTERM delivery
+SYS_PIPE / SYS_PIPE2 / SYS_DUP* / SYS_FCNTL / SYS_POLL / SYS_EPOLL_* / SYS_TIMERFD_* / SYS_SIGNALFD — pipes, descriptor duplication, descriptor flags, and event-loop shims for shell pipelines and cserve-style guest services; socket waits register on socket wait queues, console fd waits register on the keyboard waiter used by `SYS_READ`, timerfd handles register read waiters that timer IRQs can wake when timerfds expire, and signalfd handles can be woken by kernel SIGINT/SIGTERM delivery
 SYS_INPUT_READ / SYS_INPUT_WAIT_UNTIL — shared keyboard/mouse event queue for GUI-style programs; callers can drain queued events or sleep until input arrives or a frame deadline is reached
 SYS_CLOCK_GETTIME / SYS_CLOCK_SETTIME / SYS_NTP_SYNC — realtime clock syscalls; `CLOCK_MONOTONIC` reports uptime, `CLOCK_REALTIME` is maintained as an offset from uptime and can be set directly or by the tiny NTP client
 SYS_PROCINFO — scheduler/process diagnostic snapshot used by `/bin/top` for live CPU tick deltas, process state, and task-owned RAM estimates

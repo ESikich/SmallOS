@@ -50,7 +50,11 @@ static int elf_copy_to_user(process_t* proc, unsigned int va, const void* src, u
 
         if (chunk > len - copied) chunk = len - copied;
         out = elf_user_ptr(proc, cur);
-        if (!out) return 0;
+        if (!out) {
+            if (!process_vm_fault_in_page(proc, cur, 1)) return 0;
+            out = elf_user_ptr(proc, cur);
+            if (!out) return 0;
+        }
         k_memcpy(out, in + copied, chunk);
         copied += chunk;
     }
@@ -223,6 +227,31 @@ static void elf_enter_ring3(unsigned int entry,
     __builtin_unreachable();
 }
 
+static void elf_enter_ring3_raw(unsigned int entry, unsigned int user_esp) {
+    unsigned int user_cs = SEG_USER_CODE;
+    unsigned int user_ds = SEG_USER_DATA;
+
+    __asm__ __volatile__ (
+        "mov  %3, %%eax      \n"
+        "mov  %%ax, %%ds     \n"
+        "mov  %%ax, %%es     \n"
+        "mov  %%ax, %%fs     \n"
+        "mov  %%ax, %%gs     \n"
+        "push %3             \n"
+        "push %1             \n"
+        "pushf               \n"
+        "orl  $0x200, (%%esp)\n"
+        "push %2             \n"
+        "push %0             \n"
+        "iret                \n"
+        :
+        : "r"(entry), "r"(user_esp), "r"(user_cs), "r"(user_ds)
+        : "eax"
+    );
+
+    __builtin_unreachable();
+}
+
 /*
  * First scheduled entry point for a user task.
  *
@@ -246,14 +275,7 @@ static void elf_user_task_bootstrap(void) {
                          proc->kernel_stack_frames * PAGE_SIZE);
     paging_switch(proc->pd);
 
-    elf_enter_ring3(proc->user_entry,
-                    USER_STACK_TOP,
-                    proc->user_argc,
-                    proc->user_argv,
-                    proc->user_envc,
-                    proc->user_envp,
-                    proc->user_auxc,
-                    proc->user_auxv);
+    elf_enter_ring3_raw(proc->user_entry, proc->user_stack_esp);
 }
 
 static int elf_seed_sched_context(process_t* proc,
@@ -389,8 +411,18 @@ static int elf_validate_interp_layout(const elf_map_info_t* main_info,
     return 1;
 }
 
+static unsigned int elf_segment_prot(u32 flags) {
+    unsigned int prot = 0;
+    if (flags & PF_R) prot |= PROCESS_VM_PROT_READ;
+    if (flags & PF_W) prot |= PROCESS_VM_PROT_WRITE;
+    if (flags & PF_X) prot |= PROCESS_VM_PROT_EXEC;
+    if (prot == 0u) prot = PROCESS_VM_PROT_READ;
+    return prot;
+}
+
 static int elf_map_image_into_process(process_t* proc,
                                       const unsigned char* image,
+                                      const char* image_path,
                                       unsigned int dyn_base,
                                       elf_map_info_t* out) {
     const Elf32_Ehdr* eh = (const Elf32_Ehdr*)image;
@@ -420,32 +452,60 @@ static int elf_map_image_into_process(process_t* proc,
         if (map_start < low) low = map_start;
         if (map_end > high) high = map_end;
 
-        for (u32 page = map_start; page < map_end; page += PAGE_SIZE) {
-            u32* pd = (u32*)paging_phys_to_kernel_virt((u32)proc->pd);
-            u32* pt = 0;
-            u32 pd_idx = page >> 22;
-            u32 pt_idx = (page >> 12) & 0x3FFu;
-            if (pd[pd_idx] & PAGE_PRESENT) {
-                pt = (u32*)paging_phys_to_kernel_virt(pd[pd_idx] & ~0xFFFu);
+        {
+            unsigned int prot = elf_segment_prot(ph[i].p_flags);
+            unsigned int max_prot = prot;
+            if (eh->e_type == ET_DYN) {
+                prot |= PROCESS_VM_PROT_WRITE;
+                max_prot |= PROCESS_VM_PROT_WRITE | PROCESS_VM_PROT_READ;
             }
-            if (!pt || !(pt[pt_idx] & PAGE_PRESENT)) {
-                u32 frame = pmm_alloc_frame();
-                if (!frame) {
-                    terminal_puts("elf: out of frames\n");
-                    return 0;
-                }
-                k_memset(paging_phys_to_kernel_virt(frame), 0, PAGE_SIZE);
-                paging_map_page(proc->pd, page, frame, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
-            } else {
-                pt[pt_idx] |= PAGE_PRESENT | PAGE_WRITE | PAGE_USER;
+            if (prot & PROCESS_VM_PROT_WRITE) {
+                max_prot |= PROCESS_VM_PROT_READ;
+            }
+            if (!process_vm_add(proc,
+                                map_start,
+                                map_end,
+                                prot,
+                                max_prot,
+                                PROCESS_VM_KIND_ELF,
+                                0,
+                                image_path,
+                                seg_start,
+                                seg_start + ph[i].p_filesz,
+                                ph[i].p_offset,
+                                ph[i].p_filesz)) {
+                return 0;
             }
         }
 
-        if (!elf_copy_to_user(proc,
-                              seg_start,
-                              image + ph[i].p_offset,
-                              ph[i].p_filesz)) {
-            return 0;
+        if (!image_path) {
+            for (u32 page = map_start; page < map_end; page += PAGE_SIZE) {
+                u32* pd = (u32*)paging_phys_to_kernel_virt((u32)proc->pd);
+                u32* pt = 0;
+                u32 pd_idx = page >> 22;
+                u32 pt_idx = (page >> 12) & 0x3FFu;
+                if (pd[pd_idx] & PAGE_PRESENT) {
+                    pt = (u32*)paging_phys_to_kernel_virt(pd[pd_idx] & ~0xFFFu);
+                }
+                if (!pt || !(pt[pt_idx] & PAGE_PRESENT)) {
+                    u32 frame = pmm_alloc_frame();
+                    if (!frame) {
+                        terminal_puts("elf: out of frames\n");
+                        return 0;
+                    }
+                    k_memset(paging_phys_to_kernel_virt(frame), 0, PAGE_SIZE);
+                    paging_map_page(proc->pd, page, frame, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+                } else {
+                    pt[pt_idx] |= PAGE_PRESENT | PAGE_WRITE | PAGE_USER;
+                }
+            }
+
+            if (!elf_copy_to_user(proc,
+                                  seg_start,
+                                  image + ph[i].p_offset,
+                                  ph[i].p_filesz)) {
+                return 0;
+            }
         }
     }
 
@@ -461,6 +521,7 @@ static int elf_map_image_into_process(process_t* proc,
 }
 
 static process_t* elf_run_image_with_group(const unsigned char* image,
+                                           const char* image_path,
                                            int argc,
                                            char** argv,
                                            int new_process_group,
@@ -502,7 +563,7 @@ static process_t* elf_run_image_with_group(const unsigned char* image,
         return 0;
     }
 
-    if (!elf_map_image_into_process(proc, image, main_base, &main_info) ||
+    if (!elf_map_image_into_process(proc, image, image_path, main_base, &main_info) ||
         !elf_validate_main_layout(eh, &main_info, has_interp)) {
         process_destroy(proc);
         return 0;
@@ -523,7 +584,7 @@ static process_t* elf_run_image_with_group(const unsigned char* image,
             process_destroy(proc);
             return 0;
         }
-        if (!elf_map_image_into_process(proc, interp, USER_INTERP_BASE, &interp_info) ||
+        if (!elf_map_image_into_process(proc, interp, interp_path, USER_INTERP_BASE, &interp_info) ||
             !elf_validate_interp_layout(&main_info, &interp_info)) {
             vfs_free_file_owned(interp_frame, interp_frames);
             process_destroy(proc);
@@ -540,21 +601,20 @@ static process_t* elf_run_image_with_group(const unsigned char* image,
         auxv[auxc * 2] = AT_PAGESZ; auxv[auxc * 2 + 1] = PAGE_SIZE; auxc++;
     }
 
-    {
-        u32 stack_base = USER_STACK_TOP - USER_STACK_SIZE;
-        for (u32 off = 0; off < USER_STACK_SIZE; off += PAGE_SIZE) {
-            u32 stack_virt       = stack_base + off;
-            u32 stack_frame_phys = pmm_alloc_frame();
-            if (!stack_frame_phys) {
-                terminal_puts("elf: out of frames (stack)\n");
-                process_destroy(proc);
-                return 0;
-            }
-
-            k_memset(paging_phys_to_kernel_virt(stack_frame_phys), 0, PAGE_SIZE);
-            paging_map_page(proc->pd, stack_virt, stack_frame_phys,
-                            PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
-        }
+    if (!process_vm_add(proc,
+                        USER_STACK_TOP - USER_STACK_SIZE,
+                        USER_STACK_TOP,
+                        PROCESS_VM_PROT_READ | PROCESS_VM_PROT_WRITE,
+                        PROCESS_VM_PROT_READ | PROCESS_VM_PROT_WRITE,
+                        PROCESS_VM_KIND_STACK,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0)) {
+        process_destroy(proc);
+        return 0;
     }
 
     proc->kernel_stack_frames = PROCESS_KERNEL_STACK_FRAMES;
@@ -569,7 +629,15 @@ static process_t* elf_run_image_with_group(const unsigned char* image,
              proc->kernel_stack_frames * PAGE_SIZE);
 
     (void)process_set_auxv(proc, auxc, auxv);
-    if (!elf_seed_sched_context(proc, entry, argc, argv)) {
+    if (!elf_setup_user_stack(proc,
+                              argc,
+                              argv,
+                              proc->user_envc,
+                              proc->user_envp,
+                              proc->user_auxc,
+                              proc->user_auxv,
+                              &proc->user_stack_esp) ||
+        !elf_seed_sched_context(proc, entry, argc, argv)) {
         process_destroy(proc);
         return 0;
     }
@@ -585,11 +653,12 @@ static process_t* elf_run_image_with_group(const unsigned char* image,
 }
 
 process_t* elf_run_image(const unsigned char* image, int argc, char** argv) {
-    return elf_run_image_with_group(image, argc, argv, 0, 0);
+    return elf_run_image_with_group(image, 0, argc, argv, 0, 0);
 }
 
 int elf_exec_image_into(process_t* proc,
                         const unsigned char* image,
+                        const char* image_path,
                         int argc,
                         char** argv,
                         int envc,
@@ -624,10 +693,13 @@ int elf_exec_image_into(process_t* proc,
     if (!new_pd) return 0;
     proc->pd = new_pd;
 
-    if (!elf_map_image_into_process(proc, image, main_base, &main_info) ||
+    process_vm_clear(proc);
+
+    if (!elf_map_image_into_process(proc, image, image_path, main_base, &main_info) ||
         !elf_validate_main_layout(eh, &main_info, has_interp)) {
         process_pd_destroy(new_pd);
         proc->pd = old_pd;
+        process_vm_clear(proc);
         return 0;
     }
     entry = main_info.entry;
@@ -640,11 +712,12 @@ int elf_exec_image_into(process_t* proc,
                                          &interp_frame, &interp_frames);
         (void)interp_size;
         if (!interp ||
-            !elf_map_image_into_process(proc, interp, USER_INTERP_BASE, &interp_info) ||
+            !elf_map_image_into_process(proc, interp, interp_path, USER_INTERP_BASE, &interp_info) ||
             !elf_validate_interp_layout(&main_info, &interp_info)) {
             if (interp) vfs_free_file_owned(interp_frame, interp_frames);
             process_pd_destroy(new_pd);
             proc->pd = old_pd;
+            process_vm_clear(proc);
             return 0;
         }
         vfs_free_file_owned(interp_frame, interp_frames);
@@ -657,19 +730,22 @@ int elf_exec_image_into(process_t* proc,
         auxv[auxc * 2] = AT_PAGESZ; auxv[auxc * 2 + 1] = PAGE_SIZE; auxc++;
     }
 
-    {
-        u32 stack_base = USER_STACK_TOP - USER_STACK_SIZE;
-        for (u32 off = 0; off < USER_STACK_SIZE; off += PAGE_SIZE) {
-            u32 frame = pmm_alloc_frame();
-            if (!frame) {
-                process_pd_destroy(new_pd);
-                proc->pd = old_pd;
-                return 0;
-            }
-            k_memset(paging_phys_to_kernel_virt(frame), 0, PAGE_SIZE);
-            paging_map_page(new_pd, stack_base + off, frame,
-                            PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
-        }
+    if (!process_vm_add(proc,
+                        USER_STACK_TOP - USER_STACK_SIZE,
+                        USER_STACK_TOP,
+                        PROCESS_VM_PROT_READ | PROCESS_VM_PROT_WRITE,
+                        PROCESS_VM_PROT_READ | PROCESS_VM_PROT_WRITE,
+                        PROCESS_VM_KIND_STACK,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0)) {
+        process_pd_destroy(new_pd);
+        proc->pd = old_pd;
+        process_vm_clear(proc);
+        return 0;
     }
 
     if (process_set_args(proc, argc, argv) < 0 ||
@@ -680,10 +756,12 @@ int elf_exec_image_into(process_t* proc,
                               out_user_esp)) {
         process_pd_destroy(new_pd);
         proc->pd = old_pd;
+        process_vm_clear(proc);
         return 0;
     }
 
     proc->user_entry = entry;
+    proc->user_stack_esp = *out_user_esp;
     proc->heap_base = USER_HEAP_BASE;
     proc->heap_brk = USER_HEAP_BASE;
     proc->mmap_base = USER_MMAP_BASE;
@@ -761,7 +839,7 @@ static process_t* elf_run_named_with_group(const char* name,
     }
 
     {
-        process_t* proc = elf_run_image_with_group(data, argc, argv,
+        process_t* proc = elf_run_image_with_group(data, loaded_name, argc, argv,
                                                    new_process_group,
                                                    suspended);
         vfs_free_file_owned(image_frame, image_frames);
@@ -824,7 +902,7 @@ int elf_exec_named_into(process_t* proc,
 
     (void)size;
     if (!data) return 0;
-    if (!elf_exec_image_into(proc, data, argc, argv, envc, envp, out_entry, out_user_esp)) {
+    if (!elf_exec_image_into(proc, data, loaded_name, argc, argv, envc, envp, out_entry, out_user_esp)) {
         vfs_free_file_owned(image_frame, image_frames);
         return 0;
     }

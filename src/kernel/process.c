@@ -181,6 +181,399 @@ static void process_registry_remove(process_t* proc) {
     }
 }
 
+static u32 page_floor(u32 value) {
+    return value & ~(PAGE_SIZE - 1u);
+}
+
+static int process_vm_compatible(const process_vm_area_t* a,
+                                 const process_vm_area_t* b) {
+    if (!a || !b) return 0;
+    if (a->end != b->start) return 0;
+    if (a->prot != b->prot || a->max_prot != b->max_prot ||
+        a->kind != b->kind || a->flags != b->flags ||
+        a->file_size != b->file_size) {
+        return 0;
+    }
+    if (!k_strcmp(a->path, b->path)) return 0;
+    if (a->kind == PROCESS_VM_KIND_FILE_PRIVATE || a->kind == PROCESS_VM_KIND_ELF) {
+        if (a->file_end != b->file_start) return 0;
+        if (a->file_offset + (a->file_end - a->file_start) != b->file_offset) return 0;
+    }
+    return 1;
+}
+
+static void process_vm_merge(process_t* proc) {
+    if (!proc || !proc->vm_areas) return;
+
+    unsigned int i = 0;
+    while (i + 1u < proc->vm_area_count) {
+        process_vm_area_t* cur = &proc->vm_areas[i];
+        process_vm_area_t* next = &proc->vm_areas[i + 1u];
+        if (process_vm_compatible(cur, next)) {
+            cur->end = next->end;
+            cur->file_end = next->file_end;
+            for (unsigned int j = i + 1u; j + 1u < proc->vm_area_count; j++) {
+                proc->vm_areas[j] = proc->vm_areas[j + 1u];
+            }
+            proc->vm_area_count--;
+            continue;
+        }
+        i++;
+    }
+}
+
+int process_vm_init(process_t* proc) {
+    if (!proc) return 0;
+    if (proc->vm_areas) return 1;
+
+    unsigned int bytes = PROCESS_VM_AREA_MAX * sizeof(process_vm_area_t);
+    unsigned int frames = (bytes + PAGE_SIZE - 1u) / PAGE_SIZE;
+    u32 frame = pmm_alloc_contiguous_frames(frames);
+    if (!frame) return 0;
+
+    proc->vm_areas = (process_vm_area_t*)paging_phys_to_kernel_virt(frame);
+    proc->vm_area_frame = frame;
+    proc->vm_area_frames = frames;
+    proc->vm_area_capacity = PROCESS_VM_AREA_MAX;
+    proc->vm_area_count = 0;
+    k_memset(proc->vm_areas, 0, frames * PAGE_SIZE);
+    return 1;
+}
+
+void process_vm_free(process_t* proc) {
+    if (!proc) return;
+    if (proc->vm_area_frame && proc->vm_area_frames) {
+        pmm_free_contiguous_frames(proc->vm_area_frame, proc->vm_area_frames);
+    }
+    proc->vm_areas = 0;
+    proc->vm_area_frame = 0;
+    proc->vm_area_frames = 0;
+    proc->vm_area_count = 0;
+    proc->vm_area_capacity = 0;
+}
+
+void process_vm_clear(process_t* proc) {
+    if (!proc) return;
+    if (!proc->vm_areas && !process_vm_init(proc)) return;
+    proc->vm_area_count = 0;
+    if (proc->vm_areas && proc->vm_area_frames) {
+        k_memset(proc->vm_areas, 0, proc->vm_area_frames * PAGE_SIZE);
+    }
+}
+
+int process_vm_clone(process_t* dst, process_t* src) {
+    if (!dst || !src) return 0;
+    if (!process_vm_init(dst)) return 0;
+    if (src->vm_area_count > dst->vm_area_capacity) return 0;
+    if (src->vm_area_count > 0) {
+        k_memcpy(dst->vm_areas,
+                 src->vm_areas,
+                 src->vm_area_count * sizeof(process_vm_area_t));
+    }
+    dst->vm_area_count = src->vm_area_count;
+    return 1;
+}
+
+static int process_vm_find_index(process_t* proc, u32 addr) {
+    if (!proc || !proc->vm_areas) return -1;
+    for (unsigned int i = 0; i < proc->vm_area_count; i++) {
+        if (addr >= proc->vm_areas[i].start && addr < proc->vm_areas[i].end) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static process_vm_area_t* process_vm_lookup(process_t* proc, u32 addr) {
+    int idx = process_vm_find_index(proc, addr);
+    return idx >= 0 ? &proc->vm_areas[idx] : 0;
+}
+
+static int process_vm_insert_area(process_t* proc,
+                                  const process_vm_area_t* area,
+                                  int merge) {
+    if (!proc || !area || area->start >= area->end) return 0;
+    if (!proc->vm_areas && !process_vm_init(proc)) return 0;
+    if (proc->vm_area_count >= proc->vm_area_capacity) return 0;
+
+    unsigned int pos = 0;
+    while (pos < proc->vm_area_count && proc->vm_areas[pos].start < area->start) {
+        pos++;
+    }
+    if (pos > 0 && proc->vm_areas[pos - 1u].end > area->start) return 0;
+    if (pos < proc->vm_area_count && area->end > proc->vm_areas[pos].start) return 0;
+
+    for (unsigned int i = proc->vm_area_count; i > pos; i--) {
+        proc->vm_areas[i] = proc->vm_areas[i - 1u];
+    }
+    proc->vm_areas[pos] = *area;
+    proc->vm_area_count++;
+    if (merge) process_vm_merge(proc);
+    return 1;
+}
+
+int process_vm_add(process_t* proc,
+                   u32 start,
+                   u32 end,
+                   u32 prot,
+                   u32 max_prot,
+                   u32 kind,
+                   u32 flags,
+                   const char* path,
+                   u32 file_start,
+                   u32 file_end,
+                   u32 file_offset,
+                   u32 file_size) {
+    process_vm_area_t area;
+
+    if (!proc) return 0;
+    if ((start & (PAGE_SIZE - 1u)) != 0u || (end & (PAGE_SIZE - 1u)) != 0u) return 0;
+    if (start < USER_CODE_BASE || end > USER_STACK_TOP || start >= end) return 0;
+    if ((prot & ~max_prot) != 0u) return 0;
+    if ((max_prot & ~(PROCESS_VM_PROT_READ | PROCESS_VM_PROT_WRITE | PROCESS_VM_PROT_EXEC)) != 0u) {
+        return 0;
+    }
+    if (!process_vm_range_free(proc, start, end)) return 0;
+
+    k_memset(&area, 0, sizeof(area));
+    area.start = start;
+    area.end = end;
+    area.prot = prot;
+    area.max_prot = max_prot;
+    area.kind = kind;
+    area.flags = flags;
+    area.file_start = file_start;
+    area.file_end = file_end;
+    area.file_offset = file_offset;
+    area.file_size = file_size;
+    if (path) k_strncpy(area.path, path, sizeof(area.path));
+    return process_vm_insert_area(proc, &area, 1);
+}
+
+int process_vm_range_free(process_t* proc, u32 start, u32 end) {
+    if (!proc || start >= end) return 0;
+    if (!proc->vm_areas) return 1;
+    for (unsigned int i = 0; i < proc->vm_area_count; i++) {
+        process_vm_area_t* area = &proc->vm_areas[i];
+        if (start < area->end && end > area->start) return 0;
+    }
+    return 1;
+}
+
+static int process_vm_split_at(process_t* proc, u32 addr) {
+    if (!proc || !proc->vm_areas) return 0;
+    if ((addr & (PAGE_SIZE - 1u)) != 0u) return 0;
+
+    int idx = process_vm_find_index(proc, addr);
+    if (idx < 0) return 1;
+
+    process_vm_area_t* area = &proc->vm_areas[idx];
+    if (addr == area->start || addr == area->end) return 1;
+    if (proc->vm_area_count >= proc->vm_area_capacity) return 0;
+
+    process_vm_area_t right = *area;
+    u32 delta = addr - area->start;
+    right.start = addr;
+    if (right.kind == PROCESS_VM_KIND_FILE_PRIVATE || right.kind == PROCESS_VM_KIND_ELF) {
+        if (right.file_start < addr && right.file_end > addr) {
+            right.file_offset += delta;
+            right.file_start = addr;
+        } else if (right.file_end <= addr) {
+            right.file_start = addr;
+            right.file_end = addr;
+        }
+    }
+    area->end = addr;
+    if (area->kind == PROCESS_VM_KIND_FILE_PRIVATE || area->kind == PROCESS_VM_KIND_ELF) {
+        if (area->file_end > addr) area->file_end = addr;
+    }
+
+    for (unsigned int i = proc->vm_area_count; i > (unsigned int)idx + 1u; i--) {
+        proc->vm_areas[i] = proc->vm_areas[i - 1u];
+    }
+    proc->vm_areas[idx + 1] = right;
+    proc->vm_area_count++;
+    return 1;
+}
+
+int process_vm_remove_range(process_t* proc, u32 start, u32 end) {
+    if (!proc || start >= end) return 0;
+    if ((start & (PAGE_SIZE - 1u)) != 0u || (end & (PAGE_SIZE - 1u)) != 0u) return 0;
+
+    if (!proc->vm_areas) return 1;
+    if (!process_vm_split_at(proc, start) || !process_vm_split_at(proc, end)) return 0;
+
+    for (u32 page = start; page < end; page += PAGE_SIZE) {
+        (void)paging_unmap_user_page(proc->pd, page);
+    }
+
+    unsigned int out = 0;
+    for (unsigned int i = 0; i < proc->vm_area_count; i++) {
+        process_vm_area_t area = proc->vm_areas[i];
+        if (area.start >= start && area.end <= end) {
+            continue;
+        }
+        proc->vm_areas[out++] = area;
+    }
+    proc->vm_area_count = out;
+    process_vm_merge(proc);
+    return 1;
+}
+
+static int process_vm_range_covered(process_t* proc, u32 start, u32 end) {
+    u32 pos = start;
+    if (!proc || !proc->vm_areas || start >= end) return 0;
+    while (pos < end) {
+        process_vm_area_t* area = process_vm_lookup(proc, pos);
+        if (!area || area->start > pos) return 0;
+        pos = area->end;
+    }
+    return 1;
+}
+
+int process_vm_protect(process_t* proc, u32 start, u32 end, u32 prot) {
+    if (!proc || start >= end) return 0;
+    if ((start & (PAGE_SIZE - 1u)) != 0u || (end & (PAGE_SIZE - 1u)) != 0u) return 0;
+    if ((prot & ~(PROCESS_VM_PROT_READ | PROCESS_VM_PROT_WRITE | PROCESS_VM_PROT_EXEC)) != 0u) {
+        return 0;
+    }
+    if (!process_vm_range_covered(proc, start, end)) return 0;
+
+    for (unsigned int i = 0; i < proc->vm_area_count; i++) {
+        process_vm_area_t* area = &proc->vm_areas[i];
+        if (area->end <= start || area->start >= end) continue;
+        if ((prot & ~area->max_prot) != 0u) return 0;
+    }
+
+    if (!process_vm_split_at(proc, start) || !process_vm_split_at(proc, end)) return 0;
+
+    for (unsigned int i = 0; i < proc->vm_area_count; i++) {
+        process_vm_area_t* area = &proc->vm_areas[i];
+        if (area->end <= start || area->start >= end) continue;
+        area->prot = prot;
+        for (u32 page = area->start; page < area->end; page += PAGE_SIZE) {
+            u32 phys = 0;
+            u32 flags = 0;
+            if (!paging_user_page_get(proc->pd, page, &phys, &flags)) continue;
+            if (prot & PROCESS_VM_PROT_WRITE) {
+                if ((flags & PAGE_COW) == 0u && (flags & PAGE_SHARED_RO_FILE) == 0u) {
+                    (void)paging_user_page_set_flags(proc->pd, page, 0, PAGE_WRITE);
+                }
+            } else {
+                (void)paging_user_page_set_flags(proc->pd, page, PAGE_WRITE, 0);
+            }
+        }
+    }
+
+    process_vm_merge(proc);
+    return 1;
+}
+
+static int process_vm_load_file_page(process_vm_area_t* area, u32 page, u32 frame) {
+    u32 copy_start;
+    u32 copy_end;
+    u32 read = 0;
+
+    if (!area || area->path[0] == '\0') return 0;
+    if (area->file_end <= page || area->file_start >= page + PAGE_SIZE) return 1;
+
+    copy_start = area->file_start > page ? area->file_start : page;
+    copy_end = area->file_end < page + PAGE_SIZE ? area->file_end : page + PAGE_SIZE;
+    if (copy_end <= copy_start) return 1;
+
+    if (vfs_read_path_at(area->path,
+                         area->file_offset + (copy_start - area->file_start),
+                         (u8*)paging_phys_to_kernel_virt(frame) + (copy_start - page),
+                         copy_end - copy_start,
+                         &read) < 0) {
+        return 0;
+    }
+    return read == copy_end - copy_start;
+}
+
+int process_vm_handle_fault(process_t* proc, u32 fault_addr, u32 err) {
+    if (!proc || !proc->pd) return 0;
+
+    u32 page = page_floor(fault_addr);
+    int fault_present = (err & 0x1u) != 0u;
+    int fault_write = (err & 0x2u) != 0u;
+    process_vm_area_t* area = process_vm_lookup(proc, page);
+    if (!area) return 0;
+
+    if (fault_write && (area->prot & PROCESS_VM_PROT_WRITE) == 0u) return 0;
+    if (!fault_write &&
+        (area->prot & (PROCESS_VM_PROT_READ | PROCESS_VM_PROT_WRITE | PROCESS_VM_PROT_EXEC)) == 0u) {
+        return 0;
+    }
+
+    if (fault_present) {
+        u32 phys = 0;
+        u32 flags = 0;
+        if (!fault_write) return 0;
+        if (!paging_user_page_get(proc->pd, page, &phys, &flags)) return 0;
+        if ((flags & PAGE_COW) == 0u) return 0;
+        return paging_resolve_cow_fault(proc->pd, page);
+    }
+
+    if (paging_user_page_present(proc->pd, page)) return 0;
+
+    if ((area->kind == PROCESS_VM_KIND_FILE_PRIVATE || area->kind == PROCESS_VM_KIND_ELF) &&
+        area->path[0] != '\0' &&
+        (area->max_prot & PROCESS_VM_PROT_WRITE) == 0u &&
+        (area->prot & PROCESS_VM_PROT_WRITE) == 0u &&
+        area->file_start <= page &&
+        area->file_end >= page + PAGE_SIZE) {
+        u32 frame = 0;
+        u32 bytes = 0;
+        u32 file_off = area->file_offset + (page - area->file_start);
+        if ((file_off & (PAGE_SIZE - 1u)) == 0u &&
+            vfs_file_map_ro_page_path(area->path, file_off, &frame, &bytes) == 0) {
+            (void)bytes;
+            paging_map_page(proc->pd, page, frame, PAGE_USER | PAGE_SHARED_RO_FILE);
+            return 1;
+        }
+    }
+
+    u32 frame = pmm_alloc_frame();
+    if (!frame) return 0;
+    k_memset(paging_phys_to_kernel_virt(frame), 0, PAGE_SIZE);
+    if (area->kind == PROCESS_VM_KIND_FILE_PRIVATE || area->kind == PROCESS_VM_KIND_ELF) {
+        if (!process_vm_load_file_page(area, page, frame)) {
+            pmm_release_frame(frame);
+            return 0;
+        }
+    }
+
+    u32 map_flags = PAGE_USER;
+    if (area->prot & PROCESS_VM_PROT_WRITE) {
+        map_flags |= PAGE_WRITE;
+    } else if (area->max_prot & PROCESS_VM_PROT_WRITE) {
+        map_flags |= PAGE_COW;
+    }
+    paging_map_page(proc->pd, page, frame, map_flags);
+    return 1;
+}
+
+int process_vm_fault_in_page(process_t* proc, u32 addr, int write) {
+    u32 flags = 0;
+    u32 phys = 0;
+    u32 err = write ? 0x2u : 0u;
+
+    if (!proc || !proc->pd) return 0;
+    if (paging_user_page_get(proc->pd, addr, &phys, &flags)) {
+        if (!write) return 1;
+        if (flags & PAGE_WRITE) return 1;
+        err |= 0x1u;
+    }
+    return process_vm_handle_fault(proc, addr, err);
+}
+
+int process_vm_page_may_write(void* ctx, u32 virt) {
+    process_t* proc = (process_t*)ctx;
+    process_vm_area_t* area = process_vm_lookup(proc, page_floor(virt));
+    return area && (area->max_prot & PROCESS_VM_PROT_WRITE);
+}
+
 process_t* process_find_by_pid(u32 pid) {
     if (pid == 0) return 0;
 
@@ -1526,7 +1919,7 @@ static short process_handle_console_poll(fd_entry_t* ent, short events) {
     short revents = 0;
 
     if (!ent || !ent->valid) return POLLERR;
-    if (!ent->writable && (events & POLLIN) && keyboard_buf_available()) {
+    if (ent->readable && (events & POLLIN) && keyboard_buf_available()) {
         revents |= POLLIN;
     }
     if (ent->writable && (events & POLLOUT)) {
@@ -2494,6 +2887,13 @@ int process_fd_wait(fd_entry_t* ent, process_t* proc, short events) {
         return rc;
     }
 
+    if (ent->kind == PROCESS_HANDLE_KIND_CONSOLE) {
+        if ((events & POLLIN) && ent->readable) {
+            keyboard_set_waiting_process(proc);
+        }
+        return 0;
+    }
+
     if (ent->kind == PROCESS_HANDLE_KIND_PIPE) {
         pipe_object_t* pipe = pipe_object_from_ent(ent);
         if (!pipe) return -EIO;
@@ -2997,6 +3397,12 @@ process_t* process_create(const char* name) {
         pmm_free_frame(frame);
         return 0;
     }
+    if (!process_vm_init(proc)) {
+        terminal_puts("process: out of frames for vm table\n");
+        process_fd_table_free(proc);
+        pmm_free_frame(frame);
+        return 0;
+    }
     process_init_standard_fds(proc);
     (void)process_set_default_env(proc);
     if (name) {
@@ -3005,6 +3411,7 @@ process_t* process_create(const char* name) {
 
     if (!process_registry_add(proc)) {
         process_fd_table_free(proc);
+        process_vm_free(proc);
         pmm_free_frame(frame);
         return 0;
     }
@@ -3058,7 +3465,12 @@ process_t* process_fork_from_syscall(unsigned int regs_esp, unsigned int frame_t
     child = process_create(parent->name);
     if (!child) return 0;
 
-    child->pd = process_pd_clone_user(parent->pd);
+    if (!process_vm_clone(child, parent)) {
+        process_destroy(child);
+        return 0;
+    }
+
+    child->pd = process_pd_clone_user(parent->pd, process_vm_page_may_write, parent);
     if (!child->pd) {
         process_destroy(child);
         return 0;
@@ -3106,6 +3518,7 @@ process_t* process_fork_from_syscall(unsigned int regs_esp, unsigned int frame_t
     child->supp_gid_count = parent->supp_gid_count;
     child->umask = parent->umask;
     child->user_entry = parent->user_entry;
+    child->user_stack_esp = parent->user_stack_esp;
     child->user_argc = parent->user_argc;
     k_memcpy(child->user_arg_data, parent->user_arg_data, sizeof(child->user_arg_data));
     for (int i = 0; i <= PROCESS_MAX_ARGS; i++) {
@@ -3176,6 +3589,7 @@ void process_destroy(process_t* proc) {
         process_pd_destroy(proc->pd);
         proc->pd = 0;
     }
+    process_vm_free(proc);
 
     if (proc->kernel_stack_frame) {
         u32 frames = proc->kernel_stack_frames ? proc->kernel_stack_frames : 1u;
@@ -3208,6 +3622,11 @@ void process_release_exit_resources(process_t* proc) {
             process_fd_close(&proc->fds[i]);
         }
     }
+    if (proc->pd) {
+        process_pd_destroy(proc->pd);
+        proc->pd = 0;
+    }
+    process_vm_free(proc);
 }
 
 process_t* process_get_current(void) {

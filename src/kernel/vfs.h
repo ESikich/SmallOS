@@ -16,6 +16,11 @@ int vfs_file_map_ro_page(fd_entry_t* ent,
                          u32 file_offset,
                          u32* out_frame,
                          u32* out_bytes);
+int vfs_file_map_ro_page_path(const char* path,
+                              u32 file_offset,
+                              u32* out_frame,
+                              u32* out_bytes);
+int vfs_read_path_at(const char* path, u32 offset, u8* out, u32 len, u32* out_read);
 void vfs_file_map_cache_stats(u32* out_pages, u32* out_mapped_refs);
 
 const u8* vfs_load_file(const char* path, u32* out_size);

@@ -41,6 +41,7 @@ int path_is_sep(char c);
 int path_build_from(const char* base, const char* path, char* out, unsigned int out_size);
 int user_page_mapped(u32* pd, unsigned int addr);
 int user_buf_ok(unsigned int ptr, unsigned int len);
+int user_buf_write_ok(unsigned int ptr, unsigned int len);
 int user_count_bytes_ok(unsigned int ptr, unsigned int count, unsigned int elem_size, unsigned int* out_bytes);
 int copy_from_user(void* dst, const void* src, unsigned int len);
 int copy_to_user(void* dst, const void* src, unsigned int len);

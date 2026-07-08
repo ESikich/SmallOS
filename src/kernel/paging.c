@@ -102,6 +102,10 @@ static int paging_pd_index_is_user(u32 index) {
     return index >= USER_PD_FIRST_INDEX && index < USER_PD_LIMIT_INDEX;
 }
 
+static void paging_invalidate(u32 virt) {
+    __asm__ __volatile__("invlpg (%0)" : : "r"(virt) : "memory");
+}
+
 /* ------------------------------------------------------------------ */
 /* Public API                                                           */
 /* ------------------------------------------------------------------ */
@@ -279,7 +283,9 @@ u32* process_pd_create(void) {
     return (u32*)frame;
 }
 
-u32* process_pd_clone_user(u32* src_pd) {
+u32* process_pd_clone_user(u32* src_pd,
+                           int (*page_may_write)(void* ctx, u32 virt),
+                           void* ctx) {
     if (!src_pd) return 0;
 
     u32* dst_pd = process_pd_create();
@@ -320,24 +326,185 @@ u32* process_pd_clone_user(u32* src_pd) {
                 continue;
             }
 
-            u32 new_frame = pmm_alloc_frame();
-            if (!new_frame) {
+            u32 virt = (i << 22) | (j << 12);
+            int can_write = page_may_write ? page_may_write(ctx, virt) : 0;
+
+            if (src_flags & PAGE_COW) {
+                if (!pmm_retain_frame(src_frame)) {
+                    process_pd_destroy(dst_pd);
+                    return 0;
+                }
+                paging_map_page(dst_pd,
+                                virt,
+                                src_frame,
+                                src_flags & ~PAGE_WRITE);
+                continue;
+            }
+
+            if ((src_flags & PAGE_WRITE) || can_write) {
+                if (!pmm_retain_frame(src_frame)) {
+                    process_pd_destroy(dst_pd);
+                    return 0;
+                }
+
+                src_pt[j] = src_frame |
+                            ((src_flags & ~PAGE_WRITE) | PAGE_COW | PAGE_PRESENT);
+                paging_invalidate(virt);
+                paging_map_page(dst_pd,
+                                virt,
+                                src_frame,
+                                (src_flags & ~PAGE_WRITE) | PAGE_COW);
+                continue;
+            }
+
+            if (!pmm_retain_frame(src_frame)) {
                 process_pd_destroy(dst_pd);
                 return 0;
             }
-
-            k_memcpy(paging_phys_to_kernel_virt(new_frame),
-                     paging_phys_to_kernel_virt(src_frame),
-                     PAGE_SIZE);
-
             paging_map_page(dst_pd,
-                            (i << 22) | (j << 12),
-                            new_frame,
-                            src_flags);
+                            virt,
+                            src_frame,
+                            src_flags & ~PAGE_WRITE);
         }
     }
 
     return dst_pd;
+}
+
+int paging_user_page_present(u32* pd, u32 virt) {
+    u32 phys = 0;
+    u32 flags = 0;
+    return paging_user_page_get(pd, virt, &phys, &flags);
+}
+
+int paging_user_page_get(u32* pd, u32 virt, u32* out_phys, u32* out_flags) {
+    if (out_phys) *out_phys = 0;
+    if (out_flags) *out_flags = 0;
+    if (!pd) return 0;
+
+    u32 page = virt & ~(PAGE_SIZE - 1u);
+    u32 pd_index = page >> 22;
+    u32 pt_index = (page >> 12) & 0x3FFu;
+    if (!paging_pd_index_is_user(pd_index)) return 0;
+
+    u32* pd_virt = paging_pd_virt(pd);
+    u32 pde = pd_virt[pd_index];
+    if ((pde & (PAGE_PRESENT | PAGE_USER)) != (PAGE_PRESENT | PAGE_USER)) return 0;
+
+    u32* pt = paging_pt_virt(pde & ~0xFFFu);
+    u32 pte = pt[pt_index];
+    if ((pte & (PAGE_PRESENT | PAGE_USER)) != (PAGE_PRESENT | PAGE_USER)) return 0;
+
+    if (out_phys) *out_phys = pte & ~0xFFFu;
+    if (out_flags) *out_flags = pte & 0xFFFu;
+    return 1;
+}
+
+int paging_user_page_set_flags(u32* pd, u32 virt, u32 clear_flags, u32 set_flags) {
+    if (!pd) return 0;
+
+    u32 page = virt & ~(PAGE_SIZE - 1u);
+    u32 pd_index = page >> 22;
+    u32 pt_index = (page >> 12) & 0x3FFu;
+    if (!paging_pd_index_is_user(pd_index)) return 0;
+
+    u32* pd_virt = paging_pd_virt(pd);
+    u32 pde = pd_virt[pd_index];
+    if ((pde & (PAGE_PRESENT | PAGE_USER)) != (PAGE_PRESENT | PAGE_USER)) return 0;
+
+    u32* pt = paging_pt_virt(pde & ~0xFFFu);
+    u32 pte = pt[pt_index];
+    if ((pte & (PAGE_PRESENT | PAGE_USER)) != (PAGE_PRESENT | PAGE_USER)) return 0;
+
+    pt[pt_index] = (pte & ~clear_flags) | set_flags | PAGE_PRESENT | PAGE_USER;
+    paging_invalidate(page);
+    return 1;
+}
+
+static int paging_pt_empty(u32* pt) {
+    for (u32 i = 0; i < PT_ENTRIES; i++) {
+        if (pt[i] & PAGE_PRESENT) return 0;
+    }
+    return 1;
+}
+
+int paging_unmap_user_page(u32* pd, u32 virt) {
+    if (!pd) return 0;
+
+    u32 page = virt & ~(PAGE_SIZE - 1u);
+    u32 pd_index = page >> 22;
+    u32 pt_index = (page >> 12) & 0x3FFu;
+    if (!paging_pd_index_is_user(pd_index)) return 0;
+
+    u32* pd_virt = paging_pd_virt(pd);
+    u32 pde = pd_virt[pd_index];
+    if (!(pde & PAGE_PRESENT)) return 0;
+    if (pde == kernel_page_directory[pd_index]) return 0;
+
+    u32 pt_phys = pde & ~0xFFFu;
+    u32* pt = paging_pt_virt(pt_phys);
+    u32 pte = pt[pt_index];
+    if (!(pte & PAGE_PRESENT)) return 0;
+
+    if ((pte & PAGE_USER) && paging_phys_is_pmm_frame(pte & ~0xFFFu)) {
+        pmm_release_frame(pte & ~0xFFFu);
+    }
+    pt[pt_index] = 0;
+    paging_invalidate(page);
+
+    if (paging_pt_empty(pt)) {
+        pd_virt[pd_index] = 0;
+        if (paging_phys_is_pmm_frame(pt_phys)) {
+            pmm_release_frame(pt_phys);
+        }
+    }
+    return 1;
+}
+
+int paging_resolve_cow_fault(u32* pd, u32 fault_addr) {
+    if (!pd) return 0;
+
+    u32 virt = fault_addr & ~(PAGE_SIZE - 1u);
+    u32 pd_index = virt >> 22;
+    u32 pt_index = (virt >> 12) & 0x3FFu;
+
+    if (!paging_pd_index_is_user(pd_index)) return 0;
+
+    u32* pd_virt = paging_pd_virt(pd);
+    u32 pde = pd_virt[pd_index];
+    if (!(pde & PAGE_PRESENT)) return 0;
+
+    u32* pt = paging_pt_virt(pde & ~0xFFFu);
+    u32 pte = pt[pt_index];
+    if ((pte & (PAGE_PRESENT | PAGE_USER | PAGE_COW)) !=
+        (PAGE_PRESENT | PAGE_USER | PAGE_COW)) {
+        return 0;
+    }
+    if (pte & PAGE_WRITE) return 0;
+
+    u32 old_frame = pte & ~0xFFFu;
+    if (!paging_phys_is_pmm_frame(old_frame)) return 0;
+
+    u32 flags = pte & 0xFFFu;
+    u32 refs = pmm_frame_refcount(old_frame);
+
+    if (refs <= 1u) {
+        pt[pt_index] = old_frame | (((flags | PAGE_WRITE) & ~PAGE_COW) & ~PAGE_SHARED_RO_FILE);
+        paging_invalidate(virt);
+        return 1;
+    }
+
+    u32 new_frame = pmm_alloc_frame();
+    if (!new_frame) return 0;
+
+    k_memcpy(paging_phys_to_kernel_virt(new_frame),
+             paging_phys_to_kernel_virt(old_frame),
+             PAGE_SIZE);
+
+    pt[pt_index] = new_frame | (((flags | PAGE_WRITE) & ~PAGE_COW) & ~PAGE_SHARED_RO_FILE);
+    paging_invalidate(virt);
+    pmm_release_frame(old_frame);
+    return 1;
 }
 
 /*
@@ -414,7 +581,8 @@ unsigned int process_pd_count_private_frames(u32* pd) {
         frames++;
         for (u32 j = 0; j < PT_ENTRIES; j++) {
             if ((pt[j] & (PAGE_PRESENT | PAGE_USER)) == (PAGE_PRESENT | PAGE_USER) &&
-                paging_phys_is_pmm_frame(pt[j] & ~0xFFFu)) {
+                paging_phys_is_pmm_frame(pt[j] & ~0xFFFu) &&
+                pmm_frame_refcount(pt[j] & ~0xFFFu) <= 1u) {
                 frames++;
             }
         }

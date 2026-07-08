@@ -411,6 +411,10 @@ small process registry, and automatic zombie reaping:
   terminal Ctrl+Z sends `SIGTSTP` to the foreground process group,
   `waitpid(..., WUNTRACED)` reports the stopped child once, and `SIGCONT`
   resumes it
+- BusyBox `ash` also uses POSIX-style terminal readiness while editing a prompt:
+  console and PTY stdin descriptors report `POLLIN`, and sleeping
+  `poll()`/`select()` on the console is woken by the keyboard IRQ through the
+  same waiter slot as `SYS_READ`
 - `SYS_EXEC` returns the child pid and claims the child for its parent so userland can call `waitpid()`
 - if a parent exits without waiting, its children are orphaned and any unclaimed zombies become reaper-owned
 - interactive foreground input is tracked with `process_set_foreground(proc)` / `process_get_foreground()`, while terminal signals target `process_get_foreground_group()`
@@ -432,11 +436,12 @@ small process registry, and automatic zombie reaping:
 
 `elf_run_named()` follows the same scheduler-owned ELF launch path as shell commands: create the process, seed its bootstrap context, enqueue it, and return immediately.
 
-`SYS_FORK` clones the current user process with eager address-space copying and
-duplicates the fd table as shared descriptor entries. The parent receives the
-child pid, while the child resumes from the same syscall frame with return value
-`0`. `SYS_EXECVE` then replaces the current user image in-place, preserving pid,
-cwd, process group, and descriptors that do not have `FD_CLOEXEC` set.
+`SYS_FORK` clones the current user process VM metadata and copy-on-write shares
+private user pages, then duplicates the fd table as shared descriptor entries.
+The parent receives the child pid, while the child resumes from the same syscall
+frame with return value `0`. `SYS_EXECVE` then replaces the current user image
+in-place, preserving pid, cwd, process group, and descriptors that do not have
+`FD_CLOEXEC` set.
 
 The file, console, and socket syscalls used by shell tools, TinyCC, and the
 FTP/TCP smoke apps now share the dynamic PMM-backed process handle table owned
