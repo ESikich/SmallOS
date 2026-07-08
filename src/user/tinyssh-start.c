@@ -1,4 +1,5 @@
 #include "errno.h"
+#include "fcntl.h"
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
@@ -6,9 +7,32 @@
 #include "sys/wait.h"
 #include "unistd.h"
 
+#define TINYSSH_LOG "/var/log/tinyssh.log"
+
 static int exists(const char* path) {
     struct stat st;
     return stat(path, &st) == 0;
+}
+
+static void redirect_stdio(void) {
+    int nullfd;
+    int logfd;
+
+    mkdir("/var", 0755);
+    mkdir("/var/log", 0755);
+
+    nullfd = open("/dev/null", O_RDONLY);
+    if (nullfd >= 0) {
+        dup2(nullfd, STDIN_FILENO);
+        if (nullfd > STDERR_FILENO) close(nullfd);
+    }
+
+    logfd = open(TINYSSH_LOG, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (logfd >= 0) {
+        dup2(logfd, STDOUT_FILENO);
+        dup2(logfd, STDERR_FILENO);
+        if (logfd > STDERR_FILENO) close(logfd);
+    }
 }
 
 static int run_makekey(void) {
@@ -52,6 +76,7 @@ void _start(void) {
 
     mkdir("/etc", 0755);
     mkdir("/etc/tinyssh", 0755);
+    redirect_stdio();
     if (!exists("/etc/tinyssh/sshkeydir/.ed25519.sk")) {
         if (run_makekey() < 0) {
             perror("tinysshd-makekey");

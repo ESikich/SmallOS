@@ -502,7 +502,9 @@ The suite deliberately does not start BusyBox `udhcpd`.
 `make tinyssh-smoke` forwards host TCP to guest port `22`, uses the
 boot-started TinySSH service, authenticates as `root` with the staged Ed25519
 key, checks command execution through a forced PTY, and verifies that a quiet
-interactive default-shell session remains open before accepting input.
+interactive default-shell session remains open before accepting input. The
+smoke harness writes the host SSH transcript to `/tmp/smallos-tinyssh.log` by
+default; set `TINYSSH_SMOKE_LOG` to override it.
 
 `make usb-storage-smoke` boots the canonical raw image through QEMU OHCI USB
 mass storage (`-device pci-ohci` plus `-device usb-storage`) with the loader2

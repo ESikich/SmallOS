@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import shlex
 import socket
 import subprocess
 import sys
@@ -164,15 +165,28 @@ def ssh_base_args(port, identity):
     ]
 
 
-def run_ssh_until_ok(port, identity, timeout_s):
+def log_ssh_result(log, title, cmd, returncode, stdout, stderr):
+    print(f"--- {title} ---", file=log)
+    print("$ " + " ".join(shlex.quote(arg) for arg in cmd), file=log)
+    print(f"returncode={returncode}", file=log)
+    if stdout:
+        print("--- stdout ---", file=log)
+        print(stdout, end="" if stdout.endswith("\n") else "\n", file=log)
+    if stderr:
+        print("--- stderr ---", file=log)
+        print(stderr, end="" if stderr.endswith("\n") else "\n", file=log)
+    log.flush()
+
+
+def run_ssh_until_ok(port, identity, timeout_s, ssh_log):
     deadline = time.time() + timeout_s
     last = None
     while time.time() < deadline:
         cmd = ssh_base_args(port, identity) + ["echo tinyssh-ok"]
         proc = subprocess.run(cmd, text=True, capture_output=True, timeout=20)
+        log_ssh_result(ssh_log, "login probe", cmd, proc.returncode, proc.stdout, proc.stderr)
         last = proc
         if proc.returncode == 0 and "tinyssh-ok" in proc.stdout:
-            print(proc.stdout, end="")
             return
         time.sleep(0.5)
     detail = ""
@@ -181,18 +195,18 @@ def run_ssh_until_ok(port, identity, timeout_s):
     raise RuntimeError(f"timed out waiting for TinySSH login.{detail}")
 
 
-def run_pty_check(port, identity):
+def run_pty_check(port, identity, ssh_log):
     cmd = ssh_base_args(port, identity)
     cmd.insert(1, "-tt")
     cmd += ["echo tinyssh-pty-ok"]
     proc = subprocess.run(cmd, text=True, capture_output=True, timeout=20)
     output = (proc.stdout or "") + (proc.stderr or "")
-    print(output, end="")
+    log_ssh_result(ssh_log, "pty check", cmd, proc.returncode, proc.stdout, proc.stderr)
     if proc.returncode != 0 or "tinyssh-pty-ok" not in output:
         raise RuntimeError(f"interactive PTY check failed: rc={proc.returncode} output={output!r}")
 
 
-def run_default_shell_check(port, identity):
+def run_default_shell_check(port, identity, ssh_log):
     cmd = ssh_base_args(port, identity)
     cmd.insert(1, "-tt")
     proc = subprocess.Popen(
@@ -209,7 +223,7 @@ def run_default_shell_check(port, identity):
         proc.kill()
         stdout, stderr = proc.communicate()
     output = (stdout or "") + (stderr or "")
-    print(output, end="")
+    log_ssh_result(ssh_log, "default shell check", cmd, proc.returncode, stdout, stderr)
     if (
         proc.returncode != 0
         or "SmallOS user shell" not in output
@@ -227,6 +241,7 @@ def main():
     parser.add_argument("--pidfile", default="/tmp/smallos.pid")
     parser.add_argument("--port", type=int, default=2222)
     parser.add_argument("--identity", default=".state/tinyssh-smoke-ed25519")
+    parser.add_argument("--ssh-log", default="/tmp/smallos-tinyssh.log")
     parser.add_argument("--timeout", type=float, default=180.0)
     args = parser.parse_args()
 
@@ -236,7 +251,11 @@ def main():
         if not wait_for_path(args.serial, args.timeout):
             raise RuntimeError(f"timed out waiting for serial log: {args.serial}")
         monitor = connect_monitor(args.monitor, args.timeout)
-        with open(args.serial, "r", encoding="utf-8", errors="replace") as log:
+        with open(args.ssh_log, "w", encoding="utf-8") as ssh_log, open(
+            args.serial, "r", encoding="utf-8", errors="replace"
+        ) as log:
+            print(f"tinyssh-smoke SSH transcript log: {args.ssh_log}", file=ssh_log)
+            ssh_log.flush()
             offset = wait_for_prompt(monitor, log, args.timeout)
             offset = run_guest_command(
                 monitor,
@@ -246,9 +265,9 @@ def main():
                 args.timeout,
                 "lease acquired via SmallOS DHCP",
             )
-            run_ssh_until_ok(args.port, args.identity, args.timeout)
-            run_pty_check(args.port, args.identity)
-            run_default_shell_check(args.port, args.identity)
+            run_ssh_until_ok(args.port, args.identity, args.timeout, ssh_log)
+            run_pty_check(args.port, args.identity, ssh_log)
+            run_default_shell_check(args.port, args.identity, ssh_log)
         exit_status = 0
     finally:
         if monitor is not None:

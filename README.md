@@ -214,6 +214,9 @@ usr/sbin/cserve --port 8080 --root /var/www --max-conn 28 --log off
 usr/sbin/tinyssh-start
 ```
 
+TinySSH service stdout and stderr are logged inside the guest at
+`/var/log/tinyssh.log`.
+
 Forward guest port `22` to connect with OpenSSH from the host:
 
 ```bash

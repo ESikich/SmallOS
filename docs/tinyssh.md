@@ -21,6 +21,10 @@ The helper creates `/etc/tinyssh/sshkeydir` on first run by invoking
 /usr/bin/busybox tcpsvd 0 22 /usr/sbin/tinysshd -v /etc/tinyssh/sshkeydir
 ```
 
+`tinyssh-start` redirects TinySSH service stdout and stderr to
+`/var/log/tinyssh.log` inside the guest, with stdin attached to `/dev/null`, so
+daemon messages do not bleed into the active terminal.
+
 When QEMU uses user-mode networking, expose the guest SSH port with host
 forwarding. The smoke target does this automatically; a manual run can use:
 
@@ -67,7 +71,9 @@ an SSH terminal can sit quiet without relying on client keepalives.
 `make tinyssh-smoke` boots QEMU with `hostfwd=tcp::<port>-:22`, configures DHCP
 inside the guest if needed, verifies root public-key command execution, verifies
 a forced-PTY command, then opens the default shell, leaves it idle beyond the
-old TCP idle cutoff, sends a command, and exits.
+old TCP idle cutoff, sends a command, and exits. The host-side SSH command
+transcript is written to `/tmp/smallos-tinyssh.log` by default; override
+`TINYSSH_SMOKE_LOG` to choose another path.
 
 SFTP, forwarding, agent forwarding, X11 forwarding, and multi-user account
 expansion are intentionally out of scope for this pass. Password authentication

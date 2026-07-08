@@ -548,7 +548,8 @@ TinySSH is staged under `/usr/sbin` and started during boot through
 `tcpsvd` on guest port `22`. Root public-key login uses `/.ssh/authorized_keys`;
 interactive no-command sessions default to `/bin/shell`, and forced-PTY
 sessions use the libc `openpty`/`login_tty` compatibility layer backed by the
-kernel PTY syscalls.
+kernel PTY syscalls. Service stdout and stderr are redirected to
+`/var/log/tinyssh.log` inside the guest.
 
 The current compatibility wave enables BusyBox `ash` job control, BusyBox
 `mount`/`umount` for `proc`/`devtmpfs` pseudo mounts, classic networking tools

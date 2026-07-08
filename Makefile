@@ -1127,6 +1127,7 @@ esxi-smoke:
 
 QEMU=qemu-system-i386
 SERIAL_LOG=/tmp/smallos-serial.log
+TINYSSH_SMOKE_LOG=/tmp/smallos-tinyssh.log
 MONITOR_SOCK=/tmp/smallos-monitor.sock
 PIDFILE=/tmp/smallos.pid
 SMOKE_TIMEOUT=120.0
@@ -1376,7 +1377,7 @@ busybox-net-smoke:
 tinyssh-smoke:
 	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1
 	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
-	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
+	rm -f $(SERIAL_LOG) $(TINYSSH_SMOKE_LOG) $(MONITOR_SOCK) $(PIDFILE)
 	$(MAKE) run-headless SERIAL_CONSOLE=1 QEMU_NET_HOSTFWD=',hostfwd=tcp::$(TINYSSH_SMOKE_PORT)-:22'
 	$(PYTHON3) tools/tinyssh_smoke.py \
 		--monitor $(MONITOR_SOCK) \
@@ -1384,6 +1385,7 @@ tinyssh-smoke:
 		--pidfile $(PIDFILE) \
 		--port $(TINYSSH_SMOKE_PORT) \
 		--identity $(TINYSSH_SMOKE_KEY) \
+		--ssh-log $(TINYSSH_SMOKE_LOG) \
 		--timeout 180
 
 framebuffer-smoke:

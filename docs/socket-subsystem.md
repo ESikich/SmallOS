@@ -186,7 +186,8 @@ Coverage highlights:
   paths. It does not start BusyBox `udhcpd`.
 - `make tinyssh-smoke` checks boot-started TinySSH on guest port `22`, root
   public-key login, forced-PTY command execution, and an idle default-shell
-  interactive session.
+  interactive session. Its host-side SSH transcript is written to
+  `/tmp/smallos-tinyssh.log` by default.
 - `make verify-network` runs the socket EOF, socket parallel, FTP, FTP loop,
   cserve, BusyBox network, and TinySSH smoke targets in sequence.
 

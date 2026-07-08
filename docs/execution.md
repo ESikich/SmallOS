@@ -100,7 +100,7 @@ Important current-state facts:
 - `sockeof` listens on `2463` in the guest and is driven by `make socket-eof-smoke` to verify a multi-segment payload before EOF, `POLLHUP`, post-EOF response writes, and guest write-side shutdown
 - `ftpd` listens on `2121` in the guest and expects passive data connections on `30000`; the boot sequence starts it in quiet mode, `make ftp-smoke` and `make ftp-loop-smoke` cover that path, and host-side clients such as `lftp`, WinSCP, and FileZilla should use passive mode
 - `cserve` listens on `8080` from `/var/www` by default; the boot sequence starts it with logging disabled and `max-conn` set to 28
-- `tinyssh-start` listens on `22` by default through BusyBox `tcpsvd` and TinySSH; public-key login is staged for smoke tests, no-command sessions default to `/bin/shell`, and `make tinyssh-smoke` covers root public-key login, forced-PTY command execution, and an idle interactive shell interval
+- `tinyssh-start` listens on `22` by default through BusyBox `tcpsvd` and TinySSH, with service stdout/stderr redirected to `/var/log/tinyssh.log`; public-key login is staged for smoke tests, no-command sessions default to `/bin/shell`, and `make tinyssh-smoke` covers root public-key login, forced-PTY command execution, and an idle interactive shell interval
 
 ---
 
@@ -306,7 +306,9 @@ deliberately does not start BusyBox `udhcpd`.
 `make tinyssh-smoke` forwards guest port `22`, uses the boot-started TinySSH
 service, verifies public-key login as `root`, checks forced-PTY command
 execution, and verifies that an idle interactive default-shell session remains
-usable.
+usable. TinySSH daemon output goes to guest `/var/log/tinyssh.log`; the
+host-side smoke SSH transcript goes to `/tmp/smallos-tinyssh.log` unless
+`TINYSSH_SMOKE_LOG` is overridden.
 
 ---
 
