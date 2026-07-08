@@ -54,6 +54,10 @@ The ext2 start LBA is **not** compiled into the kernel. The Makefile computes it
 the mutable volume appended to `smallos.img`. The seed includes
 `/var/log/boot.txt` from `samples/boot.txt` so the kernel can persist boot
 diagnostics by overwriting an existing file after `bootseq` mounts ext2.
+It also seeds `/proc`, `/dev`, `/dev/fd`, and `/dev/pts` as empty mountpoint
+directories. Their runtime contents come from the kernel's virtual proc/dev
+providers, not from ext2 files, but keeping the directories in the root image
+makes normal directory listings expose the mounted pseudo filesystems.
 
 ## Fixed geometry
 

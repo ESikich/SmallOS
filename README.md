@@ -68,9 +68,10 @@ BusyBox-backed Unix compatibility layer inside the guest.
   `mkfifo`, and `mknod`. `/bin/sh` launches BusyBox `ash` with basic POSIX
   job-control support for script-style compatibility without replacing
   `/bin/shell`.
-- The compatibility layer exposes virtual `/proc` and `/dev` entries used by
-  Unix tools, including memory, uptime, process, mount, filesystem, network,
-  null, zero, tty, console, and standard-fd paths.
+- The root image seeds visible `/proc` and `/dev` mountpoint directories, while
+  the compatibility layer supplies their virtual entries for Unix tools:
+  memory, uptime, process, mount, filesystem, network, null, zero, urandom, tty,
+  console, standard-fd, and PTY paths.
 - TinyCC is built as `usr/bin/tcc` and can compile sample C programs inside
   SmallOS.
 
