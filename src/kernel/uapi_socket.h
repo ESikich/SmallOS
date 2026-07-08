@@ -23,6 +23,23 @@ struct sockaddr_in {
     unsigned char  sin_zero[8];
 };
 
+struct in6_addr {
+    unsigned char s6_addr[16];
+};
+
+struct sockaddr_in6 {
+    sa_family_t     sin6_family;
+    in_port_t       sin6_port;
+    unsigned int    sin6_flowinfo;
+    struct in6_addr sin6_addr;
+    unsigned int    sin6_scope_id;
+};
+
+struct sockaddr_storage {
+    sa_family_t ss_family;
+    unsigned char __ss_padding[126];
+};
+
 #define INADDR_ANY      0u
 #define INADDR_LOOPBACK 0x7F000001u
 #define INADDR_BROADCAST 0xFFFFFFFFu

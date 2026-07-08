@@ -1109,9 +1109,7 @@ int chdir(const char* path) {
 }
 
 int fchdir(int fd) {
-    (void)fd;
-    set_errno(ENOSYS);
-    return -1;
+    return errno_from_raw(sys_fchdir(fd));
 }
 
 int chroot(const char* path) {
@@ -1164,7 +1162,7 @@ int ioctl(int fd, unsigned long request, ...) {
     arg = __builtin_va_arg(ap, void*);
     __builtin_va_end(ap);
 
-    if (request == TIOCGWINSZ || request == TIOCGPGRP ||
+    if (request == TIOCGWINSZ || request == TIOCSWINSZ || request == TIOCGPGRP ||
         request == TIOCSPGRP || request == TIOCSCTTY ||
         request == TIOCNOTTY) {
         return errno_from_raw(sys_tty_ioctl(fd, (uint32_t)request, arg));
@@ -2663,6 +2661,108 @@ pid_t tcgetpgrp(int fd) {
 int tcsetpgrp(int fd, pid_t pgrp) {
     int pgid = (int)pgrp;
     return ioctl(fd, TIOCSPGRP, &pgid);
+}
+
+static char* pty_name_for_fd(int fd, char* buf, size_t len) {
+    unsigned int n;
+    char tmp[12];
+    unsigned int pos = 0;
+    const char* prefix = "/dev/pts/";
+
+    if (!buf || len == 0u || fd < 0) return 0;
+    while (*prefix) {
+        if (pos + 1u >= len) return 0;
+        buf[pos++] = *prefix++;
+    }
+    n = (unsigned int)fd;
+    if (n == 0u) {
+        if (pos + 1u >= len) return 0;
+        buf[pos++] = '0';
+    } else {
+        unsigned int tpos = 0;
+        while (n && tpos < sizeof(tmp)) {
+            tmp[tpos++] = (char)('0' + (n % 10u));
+            n /= 10u;
+        }
+        while (tpos) {
+            if (pos + 1u >= len) return 0;
+            buf[pos++] = tmp[--tpos];
+        }
+    }
+    buf[pos] = '\0';
+    return buf;
+}
+
+char* ttyname(int fd) {
+    static char name[32];
+
+    if (!isatty(fd)) {
+        set_errno(ENOTTY);
+        return 0;
+    }
+    return pty_name_for_fd(fd, name, sizeof(name));
+}
+
+char* ptsname(int fd) {
+    return ttyname(fd);
+}
+
+int grantpt(int fd) {
+    return isatty(fd) ? 0 : -1;
+}
+
+int unlockpt(int fd) {
+    return isatty(fd) ? 0 : -1;
+}
+
+int openpty(int* amaster,
+            int* aslave,
+            char* name,
+            const struct termios* termp,
+            const struct winsize* winp) {
+    int fds[2] = { -1, -1 };
+
+    if (!amaster || !aslave) {
+        set_errno(EFAULT);
+        return -1;
+    }
+    if (errno_from_raw(sys_pty_open(fds, 0)) < 0) return -1;
+    if (termp && tcsetattr(fds[1], TCSANOW, termp) < 0) {
+        close(fds[0]);
+        close(fds[1]);
+        return -1;
+    }
+    if (winp && ioctl(fds[1], TIOCSWINSZ, (void*)winp) < 0) {
+        close(fds[0]);
+        close(fds[1]);
+        return -1;
+    }
+    if (name) {
+        char* p = pty_name_for_fd(fds[1], name, 32u);
+        if (!p) {
+            close(fds[0]);
+            close(fds[1]);
+            set_errno(ENAMETOOLONG);
+            return -1;
+        }
+    }
+    *amaster = fds[0];
+    *aslave = fds[1];
+    return 0;
+}
+
+int login_tty(int fd) {
+    if (!isatty(fd)) {
+        set_errno(ENOTTY);
+        return -1;
+    }
+    if (setsid() < 0 && errno != EPERM) return -1;
+    if (ioctl(fd, TIOCSCTTY, 0) < 0) return -1;
+    if (dup2(fd, STDIN_FILENO) < 0) return -1;
+    if (dup2(fd, STDOUT_FILENO) < 0) return -1;
+    if (dup2(fd, STDERR_FILENO) < 0) return -1;
+    if (fd > STDERR_FILENO) close(fd);
+    return 0;
 }
 
 static void copy_statfs_from_sys(struct statfs* dst, const sys_statfs_t* src) {

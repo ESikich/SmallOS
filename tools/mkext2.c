@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #define TOTAL_SIZE_MB        32
 #define TOTAL_BYTES          (TOTAL_SIZE_MB * 1024u * 1024u)
@@ -55,6 +56,7 @@ struct node {
     int is_dir;
     const char* src_path;
     u32 size;
+    u16 mode;
     u32 ino;
     u32 blocks_needed;
     u32 data_blocks[4096];
@@ -166,16 +168,23 @@ static const char* parse_spec(const char* spec, char* dest, size_t dest_size,
 }
 
 static u32 measure_file(const char* path) {
-    FILE* f = fopen(path, "rb");
-    if (!f) {
-        fprintf(stderr, "mkext2: cannot open '%s'\n", path);
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        fprintf(stderr, "mkext2: cannot stat '%s'\n", path);
         exit(1);
     }
-    if (fseek(f, 0, SEEK_END) != 0) die("fseek failed");
-    long sz = ftell(f);
-    if (sz < 0) die("ftell failed");
-    fclose(f);
-    return (u32)sz;
+    if (!S_ISREG(st.st_mode)) die("source path is not a regular file");
+    return (u32)st.st_size;
+}
+
+static u16 measure_mode(const char* path, int is_dir) {
+    struct stat st;
+    if (is_dir || !path) return 0755u;
+    if (stat(path, &st) != 0) {
+        fprintf(stderr, "mkext2: cannot stat '%s'\n", path);
+        exit(1);
+    }
+    return (u16)(st.st_mode & 0777u);
 }
 
 static node_t* node_create(const char* name, int is_dir, const char* src_path) {
@@ -187,6 +196,7 @@ static node_t* node_create(const char* name, int is_dir, const char* src_path) {
     }
     node->is_dir = is_dir;
     node->src_path = src_path;
+    node->mode = measure_mode(src_path, is_dir);
     if (!is_dir && src_path) node->size = measure_file(src_path);
     return node;
 }
@@ -457,7 +467,7 @@ static u32 dir_link_count(node_t* dir) {
 static void write_inode(node_t* node) {
     u8* ino = inode_ptr(node->ino);
     memset(ino, 0, INODE_SIZE);
-    put_u16(ino, 0, (u16)((node->is_dir ? EXT2_S_IFDIR | 0755u : EXT2_S_IFREG | 0755u)));
+    put_u16(ino, 0, (u16)((node->is_dir ? EXT2_S_IFDIR : EXT2_S_IFREG) | node->mode));
     put_u32(ino, 4, node->is_dir ? node->blocks_needed * BLOCK_SIZE : node->size);
     put_u16(ino, 26, (u16)(node->is_dir ? dir_link_count(node) : 1u));
     put_u32(ino, 28, (node->blocks_needed + pointer_blocks_for(node->blocks_needed)) * (BLOCK_SIZE / 512u));

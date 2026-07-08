@@ -288,7 +288,7 @@ The runtime provides a small POSIX-shaped surface:
 - `rename`
 - `mkdir`, `rmdir`
 - `fsync`, `ftruncate`, `fchmod`, `fchown`
-- `getcwd`, `chdir`
+- `getcwd`, `chdir`, `fchdir`
 - `getpid`, `fork`, `execve`, `execv`, `execvp`, `waitpid`, `kill`,
   `killpg`, `setsid`, `getsid`, `setpgid`, `getpgid`, `getpgrp`, and
   `setpgrp`
@@ -495,6 +495,7 @@ interfaces, not complete Linux procfs or devfs implementations.
 
 - `/dev/null`
 - `/dev/zero`
+- `/dev/urandom`
 - `/dev/tty`
 - `/dev/console`
 - `/dev/fd/0`, `/dev/fd/1`, and `/dev/fd/2`
@@ -502,8 +503,11 @@ interfaces, not complete Linux procfs or devfs implementations.
 These nodes are intentionally narrow. They support the common reads, writes,
 stats, and directory listings needed by tools such as `cat`, `ps`, `free`,
 `df`, shell redirection, and compatibility probes. The terminal layer now
-supports fd-backed `tcgetattr`, `tcsetattr`, `TIOCGWINSZ`, `TIOCSPGRP`, and
-`TIOCGPGRP` for console/PTY descriptors. The mount table is kernel-backed for
+supports fd-backed `tcgetattr`, `tcsetattr`, `TIOCGWINSZ`, `TIOCSWINSZ`,
+`TIOCSPGRP`, and `TIOCGPGRP` for console/PTY descriptors. `/dev/urandom` is
+served by the kernel random generator and is seeded from the staged
+`/etc/random-seed` image file plus runtime timing and platform entropy where
+available. The mount table is kernel-backed for
 the ext2 root, `/proc`, `/dev`, and dynamic `proc`/`devtmpfs` pseudo mounts;
 `/proc/mounts`, `statfs`, `fstatfs`, `statvfs`, and `fstatvfs` report that
 state. Foreground terminal stop/continue is backed by stopped process state,
@@ -531,6 +535,13 @@ process/filesystem diagnostics. Filesystem-facing applets such as `ln`,
 `stat`, and `find -type` exercise the real ext2 metadata and node support.
 Native `/bin` tools stay first in command lookup; if a bare command is missing,
 the shell runs `/usr/bin/busybox <command> ...`.
+
+TinySSH is staged under `/usr/sbin` and started during boot through
+`tinyssh-start`, which creates host keys on first run and execs BusyBox
+`tcpsvd` on guest port `22`. Root public-key login uses `/.ssh/authorized_keys`;
+interactive no-command sessions default to `/bin/shell`, and forced-PTY
+sessions use the libc `openpty`/`login_tty` compatibility layer backed by the
+kernel PTY syscalls.
 
 The current compatibility wave enables BusyBox `ash` job control, BusyBox
 `mount`/`umount` for `proc`/`devtmpfs` pseudo mounts, classic networking tools
@@ -619,7 +630,8 @@ Runtime coverage currently lives in guest ELF probes:
 - `atprobe` - directory-fd `*at()` syscalls, absolute path override,
   non-directory base errors, and no-follow symlink stat/timestamp behavior
 - `ttyprobe` - kernel-backed termios state, PTY echo/raw/EOF behavior,
-  foreground process-group ioctls, and non-terminal `ENOTTY` failures
+  `openpty`/`ttyname`/`ptsname`/`login_tty`, terminal size/process-group
+  ioctls, and non-terminal `ENOTTY` failures
 - `rsrcprobe` - resource limits, `RLIMIT_NOFILE` enforcement, and
   `getrusage` self/children accounting behavior
 - `sessprobe` - session ids, process groups, terminal foreground pgrp wrappers,
@@ -633,9 +645,9 @@ Runtime coverage currently lives in guest ELF probes:
 - `stdioprobe` - EOF/error state, `clearerr`, `fflush`, invalid stdio ops
 - `dirprobe` - root and nested directory iteration, EOF, invalid/missing dirs
 - `errnoprobe` - wrapper `errno` behavior
-- `compatprobe` - BusyBox-facing `statfs`, `/proc`, `/dev`, `/bin/sh`,
-  metadata mutation, links/symlinks, special nodes, truncate, and
-  compatibility wrappers
+- `compatprobe` - BusyBox-facing `statfs`, `/proc`, `/dev`, `/dev/urandom`,
+  `fchdir`, `/bin/sh`, metadata mutation, links/symlinks, special nodes,
+  truncate, and compatibility wrappers
 - `crtprobe` - `main(argc, argv)` via `crt0`, argv terminator, and return status
 - `waitprobe` - `SYS_EXEC` pid return, `waitpid`, `WNOHANG`, `kill`, and wait status macros
 - `jobctlprobe` - stopped child reporting, `WUNTRACED`, process-group `SIGTSTP`/`SIGCONT`, and `killpg`

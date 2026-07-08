@@ -257,9 +257,9 @@ forced VGA image.
 `make dynamic-link-check`, `make dynlink-negative-smoke`, `make test`, and
 then `make smoke`. The heavier suites are grouped separately:
 `make verify-display` runs the framebuffer/VGA visual smoke checks and the GUI
-launch smoke, `make verify-network` runs the socket, FTP, cserve, and BusyBox
-network applet smoke matrix, and `make verify-full` runs all verification
-targets in sequence.
+launch smoke, `make verify-network` runs the socket, FTP, cserve, BusyBox
+network applet, and TinySSH smoke matrix, and `make verify-full` runs all
+verification targets in sequence.
 
 Most freestanding test ELFs define `_start(argc, argv)` directly and can link
 either statically against the SmallOS user libraries built under
@@ -437,7 +437,7 @@ make verify          # layout, dynamic checks, guest selftest, reboot/halt smoke
 make dynamic-link-check # host-side dynamic ELF/interpreter/relocation checks
 make dynlink-negative-smoke # missing-loader/libc failure-path smoke
 make verify-display  # framebuffer/VGA screenshots plus GUI launch smoke
-make verify-network  # socket EOF/parallel, FTP, FTP loop, cserve, BusyBox net
+make verify-network  # socket EOF/parallel, FTP, FTP loop, cserve, BusyBox net, TinySSH
 make verify-full     # all of the above
 ```
 
@@ -498,6 +498,11 @@ verifies BusyBox `udhcpc` through the native DHCP operation, and checks BusyBox
 `wget`, `pscan`, `whois`, `ftpget`, `ftpput`, `tftp`, `nc`, `tcpsvd`,
 `udpsvd`, `tftpd`, ARP, and `ip neigh` against real host/guest IPv4 sockets.
 The suite deliberately does not start BusyBox `udhcpd`.
+
+`make tinyssh-smoke` forwards host TCP to guest port `22`, uses the
+boot-started TinySSH service, authenticates as `root` with the staged Ed25519
+key, checks command execution through a forced PTY, and verifies that a quiet
+interactive default-shell session remains open before accepting input.
 
 `make usb-storage-smoke` boots the canonical raw image through QEMU OHCI USB
 mass storage (`-device pci-ohci` plus `-device usb-storage`) with the loader2
@@ -993,7 +998,7 @@ Shipped ext2 programs:
 - `usr/libexec/tests/dirprobe` - exercise root and nested directory iteration
 - `usr/libexec/tests/errnoprobe` - exercise raw syscall errors and POSIX errno wrappers
 - `usr/libexec/tests/compatprobe` - exercise BusyBox-facing `/proc`, `/dev`,
-  `statfs`, `sysinfo`, `/bin/sh`, metadata mutation, links/symlinks,
+  `/dev/urandom`, `fchdir`, `statfs`, `sysinfo`, `/bin/sh`, metadata mutation, links/symlinks,
   truncate, special nodes, and compatibility wrappers
 - `usr/libexec/tests/permprobe` - exercise kernel-owned credentials, `umask`,
   ext2 mode-bit enforcement, `access`, owner/root metadata checks, and
@@ -1002,8 +1007,8 @@ Shipped ext2 programs:
   absolute path override, non-directory base errors, hard/symlink handling, and
   no-follow symlink stat/timestamp behavior
 - `usr/libexec/tests/ttyprobe` - exercise kernel-backed termios state, PTY
-  echo/raw/EOF behavior, terminal process-group ioctls, and non-terminal
-  `ENOTTY` failures
+  echo/raw/EOF behavior, `openpty`/`ttyname`/`ptsname`/`login_tty`,
+  terminal size/process-group ioctls, and non-terminal `ENOTTY` failures
 - `usr/libexec/tests/rsrcprobe` - exercise resource limits, `RLIMIT_NOFILE`
   enforcement, fixed address-space limits, and child `getrusage` accounting
 - `usr/libexec/tests/sessprobe` - exercise session ids, process groups,
@@ -1047,7 +1052,7 @@ Shipped ext2 programs:
 * `bin/` contains command-style app binaries found first by bare shell command lookup
 * `usr/bin/` contains demos, development tools, and larger user-facing programs such as `hello`, `plasma`, `mandel`, `fractint`, `tcc`, and `busybox`
 * `usr/libexec/tests/` contains the remaining shipped test binaries; most probes, including `displayprobe`, are staged dynamically
-* `usr/sbin/` contains guest service binaries; `tcpecho`, `sockeof`, and `ftpd` are staged dynamically, while `cserve` remains static; BusyBox service applets such as `tcpsvd`, `udpsvd`, `tftpd`, and `udhcpd` live under `usr/bin/busybox`, although the DHCP server applet is not run by automated smoke tests
+* `usr/sbin/` contains guest service binaries; `tcpecho`, `sockeof`, `ftpd`, and `tinyssh-start` are staged dynamically, while `cserve` and the TinySSH binaries are staged as static service ELFs; BusyBox service applets such as `tcpsvd`, `udpsvd`, `tftpd`, and `udhcpd` live under `usr/bin/busybox`, although the DHCP server applet is not run by automated smoke tests
 * `usr/include/` and `usr/lib/` contain the guest C build sysroot, including public SmallOS helpers such as `term_keys.h`
 * `lib/` contains the dynamic loader and shared runtime used by converted primary commands
 * `usr/share/man/` contains plain-text manual pages installed from repository `man/man*/`

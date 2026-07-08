@@ -35,7 +35,7 @@
 #define TCP_STATE_FIN_WAIT    4
 
 #define TCP_RETRY_TICKS     (1u * SMALLOS_TIMER_HZ)
-#define TCP_IDLE_TICKS      (12u * SMALLOS_TIMER_HZ)
+#define TCP_FIN_WAIT_TICKS  (60u * SMALLOS_TIMER_HZ)
 #define TCP_MAX_RETRIES        3u
 #define TCP_MAX_FRAME       1518u
 #define TCP_MAX_PAYLOAD    (TCP_MAX_FRAME - 14u - 20u - 20u)
@@ -1885,10 +1885,6 @@ static void tcp_maybe_retransmit(void) {
                 now >= conn->tx_retransmit_at) {
                 tcp_conn_tx_retransmit(conn);
             }
-            if (conn->local_port != TCP_CONTROL_PORT &&
-                now - conn->last_activity > TCP_IDLE_TICKS) {
-                tcp_begin_close(conn);
-            }
         } else if (conn->state == TCP_STATE_FIN_WAIT) {
             if (conn->local_fin_acked && conn->peer_closed) {
                 tcp_reset_connection(conn);
@@ -1916,7 +1912,7 @@ static void tcp_maybe_retransmit(void) {
                                  0,
                                  0);
             }
-            if (now - conn->last_activity > TCP_IDLE_TICKS) {
+            if (now - conn->last_activity > TCP_FIN_WAIT_TICKS) {
                 tcp_reset_connection(conn);
             }
         }

@@ -640,7 +640,7 @@ Bootseq  →  mount ext2 from ATA, USB storage, or boot RAM fallback
          →  run /bin/bootsplash boot/splash.bmp
          →  probe OHCI boot keyboard/mouse HID and queue retrying usb service
 Bootnet  →  dhcp_configure, then best-effort ntp_sync through the DHCP gateway
-Bootsvc  →  after ext2 and splash are ready, start boot FTP and cserve services
+Bootsvc  →  after ext2 and splash are ready, start boot FTP, cserve, and TinySSH services
 Bootseq  →  print welcome/time/network/memory summary and SmallOS ready
          →  foreground and resume /bin/login
          →  relaunch login after logout, or emergency /bin/shell if login fails

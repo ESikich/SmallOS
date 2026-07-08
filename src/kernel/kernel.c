@@ -27,6 +27,7 @@
 #include "../drivers/net.h"
 #include "../drivers/tcp.h"
 #include "../drivers/ntp.h"
+#include "random.h"
 
 extern unsigned char bss_end;
 
@@ -918,6 +919,7 @@ static void boot_start_user_services(void) {
         "--log", "off",
         0
     };
+    char* tinyssh_argv[] = { "tinyssh-start", 0 };
     process_t* proc;
 
     proc = elf_run_named_new_group("usr/sbin/ftpd", 2, ftpd_argv);
@@ -947,6 +949,21 @@ static void boot_start_user_services(void) {
         boot_log_save();
     } else {
         boot_log_only_puts("service: WARN cserve unavailable\n");
+        boot_log_save();
+    }
+
+    proc = elf_run_named_new_group("usr/sbin/tinyssh-start", 1, tinyssh_argv);
+    if (!s_boot_async_quiet) {
+        if (proc) {
+            boot_puts("service: tinyssh queued on port 22\n");
+        } else {
+            boot_puts("service: WARN tinyssh unavailable\n");
+        }
+    } else if (proc) {
+        boot_log_only_puts("service: tinyssh queued on port 22\n");
+        boot_log_save();
+    } else {
+        boot_log_only_puts("service: WARN tinyssh unavailable\n");
         boot_log_save();
     }
 }
@@ -986,6 +1003,7 @@ static void boot_services_task_main(void) {
 static void boot_sequence_task_main(void) {
     boot_mount_ext2(s_boot_ata_ready);
     s_boot_log_fs_ready = 1;
+    random_mix_seed_file("etc/random-seed");
     boot_log_save();
     __asm__ __volatile__("sti");
 
@@ -1095,6 +1113,7 @@ void kernel_main(void) {
     memory_init(PAGE_ALIGN((unsigned int)&bss_end));
     boot_log_promote_buffer();
     pmm_init();
+    random_init_early();
     kernel_selfcheck();
 
     if (fb_console_init()) {

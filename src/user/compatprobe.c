@@ -199,7 +199,13 @@ static void probe_unix_layer(void) {
     int saw_null = 0;
     int fd;
     int fd2;
+    int cwd_fd;
     char buf[8];
+    char buf2[8];
+    char cwd_before[128];
+    char cwd_after[128];
+    int nonzero;
+    int differs;
 
     check("statfs root", statfs("/", &sfs) == 0 && sfs.f_bsize > 0 &&
                           sfs.f_blocks >= sfs.f_bfree);
@@ -258,6 +264,37 @@ static void probe_unix_layer(void) {
         check("read dev zero", read(fd, buf, sizeof(buf)) == (int)sizeof(buf) &&
                                buf[0] == 0 && buf[sizeof(buf) - 1u] == 0);
         close(fd);
+    }
+
+    memset(buf, 0, sizeof(buf));
+    memset(buf2, 0, sizeof(buf2));
+    fd = open("/dev/urandom", O_RDONLY);
+    check("open dev urandom", fd >= 0);
+    if (fd >= 0) {
+        check("read dev urandom first", read(fd, buf, sizeof(buf)) == (int)sizeof(buf));
+        check("read dev urandom second", read(fd, buf2, sizeof(buf2)) == (int)sizeof(buf2));
+        nonzero = 0;
+        differs = 0;
+        for (unsigned int i = 0; i < sizeof(buf); i++) {
+            if (buf[i] != 0 || buf2[i] != 0) nonzero = 1;
+            if (buf[i] != buf2[i]) differs = 1;
+        }
+        check("dev urandom nonzero", nonzero);
+        check("dev urandom changes", differs);
+        close(fd);
+    }
+
+    memset(cwd_before, 0, sizeof(cwd_before));
+    memset(cwd_after, 0, sizeof(cwd_after));
+    check("getcwd before fchdir", getcwd(cwd_before, sizeof(cwd_before)) != 0);
+    cwd_fd = open(".", O_RDONLY);
+    check("open cwd dir", cwd_fd >= 0);
+    if (cwd_fd >= 0) {
+        check("chdir tmp", chdir("/tmp") == 0);
+        check("fchdir restore", fchdir(cwd_fd) == 0);
+        check("getcwd after fchdir", getcwd(cwd_after, sizeof(cwd_after)) != 0 &&
+                                      strcmp(cwd_before, cwd_after) == 0);
+        close(cwd_fd);
     }
 
     fd = open("/dev/fd/1", O_WRONLY);

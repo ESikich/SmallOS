@@ -13,6 +13,7 @@
 #include "vfs.h"
 #include "socket.h"
 #include "wait.h"
+#include "random.h"
 #include "../drivers/display.h"
 #include "input.h"
 
@@ -57,6 +58,7 @@ static volatile int s_detach_allowed = 0;
 #define TERM_LFLAG_ICANON 0000002u
 #define TERM_LFLAG_ECHO   0000010u
 #define TERM_OFLAG_OPOST  0000001u
+#define TERM_OFLAG_ONLCR  0000004u
 
 typedef struct special_wait_object {
     wait_queue_t read_waiters;
@@ -94,6 +96,7 @@ typedef struct pty_object {
     unsigned int rows;
     unsigned int cols;
     u32 foreground_pgid;
+    unsigned int output_prev_cr;
     sys_termios_t termios;
 } pty_object_t;
 
@@ -136,7 +139,7 @@ static void terminal_attr_init_default(sys_termios_t* tio) {
     if (!tio) return;
     k_memset(tio, 0, sizeof(*tio));
     tio->c_lflag = TERM_LFLAG_ECHO | TERM_LFLAG_ICANON | TERM_LFLAG_ISIG;
-    tio->c_oflag = TERM_OFLAG_OPOST;
+    tio->c_oflag = TERM_OFLAG_OPOST | TERM_OFLAG_ONLCR;
     tio->c_cc[TERM_VINTR] = 3u;
     tio->c_cc[TERM_VERASE] = 8u;
     tio->c_cc[TERM_VEOF] = 4u;
@@ -827,7 +830,8 @@ int process_fd_open_virtual(process_t* proc,
     if (type != PROCESS_VIRTUAL_REGULAR &&
         type != PROCESS_VIRTUAL_NULL &&
         type != PROCESS_VIRTUAL_ZERO &&
-        type != PROCESS_VIRTUAL_TTY) {
+        type != PROCESS_VIRTUAL_TTY &&
+        type != PROCESS_VIRTUAL_URANDOM) {
         return -EINVAL;
     }
 
@@ -1837,6 +1841,45 @@ static int pty_buffer_write(pty_buffer_t* buffer,
     return (int)done;
 }
 
+static int pty_buffer_write_output(pty_buffer_t* buffer,
+                                   const char* buf,
+                                   unsigned int len,
+                                   unsigned int* reader_refs,
+                                   unsigned int flags,
+                                   const sys_termios_t* tio,
+                                   unsigned int* prev_cr) {
+    unsigned int done = 0u;
+    int translate_newline;
+
+    if (!buf) return -EFAULT;
+    translate_newline = tio &&
+                        ((tio->c_oflag & TERM_OFLAG_OPOST) != 0u) &&
+                        ((tio->c_oflag & TERM_OFLAG_ONLCR) != 0u);
+    if (!translate_newline) {
+        return pty_buffer_write(buffer, buf, len, reader_refs, flags);
+    }
+
+    while (done < len) {
+        int rc;
+        if (buf[done] == '\n') {
+            if (prev_cr && *prev_cr) {
+                rc = pty_buffer_write(buffer, &buf[done], 1u, reader_refs, flags);
+            } else {
+                char crlf[2] = { '\r', '\n' };
+                rc = pty_buffer_write(buffer, crlf, sizeof(crlf), reader_refs, flags);
+            }
+        } else {
+            rc = pty_buffer_write(buffer, &buf[done], 1u, reader_refs, flags);
+        }
+        if (rc < 0) return done ? (int)done : rc;
+        if (rc == 0) return (int)done;
+        if (prev_cr) *prev_cr = (buf[done] == '\r') ? 1u : 0u;
+        done++;
+        if ((flags & SYS_FD_FLAG_NONBLOCK) != 0u) break;
+    }
+    return (int)done;
+}
+
 static int process_handle_pty_read_common(fd_entry_t* ent,
                                           char* buf,
                                           unsigned int len,
@@ -1869,7 +1912,13 @@ static int process_handle_pty_read_common(fd_entry_t* ent,
             break;
         }
         if (do_echo) {
-            (void)pty_buffer_write(out, &buf[done], 1u, &pty->master_refs, 0);
+            (void)pty_buffer_write_output(out,
+                                          &buf[done],
+                                          1u,
+                                          &pty->master_refs,
+                                          0,
+                                          &pty->termios,
+                                          &pty->output_prev_cr);
         }
         done++;
         if (canonical) {
@@ -1914,11 +1963,13 @@ static int process_handle_pty_write(fd_entry_t* ent, const char* buf, unsigned i
                                              PROCESS_TERMINATED_BY_CTRL_C);
                 }
                 if ((pty->termios.c_lflag & TERM_LFLAG_ECHO) != 0u) {
-                    (void)pty_buffer_write(&pty->slave_to_master,
-                                           interrupt_text,
-                                           sizeof(interrupt_text) - 1u,
-                                           &pty->master_refs,
-                                           0);
+                    (void)pty_buffer_write_output(&pty->slave_to_master,
+                                                  interrupt_text,
+                                                  sizeof(interrupt_text) - 1u,
+                                                  &pty->master_refs,
+                                                  0,
+                                                  &pty->termios,
+                                                  &pty->output_prev_cr);
                 }
                 if (i > 0) {
                     return (int)i;
@@ -1934,11 +1985,13 @@ static int process_handle_pty_write(fd_entry_t* ent, const char* buf, unsigned i
                                          sched_current(),
                                          0);
                 if ((pty->termios.c_lflag & TERM_LFLAG_ECHO) != 0u) {
-                    (void)pty_buffer_write(&pty->slave_to_master,
-                                           stop_text,
-                                           sizeof(stop_text) - 1u,
-                                           &pty->master_refs,
-                                           0);
+                    (void)pty_buffer_write_output(&pty->slave_to_master,
+                                                  stop_text,
+                                                  sizeof(stop_text) - 1u,
+                                                  &pty->master_refs,
+                                                  0,
+                                                  &pty->termios,
+                                                  &pty->output_prev_cr);
                 }
                 if (i > 0) {
                     return (int)i;
@@ -1949,8 +2002,13 @@ static int process_handle_pty_write(fd_entry_t* ent, const char* buf, unsigned i
         return pty_buffer_write(&pty->master_to_slave, buf, len,
                                 &pty->slave_refs, ent->flags);
     }
-    return pty_buffer_write(&pty->slave_to_master, buf, len,
-                            &pty->master_refs, ent->flags);
+    return pty_buffer_write_output(&pty->slave_to_master,
+                                   buf,
+                                   len,
+                                   &pty->master_refs,
+                                   ent->flags,
+                                   &pty->termios,
+                                   &pty->output_prev_cr);
 }
 
 static int process_handle_pty_seek(fd_entry_t* ent, int offset, int whence) {
@@ -2300,6 +2358,10 @@ static int process_handle_virtual_read(fd_entry_t* ent, char* buf, unsigned int 
     if (obj->type == PROCESS_VIRTUAL_TTY) {
         return process_handle_console_read(ent, buf, len);
     }
+    if (obj->type == PROCESS_VIRTUAL_URANDOM) {
+        random_get_bytes(buf, len);
+        return (int)len;
+    }
 
     if (ent->offset >= ent->size) return 0;
     if (len > ent->size - ent->offset) {
@@ -2331,7 +2393,10 @@ static int process_handle_virtual_seek(fd_entry_t* ent, int offset, int whence) 
     int next;
 
     if (!ent || !ent->valid || !obj) return -EBADF;
-    if (obj->type == PROCESS_VIRTUAL_TTY) return -EINVAL;
+    if (obj->type == PROCESS_VIRTUAL_TTY ||
+        obj->type == PROCESS_VIRTUAL_URANDOM) {
+        return -EINVAL;
+    }
 
     if (whence == 0) {
         base = 0;

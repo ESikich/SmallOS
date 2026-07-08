@@ -250,6 +250,10 @@ static inline int sys_chdir(const char* path) {
     return syscall1(SYS_CHDIR, (uint32_t)path);
 }
 
+static inline int sys_fchdir(int fd) {
+    return syscall1(SYS_FCHDIR, (uint32_t)fd);
+}
+
 /*
  * sys_close(fd)
  *

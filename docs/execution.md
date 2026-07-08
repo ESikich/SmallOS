@@ -95,11 +95,12 @@ Important current-state facts:
   is visible are display-suppressed but still appended to the boot log.
 - `pinggw` and bare `ping` target the DHCP-provided gateway. `ping <ip>` routes through the DHCP gateway when the target is off-subnet. Public ICMP may still be blocked by the surrounding hypervisor or NAT, so `pingpublic` is only a best-effort probe.
 - `netcheck` prints the gateway steps separately from the public ICMP probe so a `1.1.1.1` timeout does not imply the local NAT path is broken
-- `usr/sbin/tcpecho`, `usr/sbin/sockeof`, `usr/sbin/ftpd`, and `usr/sbin/cserve` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
+- `usr/sbin/tcpecho`, `usr/sbin/sockeof`, `usr/sbin/ftpd`, `usr/sbin/cserve`, and `usr/sbin/tinyssh-start` are the current guest-side TCP smoke apps; they run as normal ELFs and are exercised through QEMU hostfwd on the guest service ports
 - `tcpecho` listens on `2323` in the guest and is driven by `make socket-parallel-smoke` to verify multiple simultaneous echo clients
 - `sockeof` listens on `2463` in the guest and is driven by `make socket-eof-smoke` to verify a multi-segment payload before EOF, `POLLHUP`, post-EOF response writes, and guest write-side shutdown
 - `ftpd` listens on `2121` in the guest and expects passive data connections on `30000`; the boot sequence starts it in quiet mode, `make ftp-smoke` and `make ftp-loop-smoke` cover that path, and host-side clients such as `lftp`, WinSCP, and FileZilla should use passive mode
 - `cserve` listens on `8080` from `/var/www` by default; the boot sequence starts it with logging disabled and `max-conn` set to 28
+- `tinyssh-start` listens on `22` by default through BusyBox `tcpsvd` and TinySSH; public-key login is staged for smoke tests, no-command sessions default to `/bin/shell`, and `make tinyssh-smoke` covers root public-key login, forced-PTY command execution, and an idle interactive shell interval
 
 ---
 
@@ -136,7 +137,7 @@ After kernel diagnostics, `kernel_main()` creates `bootnet`, `bootsvc`, and
 ext2, saves `/var/log/boot.txt`, switches async chatter to log-only mode, loads
 `/bin/login` suspended, and runs `/bin/bootsplash boot/splash.bmp`.
 While the splash remains visible, boot input/HID diagnostics finish and
-`bootnet`/`bootsvc` append DHCP, NTP, FTP, and cserve status to the boot log.
+`bootnet`/`bootsvc` append DHCP, NTP, FTP, cserve, and TinySSH status to the boot log.
 `bootseq` then clears the splash, prints a welcome/time/network/memory summary
 plus `SmallOS ready`, and launches `/bin/login`. The native login prompt checks
 `/etc/passwd` and `/etc/shadow`; the sample root shadow password starts empty
@@ -232,7 +233,7 @@ compatibility, and `system()` APIs. The sample sources are staged under
 TinyCC's runtime expectations are part of the user runtime contract in
 [`docs/user-runtime.md`](user-runtime.md).
 
-For the TCP service path, FTP and cserve are boot-started by default. The shell
+For the TCP service path, FTP, cserve, and TinySSH are boot-started by default. The shell
 can still launch additional long-lived reattachable services with commands such
 as `bg usr/sbin/tcpecho`, `bg usr/sbin/sockeof`, or
 `bg usr/sbin/ftpd --log-file /var/log/ftpd.log`. Those programs bind and listen
@@ -241,6 +242,22 @@ Use `jobs` to inspect them, `fg <jobid>` to wait on one in the foreground,
 Ctrl+Z to return a foregrounded job to the background, and `kill <jobid>` to
 stop one without rebooting the guest. Boot-started `ftpd` runs in quiet mode so
 request logs do not interrupt the shell prompt.
+
+TinySSH listens on guest port `22`. With QEMU user networking, forward a host
+port to it:
+
+```text
+hostfwd=tcp::2222-:22
+```
+
+Then connect from the host with a staged or user-installed authorized key:
+
+```sh
+ssh -tt -o IdentitiesOnly=yes -p 2222 -i .state/tinyssh-smoke-ed25519 root@127.0.0.1
+```
+
+The `-tt` option forces PTY allocation for an interactive terminal. If no remote
+command is supplied, TinySSH starts the SmallOS `/bin/shell` for `root`.
 
 The FTP service uses passive data connections, so a host-driven smoke needs
 both the control port and passive data port forwarded:
@@ -285,6 +302,11 @@ host-forwarded echo check, and fetches a file from guest BusyBox `tftpd`
 through `udpsvd`. This keeps the enabled BusyBox network applets tied to real
 IPv4 TCP/UDP behavior rather than only compile-time availability. It
 deliberately does not start BusyBox `udhcpd`.
+
+`make tinyssh-smoke` forwards guest port `22`, uses the boot-started TinySSH
+service, verifies public-key login as `root`, checks forced-PTY command
+execution, and verifies that an idle interactive default-shell session remains
+usable.
 
 ---
 
@@ -432,7 +454,7 @@ and write-waiter wakeups for basic send-side backpressure.
 paths: `SHUT_RD` reports local EOF, and `SHUT_WR` drains queued TX before
 sending FIN and rejecting later writes. FIN paths retransmit, ACK duplicate peer
 FINs, preserve final writes before close-driven FIN, and clean up once the peer
-close/ACK sequence completes or idles out.
+close/ACK sequence completes or the FIN_WAIT cleanup interval expires.
 Each process also carries cwd state, so user path syscalls resolve relative
 paths before entering VFS or ELF loading.
 ext2-backed file behavior and path operations sit behind `vfs.c`, so

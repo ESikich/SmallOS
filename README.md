@@ -47,7 +47,7 @@ BusyBox-backed Unix compatibility layer inside the guest.
   `ftpput`/`tftp`/`tcpsvd`/`udpsvd`/`tftpd`/`httpd`, BusyBox `udhcpc`
   routed through the native DHCP operation, a compact TCP service task,
   passive sockets, `poll`/`epoll` readiness, FTP, TFTP, echo, WHOIS, and
-  HTTP server smoke paths.
+  HTTP server smoke paths, plus boot-started TinySSH root public-key login.
 - Guest userland includes familiar commands such as `ls`, `tree`, `cat`,
   `more`, `man`, `pwd`, `touch`, `mkdir`, `rm`, `cp`, `mv`, `edit`, `date`, `ip`,
   `ipconfig`, `login`, `passwd`, `uptime`, `halt`, and `reboot`, plus diagnostics such as
@@ -205,11 +205,19 @@ make run-headless \
   QEMU_NET_HOSTFWD=',hostfwd=tcp::2323-:2323'
 ```
 
-Inside the guest, the FTP and web services start by default:
+Inside the guest, FTP, web, and SSH services start by default:
 
 ```text
 usr/sbin/ftpd --quiet
 usr/sbin/cserve --port 8080 --root /var/www --max-conn 28 --log off
+usr/sbin/tinyssh-start
+```
+
+Forward guest port `22` to connect with OpenSSH from the host:
+
+```bash
+make run-headless QEMU_NET_HOSTFWD=',hostfwd=tcp::2222-:22'
+ssh -tt -o IdentitiesOnly=yes -p 2222 -i .state/tinyssh-smoke-ed25519 root@127.0.0.1
 ```
 
 Additional or replacement services can still be launched from the shell:
@@ -296,7 +304,7 @@ Useful verification targets:
 ```bash
 make verify          # layout checks, guest regression suite, reboot/halt smoke
 make verify-display  # framebuffer/VGA screenshots plus GUI launch smoke
-make verify-network  # socket EOF/parallel, FTP, FTP loop, cserve, BusyBox net
+make verify-network  # socket EOF/parallel, FTP, FTP loop, cserve, BusyBox net, TinySSH
 make verify-full     # all verification targets
 ```
 
@@ -316,6 +324,7 @@ make ftp-smoke
 make ftp-loop-smoke
 make cserve-smoke
 make busybox-net-smoke
+make tinyssh-smoke
 ```
 
 ## Repository Layout

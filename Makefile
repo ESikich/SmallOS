@@ -114,6 +114,7 @@ THIRD_PARTY_WOLF3D_SENTINEL=$(CURDIR)/third_party/wolf3d/WOLFSRC/WL_MAIN.C
 STATE_DIR=.state
 STATE_EXT2_IMG=$(STATE_DIR)/ext2.img
 STATE_EXT2_STAMP=$(STATE_DIR)/ext2.img.stamp
+RANDOM_SEED_FILE=$(STATE_DIR)/random-seed.bin
 BUSYBOX_VERSION=1.36.1
 BUSYBOX_URL=https://busybox.net/downloads/busybox-$(BUSYBOX_VERSION).tar.bz2
 BUSYBOX_TARBALL=$(STATE_DIR)/downloads/busybox-$(BUSYBOX_VERSION).tar.bz2
@@ -122,6 +123,39 @@ BUSYBOX_PATCH_STAMP=$(BUSYBOX_SRC_DIR)/.smallos-patched
 BUSYBOX_OUT_DIR=$(OBJ_DIR)/busybox-smalos
 BUSYBOX_CONFIG_STAMP=$(BUSYBOX_OUT_DIR)/.smallos-configured
 BUSYBOX_SMALOS_BIN=$(BIN_DIR)/busybox.elf
+TINYSSH_COMMIT=3d93382cde06c109d5d274fa2dddea064e543c85
+TINYSSH_URL=https://github.com/janmojzis/tinyssh/archive/$(TINYSSH_COMMIT).tar.gz
+TINYSSH_TARBALL=$(STATE_DIR)/downloads/tinyssh-$(TINYSSH_COMMIT).tar.gz
+TINYSSH_SRC_DIR=$(BUILD_DIR)/tinyssh-smalos-src
+TINYSSH_CONFIG_STAMP=$(TINYSSH_SRC_DIR)/.smallos-configured
+TINYSSH_OBJ_DIR=$(OBJ_DIR)/tinyssh-smalos
+TINYSSH_BIN=$(BIN_DIR)/tinysshd.elf
+TINYSSH_MAKEKEY_BIN=$(BIN_DIR)/tinysshd-makekey.elf
+TINYSSH_PRINTKEY_BIN=$(BIN_DIR)/tinysshd-printkey.elf
+TINYSSH_ELFS=$(TINYSSH_BIN) $(TINYSSH_MAKEKEY_BIN) $(TINYSSH_PRINTKEY_BIN)
+TINYSSH_SMOKE_KEY=$(STATE_DIR)/tinyssh-smoke-ed25519
+TINYSSH_AUTHORIZED_KEYS=$(STATE_DIR)/tinyssh-authorized_keys
+TINYSSH_SMOKE_PORT?=2222
+TINYSSH_OBJ_NAMES=blocking buf byte channel channel_drop channel_fork \
+ channel_forkpty channel_subsystem cleanup coe connectioninfo crypto_dh_x25519 \
+ crypto_hash_sha256 crypto_hash_sha512_lib25519 crypto_hash_sha512_tinyssh \
+ crypto_kem_sntrup761_libntruprime crypto_kem_sntrup761_tinyssh \
+ crypto_kem_sntrup761x25519 crypto_onetimeauth_poly1305_lib1305 \
+ crypto_onetimeauth_poly1305_tinyssh crypto_scalarmult_curve25519 \
+ crypto_sign_ed25519_lib25519 crypto_sign_ed25519_tinyssh crypto_sort_uint32 \
+ crypto_stream_chacha20 crypto_verify_16 crypto_verify_32 die dropuidgid e env \
+ fe fe25519 ge25519 getln global int16_optblocker int32_optblocker \
+ int64_optblocker int8_optblocker iptostr load log loginshell logsys \
+ main_tinysshd main_tinysshd_makekey main_tinysshd_printkey newenv numtostr open \
+ packet packet_auth packet_channel_open packet_channel_recv packet_channel_request \
+ packet_channel_send packet_get packet_hello packet_kex packet_kexdh packet_put \
+ packet_recv packet_send packet_unimplemented packetparser porttostr randombytes \
+ randommod readall savesync sc25519 ssh sshcrypto sshcrypto_cipher \
+ sshcrypto_cipher_chachapoly sshcrypto_kex sshcrypto_kex_curve25519 \
+ sshcrypto_kex_sntrup761x25519 sshcrypto_key sshcrypto_key_ed25519 str \
+ stringparser subprocess_auth subprocess_sign tinysshd trymlock \
+ uint16_optblocker uint32_optblocker uint64_optblocker uint8_optblocker writeall
+TINYSSH_OBJS=$(addprefix $(TINYSSH_OBJ_DIR)/,$(addsuffix .o,$(TINYSSH_OBJ_NAMES)))
 
 BOOT_SECTOR_SIZE := $(shell awk '/^BOOT_SECTOR_SIZE[[:space:]]+equ/ {print $$3}' $(BOOT_DIR)/boot.asm)
 BOOT_SECTOR_MASK := $(shell echo $$(( $(BOOT_SECTOR_SIZE) - 1 )))
@@ -196,6 +230,7 @@ KERNEL_C_SRCS=\
 		$(KERNEL_DIR)/timer.c \
 		$(KERNEL_DIR)/cpu.c \
 		$(KERNEL_DIR)/klib.c \
+	$(KERNEL_DIR)/random.c \
 	$(KERNEL_DIR)/memory.c \
 	$(KERNEL_DIR)/boot_info.c \
 	$(KERNEL_DIR)/pmm.c \
@@ -225,7 +260,7 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/ext2.c \
 	$(DRIVERS_DIR)/serial.c
 
-USER_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell sh login passwd ip ipconfig meminfo memmap cpuz top netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest hello ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe jobctlprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe envprobe mathprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe soundprobe plasma mandel wolf3d fractint tcpecho sockeof ftpd
+USER_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell sh login passwd ip ipconfig meminfo memmap cpuz top netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest hello ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe jobctlprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe execveprobe envprobe mathprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe soundprobe plasma mandel wolf3d fractint tcpecho sockeof ftpd tinyssh-start
 USER_PROGS := $(filter-out fractint,$(USER_PROGS))
 USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
 USER_LIBC_SRCS=\
@@ -299,7 +334,7 @@ USER_DYNAMIC_LEGACY_PROGS=$(USER_DYNAMIC_LEGACY_NO_CRT0) $(USER_DYNAMIC_LEGACY_W
 EXT2_BIN_STATIC_PROGS=$(filter-out $(USER_DYNAMIC_PROGS),$(EXT2_BIN_PROGS))
 EXT2_DEMO_STATIC_PROGS=$(filter-out $(USER_DYNAMIC_PROGS),$(EXT2_DEMO_PROGS))
 EXT2_TEST_STATIC_PROGS=$(filter-out $(USER_DYNAMIC_PROGS),$(EXT2_TEST_PROGS))
-EXT2_SBIN_PROGS=tcpecho sockeof ftpd
+EXT2_SBIN_PROGS=tcpecho sockeof ftpd tinyssh-start
 EXT2_SBIN_STATIC_PROGS=$(filter-out $(USER_DYNAMIC_PROGS),$(EXT2_SBIN_PROGS))
 EXT2_BIN_ENTRIES=$(foreach prog,$(EXT2_BIN_STATIC_PROGS),bin/$(prog)=$(BIN_DIR)/$(prog).elf) \
                  $(foreach prog,$(filter $(USER_DYNAMIC_LEGACY_PROGS),$(EXT2_BIN_PROGS)),bin/$(prog)=$(BIN_DIR)/$(prog).dyn.elf) \
@@ -330,7 +365,10 @@ EXT2_TEST_ENTRIES+=usr/libexec/tests/dynhello=$(BIN_DIR)/dynhello.elf \
 EXT2_SBIN_ENTRIES=$(foreach prog,$(EXT2_SBIN_STATIC_PROGS),usr/sbin/$(prog)=$(BIN_DIR)/$(prog).elf) \
                   $(foreach prog,$(filter $(USER_DYNAMIC_LEGACY_PROGS),$(EXT2_SBIN_PROGS)),usr/sbin/$(prog)=$(BIN_DIR)/$(prog).dyn.elf) \
                   $(foreach prog,$(filter $(USER_DYNAMIC_PIE_PROGS),$(EXT2_SBIN_PROGS)),usr/sbin/$(prog)=$(BIN_DIR)/$(prog).pie.elf) \
-                  usr/sbin/cserve=$(CSERVER_BIN)
+                  usr/sbin/cserve=$(CSERVER_BIN) \
+                  usr/sbin/tinysshd=$(TINYSSH_BIN) \
+                  usr/sbin/tinysshd-makekey=$(TINYSSH_MAKEKEY_BIN) \
+                  usr/sbin/tinysshd-printkey=$(TINYSSH_PRINTKEY_BIN)
 EXT2_APP_ENTRIES=$(EXT2_BIN_ENTRIES) $(EXT2_DEMO_ENTRIES) $(EXT2_TEST_ENTRIES)
 EXT2_APP_ENTRIES+= $(EXT2_SBIN_ENTRIES)
 MAN_PAGE_FILES=$(wildcard man/man*/*)
@@ -359,8 +397,8 @@ WOLF3D_DATA_ENTRIES=$(foreach file,$(WOLF3D_DATA_FILES),usr/share/wolf3d/$(notdi
 else
 WOLF3D_DATA_ENTRIES=
 endif
-EXT2_EXTRA_DIRS=tmp/ var/log/ lib/ usr/include/ usr/include/arpa/ usr/include/linux/ usr/include/netinet/ usr/include/sys/ usr/lib/ usr/lib/smallos/ usr/lib/smallos/plugins/ usr/libexec/tests/static/ usr/share/examples/tinycc/ usr/share/man/man1/ usr/share/man/man2/ usr/share/man/man3/ usr/share/man/man4/ usr/share/man/man5/ usr/share/man/man6/ usr/share/man/man7/ usr/share/man/man8/ usr/share/wolf3d/
-EXT2_BASE_EXTRA_ENTRIES=usr/bin/tcc=$(TINYCC_SMALOS_BIN) usr/bin/busybox=$(BUSYBOX_SMALOS_BIN) $(USER_INCLUDE_ENTRIES) $(USER_UAPI_ENTRIES) usr/share/examples/tinycc/tccmath.c=$(CURDIR)/samples/tccmath.c usr/share/examples/tinycc/tccagg.c=$(CURDIR)/samples/tccagg.c usr/share/examples/tinycc/tcctree.c=$(CURDIR)/samples/tcctree.c usr/share/examples/tinycc/tccmini.c=$(CURDIR)/samples/tccmini.c usr/share/examples/tinycc/tccsysroot.c=$(CURDIR)/samples/tccsysroot.c usr/share/examples/tinycc/tccposix.c=$(CURDIR)/samples/tccposix.c etc/passwd=$(CURDIR)/samples/passwd etc/shadow=$(CURDIR)/samples/shadow etc/group=$(CURDIR)/samples/group etc/cserve.ini=$(CURDIR)/samples/cserve.ini var/www/index.html=$(CURDIR)/samples/cserve_index.html var/log/boot.txt=$(CURDIR)/samples/boot.txt boot/splash.bmp=$(CURDIR)/assets/boot_splash.bmp $(MAN_PAGE_ENTRIES)
+EXT2_EXTRA_DIRS=tmp/ var/log/ lib/ usr/include/ usr/include/arpa/ usr/include/linux/ usr/include/netinet/ usr/include/sys/ usr/lib/ usr/lib/smallos/ usr/lib/smallos/plugins/ usr/libexec/tests/static/ usr/share/examples/tinycc/ usr/share/man/man1/ usr/share/man/man2/ usr/share/man/man3/ usr/share/man/man4/ usr/share/man/man5/ usr/share/man/man6/ usr/share/man/man7/ usr/share/man/man8/ usr/share/wolf3d/ .ssh/ etc/tinyssh/
+EXT2_BASE_EXTRA_ENTRIES=usr/bin/tcc=$(TINYCC_SMALOS_BIN) usr/bin/busybox=$(BUSYBOX_SMALOS_BIN) $(USER_INCLUDE_ENTRIES) $(USER_UAPI_ENTRIES) usr/share/examples/tinycc/tccmath.c=$(CURDIR)/samples/tccmath.c usr/share/examples/tinycc/tccagg.c=$(CURDIR)/samples/tccagg.c usr/share/examples/tinycc/tcctree.c=$(CURDIR)/samples/tcctree.c usr/share/examples/tinycc/tccmini.c=$(CURDIR)/samples/tccmini.c usr/share/examples/tinycc/tccsysroot.c=$(CURDIR)/samples/tccsysroot.c usr/share/examples/tinycc/tccposix.c=$(CURDIR)/samples/tccposix.c etc/passwd=$(CURDIR)/samples/passwd etc/shadow=$(CURDIR)/samples/shadow etc/group=$(CURDIR)/samples/group etc/random-seed=$(RANDOM_SEED_FILE) .ssh/authorized_keys=$(TINYSSH_AUTHORIZED_KEYS) etc/cserve.ini=$(CURDIR)/samples/cserve.ini var/www/index.html=$(CURDIR)/samples/cserve_index.html var/log/boot.txt=$(CURDIR)/samples/boot.txt boot/splash.bmp=$(CURDIR)/assets/boot_splash.bmp $(MAN_PAGE_ENTRIES)
 EXT2_EXTRA_ENTRIES=$(EXT2_BASE_EXTRA_ENTRIES) $(USER_LIB_ENTRIES)
 FRACTINT_EXTRA_ENTRIES=usr/share/xfractint/fractint.hlp=$(FRACTINT_DIR)/fractint.hlp usr/share/xfractint/sstools.ini=$(FRACTINT_DIR)/sstools.ini $(FRACTINT_DATA_ENTRIES)
 EXT2_ALL_EXTRA_ENTRIES=$(EXT2_EXTRA_ENTRIES) $(FRACTINT_EXTRA_ENTRIES) $(WOLF3D_DATA_ENTRIES)
@@ -387,7 +425,7 @@ USER_LIBM=$(USER_LIB_DIR)/libm.a
 USER_LIBPOSIX=$(USER_LIB_DIR)/libposix.a
 USER_LIB_ARCHIVES=$(USER_LIBPOSIX) $(USER_LIBC) $(USER_LIBM)
 USER_LINK_LIBS=-L$(USER_LIB_DIR) --start-group -lposix -lc -lm --end-group
-USER_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_PROGS))) $(BIN_DIR)/fractint.elf
+USER_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_PROGS))) $(BIN_DIR)/fractint.elf $(TINYSSH_ELFS)
 USER_DYN_OBJ_DIR=$(OBJ_DIR)/user-dyn
 USER_DYN_LIB_DIR=$(BIN_DIR)/lib
 LD_SMALLOS_OBJ=$(USER_DYN_OBJ_DIR)/ld_smallos.o
@@ -459,7 +497,7 @@ OBJ_SUBDIRS=$(sort \
 )
 
 BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(dir $(IMG_FILE)) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
-BUILD_SUBDIRS+=$(TINYCC_SMALOS_OBJ_DIR) $(BUSYBOX_OUT_DIR) $(CSERVER_OBJ_DIR)
+BUILD_SUBDIRS+=$(TINYCC_SMALOS_OBJ_DIR) $(BUSYBOX_OUT_DIR) $(CSERVER_OBJ_DIR) $(TINYSSH_OBJ_DIR)
 
 all: artifacts
 
@@ -752,6 +790,30 @@ $(BUSYBOX_SMALOS_BIN): $(BUSYBOX_CONFIG_STAMP) $(USER_CRT0_OBJ) $(USER_LIB_ARCHI
 	$(MAKE) -C $(BUSYBOX_SRC_DIR) O=$(CURDIR)/$(BUSYBOX_OUT_DIR) ARCH=i386 CC="$(CC)" busybox
 	cp $(BUSYBOX_OUT_DIR)/busybox $@
 
+$(TINYSSH_TARBALL): | dirs
+	mkdir -p $(dir $@)
+	curl -L --fail -o $@ $(TINYSSH_URL)
+
+$(TINYSSH_CONFIG_STAMP): $(TINYSSH_TARBALL) tools/configure_tinyssh_smalos.sh patches/tinyssh/smallos.diff | dirs
+	rm -rf $(TINYSSH_SRC_DIR)
+	mkdir -p $(TINYSSH_SRC_DIR)
+	tar -xzf $(TINYSSH_TARBALL) --strip-components=1 -C $(TINYSSH_SRC_DIR)
+	patch -d $(TINYSSH_SRC_DIR) -p1 < patches/tinyssh/smallos.diff
+	tools/configure_tinyssh_smalos.sh $(TINYSSH_SRC_DIR)
+	touch $@
+
+$(TINYSSH_OBJ_DIR)/%.o: $(TINYSSH_CONFIG_STAMP) Makefile | dirs
+	$(CC) $(USER_PUBLIC_CPPFLAGS) $(CFLAGS) -Os -ffunction-sections -fdata-sections -Wno-unused-function -Wno-unused-variable -I$(TINYSSH_SRC_DIR) -I$(TINYSSH_SRC_DIR)/cryptoint $(DEPFLAGS) -MF $(@:.o=.d) -c $(TINYSSH_SRC_DIR)/$*.c -o $@
+
+$(TINYSSH_OBJ_DIR)/%.d:
+	@:
+
+$(TINYSSH_BIN): $(TINYSSH_OBJS) $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
+	$(LD) $(USER_LDFLAGS) -s $(filter %.o,$^) $(USER_LINK_LIBS) $(LIBGCC_FILE) -o $@
+
+$(TINYSSH_MAKEKEY_BIN) $(TINYSSH_PRINTKEY_BIN): $(TINYSSH_BIN) | dirs
+	cp $< $@
+
 $(TINYCC_SMALOS_PATCH_STAMP): check-third-party patches/tinycc/smallos.patch | dirs
 	rm -rf $(TINYCC_SMALOS_SRC_DIR)
 	mkdir -p $(TINYCC_SMALOS_SRC_DIR)
@@ -868,6 +930,23 @@ $(TOOLS_DIR)/mkext2: tools/mkext2.c | dirs
 $(TOOLS_DIR)/mkimage: tools/mkimage.c | dirs
 	$(HOST_CC) -o $@ $<
 
+$(RANDOM_SEED_FILE): | dirs
+	@if [ ! -f $@ ]; then dd if=/dev/urandom of=$@ bs=64 count=1 status=none; fi
+
+$(TINYSSH_AUTHORIZED_KEYS): | dirs
+	@if ! command -v ssh-keygen >/dev/null 2>&1; then \
+		echo "ssh-keygen is required to create $(TINYSSH_AUTHORIZED_KEYS)" >&2; \
+		exit 1; \
+	fi
+	@if [ ! -f $(TINYSSH_SMOKE_KEY) ]; then \
+		ssh-keygen -q -t ed25519 -N '' -f $(TINYSSH_SMOKE_KEY); \
+	fi
+	@if [ ! -f $(TINYSSH_SMOKE_KEY).pub ]; then \
+		ssh-keygen -y -f $(TINYSSH_SMOKE_KEY) > $(TINYSSH_SMOKE_KEY).pub; \
+	fi
+	cp $(TINYSSH_SMOKE_KEY).pub $@
+	chmod 600 $@
+
 # ext2 seed image (generated from the current tree)
 #
 $(BIN_DIR)/ext2.seed.img: $(USER_ELFS) $(CSERVER_BIN) $(WOLF3D_SOURCE_PROBE_BIN) $(TOOLS_DIR)/mkext2 $(EXT2_EXTRA_FILES) $(FRACTINT_SVN_STAMP) $(FRACTINT_DIR)/fractint.hlp Makefile | dirs
@@ -902,6 +981,8 @@ tinycc-host-clean:
 tinycc-smalos: $(TINYCC_SMALOS_BIN)
 
 busybox-smalos: $(BUSYBOX_SMALOS_BIN)
+
+tinyssh-smalos: $(TINYSSH_ELFS)
 
 $(GEN_DIR)/loader2.gen.asm: $(BOOT_DIR)/loader2.asm FORCE | dirs
 	sed \
@@ -1093,7 +1174,7 @@ QEMU_USB_STORAGE_FLAGS=-drive if=none,id=stick,format=raw,file=$(IMG_FILE) \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all image img artifacts dirs deps fractint-source wolf3d-shareware-data wolf3d-source-probe check-third-party dyn-size-report dynamic-link-check dyn-reloc-inventory dynlink-negative-smoke run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage run-usb-storage-fallback run-headless-usb-storage-fallback usb-storage-smoke usb-ramdisk-fallback-smoke test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke busybox-net-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean tinycc-smalos busybox-smalos FORCE
+.PHONY: all image img artifacts dirs deps fractint-source wolf3d-shareware-data wolf3d-source-probe check-third-party dyn-size-report dynamic-link-check dyn-reloc-inventory dynlink-negative-smoke run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage run-usb-storage-fallback run-headless-usb-storage-fallback usb-storage-smoke usb-ramdisk-fallback-smoke test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke busybox-net-smoke tinyssh-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean tinycc-smalos busybox-smalos tinyssh-smalos FORCE
 
 FORCE:
 
@@ -1292,6 +1373,19 @@ busybox-net-smoke:
 		--guest-tftpd-port $(BUSYBOX_NET_SMOKE_GUEST_TFTPD_PORT) \
 		--timeout 120
 
+tinyssh-smoke:
+	$(MAKE) reset-disk image-layout-check SERIAL_CONSOLE=1
+	@if [ -f $(PIDFILE) ]; then kill "$$(cat $(PIDFILE))" 2>/dev/null || true; fi
+	rm -f $(SERIAL_LOG) $(MONITOR_SOCK) $(PIDFILE)
+	$(MAKE) run-headless SERIAL_CONSOLE=1 QEMU_NET_HOSTFWD=',hostfwd=tcp::$(TINYSSH_SMOKE_PORT)-:22'
+	$(PYTHON3) tools/tinyssh_smoke.py \
+		--monitor $(MONITOR_SOCK) \
+		--serial $(SERIAL_LOG) \
+		--pidfile $(PIDFILE) \
+		--port $(TINYSSH_SMOKE_PORT) \
+		--identity $(TINYSSH_SMOKE_KEY) \
+		--timeout 180
+
 framebuffer-smoke:
 	$(MAKE) display-smoke-one DISPLAY_BACKEND=auto DISPLAY_SMOKE_MODE=framebuffer DISPLAY_SMOKE_PPM=$(FRAMEBUFFER_SMOKE_PPM)
 
@@ -1373,6 +1467,7 @@ verify-network:
 	$(MAKE) ftp-loop-smoke
 	$(MAKE) cserve-smoke
 	$(MAKE) busybox-net-smoke
+	$(MAKE) tinyssh-smoke
 
 verify-full:
 	$(MAKE) verify

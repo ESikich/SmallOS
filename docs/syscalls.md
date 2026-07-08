@@ -694,6 +694,9 @@ must name an existing ext2 directory. File-oriented syscalls such as
 `SYS_MKDIR`, `SYS_RMDIR`, `SYS_DIRLIST`, `SYS_WRITEFILE_PATH`, and `SYS_EXEC`
 resolve relative paths through the same process cwd.
 
+The libc `fchdir(fd)` wrapper uses the same cwd state by restoring the
+normalized path recorded on an open directory descriptor.
+
 ---
 
 ### SYS_FSYNC (39)
@@ -1339,7 +1342,9 @@ int sys_pty_open(int fds[2], int master_flags);
 
 Creates a pseudo-terminal pair. `fds[0]` receives the master fd and `fds[1]`
 receives the slave fd. GUI shell windows keep the master and dup the slave onto
-the child shell's standard descriptors.
+the child shell's standard descriptors. The libc `openpty` wrapper exposes this
+as stable synthetic names such as `/dev/pts/N`, and `login_tty` duplicates the
+slave onto fd `0`, `1`, and `2`.
 
 ### SYS_PTY_SET_SIZE (84)
 
@@ -1361,8 +1366,9 @@ int sys_tty_ioctl(int fd, uint32_t request, void* arg);
 
 Terminal attributes live in kernel terminal state. PTYs carry their own
 termios data and console-like descriptors use a default console terminal
-state. `sys_tty_ioctl` currently supports `TIOCGWINSZ`, `TIOCGPGRP`,
-`TIOCSPGRP`, and compatibility no-ops for `TIOCSCTTY`/`TIOCNOTTY`;
+state. `sys_tty_ioctl` currently supports `TIOCGWINSZ`, `TIOCSWINSZ`,
+`TIOCGPGRP`, `TIOCSPGRP`, and compatibility no-ops for
+`TIOCSCTTY`/`TIOCNOTTY`;
 non-terminal descriptors fail with `-ENOTTY`. The controlling-tty no-ops let
 BusyBox `getty`/`login` tolerate SmallOS console and PTY descriptors without
 modeling the full Linux tty-stealing lifecycle.

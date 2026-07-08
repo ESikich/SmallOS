@@ -56,7 +56,8 @@ typedef enum {
     PROCESS_VIRTUAL_REGULAR = 1,
     PROCESS_VIRTUAL_NULL = 2,
     PROCESS_VIRTUAL_ZERO = 3,
-    PROCESS_VIRTUAL_TTY = 4
+    PROCESS_VIRTUAL_TTY = 4,
+    PROCESS_VIRTUAL_URANDOM = 5
 } process_virtual_type_t;
 
 typedef enum {

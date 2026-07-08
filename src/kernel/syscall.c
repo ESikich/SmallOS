@@ -59,6 +59,7 @@
 #define SYS_IOCTL_TIOCGPGRP   0x540Fu
 #define SYS_IOCTL_TIOCSPGRP   0x5410u
 #define SYS_IOCTL_TIOCGWINSZ  0x5413u
+#define SYS_IOCTL_TIOCSWINSZ  0x5414u
 #define SYS_IOCTL_TIOCSCTTY   0x540Eu
 #define SYS_IOCTL_TIOCNOTTY   0x5422u
 #define SYS_RLIMIT_CPU        0
@@ -768,13 +769,29 @@ static int virtual_path_is_dir(const char* path) {
 
     path = virtual_effective_path(path, translated, sizeof(translated));
     if (path_eq(path, "proc") || path_eq(path, "proc/net") ||
-        path_eq(path, "dev") || path_eq(path, "dev/fd")) {
+        path_eq(path, "dev") || path_eq(path, "dev/fd") ||
+        path_eq(path, "dev/pts")) {
         return 1;
     }
     if (virtual_proc_pid_path(path, &proc, &leaf)) {
         return proc && leaf && leaf[0] == '\0';
     }
     return 0;
+}
+
+static int virtual_path_is_dev_pts(const char* path) {
+    const char* p;
+    char translated[PROCESS_FD_NAME_MAX];
+
+    path = virtual_effective_path(path, translated, sizeof(translated));
+    if (!k_starts_with(path, "dev/pts/")) return 0;
+    p = path + 8;
+    if (*p == '\0') return 0;
+    while (*p) {
+        if (*p < '0' || *p > '9') return 0;
+        p++;
+    }
+    return 1;
 }
 
 static int virtual_path_is_dev(const char* path, unsigned int* out_type) {
@@ -789,9 +806,13 @@ static int virtual_path_is_dev(const char* path, unsigned int* out_type) {
         if (out_type) *out_type = PROCESS_VIRTUAL_ZERO;
         return 1;
     }
+    if (path_eq(path, "dev/urandom")) {
+        if (out_type) *out_type = PROCESS_VIRTUAL_URANDOM;
+        return 1;
+    }
     if (path_eq(path, "dev/tty") || path_eq(path, "dev/console") ||
         path_eq(path, "dev/fd/0") || path_eq(path, "dev/fd/1") ||
-        path_eq(path, "dev/fd/2")) {
+        path_eq(path, "dev/fd/2") || virtual_path_is_dev_pts(path)) {
         if (out_type) *out_type = PROCESS_VIRTUAL_TTY;
         return 1;
     }
@@ -1026,7 +1047,8 @@ static int virtual_stat_info(const char* path, sys_stat_info_t* info) {
     mode = is_dir ? (0040000u | 0555u) : (0100000u | 0444u);
     if (type == PROCESS_VIRTUAL_NULL ||
         type == PROCESS_VIRTUAL_ZERO ||
-        type == PROCESS_VIRTUAL_TTY) {
+        type == PROCESS_VIRTUAL_TTY ||
+        type == PROCESS_VIRTUAL_URANDOM) {
         mode = 0020000u | 0666u;
         info->rdev = type;
     }
@@ -5007,6 +5029,10 @@ static int sys_chmod_impl(const char* path, unsigned int mode) {
 
     if (path_rc < 0) return path_rc;
     if (!proc) return -EINVAL;
+    if (virtual_stat_info(kpath, &info)) {
+        if (!process_is_root(proc) && proc->euid != info.uid) return -EPERM;
+        return 0;
+    }
     if (path_on_pseudo_mount(kpath)) return -EACCES;
     perm_rc = check_path_permission(proc, kpath, 0, &info);
     if (perm_rc < 0) return perm_rc;
@@ -5022,6 +5048,10 @@ static int sys_chown_impl(const char* path, unsigned int uid, unsigned int gid) 
 
     if (path_rc < 0) return path_rc;
     if (!proc) return -EINVAL;
+    if (virtual_path_exists(kpath, 0, 0, 0)) {
+        if (!process_is_root(proc)) return -EPERM;
+        return 0;
+    }
     if (path_on_pseudo_mount(kpath)) return -EACCES;
     if (!process_is_root(proc)) return -EPERM;
     perm_rc = check_path_permission(proc, kpath, 0, 0);
@@ -5481,6 +5511,14 @@ static int sys_tty_ioctl_impl(int fd, unsigned int request, void* arg) {
         ws.ws_col = (unsigned short)cols;
         if (copy_to_user(arg, &ws, sizeof(ws)) < 0) return -EFAULT;
         return 0;
+    }
+
+    if (request == SYS_IOCTL_TIOCSWINSZ) {
+        sys_winsize_t ws;
+
+        if (!arg || !user_buf_ok((unsigned int)arg, sizeof(ws))) return -EFAULT;
+        if (copy_from_user(&ws, arg, sizeof(ws)) < 0) return -EFAULT;
+        return process_fd_pty_set_size(ent, ws.ws_row, ws.ws_col);
     }
 
     if (request == SYS_IOCTL_TIOCGPGRP) {
@@ -6581,6 +6619,25 @@ static int sys_chdir_impl(const char* path) {
     return 0;
 }
 
+static int sys_fchdir_impl(int fd) {
+    process_t* proc = (process_t*)sched_current();
+    fd_entry_t* ent;
+
+    if (!proc) return -EINVAL;
+    ent = process_fd_get(proc, fd);
+    if (!ent) return -EBADF;
+    if (ent->kind != PROCESS_HANDLE_KIND_FILE || !ent->is_dir) return -ENOTDIR;
+    if (!virtual_path_is_dir(ent->name) && !vfs_is_dir(ent->name)) {
+        return -ENOENT;
+    }
+    {
+        int perm_rc = check_path_permission(proc, ent->name, SYS_PERM_X, 0);
+        if (perm_rc < 0) return perm_rc;
+    }
+    k_memcpy(proc->cwd, ent->name, (k_size_t)k_strlen(ent->name) + 1u);
+    return 0;
+}
+
 static int sys_fread_impl(int fd, char* buf, unsigned int len) {
     if (len == 0) return 0;
     if (!user_buf_ok((unsigned int)buf, len)) return -EFAULT;
@@ -6920,6 +6977,10 @@ void syscall_handler_main(syscall_regs_t* regs) {
 
         case SYS_CHDIR:
             regs->eax = (unsigned int)sys_chdir_impl((const char*)regs->ebx);
+            break;
+
+        case SYS_FCHDIR:
+            regs->eax = (unsigned int)sys_fchdir_impl((int)regs->ebx);
             break;
 
         case SYS_FSYNC:

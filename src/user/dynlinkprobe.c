@@ -178,13 +178,13 @@ int main(int argc, char** argv, char** envp) {
         pid = sys_exec("usr/libexec/tests/sleep_test", 1, child_argv);
         if (pid > 0) {
             int shared = 0;
-            for (int i = 0; i < 32; i++) {
-                sys_sleep(1);
+            for (int i = 0; i < 64; i++) {
                 if (sys_meminfo(&during) == 0 &&
                     during.ro_file_cache_mapped_refs > before.ro_file_cache_mapped_refs) {
                     shared = 1;
                     break;
                 }
+                sys_sleep(1);
             }
             if (shared) {
                 puts("dynlinkprobe shared-child: PASS");

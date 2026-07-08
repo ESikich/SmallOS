@@ -122,7 +122,8 @@ static void init_config(ftp_config_t* config) {
     config->user_count = 1;
     ftp_strlcpy(config->users[0].username, "ftp",
                 sizeof(config->users[0].username));
-    ftp_strlcpy(config->users[0].password_hash, "ftp",
+    ftp_strlcpy(config->users[0].password_hash,
+                "$smallos-sha256$ftp$8b566b9c61d7e73e3d1893692b7f12fdafc732f171f1c31e2e2901b4f52f279f",
                 sizeof(config->users[0].password_hash));
     ftp_strlcpy(config->users[0].home, "/",
                 sizeof(config->users[0].home));
