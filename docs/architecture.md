@@ -287,7 +287,10 @@ irq0_stub — add esp 4, pop segments, popa, iretd → ring 3 resumes
 
 ## SYS_YIELD integration
 
-`sched_yield_now(esp)` is called from `sys_yield_impl` inside the syscall handler. It bypasses the quantum counter, resets `s_tick_count`, and calls the same `sched_do_switch(esp)` core used by `sched_tick`. The `esp` argument is `(unsigned int)regs` — a pointer to the `isr128_stub` register frame, which is structurally identical to an `irq0_stub` frame (same push order). `sched_switch` therefore resumes the yielding process via `iretd` exactly as it would a timer-preempted context.
+`sys_yield_impl()` no longer calls `sched_yield_now()` directly. It briefly
+enables interrupts, executes `hlt`, disables interrupts again, and returns to
+the caller. That gives the timer and device IRQ paths a chance to run; timer IRQ0
+still owns round-robin switching through `sched_tick()`.
 
 ## Lifecycle
 
@@ -428,7 +431,10 @@ regs->eax = result
 pop segments, popa, iretd → ring 3 resumes
 ```
 
-The `isr128_stub` frame (pusha + 4 segment pushes + esp) is structurally identical to the `irq0_stub` frame. This means `regs` (the pointer passed to `syscall_handler_main`) can be passed directly to `sched_yield_now()` as a valid scheduler resume ESP.
+The `isr128_stub` frame (pusha + 4 segment pushes + esp) determines
+`syscall_regs_t` and is the frame normal syscalls return through. `SYS_YIELD`
+parks with `sti; hlt; cli`; scheduler switches are still driven by IRQ paths
+such as timer preemption.
 
 Normal syscalls return through this saved interrupt frame. `SYS_EXIT` is the exception: it switches to the kernel page directory, marks the current task `PROCESS_STATE_ZOMBIE` through `sched_exit_current()`, and switches away instead of unwinding through the original `iretd` path.
 
@@ -923,7 +929,7 @@ per-process kernel stacks (PMM frame per process, freed on exit)
 SYS_READ / fd 0 — true blocking keyboard input through the console handle: parks process in PROCESS_STATE_WAITING, woken by keyboard IRQ via process_key_consumer()
 SYS_MOUSE_READ — polling mouse state for graphics demos: returns accumulated relative deltas/buttons and clears the movement counters
 SYS_USBINFO / SYS_MOUSE_DEBUG / SYS_USB_DIAG_OP / SYS_USB_MOUSE_OP — USB and mouse diagnostic interfaces used by `/bin/usb*` and `/bin/mousetest`; userland owns passive snapshot formatting while controller access and active diagnostic transfers remain in the kernel
-SYS_YIELD — voluntary preemption via sched_yield_now()
+SYS_YIELD — cooperative interrupt wait; timer IRQs still own scheduler switches
 SYS_SLEEP — timed sleep: parks process in PROCESS_STATE_SLEEPING and wakes via the timer IRQ once the deadline is reached
 SYS_EXEC / SYS_FORK / SYS_EXECVE / SYS_WAITPID / SYS_KILL — legacy async ELF spawn plus POSIX-shaped fork/replace; userland can collect exit/signal status or terminate a child by pid
 SYS_GETCWD / SYS_CHDIR — per-process cwd state; relative user paths are normalized before VFS or ELF loading

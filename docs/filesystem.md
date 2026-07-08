@@ -49,11 +49,11 @@ The ext2 start LBA is **not** compiled into the kernel. The Makefile computes it
 
 # On-Disk Layout
 
-`build/bin/ext2.seed.img` is built by `tools/mkext2.c` as a raw 32 MB ext2
-volume. Normal runs copy that seed to `.state/ext2.img`, which is the mutable
-volume appended to `smallos.img`. The seed includes `/var/log/boot.txt` from
-`samples/boot.txt` so the kernel can persist boot diagnostics by overwriting an
-existing file after `bootseq` mounts ext2.
+`build/bin/<profile>/ext2.seed.img` is built by `tools/mkext2.c` as a raw
+32 MB ext2 volume. Normal runs copy that seed to `.state/ext2.img`, which is
+the mutable volume appended to `smallos.img`. The seed includes
+`/var/log/boot.txt` from `samples/boot.txt` so the kernel can persist boot
+diagnostics by overwriting an existing file after `bootseq` mounts ext2.
 
 ## Fixed geometry
 
@@ -112,14 +112,14 @@ descriptor path.
 The image build contract is:
 
 1. build `kernel.bin`
-2. pad it to a 512-byte boundary as `kernel_padded.bin`
+2. have `mkimage` pad the kernel region to a 512-byte boundary during final assembly
 3. compute `kernel_sectors = ceil(kernel.bin / 512)`
 4. compute `ext2_lba = kernel_lba + kernel_sectors`
-5. build `build/bin/ext2.seed.img` and refresh `.state/ext2.img` when needed
+5. build `build/bin/<profile>/ext2.seed.img` and refresh `.state/ext2.img` when needed
 6. assemble:
 
 ```text
-smallos.img = boot.bin + loader2.bin + kernel_padded.bin + .state/ext2.img
+smallos.img = boot.bin + loader2.bin + padded kernel region + .state/ext2.img
 ```
 
 ## Why kernel padding matters

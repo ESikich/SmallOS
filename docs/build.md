@@ -863,8 +863,8 @@ fallback for missing applets.
 ```bash
 i686-elf-gcc -I<dirs> \
     -ffreestanding -m32 -fno-pie -fno-stack-protector \
-    -nostdlib -nostartfiles -MMD -MP -MF build/obj/auto/user/hello.d \
-    -c hello.c -o build/obj/auto/user/hello.o
+    -nostdlib -nostartfiles -MMD -MP -MF build/obj/<profile>/user/hello.d \
+    -c hello.c -o build/obj/<profile>/user/hello.o
 ```
 
 ## Link
@@ -873,7 +873,7 @@ All user programs are linked at `USER_CODE_BASE` (0x400000):
 
 ```bash
 i686-elf-ld -m elf_i386 -Ttext-segment 0x400000 -e _start \
-    build/obj/auto/user/hello.o -o build/bin/auto/hello.elf
+    build/obj/<profile>/user/hello.o -o build/bin/<profile>/hello.elf
 ```
 
 Key link options:
@@ -909,18 +909,18 @@ $(TOOLS_DIR)/mkext2: tools/mkext2.c | dirs
 ## Building
 
 ```bash
-build/tools/mkext2 build/bin/auto/ext2.seed.img \
-    bin/echo=build/bin/auto/echo.elf \
-    bin/date=build/bin/auto/date.elf \
-    usr/bin/hello=build/bin/auto/hello.elf \
-    usr/bin/plasma=build/bin/auto/plasma.elf \
-    usr/bin/mandel=build/bin/auto/mandel.elf \
-    usr/libexec/tests/exec_args=build/bin/auto/exec_args.elf \
-    usr/sbin/ftpd=build/bin/auto/ftpd.elf \
-    usr/bin/tcc=build/bin/auto/tcc-smalos.elf \
+build/tools/mkext2 build/bin/<profile>/ext2.seed.img \
+    bin/echo=build/bin/<profile>/echo.elf \
+    bin/date=build/bin/<profile>/date.elf \
+    usr/bin/hello=build/bin/<profile>/hello.elf \
+    usr/bin/plasma=build/bin/<profile>/plasma.elf \
+    usr/bin/mandel=build/bin/<profile>/mandel.elf \
+    usr/libexec/tests/exec_args=build/bin/<profile>/exec_args.elf \
+    usr/sbin/ftpd=build/bin/<profile>/ftpd.elf \
+    usr/bin/tcc=build/bin/<profile>/tcc-smalos.elf \
     usr/include/stdio.h=src/user/include/stdio.h \
-    usr/lib/crt0.o=build/obj/auto/user/crt/crt0.o \
-    usr/lib/libc.a=build/obj/auto/user/lib/libc.a \
+    usr/lib/crt0.o=build/obj/<profile>/user/crt/crt0.o \
+    usr/lib/libc.a=build/obj/<profile>/user/lib/libc.a \
     usr/share/examples/tinycc/tccmath.c=samples/tccmath.c
 ```
 
@@ -1127,9 +1127,9 @@ The final image builder is invoked with already-built component binaries and sou
 
 ```bash
 build/tools/mkimage \
-    --boot build/bin/auto/boot.bin \
-    --loader build/bin/auto/loader2.bin \
-    --kernel build/bin/auto/kernel.bin \
+    --boot build/bin/<profile>/boot.bin \
+    --loader build/bin/<profile>/loader2.bin \
+    --kernel build/bin/<profile>/kernel.bin \
     --fs .state/ext2.img \
     --out build/img/smallos.img \
     --sector-size 512 \

@@ -356,7 +356,7 @@ Exited tasks must be marked `PROCESS_STATE_ZOMBIE` and destroyed later from a sa
 * Link user ELFs with `-Ttext-segment 0x400000`, not `-Ttext`
 * User frames from `pmm_alloc_frame()` only
 * `elf_user_task_bootstrap()` sets `tss_set_kernel_stack()` before first ring-3 entry for a user task, and scheduler-driven switches update ESP0 for later entries
-* Use `esp - 8` from the IRQ0 / syscall-stub paths when handing a resume frame to the scheduler
+* Use `esp - 8` from IRQ C-call paths such as IRQ0 when handing a resume frame to the scheduler; `SYS_YIELD` itself parks with `sti; hlt; cli` and does not call `sched_yield_now()` directly.
 * Preserve the true interrupt/syscall resume ESP; do not let `sched_switch()` overwrite it with the scheduler's own C call-frame ESP
 
 ---

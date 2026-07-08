@@ -70,13 +70,13 @@ void sched_tick(unsigned int esp);
 /*
  * sched_yield_now(esp)
  *
- * Voluntarily yield the remainder of the current quantum and immediately
- * switch to the next runnable process.
+ * Immediately switch to the next runnable process from a caller that already
+ * owns a valid scheduler resume frame.
  *
- * Called from sys_yield_impl() via the SYS_YIELD syscall path.  esp is
- * the kernel stack pointer of the isr128_stub frame — structurally
- * identical to an irq0_stub frame, so sched_switch can resume it via
- * iretd exactly as it would a timer-preempted context.
+ * This is used by scheduler-aware kernel paths, not by SYS_YIELD.  SYS_YIELD
+ * parks with sti; hlt; cli and lets interrupt handling drive any scheduler
+ * switch.  esp must be a stack pointer that sched_switch can resume via iretd
+ * exactly as it would a timer-preempted context.
  *
  * Resets the tick counter so the next process gets a full quantum.
  *

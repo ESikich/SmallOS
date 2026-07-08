@@ -73,7 +73,7 @@ Important current-state facts:
   kernel loads both the main image and interpreter, then the user-space loader
   maps `/lib/libc.so` through `mmap`
 - ELF launch and exit are now scheduler-owned: `elf_run_image()` seeds a bootstrap context, enqueues the task, and returns `process_t*`
-- the scheduler supports kernel tasks, ELF tasks, voluntary yielding, timer-driven sleeping, and timer-driven switching; foreground commands wait for children, and `bg` returns while keeping a reattachable shell job
+- the scheduler supports kernel tasks, ELF tasks, cooperative interrupt waits, timer-driven sleeping, and timer-driven switching; foreground commands wait for children, and `bg` returns while keeping a reattachable shell job
 - user ELFs have a small freestanding runtime layer with a heap allocator,
   fd-backed console streams, streaming VFS-backed file handles,
   `stat`/`rename`/`unlink`, `lseek`, and socket wrappers, which is enough for
@@ -522,7 +522,8 @@ The scheduler owns everything:
 
 - kernel tasks created with `process_create_kernel_task()` (shell, reaper)
 - ELF user tasks — `elf_loader.c` copies argv into `process_t` storage, builds a valid `sched_esp` on the process kernel stack, seeds first scheduler entry through `elf_user_task_bootstrap()`, and enqueues the process with `sched_enqueue(proc)`
-- voluntary yields via `SYS_YIELD` → `sched_yield_now()`
+- cooperative yields via `SYS_YIELD` → `sti; hlt; cli`; timer IRQs still decide
+  whether a scheduler switch is needed
 - timer-driven preemption via `sched_tick()`
 - exit via `SYS_EXIT` → `sched_exit_current()`
 
@@ -680,7 +681,8 @@ The following must remain true:
 - every user process must have a valid kernel stack frame before ring-3 entry
 - `tss_set_kernel_stack()` must match the process that will next return from ring 3 into the kernel
   - this is enforced by `elf_user_task_bootstrap()` on first entry, not by the earlier `elf_run_image()` setup path
-- timer IRQ and syscall-yield paths must pass the scheduler the true resume-frame base, `esp - 8`, not raw `esp`
+- timer IRQ paths must pass the scheduler the true C-call resume-frame base,
+  `esp - 8`, not raw `esp`
 - the scheduler must preserve that real saved resume ESP instead of letting `sched_switch()` overwrite it with the scheduler's own C call-frame ESP
 - `process_destroy()` must not run until a safe stack is active and the task is already `PROCESS_STATE_ZOMBIE`
 
@@ -701,7 +703,7 @@ Likely causes:
 
 Likely causes:
 
-- wrong resume ESP passed to the scheduler instead of `esp - 8`
+- wrong IRQ resume ESP passed to the scheduler instead of `esp - 8`
 - scheduler save slot allowed to overwrite the real interrupt/syscall resume ESP
 - task destroyed before switching off its own kernel stack
 
@@ -728,7 +730,8 @@ The execution model is fully scheduler-owned.
 - scheduler-owned shell task
 - scheduler-owned reaper task — frees unclaimed zombie processes automatically
 - timer-driven preemption
-- `SYS_YIELD`, `SYS_EXEC`, `SYS_FORK`, `SYS_EXECVE`, `SYS_EXIT` all scheduler-owned
+- `SYS_EXEC`, `SYS_FORK`, `SYS_EXECVE`, and `SYS_EXIT` are scheduler-owned;
+  `SYS_YIELD` cooperatively waits for an interrupt and returns
 - ELF processes have real per-process page directories
 - foreground commands wait with `process_wait()`; `bg` children are reaped automatically; `SYS_EXEC` and `SYS_FORK` children are parent-waitable with `waitpid()` and can report stopped state through `WUNTRACED`; user-shell `bg` children are shell-owned jobs until `fg` or `kill`
 - no known zombie or frame leaks

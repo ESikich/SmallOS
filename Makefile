@@ -940,7 +940,7 @@ boot-layout-check: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(GEN_DIR)/loader2
 # Layout:
 #   boot.bin             ($(BOOT_SECTOR_SIZE) bytes,   LBA 0)
 #   loader2.bin          ($(LOADER2_SIZE_BYTES) bytes, LBA 1-$(shell echo $$(( $(LOADER2_SIZE_BYTES) / $(BOOT_SECTOR_SIZE) ))))
-#   kernel_padded.bin    (sector-aligned, immediately after loader2.bin)
+#   padded kernel region (kernel.bin plus zero padding to a sector boundary)
 #   .state/ext2.img      mutable ext2 partition copy, after the padded kernel
 #
 # Sector 0 is now an MBR-style boot sector with partition table entries for

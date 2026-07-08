@@ -186,9 +186,11 @@ normally.
 void sys_yield(void);
 ```
 
-Voluntarily surrenders the current scheduler quantum. The calling process is immediately context-switched out and becomes runnable again on the next scheduler pass.
-
-**Implementation note:** `sys_yield_impl(esp)` receives `(unsigned int)regs` from `isr128_stub`, but the true resume-frame base is `esp - 8` because the stub passes ESP via `push esp` and then `call` adds a return address. `sched_yield_now(esp - 8)` bypasses the quantum counter and calls `sched_do_switch()` with the real resume ESP.
+Voluntarily gives the machine a chance to service interrupts. The current
+implementation enables interrupts, halts until the next interrupt, disables
+interrupts again, and returns `0` to the caller. Timer IRQs still own actual
+round-robin switching, so `SYS_YIELD` is cooperative wait-for-interrupt rather
+than an immediate direct call into `sched_yield_now()`.
 
 ---
 
@@ -264,9 +266,13 @@ and share the current file offset.
 int sys_sleep(uint32_t ticks);
 ```
 
-Blocks the calling process for at least `ticks` timer ticks. The task marks itself `PROCESS_STATE_SLEEPING`, yields to the scheduler, and is woken by the timer IRQ once the deadline is reached.
+Blocks the calling process for at least `ticks` timer ticks. The task marks
+itself `PROCESS_STATE_SLEEPING`, parks with interrupts enabled, and is woken by
+the timer IRQ once the deadline is reached.
 
-`sys_sleep_impl` uses the same scheduler-owned preemption path as `SYS_YIELD`, but the task remains unrunnable until `timer_get_ticks()` reaches the stored wake deadline. If no other runnable task exists, the kernel still idles in a `hlt` loop until the wake condition is met.
+`sys_sleep_impl` marks the task sleeping until `timer_get_ticks()` reaches the
+stored wake deadline. If no other runnable task exists, the kernel still idles
+in a `hlt` loop until the wake condition is met.
 
 ---
 
@@ -2130,7 +2136,7 @@ u_stat(...)        query path metadata
 * All pointer arguments to syscalls are validated with page-aware user checks before kernel dereference — pointers below `USER_CODE_BASE` (0x400000), spanning above `USER_STACK_TOP` (0xC0000000), touching an unmapped user page, or wrapping a variable-length byte count are rejected before use
 * `SYS_EXEC` copies the user `name` and `argv[]` strings into kernel buffers before handing them to the ELF loader, so the loader never depends on caller memory staying stable after validation
 * Each process owns a cwd. Kernel path syscalls normalize `.` / `..`, accept absolute paths with a leading slash, and resolve relative paths against that process cwd before entering VFS or ELF loading.
-* `SYS_YIELD` and the timer path use the same stub layout, but the real scheduler resume ESP is `esp - 8`, not raw `esp`
+* Timer IRQ scheduler handoff uses the adjusted C-call resume frame from `irq0_handler_main`, currently `esp - 8`; `SYS_YIELD` itself now parks with `sti; hlt; cli` and lets interrupt handling decide whether a scheduler switch is needed.
 * EOI for IRQ1 is sent at the top of `irq1_handler_main` before `keyboard_handle_irq`; IRQ12 sends EOI to both PICs before decoding PS/2 mouse bytes or draining VMware mouse events
 * The TSS is owned by the GDT subsystem. Syscall entry uses the currently active `SS0/ESP0`, and scheduler-driven updates to ESP0 go through `tss_set_kernel_stack()` rather than a cached pointer into the packed TSS.
 * fd 0/1/2 are real console handles created by `process_create()` (`stdin`, `stdout`, `stderr`) and may be replaced by inherited PTY slave handles for GUI shell sessions; user-opened files, pipes, sockets, and event handles start at fd 3. The descriptor table is PMM-backed process state: it starts at 16 slots, grows up to the default 128-fd process limit, and has a kernel hard cap of 256. Every handle carries readable/writable state plus an ops table for `read`, `write`, `seek`, `poll`, `flush`, and `close`. File, pipe, PTY, and socket resources are shared/refcounted when descriptors are duplicated or inherited across `fork()`, while `FD_CLOEXEC` is per descriptor. `process.c` owns fd lifetime and dispatch, `vfs.c` owns ext2-backed file behavior, `socket.c` owns kernel socket objects plus accept/read/write wait queues, and `tcp.c` owns passive TCP listeners, the global 4-tuple connection table, and the lazy RX/TX rings behind connected sockets.

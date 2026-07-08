@@ -277,7 +277,8 @@ ES:BX = 0x0000:0x1000  →  physical 0x1000
 
 ## Injected Values
 
-The Makefile still generates `build/gen/loader2.gen.asm`, but only the stack-top values are injected:
+The Makefile still generates `build/gen/<profile>/loader2.gen.asm`, but only
+the stack-top values are injected:
 
 ```text
 __STAGE2_STACK_TOP__    0xFF00
