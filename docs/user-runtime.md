@@ -719,6 +719,8 @@ Runtime coverage currently lives in guest ELF probes:
   shared-frame accounting rise/fall
 - `memleakprobe` - PMM/kalloc drift across fork, pipe, file, mmap, and socket churn
 - `procscaleprobe` - more-than-32 child process scaling, PID uniqueness, and accounting release
+- `lifetimeprobe` - composed process/exec, fd, pipe, file, timerfd/signalfd,
+  mmap/COW, and `sys_meminfo` accounting cleanup across repeated cycles
 - `execveprobe` - replacing `execve` image handoff and argv delivery
 
 Run the full acceptance suite with:

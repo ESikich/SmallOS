@@ -28,6 +28,7 @@ wrappers in `src/user/posix`.
 * **VM regression coverage** (`src/user/cowprobe.c`, `tests/elfs/cowprobe.py`, `docs/`)
   * Added `cowprobe` to the per-ELF QEMU regression suite instead of relying only on the broad shell selftest transcript.
   * Extended `cowprobe` coverage for partial `munmap()` VMA splitting with fixed-address remapping, plus `mprotect()`/`fork()` interactions where read-only private pages can regain write permission independently in parent and child.
+  * Added `usr/libexec/tests/lifetimeprobe` coverage for composed process/exec, fd, pipe, file, timerfd/signalfd, mmap/COW, and memory-accounting cleanup cycles.
 * **Diagnostic commands as userland ELFs** (`src/user/{meminfo,memmap,cpuz,netinfo,dhcp,netsend,netrecv,arpgw,ping,pinggw,pingpublic,netcheck,ataread,usbinfo,usbports,usbdiag,usbpeek,usbpower,usbmouse,mousetest}.c`, `src/shell/commands.c`, `src/user/shell/app.c`, `Makefile`, `docs/`)
   * Moved memory, E820, network, ATA, USB, and mouse diagnostic command presentation out of the user shell and kernel fallback shell into standalone `/bin/*.elf` programs.
   * Added `/bin/cpuz.elf`, a CPU-Z-style hardware summary that combines CPUID data with existing memory, display, USB, network, and storage diagnostic syscalls.

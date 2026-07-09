@@ -209,6 +209,8 @@ The following programs exercise the current memory model:
 - `heapprobe` - allocator behavior and reuse
 - `memleakprobe` - fork/pipe/file/mmap/socket churn accounting
 - `procscaleprobe` - more-than-32 child scaling and PID uniqueness
+- `lifetimeprobe` - repeated composed resource lifetime cycles with
+  process/fd/VM/PMM/kalloc accounting assertions
 - `cowprobe` - copy-on-write behavior and shared-frame accounting
 - `fileprobe` - file-handle and path write helpers
 - `statprobe` - path probing and file metadata

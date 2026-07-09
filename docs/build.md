@@ -1015,6 +1015,8 @@ Shipped ext2 programs:
 - `usr/libexec/tests/dupprobe` - exercise dup/dup2 shared descriptions and FD_CLOEXEC
 - `usr/libexec/tests/forkprobe` - exercise fork memory copy, wait, and shared inherited fd offsets
 - `usr/libexec/tests/execveprobe` - exercise replacing execve image handoff
+- `usr/libexec/tests/lifetimeprobe` - exercise composed process/exec, fd,
+  pipe, file, timerfd/signalfd, mmap/COW, and accounting cleanup cycles
 - `usr/libexec/tests/fileread` - exercise VFS-backed file handles via SYS_OPEN / SYS_FREAD / SYS_CLOSE
 - `usr/libexec/tests/compiler_demo` - exercise SYS_WRITEFILE, SYS_WRITEFILE_PATH, and readback
 - `usr/libexec/tests/heapprobe` - exercise malloc/free/realloc/calloc

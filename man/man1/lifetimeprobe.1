@@ -1,0 +1,23 @@
+LIFETIMEPROBE(1)
+
+NAME
+    lifetimeprobe - torture resource lifetime cleanup and accounting
+
+SYNOPSIS
+    lifetimeprobe
+
+DESCRIPTION
+    Runs repeated composed resource-lifetime cycles that cover child process
+    creation, exec, descriptor duplication and close-on-exec flags, pipes,
+    timerfd and signalfd handles, temporary file create/truncate/rename/unlink
+    flows, anonymous mmap, fork copy-on-write pressure, and munmap cleanup.
+
+    The probe samples sys_meminfo before and after the measured workload and
+    reports PASS only when process, fd-table, VM-area, PMM, shared-frame, and
+    kalloc accounting return to the warmed baseline within the probe tolerance.
+
+NOTES
+    This is primarily a diagnostic or self-test helper, but it is documented so installed programs are discoverable.
+
+SEE ALSO
+    meminfo(1), memleakprobe(1), procscaleprobe(1), cowprobe(1), rsrcprobe(1)
