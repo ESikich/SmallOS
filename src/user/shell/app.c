@@ -1346,6 +1346,7 @@ void sh_shelltest(void) {
     sh_shelltest_exec("mv_tccmini", "mv usr/share/examples/tinycc/tccmini.c var/tmp/samples");
     sh_shelltest_exec("mv_tccsysroot", "mv usr/share/examples/tinycc/tccsysroot.c var/tmp/samples");
     sh_shelltest_exec("mv_tccposix", "mv usr/share/examples/tinycc/tccposix.c var/tmp/samples");
+    sh_shelltest_exec("mv_tccrun_fault", "mv usr/share/examples/tinycc/tccrun_fault.c var/tmp/samples");
     sh_shelltest_exec("ls_samples", "ls var/tmp/samples");
     sh_shelltest_exec("tccmath_build", "tcc -nostdlib -o var/tmp/tccmath var/tmp/samples/tccmath.c");
     sh_shelltest_exec("tccmath_run", "var/tmp/tccmath");
@@ -1359,6 +1360,8 @@ void sh_shelltest(void) {
     sh_shelltest_exec("tccsysroot_run", "var/tmp/tccsysroot");
     sh_shelltest_exec("tccposix_build", "tcc -o var/tmp/tccposix var/tmp/samples/tccposix.c");
     sh_shelltest_exec("tccposix_run", "var/tmp/tccposix");
+    sh_shelltest_exec("tccrun_sysroot", "tcc -run var/tmp/samples/tccsysroot.c");
+    sh_shelltest_exec("tccrun_fault", "tcc -bt -run var/tmp/samples/tccrun_fault.c");
     sh_shelltest_exec("cat", "cat var/tmp/compiler.out");
     sh_shelltest_exec("touch", "touch var/tmp/EMPTY.TXT");
     sh_shelltest_exec("fsread_touch", "fsread var/tmp/EMPTY.TXT");

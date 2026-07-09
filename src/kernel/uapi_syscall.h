@@ -51,6 +51,73 @@
 #define SYS_WAITPID_WNOHANG   1
 #define SYS_WAITPID_WUNTRACED 2
 
+#define SYS_SIG_BLOCK   0
+#define SYS_SIG_UNBLOCK 1
+#define SYS_SIG_SETMASK 2
+
+#define SYS_SA_NOCLDSTOP 1u
+#define SYS_SA_SIGINFO   4u
+
+#define SYS_SI_KERNEL 128
+#define SYS_SEGV_MAPERR 1
+#define SYS_SEGV_ACCERR 2
+#define SYS_FPE_INTDIV 1
+#define SYS_FPE_FLTDIV 3
+#define SYS_ILL_ILLOPC 1
+#define SYS_BUS_ADRERR 2
+
+#define SYS_SIG_GREGS 19u
+#define SYS_REG_GS     0u
+#define SYS_REG_FS     1u
+#define SYS_REG_ES     2u
+#define SYS_REG_DS     3u
+#define SYS_REG_EDI    4u
+#define SYS_REG_ESI    5u
+#define SYS_REG_EBP    6u
+#define SYS_REG_ESP    7u
+#define SYS_REG_EBX    8u
+#define SYS_REG_EDX    9u
+#define SYS_REG_ECX    10u
+#define SYS_REG_EAX    11u
+#define SYS_REG_TRAPNO 12u
+#define SYS_REG_ERR    13u
+#define SYS_REG_EIP    14u
+#define SYS_REG_CS     15u
+#define SYS_REG_EFL    16u
+#define SYS_REG_UESP   17u
+#define SYS_REG_SS     18u
+
+typedef struct sys_sigaction {
+    unsigned int handler;
+    unsigned int sigaction;
+    unsigned int restorer;
+    unsigned int mask;
+    unsigned int flags;
+} sys_sigaction_t;
+
+typedef struct sys_siginfo {
+    int si_signo;
+    int si_errno;
+    int si_code;
+    unsigned int si_addr;
+} sys_siginfo_t;
+
+typedef struct sys_ucontext {
+    unsigned int uc_flags;
+    unsigned int uc_link;
+    unsigned int uc_sigmask;
+    int gregs[SYS_SIG_GREGS];
+} sys_ucontext_t;
+
+typedef struct sys_signal_frame {
+    unsigned int retaddr;
+    unsigned int signum;
+    unsigned int siginfo;
+    unsigned int ucontext;
+    sys_siginfo_t info;
+    sys_ucontext_t context;
+} sys_signal_frame_t;
+
 typedef struct sys_fsinfo {
     unsigned int total_bytes;
     unsigned int used_bytes;
@@ -500,7 +567,10 @@ enum {
     SYS_SENDTO          = 143, /* datagram/raw send with destination */
     SYS_RECVFROM        = 144, /* datagram/raw receive with source */
     SYS_NET_IOCTL       = 145, /* network interface/route ioctl */
-    SYS_FCHDIR          = 146  /* change process cwd to directory fd */
+    SYS_FCHDIR          = 146, /* change process cwd to directory fd */
+    SYS_SIGACTION       = 147, /* install/query process signal action */
+    SYS_SIGPROCMASK     = 148, /* update/query process signal mask */
+    SYS_SIGRETURN       = 149  /* return from user signal handler */
 };
 
 #endif

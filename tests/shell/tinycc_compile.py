@@ -70,4 +70,17 @@ CASES = [
         ],
         timeout=120.0,
     ),
+    case(
+        name="tinycc_run",
+        must_contain=[
+            "shelltest: tccrun_sysroot begin",
+            "tcc sysroot ok:",
+            "shelltest: tccrun_sysroot end",
+            "shelltest: tccrun_fault begin",
+            "tcc run fault before crash",
+            "RUNTIME ERROR: invalid memory access",
+            "shelltest: tccrun_fault end",
+        ],
+        timeout=120.0,
+    ),
 ]

@@ -584,13 +584,19 @@ virtual filesystem behavior when they reveal a portable Unix expectation.
 
 # TinyCC Expectations
 
-`usr/bin/tcc` is built from TinyCC submodule sources plus the SmallOS user
-libraries. It links `src/user/crt/crt0.c`, so the kernel still enters
-`_start(argc, argv)` while TinyCC itself runs through its upstream
-`main(argc, argv)` path. Inside the guest it searches `/usr/include` and
-`/usr/lib`, adds `crt0.o` and the SmallOS runtime archives by default, and can
-compile normal hosted `main()` programs without `-nostdlib`. It relies on
-normal runtime behavior:
+`usr/bin/tcc` is built directly from the TinyCC submodule plus the SmallOS user
+libraries; SmallOS does not patch TinyCC for the guest compiler path. It links
+`src/user/crt/crt0.c`, so the kernel still enters `_start(argc, argv)` while
+TinyCC itself runs through its upstream `main(argc, argv)` path. Inside the
+guest it searches `/usr/include` and `/usr/lib`, adds conventional startup and
+support files such as `crt1.o`, `crti.o`, `crtn.o`, `libtcc1.a`, and
+`runmain.o`, and can compile normal hosted `main()` programs without
+`-nostdlib`. TinyCC's upstream `-bt` runtime is available through `bt-exe.o`,
+`bt-log.o`, signal/ucontext delivery, and a conventional `libpthread.a`
+placeholder archive. The v1 target still inherits TinyCC's upstream i386
+`__linux__` predefine; SmallOS treats that as a documented compatibility wart
+until a separate upstreamable target identity exists. It relies on normal
+runtime behavior:
 
 - cwd-aware file opens
 - normalized path handling through `realpath`
@@ -598,6 +604,7 @@ normal runtime behavior:
 - meaningful `fflush`
 - directory traversal through `opendir` / `readdir`
 - ext2 writeback through normal streaming fd writes and flush/close when the mounted storage is writable
+- `SA_SIGINFO` signal actions with i386 `ucontext_t` register state for `tcc -bt -run` crash reporting
 
 The TinyCC acceptance gate is the guest compiler suite:
 
@@ -608,6 +615,7 @@ tinycc_tree
 tinycc_compile
 tinycc_sysroot
 tinycc_posix
+tinycc_run
 ```
 
 Any runtime or filesystem change should keep those tests passing unless the

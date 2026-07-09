@@ -219,6 +219,8 @@ tcc -o var/tmp/tccsysroot usr/share/examples/tinycc/tccsysroot.c
 var/tmp/tccsysroot
 tcc -o var/tmp/tccposix usr/share/examples/tinycc/tccposix.c
 var/tmp/tccposix
+tcc -run usr/share/examples/tinycc/tccsysroot.c
+tcc -bt -run usr/share/examples/tinycc/tccrun_fault.c
 ```
 
 The test suite uses this flow to compile several focused C samples inside the
@@ -226,9 +228,12 @@ guest and then run the generated programs. The `-nostdlib` samples exercise
 freestanding output, while `tccsysroot.c` exercises the installed
 `/usr/include` and `/usr/lib` hosted path. `tccposix.c` goes further and uses
 that sysroot for ordinary file, stat, cwd, directory, stderr, time, header
-compatibility, and `system()` APIs. The sample sources are staged under
-`/usr/share/examples/tinycc/` and the produced binaries are written under
-`/var/tmp/`.
+compatibility, and `system()` APIs. The `-run` cases cover TinyCC's in-memory
+execution path; the deliberate `tccrun_fault.c` crash uses upstream TinyCC's
+`-bt` option, which installs the `SA_SIGINFO` handler that consumes SmallOS
+`siginfo_t` and i386 `ucontext_t` delivery. The sample sources are staged
+under `/usr/share/examples/tinycc/` and the produced binaries are written
+under `/var/tmp/`.
 
 TinyCC's runtime expectations are part of the user runtime contract in
 [`docs/user-runtime.md`](user-runtime.md).
@@ -634,7 +639,9 @@ This is the launch contract for every user ELF:
 kernel ABI at `_start(argc, argv, envp)`, sets `environ`, calls
 `main(argc, argv, envp)`, and exits with the returned status. TinyCC is linked
 this way so its upstream `main` path can run normally. The seed image installs
-`/usr/lib/crt0.o` so guest-built hosted programs can use the same entry path.
+`/usr/lib/crt0.o` and the conventional `crt1.o` alias so guest-built hosted
+programs can use the same entry path. Empty `crti.o` and `crtn.o` startup
+fragments are also staged for toolchains that expect Unix CRT names.
 Direct `_start(argc, argv)` programs remain supported for low-level probes and
 freestanding tests; new hosted-ish programs should prefer
 `int main(int argc, char** argv, char** envp)` plus `crt0`.

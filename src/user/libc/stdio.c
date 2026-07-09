@@ -1755,7 +1755,7 @@ static void __smallos_set_static_dlerror(const char* msg) {
     __smallos_static_dlerror = msg;
 }
 
-__attribute__((noreturn)) void exit(int code) {
+__attribute__((weak, noreturn)) void exit(int code) {
     while (__smallos_atexit_count > 0) {
         void (*fn)(void) = __smallos_atexit_handlers[--__smallos_atexit_count];
         if (fn) {
@@ -1774,7 +1774,7 @@ __attribute__((noreturn)) void _exit(int status) {
     for (;;) {}
 }
 
-int atexit(void (*function)(void)) {
+__attribute__((weak)) int atexit(void (*function)(void)) {
     if (!function) {
         errno = EINVAL;
         return -1;

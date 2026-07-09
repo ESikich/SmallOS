@@ -81,6 +81,25 @@ void syscall_handler_main(syscall_regs_t* regs) {
                                                         regs->edx);
             break;
 
+        case SYS_SIGACTION:
+            regs->eax = (unsigned int)sys_sigaction_impl((int)regs->ebx,
+                                                         (const sys_sigaction_t*)regs->ecx,
+                                                         (sys_sigaction_t*)regs->edx);
+            break;
+
+        case SYS_SIGPROCMASK:
+            regs->eax = (unsigned int)sys_sigprocmask_impl((int)regs->ebx,
+                                                           (const unsigned int*)regs->ecx,
+                                                           (unsigned int*)regs->edx);
+            break;
+
+        case SYS_SIGRETURN:
+        {
+            int rc = sys_sigreturn_impl(regs, (const sys_signal_frame_t*)regs->ebx);
+            if (rc < 0) regs->eax = (unsigned int)rc;
+            break;
+        }
+
         case SYS_HALT:
             system_halt();
             regs->eax = 0;

@@ -3,6 +3,8 @@
 
 typedef unsigned int sigset_t;
 typedef void (*sighandler_t)(int);
+typedef struct siginfo siginfo_t;
+typedef void (*sigaction_handler_t)(int, siginfo_t*, void*);
 
 #define SIGHUP  1
 #define SIGINT  2
@@ -40,14 +42,36 @@ typedef void (*sighandler_t)(int);
 #define SIG_DFL ((sighandler_t)0)
 #define SIG_IGN ((sighandler_t)1)
 
+struct siginfo {
+    int si_signo;
+    int si_errno;
+    int si_code;
+    void* si_addr;
+};
+
 struct sigaction {
-    sighandler_t sa_handler;
+    union {
+        sighandler_t handler;
+        sigaction_handler_t sigaction;
+    } __sa_handler;
     sigset_t sa_mask;
     int sa_flags;
 };
 
-#define SA_RESTART 0x10000000
+#define sa_handler __sa_handler.handler
+#define sa_sigaction __sa_handler.sigaction
+
 #define SA_NOCLDSTOP 1
+#define SA_SIGINFO 4
+#define SA_RESTART 0x10000000
+
+#define SI_KERNEL 128
+#define SEGV_MAPERR 1
+#define SEGV_ACCERR 2
+#define FPE_INTDIV 1
+#define FPE_FLTDIV 3
+#define ILL_ILLOPC 1
+#define BUS_ADRERR 2
 
 struct timespec;
 

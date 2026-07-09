@@ -355,6 +355,26 @@ void fault_handler_main(unsigned int esp, unsigned int vector) {
         }
     }
 
+    if (proc && proc->pd != 0 && user_mode) {
+        unsigned int sig = meta ? meta->signal : FAULT_SIGSEGV;
+        unsigned int code = SYS_SI_KERNEL;
+        unsigned int addr = has_cr2 ? cr2 : eip;
+
+        if (sig == FAULT_SIGSEGV) {
+            code = (err & 0x01u) ? SYS_SEGV_ACCERR : SYS_SEGV_MAPERR;
+        } else if (sig == FAULT_SIGFPE) {
+            code = (vector == 0u) ? SYS_FPE_INTDIV : SYS_FPE_FLTDIV;
+        } else if (sig == FAULT_SIGILL) {
+            code = SYS_ILL_ILLOPC;
+        } else if (sig == FAULT_SIGBUS) {
+            code = SYS_BUS_ADRERR;
+        }
+
+        if (process_user_fault_signal(proc, esp, vector, has_err, err, sig, code, addr)) {
+            return;
+        }
+    }
+
     last_fault_record(vector, meta, eip, cs, eflags, user_esp, user_ss, err, cr2);
 
     terminal_puts(tag);

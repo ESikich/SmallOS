@@ -97,6 +97,14 @@ typedef enum {
     PROCESS_SOCKET_STATE_CONNECTED = 5
 } process_socket_state_t;
 
+typedef struct process_sigaction {
+    u32 handler;
+    u32 sigaction;
+    u32 restorer;
+    u32 mask;
+    u32 flags;
+} process_sigaction_t;
+
 typedef struct process_handle_ops {
     int  (*read)(fd_entry_t* ent, char* buf, unsigned int len);
     int  (*write)(fd_entry_t* ent, const char* buf, unsigned int len);
@@ -184,6 +192,8 @@ typedef struct process {
     unsigned int    heap_brk;
     unsigned int    mmap_base;
     unsigned int    mmap_next;
+    unsigned int    signal_mask;
+    process_sigaction_t signal_actions[32];
     char            cwd[PROCESS_CWD_MAX];  /* canonical path without leading slash */
     char            name[PROCESS_NAME_MAX];
     fd_entry_t*     fds;                /* PMM-backed per-process open handles */
@@ -320,6 +330,14 @@ int        process_getpgid(process_t* caller, int pid);
 int        process_setpgid(process_t* caller, int pid, int pgid);
 int        process_signal_deliver(process_t* proc, int signum);
 int        process_group_signal_deliver(u32 pgid, int signum);
+int        process_user_fault_signal(process_t* proc,
+                                     unsigned int frame_esp,
+                                     unsigned int vector,
+                                     unsigned int has_err,
+                                     unsigned int err,
+                                     unsigned int signal,
+                                     unsigned int code,
+                                     unsigned int fault_addr);
 int        process_group_kill(u32 pgid, int status);
 int        process_stop_pid(int pid, int signum, unsigned int esp);
 int        process_continue_pid(int pid);

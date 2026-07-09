@@ -40,6 +40,10 @@ u64 __umoddi3(u64 num, u64 den) {
     return rem;
 }
 
+u64 __udivmoddi4(u64 num, u64 den, u64* rem) {
+    return udivmod64(num, den, rem);
+}
+
 s64 __divdi3(s64 num, s64 den) {
     int neg = 0;
     u64 unum;

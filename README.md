@@ -72,8 +72,9 @@ BusyBox-backed Unix compatibility layer inside the guest.
   the compatibility layer supplies their virtual entries for Unix tools:
   memory, uptime, process, mount, filesystem, network, null, zero, urandom, tty,
   console, standard-fd, and PTY paths.
-- TinyCC is built as `usr/bin/tcc` and can compile sample C programs inside
-  SmallOS.
+- TinyCC is built as `usr/bin/tcc` from unmodified upstream sources and can
+  compile and `-run` sample C programs inside SmallOS through the installed
+  `/usr/include` and `/usr/lib` sysroot.
 
 ## Requirements
 

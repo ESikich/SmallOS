@@ -944,6 +944,18 @@ static inline int sys_mprotect(void* addr, uint32_t length, int prot) {
     return syscall3(SYS_MPROTECT, (uint32_t)addr, length, (uint32_t)prot);
 }
 
+static inline int sys_sigaction(int signum, const sys_sigaction_t* act, sys_sigaction_t* oldact) {
+    return syscall3(SYS_SIGACTION, (uint32_t)signum, (uint32_t)act, (uint32_t)oldact);
+}
+
+static inline int sys_sigprocmask(int how, const uint32_t* set, uint32_t* oldset) {
+    return syscall3(SYS_SIGPROCMASK, (uint32_t)how, (uint32_t)set, (uint32_t)oldset);
+}
+
+static inline int sys_sigreturn(const sys_signal_frame_t* frame) {
+    return syscall1(SYS_SIGRETURN, (uint32_t)frame);
+}
+
 static inline int sys_halt(void) {
     return syscall0(SYS_HALT);
 }

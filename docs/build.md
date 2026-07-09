@@ -58,12 +58,15 @@ official Fractint source from `https://svn.fractint.net/tags/fractint-20-04p17`
 into `third_party/fractint`. The normal build checks for the key third-party
 source files and prints the dependency command if they are missing.
 
-The TinyCC sources stay clean in `third_party/tinycc`. SmallOS applies
-`patches/tinycc/smallos.patch` to a build-local copy under
-`build/tinycc-smalos-src/` before compiling the guest `usr/bin/tcc`
-variant. That variant defaults to the SmallOS guest sysroot: `/usr/include`
-for headers and `/usr/lib` for `crt0.o`, `libc.a`, `libm.a`, and
-`libposix.a`.
+The TinyCC sources stay clean in `third_party/tinycc`. SmallOS compiles
+`third_party/tinycc/tcc.c` directly for the guest `usr/bin/tcc` variant and
+exports the compatibility contract through the guest sysroot instead of a
+TinyCC source patch. That variant defaults to `/usr/include` for headers,
+`/usr/lib` for libraries and startup files, and `/lib/ld-smallos.so` as the
+ELF interpreter. The image stages conventional TinyCC-facing artifacts such as
+`crt1.o`, `crti.o`, `crtn.o`, `libtcc1.a`, `runmain.o`, `bt-exe.o`,
+`bt-log.o`, and a compatibility `libpthread.a` archive alongside the SmallOS
+runtime archives.
 
 BusyBox is downloaded into `.state/downloads/`, gets SmallOS platform
 capability overrides from `patches/busybox/smallos.patch`, links SmallOS-owned
@@ -852,6 +855,9 @@ bridges the kernel `_start(argc, argv)` launch ABI to TinyCC's normal
 `usr/share/examples/tinycc/tcctree.c`, `usr/share/examples/tinycc/tccmini.c`,
 `usr/share/examples/tinycc/tccsysroot.c`, and
 `usr/share/examples/tinycc/tccposix.c` inside the guest with that compiler.
+The suite also runs `tcc -run` against the hosted sysroot sample and
+`tcc -bt -run` against `tccrun_fault.c` to verify TinyCC's upstream
+signal/ucontext crash-reporting path.
 
 BusyBox ships as `usr/bin/busybox`, configured for a useful Unix compatibility
 set rather than full Linux emulation. `ash` is enabled as `/bin/sh` with basic
@@ -1039,7 +1045,9 @@ Shipped ext2 programs:
 - `bin/passwd` - native SmallOS password setter for `/etc/shadow`
 - `bin/sh` - launcher that execs `/usr/bin/busybox sh`
 - `/usr/include` - public libc/POSIX/SmallOS headers and kernel UAPI headers
-- `/usr/lib` - `crt0.o`, `libc.a`, `libm.a`, and `libposix.a` for guest builds
+- `/usr/lib` - `crt0.o`, `crt1.o`, `crti.o`, `crtn.o`, `libc.a`, `libm.a`,
+  `libposix.a`, `libpthread.a`, `libtcc1.a`, `runmain.o`, `bt-exe.o`, and
+  `bt-log.o` for guest builds
 - `/lib/ld-smallos.so` - SmallOS dynamic loader used by dynamic executables
 - `/lib/libc.so` - combined shared libc/POSIX/libm runtime for dynamic executables
 - `/lib/libdynfini.so` - focused DSO lifecycle probe library
@@ -1047,7 +1055,7 @@ Shipped ext2 programs:
 - `/etc/passwd`, `/etc/shadow`, and `/etc/group` - root entries for
   file-backed user/group lookup and shadow-backed login; the sample root shadow
   password starts empty and can be changed with `passwd`
-- `usr/share/examples/tinycc/tccmath.c`, `usr/share/examples/tinycc/tccagg.c`, `usr/share/examples/tinycc/tcctree.c`, `usr/share/examples/tinycc/tccmini.c`, `usr/share/examples/tinycc/tccsysroot.c`, `usr/share/examples/tinycc/tccposix.c` - guest compiler test inputs used by the shell selftests
+- `usr/share/examples/tinycc/tccmath.c`, `usr/share/examples/tinycc/tccagg.c`, `usr/share/examples/tinycc/tcctree.c`, `usr/share/examples/tinycc/tccmini.c`, `usr/share/examples/tinycc/tccsysroot.c`, `usr/share/examples/tinycc/tccposix.c`, `usr/share/examples/tinycc/tccrun_fault.c` - guest compiler test inputs used by the shell selftests
 
 ## Properties
 

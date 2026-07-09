@@ -1,4 +1,5 @@
 #include "process.h"
+#include <stddef.h>
 #include "pmm.h"
 #include "paging.h"
 #include "klib.h"
@@ -14,6 +15,7 @@
 #include "socket.h"
 #include "wait.h"
 #include "random.h"
+#include "syscall_internal.h"
 #include "../drivers/display.h"
 #include "input.h"
 
@@ -2520,6 +2522,77 @@ static int special_wait_readable(fd_entry_t* ent, process_t* proc) {
 static unsigned int signal_bit(int signum) {
     if (signum <= 0 || signum >= 32) return 0u;
     return 1u << (unsigned int)signum;
+}
+
+int process_user_fault_signal(process_t* proc,
+                              unsigned int frame_esp,
+                              unsigned int vector,
+                              unsigned int has_err,
+                              unsigned int err,
+                              unsigned int signal,
+                              unsigned int code,
+                              unsigned int fault_addr) {
+    unsigned int* frame = (unsigned int*)frame_esp;
+    unsigned int bit = signal_bit((int)signal);
+    process_sigaction_t* action;
+    unsigned int handler;
+    unsigned int eip_idx = has_err ? 13u : 12u;
+    unsigned int cs_idx = has_err ? 14u : 13u;
+    unsigned int eflags_idx = has_err ? 15u : 14u;
+    unsigned int uesp_idx = has_err ? 16u : 15u;
+    unsigned int ss_idx = has_err ? 17u : 16u;
+    unsigned int old_mask;
+    unsigned int user_esp;
+    unsigned int frame_addr;
+    sys_signal_frame_t user_frame;
+
+    if (!proc || !frame || signal == 0u || signal >= 32u || bit == 0u) return 0;
+    action = &proc->signal_actions[signal];
+    handler = (action->flags & SYS_SA_SIGINFO) ? action->sigaction : action->handler;
+    if (handler == 0u || handler == 1u || action->restorer == 0u) return 0;
+    if ((frame[cs_idx] & 3u) != 3u) return 0;
+
+    old_mask = proc->signal_mask;
+    user_esp = frame[uesp_idx];
+    frame_addr = (user_esp - sizeof(user_frame)) & ~0xFu;
+
+    k_memset(&user_frame, 0, sizeof(user_frame));
+    user_frame.retaddr = action->restorer;
+    user_frame.signum = signal;
+    user_frame.siginfo = frame_addr + offsetof(sys_signal_frame_t, info);
+    user_frame.ucontext = frame_addr + offsetof(sys_signal_frame_t, context);
+    user_frame.info.si_signo = (int)signal;
+    user_frame.info.si_code = (int)code;
+    user_frame.info.si_addr = fault_addr;
+    user_frame.context.uc_sigmask = old_mask;
+    user_frame.context.gregs[SYS_REG_GS] = (int)frame[0];
+    user_frame.context.gregs[SYS_REG_FS] = (int)frame[1];
+    user_frame.context.gregs[SYS_REG_ES] = (int)frame[2];
+    user_frame.context.gregs[SYS_REG_DS] = (int)frame[3];
+    user_frame.context.gregs[SYS_REG_EDI] = (int)frame[4];
+    user_frame.context.gregs[SYS_REG_ESI] = (int)frame[5];
+    user_frame.context.gregs[SYS_REG_EBP] = (int)frame[6];
+    user_frame.context.gregs[SYS_REG_ESP] = (int)frame[7];
+    user_frame.context.gregs[SYS_REG_EBX] = (int)frame[8];
+    user_frame.context.gregs[SYS_REG_EDX] = (int)frame[9];
+    user_frame.context.gregs[SYS_REG_ECX] = (int)frame[10];
+    user_frame.context.gregs[SYS_REG_EAX] = (int)frame[11];
+    user_frame.context.gregs[SYS_REG_TRAPNO] = (int)vector;
+    user_frame.context.gregs[SYS_REG_ERR] = (int)err;
+    user_frame.context.gregs[SYS_REG_EIP] = (int)frame[eip_idx];
+    user_frame.context.gregs[SYS_REG_CS] = (int)frame[cs_idx];
+    user_frame.context.gregs[SYS_REG_EFL] = (int)frame[eflags_idx];
+    user_frame.context.gregs[SYS_REG_UESP] = (int)frame[uesp_idx];
+    user_frame.context.gregs[SYS_REG_SS] = (int)frame[ss_idx];
+
+    if (copy_to_user((void*)frame_addr, &user_frame, sizeof(user_frame)) < 0) {
+        return 0;
+    }
+
+    proc->signal_mask = old_mask | action->mask | bit;
+    frame[eip_idx] = handler;
+    frame[uesp_idx] = frame_addr;
+    return 1;
 }
 
 static int signalfd_ready(fd_entry_t* ent) {

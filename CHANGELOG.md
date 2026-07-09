@@ -97,10 +97,11 @@ wrappers in `src/user/posix`.
   * Buffered STOR socket reads into 64 KiB file writes so uploads do not turn segment-sized TCP reads into repeated partial-block filesystem writes.
 * **Verification workflow** (`Makefile`, `README.md`, `docs/`)
   * Added `verify-display`, `verify-network`, and `verify-full` aggregate targets so visual and network smoke suites can be run deliberately without bloating the standard `make verify` path.
-* **Hosted user runtime and guest sysroot** (`Makefile`, `src/user/{crt,include,internal,libc,libm,posix}`, `patches/tinycc/smallos.patch`, `samples/`, `docs/`, `man/`)
+* **Hosted user runtime and guest sysroot** (`Makefile`, `src/user/{crt,include,internal,libc,libm,posix}`, `samples/`, `docs/`, `man/`)
   * Reorganized the user runtime into public headers under `src/user/include`, raw SmallOS helper headers under `src/user/internal`, `src/user/crt/crt0.c`, libc objects in `src/user/libc`, math in `src/user/libm`, and syscall-backed POSIX wrappers in `src/user/posix`.
   * Built the runtime as `libc.a`, `libm.a`, and `libposix.a`, installed those archives plus `crt0.o` under `/usr/lib`, and installed public headers plus kernel UAPI headers under `/usr/include`.
-  * Updated the SmallOS TinyCC build-local patch so guest `tcc` defaults to `/usr/include` and `/usr/lib`, then added hosted sysroot and POSIX sample coverage through `tccsysroot.c` and `tccposix.c`.
+  * Moved guest `tcc` onto unmodified TinyCC sources and exposed the SmallOS contract through the installed sysroot: `/usr/include`, `/usr/lib`, conventional CRT names, `libtcc1.a`, TinyCC `-run` support objects, and hosted/POSIX sample coverage through `tccsysroot.c`, `tccposix.c`, and `tccrun_fault.c`.
+  * Added `sigaction`, `sigprocmask`, `sigreturn`, `SA_SIGINFO`, `siginfo_t`, and i386 `ucontext_t` delivery so TinyCC's upstream `tcc -bt -run` runtime can report user faults instead of relying on a TinyCC source patch.
   * Kept low-level probes free to include `src/user/internal/*`, while normal hosted programs and ports can build against the installed public header/library surface.
   * Moved ordinary command ELFs such as `cat`, `cp`, `ls`, `man`, `more`, `tree`, `touch`, and `bmpview` off private `user_lib.h` / `user_syscall.h` includes and onto public libc/POSIX headers.
   * Improved the freestanding `sin`, `cos`, and `tan` implementations and added `mathprobe` coverage for representative quadrants and singular-edge behavior.

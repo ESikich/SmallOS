@@ -1315,6 +1315,49 @@ server, and the same UDP path is covered by BusyBox `tftp` client and
 `SYS_NET_OP_DHCP` wrapper for `eth0`; BusyBox `udhcpd` is built but not
 exercised by the smoke suite.
 
+### SYS_SIGACTION (147)
+
+```c
+int sys_sigaction(int signum,
+                  const sys_sigaction_t* act,
+                  sys_sigaction_t* oldact);
+```
+
+Installs or queries the per-process user signal action for `signum`. The
+kernel stores the handler, action mask, flags, and user restorer address. The
+public libc `sigaction()` wrapper provides the restorer trampoline used by
+`SYS_SIGRETURN`.
+
+When a user-mode CPU fault maps to a signal and an unblocked handler exists,
+the kernel builds a signal frame on the user stack, populates `siginfo_t` and
+i386 `ucontext_t` register state, and transfers control to the handler.
+`SA_SIGINFO` handlers receive `(signum, siginfo_t*, ucontext_t*)`; legacy
+handlers receive the same stack frame but normally only consume the first
+argument. If no handler is installed, the process keeps the existing terminal
+behavior and exits with status `128 + signum`.
+
+### SYS_SIGPROCMASK (148)
+
+```c
+int sys_sigprocmask(int how, const unsigned int* set, unsigned int* oldset);
+```
+
+Updates the process signal mask using `SYS_SIG_BLOCK`, `SYS_SIG_UNBLOCK`, or
+`SYS_SIG_SETMASK`, and optionally returns the old mask. The current
+implementation is process-local and synchronous; pending-signal queues are not
+implemented yet.
+
+### SYS_SIGRETURN (149)
+
+```c
+int sys_sigreturn(sys_signal_frame_t* frame);
+```
+
+Restores the saved user register frame and signal mask after a user signal
+handler returns through the libc restorer trampoline. The syscall resumes via
+the restored interrupt-return state, so the syscall dispatcher does not
+overwrite the restored `eax` value on success.
+
 ### SYS_BLOCK_READ_SECTOR (81)
 
 ```c
@@ -2149,6 +2192,9 @@ sys_ftruncate(fd, size)
 sys_fchmod(fd, mode)
 sys_fchown(fd, uid, gid)
 sys_futimens(fd, times)
+sys_sigaction(signum, act, oldact)
+sys_sigprocmask(how, set, oldset)
+sys_sigreturn(frame)
 ```
 
 `src/user/internal/user_lib.h` higher-level wrappers:

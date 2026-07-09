@@ -468,7 +468,7 @@ unsigned int sys_brk_impl(unsigned int new_brk) {
                             map_start,
                             map_end,
                             PROCESS_VM_PROT_READ | PROCESS_VM_PROT_WRITE,
-                            PROCESS_VM_PROT_READ | PROCESS_VM_PROT_WRITE,
+                            PROCESS_VM_PROT_READ | PROCESS_VM_PROT_WRITE | PROCESS_VM_PROT_EXEC,
                             PROCESS_VM_KIND_HEAP,
                             0,
                             0,
@@ -556,7 +556,7 @@ static int sys_mmap_anon_impl(process_t* proc,
                         start,
                         start + size,
                         prot,
-                        prot,
+                        PROCESS_VM_PROT_READ | PROCESS_VM_PROT_WRITE | PROCESS_VM_PROT_EXEC,
                         PROCESS_VM_KIND_ANON,
                         0,
                         0,
@@ -673,6 +673,89 @@ int sys_mprotect_impl(unsigned int addr, unsigned int length, unsigned int prot)
     if ((prot & ~(SYS_PROT_READ | SYS_PROT_WRITE | SYS_PROT_EXEC)) != 0u) return -EINVAL;
 
     return process_vm_protect(proc, addr, addr + size, prot) ? 0 : -EINVAL;
+}
+
+int sys_sigaction_impl(int signum, const sys_sigaction_t* act, sys_sigaction_t* oldact) {
+    process_t* proc = (process_t*)sched_current();
+    sys_sigaction_t in;
+    sys_sigaction_t old;
+
+    if (!proc || signum <= 0 || signum >= 32) return -EINVAL;
+    if (oldact) {
+        old.handler = proc->signal_actions[signum].handler;
+        old.sigaction = proc->signal_actions[signum].sigaction;
+        old.restorer = proc->signal_actions[signum].restorer;
+        old.mask = proc->signal_actions[signum].mask;
+        old.flags = proc->signal_actions[signum].flags;
+        if (copy_to_user(oldact, &old, sizeof(old)) < 0) return -EFAULT;
+    }
+    if (act) {
+        if (copy_from_user(&in, act, sizeof(in)) < 0) return -EFAULT;
+        proc->signal_actions[signum].handler = in.handler;
+        proc->signal_actions[signum].sigaction = in.sigaction;
+        proc->signal_actions[signum].restorer = in.restorer;
+        proc->signal_actions[signum].mask = in.mask;
+        proc->signal_actions[signum].flags = in.flags;
+    }
+    return 0;
+}
+
+int sys_sigprocmask_impl(int how, const unsigned int* set, unsigned int* oldset) {
+    process_t* proc = (process_t*)sched_current();
+    unsigned int in = 0;
+    unsigned int next;
+    const unsigned int unmaskable = (1u << 9u) | (1u << 19u);
+
+    if (!proc) return -EINVAL;
+    if (oldset && copy_to_user(oldset, &proc->signal_mask, sizeof(proc->signal_mask)) < 0) {
+        return -EFAULT;
+    }
+    if (!set) return 0;
+    if (copy_from_user(&in, set, sizeof(in)) < 0) return -EFAULT;
+    in &= ~unmaskable;
+
+    if (how == SYS_SIG_BLOCK) {
+        next = proc->signal_mask | in;
+    } else if (how == SYS_SIG_UNBLOCK) {
+        next = proc->signal_mask & ~in;
+    } else if (how == SYS_SIG_SETMASK) {
+        next = in;
+    } else {
+        return -EINVAL;
+    }
+    proc->signal_mask = next & ~unmaskable;
+    return 0;
+}
+
+int sys_sigreturn_impl(syscall_regs_t* regs, const sys_signal_frame_t* user_frame) {
+    process_t* proc = (process_t*)sched_current();
+    sys_signal_frame_t frame;
+    syscall_iret_frame_t* iret;
+
+    if (!proc || !regs || !user_frame) return -EINVAL;
+    if (copy_from_user(&frame, user_frame, sizeof(frame)) < 0) return -EFAULT;
+
+    proc->signal_mask = frame.context.uc_sigmask;
+    regs->gs = (unsigned int)frame.context.gregs[SYS_REG_GS];
+    regs->fs = (unsigned int)frame.context.gregs[SYS_REG_FS];
+    regs->es = (unsigned int)frame.context.gregs[SYS_REG_ES];
+    regs->ds = (unsigned int)frame.context.gregs[SYS_REG_DS];
+    regs->edi = (unsigned int)frame.context.gregs[SYS_REG_EDI];
+    regs->esi = (unsigned int)frame.context.gregs[SYS_REG_ESI];
+    regs->ebp = (unsigned int)frame.context.gregs[SYS_REG_EBP];
+    regs->esp = (unsigned int)frame.context.gregs[SYS_REG_ESP];
+    regs->ebx = (unsigned int)frame.context.gregs[SYS_REG_EBX];
+    regs->edx = (unsigned int)frame.context.gregs[SYS_REG_EDX];
+    regs->ecx = (unsigned int)frame.context.gregs[SYS_REG_ECX];
+    regs->eax = (unsigned int)frame.context.gregs[SYS_REG_EAX];
+
+    iret = (syscall_iret_frame_t*)((unsigned char*)regs + sizeof(*regs));
+    iret->eip = (unsigned int)frame.context.gregs[SYS_REG_EIP];
+    iret->cs = (unsigned int)frame.context.gregs[SYS_REG_CS];
+    iret->eflags = (unsigned int)frame.context.gregs[SYS_REG_EFL];
+    iret->user_esp = (unsigned int)frame.context.gregs[SYS_REG_UESP];
+    iret->ss = (unsigned int)frame.context.gregs[SYS_REG_SS];
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */

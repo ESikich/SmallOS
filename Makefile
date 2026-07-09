@@ -68,9 +68,8 @@ TINYCC_CONFIG_STAMP=$(TINYCC_DIR)/.configured
 TINYCC_SMALOS_OBJ_DIR=$(OBJ_DIR)/tinycc-smalos
 TINYCC_SMALOS_OBJ=$(TINYCC_SMALOS_OBJ_DIR)/tcc.o
 TINYCC_SMALOS_BIN=$(BIN_DIR)/tcc-smalos.elf
-TINYCC_SMALOS_SRC_DIR=$(BUILD_DIR)/tinycc-smalos-src
-TINYCC_SMALOS_PATCH_STAMP=$(TINYCC_SMALOS_SRC_DIR)/.smallos-patched
-TINYCC_SMALOS_SRC=$(TINYCC_SMALOS_SRC_DIR)/tcc.c
+TINYCC_SMALOS_SRC=$(CURDIR)/third_party/tinycc/tcc.c
+TINYCC_SUPPORT_OBJ_DIR=$(OBJ_DIR)/tinycc-support
 CSERVER_DIR=$(CURDIR)/third_party/cserver
 CSERVER_OBJ_DIR=$(OBJ_DIR)/cserver
 CSERVER_BIN=$(BIN_DIR)/cserve.elf
@@ -381,7 +380,7 @@ EXT2_APP_ENTRIES=$(EXT2_BIN_ENTRIES) $(EXT2_DEMO_ENTRIES) $(EXT2_TEST_ENTRIES)
 EXT2_APP_ENTRIES+= $(EXT2_SBIN_ENTRIES)
 MAN_PAGE_FILES=$(wildcard man/man*/*)
 MAN_PAGE_ENTRIES=$(foreach page,$(MAN_PAGE_FILES),usr/share/$(page)=$(CURDIR)/$(page))
-USER_STATIC_LIB_ENTRIES=usr/lib/crt0.o=$(USER_CRT0_OBJ) usr/lib/libc.a=$(USER_LIBC) usr/lib/libm.a=$(USER_LIBM) usr/lib/libposix.a=$(USER_LIBPOSIX)
+USER_STATIC_LIB_ENTRIES=usr/lib/crt0.o=$(USER_CRT0_OBJ) usr/lib/crt1.o=$(USER_CRT1_OBJ) usr/lib/crti.o=$(USER_CRTI_OBJ) usr/lib/crtn.o=$(USER_CRTN_OBJ) usr/lib/libc.a=$(USER_LIBC) usr/lib/libm.a=$(USER_LIBM) usr/lib/libposix.a=$(USER_LIBPOSIX) usr/lib/libpthread.a=$(USER_LIBPTHREAD) usr/lib/libtcc1.a=$(TINYCC_SUPPORT_LIB) usr/lib/runmain.o=$(TINYCC_RUNMAIN_OBJ) usr/lib/bt-exe.o=$(TINYCC_BT_EXE_OBJ) usr/lib/bt-log.o=$(TINYCC_BT_LOG_OBJ)
 USER_DYN_LOADER_ENTRY=lib/ld-smallos.so=$(LD_SMALLOS_BIN)
 USER_DYN_LIBC_ENTRY=lib/libc.so=$(USER_DYN_LIBC)
 USER_DYN_FINI_ENTRY=lib/libdynfini.so=$(USER_DYN_FINI)
@@ -406,7 +405,7 @@ else
 WOLF3D_DATA_ENTRIES=
 endif
 EXT2_EXTRA_DIRS=tmp/ var/log/ lib/ proc/ dev/ dev/fd/ dev/pts/ usr/include/ usr/include/arpa/ usr/include/linux/ usr/include/netinet/ usr/include/sys/ usr/lib/ usr/lib/smallos/ usr/lib/smallos/plugins/ usr/libexec/tests/static/ usr/share/examples/tinycc/ usr/share/man/man1/ usr/share/man/man2/ usr/share/man/man3/ usr/share/man/man4/ usr/share/man/man5/ usr/share/man/man6/ usr/share/man/man7/ usr/share/man/man8/ usr/share/wolf3d/ .ssh/ etc/tinyssh/
-EXT2_BASE_EXTRA_ENTRIES=usr/bin/tcc=$(TINYCC_SMALOS_BIN) usr/bin/busybox=$(BUSYBOX_SMALOS_BIN) $(USER_INCLUDE_ENTRIES) $(USER_UAPI_ENTRIES) usr/share/examples/tinycc/tccmath.c=$(CURDIR)/samples/tccmath.c usr/share/examples/tinycc/tccagg.c=$(CURDIR)/samples/tccagg.c usr/share/examples/tinycc/tcctree.c=$(CURDIR)/samples/tcctree.c usr/share/examples/tinycc/tccmini.c=$(CURDIR)/samples/tccmini.c usr/share/examples/tinycc/tccsysroot.c=$(CURDIR)/samples/tccsysroot.c usr/share/examples/tinycc/tccposix.c=$(CURDIR)/samples/tccposix.c etc/passwd=$(CURDIR)/samples/passwd etc/shadow=$(CURDIR)/samples/shadow etc/group=$(CURDIR)/samples/group etc/random-seed=$(RANDOM_SEED_FILE) .ssh/authorized_keys=$(TINYSSH_AUTHORIZED_KEYS) etc/cserve.ini=$(CURDIR)/samples/cserve.ini var/www/index.html=$(CURDIR)/samples/cserve_index.html var/log/boot.txt=$(CURDIR)/samples/boot.txt boot/splash.bmp=$(CURDIR)/assets/boot_splash.bmp $(MAN_PAGE_ENTRIES)
+EXT2_BASE_EXTRA_ENTRIES=usr/bin/tcc=$(TINYCC_SMALOS_BIN) usr/bin/busybox=$(BUSYBOX_SMALOS_BIN) $(USER_INCLUDE_ENTRIES) $(USER_UAPI_ENTRIES) usr/share/examples/tinycc/tccmath.c=$(CURDIR)/samples/tccmath.c usr/share/examples/tinycc/tccagg.c=$(CURDIR)/samples/tccagg.c usr/share/examples/tinycc/tcctree.c=$(CURDIR)/samples/tcctree.c usr/share/examples/tinycc/tccmini.c=$(CURDIR)/samples/tccmini.c usr/share/examples/tinycc/tccsysroot.c=$(CURDIR)/samples/tccsysroot.c usr/share/examples/tinycc/tccposix.c=$(CURDIR)/samples/tccposix.c usr/share/examples/tinycc/tccrun_fault.c=$(CURDIR)/samples/tccrun_fault.c etc/passwd=$(CURDIR)/samples/passwd etc/shadow=$(CURDIR)/samples/shadow etc/group=$(CURDIR)/samples/group etc/random-seed=$(RANDOM_SEED_FILE) .ssh/authorized_keys=$(TINYSSH_AUTHORIZED_KEYS) etc/cserve.ini=$(CURDIR)/samples/cserve.ini var/www/index.html=$(CURDIR)/samples/cserve_index.html var/log/boot.txt=$(CURDIR)/samples/boot.txt boot/splash.bmp=$(CURDIR)/assets/boot_splash.bmp $(MAN_PAGE_ENTRIES)
 EXT2_EXTRA_ENTRIES=$(EXT2_BASE_EXTRA_ENTRIES) $(USER_LIB_ENTRIES)
 FRACTINT_EXTRA_ENTRIES=usr/share/xfractint/fractint.hlp=$(FRACTINT_DIR)/fractint.hlp usr/share/xfractint/sstools.ini=$(FRACTINT_DIR)/sstools.ini $(FRACTINT_DATA_ENTRIES)
 EXT2_ALL_EXTRA_ENTRIES=$(EXT2_EXTRA_ENTRIES) $(FRACTINT_EXTRA_ENTRIES) $(WOLF3D_DATA_ENTRIES)
@@ -425,13 +424,30 @@ USER_LIBM_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(filter $(USER_DI
 USER_POSIX_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(filter $(USER_DIR)/%.c,$(USER_POSIX_SRCS)))
 USER_RUNTIME_OBJS=$(USER_LIBC_OBJS) $(USER_LIBM_OBJS) $(USER_POSIX_OBJS)
 USER_CRT0_OBJ=$(OBJ_DIR)/user/crt/crt0.o
+USER_CRT1_OBJ=$(OBJ_DIR)/user/crt/crt1.o
+USER_CRTI_OBJ=$(OBJ_DIR)/user/crt/crti.o
+USER_CRTN_OBJ=$(OBJ_DIR)/user/crt/crtn.o
+USER_CRT_OBJS=$(USER_CRT0_OBJ) $(USER_CRT1_OBJ) $(USER_CRTI_OBJ) $(USER_CRTN_OBJ)
 USER_PIE_OBJ_DIR=$(OBJ_DIR)/user-pie
 USER_PIE_CRT0_OBJ=$(USER_PIE_OBJ_DIR)/crt/crt0.pic.o
 USER_LIB_DIR=$(OBJ_DIR)/user/lib
 USER_LIBC=$(USER_LIB_DIR)/libc.a
 USER_LIBM=$(USER_LIB_DIR)/libm.a
 USER_LIBPOSIX=$(USER_LIB_DIR)/libposix.a
-USER_LIB_ARCHIVES=$(USER_LIBPOSIX) $(USER_LIBC) $(USER_LIBM)
+USER_LIBPTHREAD=$(USER_LIB_DIR)/libpthread.a
+TINYCC_SUPPORT_LIB=$(USER_LIB_DIR)/libtcc1.a
+TINYCC_RUNMAIN_OBJ=$(TINYCC_SUPPORT_OBJ_DIR)/runmain.o
+TINYCC_BT_EXE_OBJ=$(TINYCC_SUPPORT_OBJ_DIR)/bt-exe.o
+TINYCC_BT_LOG_OBJ=$(TINYCC_SUPPORT_OBJ_DIR)/bt-log.o
+TINYCC_LIBTCC1_OBJS=$(TINYCC_SUPPORT_OBJ_DIR)/libtcc1.o \
+                    $(TINYCC_SUPPORT_OBJ_DIR)/stdatomic.o \
+                    $(TINYCC_SUPPORT_OBJ_DIR)/builtin.o \
+                    $(TINYCC_SUPPORT_OBJ_DIR)/atomic.o \
+                    $(TINYCC_SUPPORT_OBJ_DIR)/alloca.o \
+                    $(TINYCC_SUPPORT_OBJ_DIR)/alloca-bt.o \
+                    $(TINYCC_SUPPORT_OBJ_DIR)/pic86.o \
+                    $(TINYCC_SUPPORT_OBJ_DIR)/dsohandle.o
+USER_LIB_ARCHIVES=$(USER_LIBPOSIX) $(USER_LIBC) $(USER_LIBM) $(USER_LIBPTHREAD)
 USER_LINK_LIBS=-L$(USER_LIB_DIR) --start-group -lposix -lc -lm --end-group
 USER_ELFS=$(addprefix $(BIN_DIR)/,$(addsuffix .elf,$(USER_PROGS))) $(BIN_DIR)/fractint.elf $(TINYSSH_ELFS)
 USER_DYN_OBJ_DIR=$(OBJ_DIR)/user-dyn
@@ -496,9 +512,10 @@ OBJ_SUBDIRS=$(sort \
 	$(dir $(USER_PIE_CRT0_OBJ)) \
 	$(USER_PIE_OBJ_DIR) \
 	$(USER_DYN_OBJ_DIR) \
-	$(dir $(USER_CRT0_OBJ)) \
+	$(dir $(USER_CRT_OBJS)) \
 	$(USER_LIB_DIR) \
 	$(USER_DYN_LIB_DIR) \
+	$(TINYCC_SUPPORT_OBJ_DIR) \
 	$(dir $(GUI_OBJS)) \
 	$(dir $(USER_SHELL_OBJS)) \
 	$(dir $(FRACTINT_OBJS)) \
@@ -627,6 +644,12 @@ $(filter $(OBJ_DIR)/user/libc/%.o $(OBJ_DIR)/user/libm/%.o $(OBJ_DIR)/user/posix
 $(OBJ_DIR)/user/crt/%.o: $(USER_DIR)/crt/%.c | dirs
 	$(CC) $(USER_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
+$(USER_CRT1_OBJ): $(USER_CRT0_OBJ) | dirs
+	cp $< $@
+
+$(OBJ_DIR)/user/crt/%.o: $(USER_DIR)/crt/%.asm | dirs
+	$(ASM) -f elf32 $< -o $@
+
 $(OBJ_DIR)/user/gui/%.o: $(USER_DIR)/gui/%.c | dirs
 	$(CC) $(USER_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
@@ -636,7 +659,7 @@ $(OBJ_DIR)/user/shell/%.o: $(USER_DIR)/shell/%.c | dirs
 $(OBJ_DIR)/user/%.o: $(USER_DIR)/%.asm | dirs
 	$(ASM) -f elf32 $< -o $@
 
-$(USER_LIBC): $(USER_LIBC_OBJS) | dirs
+$(USER_LIBC): $(USER_LIBC_OBJS) $(USER_POSIX_OBJS) $(USER_LIBM_OBJS) | dirs
 	rm -f $@
 	$(AR) rcs $@ $^
 
@@ -645,6 +668,20 @@ $(USER_LIBM): $(USER_LIBM_OBJS) | dirs
 	$(AR) rcs $@ $^
 
 $(USER_LIBPOSIX): $(USER_POSIX_OBJS) | dirs
+	rm -f $@
+	$(AR) rcs $@ $^
+
+$(USER_LIBPTHREAD): | dirs
+	rm -f $@
+	$(AR) rcs $@
+
+$(TINYCC_SUPPORT_OBJ_DIR)/%.o: $(CURDIR)/third_party/tinycc/lib/%.c | dirs
+	$(CC) $(USER_PUBLIC_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) -I$(TINYCC_DIR) -I$(CURDIR)/third_party/tinycc -DTCC_TARGET_I386 -c $< -o $@
+
+$(TINYCC_SUPPORT_OBJ_DIR)/%.o: $(CURDIR)/third_party/tinycc/lib/%.S | dirs
+	$(CC) $(USER_PUBLIC_CPPFLAGS) $(CFLAGS) $(USER_CFLAGS) -I$(TINYCC_DIR) -I$(CURDIR)/third_party/tinycc -DTCC_TARGET_I386 -c $< -o $@
+
+$(TINYCC_SUPPORT_LIB): $(TINYCC_LIBTCC1_OBJS) | dirs
 	rm -f $@
 	$(AR) rcs $@ $^
 
@@ -822,15 +859,8 @@ $(TINYSSH_BIN): $(TINYSSH_OBJS) $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
 $(TINYSSH_MAKEKEY_BIN) $(TINYSSH_PRINTKEY_BIN): $(TINYSSH_BIN) | dirs
 	cp $< $@
 
-$(TINYCC_SMALOS_PATCH_STAMP): check-third-party patches/tinycc/smallos.patch | dirs
-	rm -rf $(TINYCC_SMALOS_SRC_DIR)
-	mkdir -p $(TINYCC_SMALOS_SRC_DIR)
-	(cd $(CURDIR)/third_party/tinycc && tar cf - --exclude=.git .) | (cd $(TINYCC_SMALOS_SRC_DIR) && tar xf -)
-	patch -d $(TINYCC_SMALOS_SRC_DIR) -p1 < patches/tinycc/smallos.patch
-	touch $@
-
-$(TINYCC_SMALOS_OBJ): $(TINYCC_SMALOS_PATCH_STAMP) $(TINYCC_CONFIG_STAMP) | dirs
-	$(CC) $(USER_PUBLIC_CPPFLAGS) $(CFLAGS) -Os -ffunction-sections -fdata-sections -I$(TINYCC_DIR) -I$(TINYCC_SMALOS_SRC_DIR) -DTCC_TARGET_I386 -DTCC_TARGET_SMALLOS -c $(TINYCC_SMALOS_SRC) -o $@
+$(TINYCC_SMALOS_OBJ): check-third-party $(TINYCC_CONFIG_STAMP) | dirs
+	$(CC) $(USER_PUBLIC_CPPFLAGS) $(CFLAGS) -Os -ffunction-sections -fdata-sections -I$(TINYCC_DIR) -I$(CURDIR)/third_party/tinycc -DTCC_TARGET_I386 -DCONFIG_TCCDIR=\"/usr/lib\" -DCONFIG_TCC_SYSINCLUDEPATHS=\"/usr/include\" -DCONFIG_TCC_LIBPATHS=\"/usr/lib\" -DCONFIG_TCC_CRTPREFIX=\"/usr/lib\" -DCONFIG_TCC_ELFINTERP=\"/lib/ld-smallos.so\" -c $(TINYCC_SMALOS_SRC) -o $@
 
 $(TINYCC_SMALOS_BIN): $(TINYCC_SMALOS_OBJ) $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
 	$(LD) $(USER_LDFLAGS) -s $(filter %.o,$^) $(USER_LINK_LIBS) $(LIBGCC_FILE) -o $@

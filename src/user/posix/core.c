@@ -50,11 +50,20 @@ struct __res_state _res;
 char* __smallos_empty_env[] = { 0 };
 char** environ = __smallos_empty_env;
 static int s_environ_owned = 0;
-static sighandler_t s_signal_handlers[32];
 char* optarg = 0;
 int optind = 1;
 int opterr = 1;
 int optopt = 0;
+
+void __smallos_sigreturn_trampoline(void);
+__asm__(
+".global __smallos_sigreturn_trampoline\n"
+"__smallos_sigreturn_trampoline:\n"
+"    leal -4(%esp), %ebx\n"
+"    movl $149, %eax\n"
+"    int $0x80\n"
+"    hlt\n"
+);
 
 static void set_errno(int value);
 
@@ -1315,23 +1324,7 @@ int sigfillset(sigset_t* set) {
 }
 
 int sigprocmask(int how, const sigset_t* set, sigset_t* oldset) {
-    static sigset_t current_mask = 0;
-    if (oldset) {
-        *oldset = current_mask;
-    }
-    if (set) {
-        if (how == SIG_BLOCK) {
-            current_mask |= *set;
-        } else if (how == SIG_UNBLOCK) {
-            current_mask &= ~(*set);
-        } else if (how == SIG_SETMASK) {
-            current_mask = *set;
-        } else {
-            set_errno(EINVAL);
-            return -1;
-        }
-    }
-    return 0;
+    return errno_from_raw(sys_sigprocmask(how, set, oldset));
 }
 
 int sigsuspend(const sigset_t* mask) {
@@ -1349,45 +1342,48 @@ int sigtimedwait(const sigset_t* set, void* info, const struct timespec* timeout
 }
 
 sighandler_t signal(int signum, sighandler_t handler) {
-    sighandler_t old;
+    struct sigaction act;
+    struct sigaction old;
 
-    if (signum <= 0 || signum >= 32) {
-        set_errno(EINVAL);
-        return (sighandler_t)-1;
-    }
-
-    old = s_signal_handlers[signum] ? s_signal_handlers[signum] : SIG_DFL;
-    s_signal_handlers[signum] = handler;
-    return old;
+    memset(&act, 0, sizeof(act));
+    act.sa_handler = handler;
+    if (sigaction(signum, &act, &old) < 0) return (sighandler_t)-1;
+    return old.sa_handler;
 }
 
 int raise(int signum) {
-    sighandler_t handler;
-
-    if (signum <= 0 || signum >= 32) {
-        set_errno(EINVAL);
-        return -1;
-    }
-    handler = s_signal_handlers[signum];
-    if (handler && handler != SIG_IGN && handler != SIG_DFL) {
-        handler(signum);
-    }
-    return 0;
+    return kill((int)getpid(), signum);
 }
 
 int sigaction(int signum, const struct sigaction* act, struct sigaction* oldact) {
-    static struct sigaction actions[32];
+    sys_sigaction_t in;
+    sys_sigaction_t out;
+    sys_sigaction_t* in_ptr = 0;
+    sys_sigaction_t* out_ptr = oldact ? &out : 0;
+    int rc;
 
-    if (signum <= 0 || signum >= 32) {
-        set_errno(EINVAL);
-        return -1;
-    }
-    if (oldact) {
-        *oldact = actions[signum];
-    }
+    memset(&in, 0, sizeof(in));
+    memset(&out, 0, sizeof(out));
     if (act) {
-        actions[signum] = *act;
-        (void)signal(signum, act->sa_handler);
+        in.handler = (uint32_t)act->sa_handler;
+        in.sigaction = (uint32_t)act->sa_sigaction;
+        in.restorer = (uint32_t)__smallos_sigreturn_trampoline;
+        in.mask = act->sa_mask;
+        in.flags = (uint32_t)act->sa_flags;
+        in_ptr = &in;
+    }
+
+    rc = errno_from_raw(sys_sigaction(signum, in_ptr, out_ptr));
+    if (rc < 0) return rc;
+    if (oldact) {
+        memset(oldact, 0, sizeof(*oldact));
+        if (out.flags & SA_SIGINFO) {
+            oldact->sa_sigaction = (sigaction_handler_t)out.sigaction;
+        } else {
+            oldact->sa_handler = (sighandler_t)out.handler;
+        }
+        oldact->sa_mask = out.mask;
+        oldact->sa_flags = (int)out.flags;
     }
     return 0;
 }
