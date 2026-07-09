@@ -1,0 +1,17 @@
+COWPROBE(1)
+
+NAME
+    cowprobe - test copy-on-write behavior
+
+SYNOPSIS
+    cowprobe
+
+DESCRIPTION
+    Exercises fork-time copy-on-write sharing, private-page breakaway after
+    writes, and child wait cleanup.
+
+    The probe also checks memory-accounting visibility: shared PMM frame
+    accounting should rise after fork and fall again after the child exits.
+
+NOTES
+    This is primarily a diagnostic or self-test helper, but it is documented so installed programs are discoverable.

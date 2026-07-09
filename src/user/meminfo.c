@@ -37,6 +37,36 @@ void _start(int argc, char** argv) {
     u_put_uint(used_frames * 4u);
     u_puts(" KB)\n");
 
+    u_puts("pmm:    used ");
+    u_put_uint(info.pmm_used_frames);
+    u_puts(" ref ");
+    u_put_uint(info.pmm_refcounted_frames);
+    u_puts(" shared ");
+    u_put_uint(info.pmm_shared_frames);
+    u_puts("\n");
+
+    u_puts("proc:   ");
+    u_put_uint(info.process_count);
+    u_puts(" / ");
+    u_put_uint(info.process_capacity);
+    u_puts(" tasks  pages p=");
+    u_put_uint(info.process_pages);
+    u_puts(" kstk=");
+    u_put_uint(info.kernel_stack_pages);
+    u_puts(" fd=");
+    u_put_uint(info.fd_table_pages);
+    u_puts(" vm=");
+    u_put_uint(info.vm_area_pages);
+    u_puts("\n");
+
+    u_puts("kalloc: ");
+    u_put_uint(info.kalloc_pages);
+    u_puts(" pages  used ");
+    u_put_uint(info.kalloc_used_bytes);
+    u_puts(" B  free ");
+    u_put_uint(info.kalloc_free_bytes);
+    u_puts(" B\n");
+
     u_puts("rofile: ");
     u_put_uint(info.ro_file_cache_pages);
     u_puts(" cache pages / ");

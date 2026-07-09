@@ -2,6 +2,8 @@
 #include "process.h"
 #include "paging.h"
 #include "gdt.h"
+#include "kalloc.h"
+#include "klib.h"
 #include "terminal.h"
 #include "memory.h"
 #include "timer.h"
@@ -11,8 +13,9 @@ extern void sched_switch(unsigned int* save_esp,
                          unsigned int  next_cr3,
                          unsigned int  next_esp0);
 
-static process_t*   s_table[SCHED_MAX_PROCS];
+static process_t**  s_table       = 0;
 static int          s_count       = 0;
+static int          s_capacity    = 0;
 static int          s_current_idx = -1;
 static unsigned int s_tick_count  = 0;
 static unsigned int s_boot_esp    = 0;
@@ -106,19 +109,44 @@ static void sched_wake_sleepers(unsigned int now) {
 }
 
 void sched_init(void) {
-    for (int i = 0; i < SCHED_MAX_PROCS; i++) {
-        s_table[i] = 0;
+    s_table = (process_t**)kcalloc(SCHED_INITIAL_PROCS, sizeof(process_t*));
+    if (!s_table) {
+        terminal_puts("sched: failed to allocate run queue\n");
+        for (;;) {
+            __asm__ __volatile__("cli; hlt");
+        }
     }
 
     s_count = 0;
+    s_capacity = SCHED_INITIAL_PROCS;
     s_current_idx = -1;
     s_tick_count = 0;
     s_boot_esp = 0;
 }
 
+static int sched_grow(void) {
+    int new_capacity;
+    process_t** new_table;
+
+    if (s_capacity >= SCHED_MAX_PROCS) return 0;
+    new_capacity = s_capacity * 2;
+    if (new_capacity < SCHED_INITIAL_PROCS) new_capacity = SCHED_INITIAL_PROCS;
+    if (new_capacity > SCHED_MAX_PROCS) new_capacity = SCHED_MAX_PROCS;
+
+    new_table = (process_t**)kcalloc((unsigned int)new_capacity, sizeof(process_t*));
+    if (!new_table) return 0;
+    if (s_table && s_count > 0) {
+        k_memcpy(new_table, s_table, (k_size_t)s_count * sizeof(process_t*));
+        kfree(s_table);
+    }
+    s_table = new_table;
+    s_capacity = new_capacity;
+    return 1;
+}
+
 int sched_enqueue(process_t* proc) {
     if (!proc) return 0;
-    if (s_count >= SCHED_MAX_PROCS) {
+    if (s_count >= s_capacity && !sched_grow()) {
         terminal_puts("sched: table full\n");
         return 0;
     }
@@ -321,6 +349,14 @@ int sched_snapshot_all(process_t** out, int max) {
     }
 
     return copied;
+}
+
+int sched_count(void) {
+    return s_count;
+}
+
+int sched_capacity(void) {
+    return s_capacity;
 }
 
 int sched_reap_zombies(void) {

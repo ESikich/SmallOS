@@ -1,6 +1,8 @@
 #include "syscall_internal.h"
 #include "idt.h"
+#include "kalloc.h"
 #include "klib.h"
+#include "memory.h"
 #include "paging.h"
 #include "pmm.h"
 #include "process.h"
@@ -452,9 +454,20 @@ static unsigned int virtual_build_proc_content(const char* path,
     if (path_eq(path, "proc/meminfo")) {
         unsigned int total = pmm_total_count() * PAGE_SIZE;
         unsigned int free = pmm_free_count() * PAGE_SIZE;
+        process_accounting_t proc_acct;
+        kalloc_stats_t ka;
+        process_accounting_snapshot(&proc_acct);
+        (void)kalloc_stats(&ka);
         vbuf_put_kb_line(out, cap, &pos, "MemTotal", total);
         vbuf_put_kb_line(out, cap, &pos, "MemFree", free);
         vbuf_put_kb_line(out, cap, &pos, "MemAvailable", free);
+        vbuf_put_kb_line(out, cap, &pos, "KernelHeap", memory_get_heap_top() - memory_get_heap_base());
+        vbuf_put_kb_line(out, cap, &pos, "KallocUsed", ka.used_bytes);
+        vbuf_put_kb_line(out, cap, &pos, "KallocFree", ka.free_bytes);
+        vbuf_put_kb_line(out, cap, &pos, "ProcessPages", proc_acct.process_pages * PAGE_SIZE);
+        vbuf_put_kb_line(out, cap, &pos, "KernelStackPages", proc_acct.kernel_stack_pages * PAGE_SIZE);
+        vbuf_put_kb_line(out, cap, &pos, "FdTablePages", proc_acct.fd_table_pages * PAGE_SIZE);
+        vbuf_put_kb_line(out, cap, &pos, "VmAreaPages", proc_acct.vm_area_pages * PAGE_SIZE);
         return pos;
     }
     if (path_eq(path, "proc/uptime")) {
@@ -1126,8 +1139,8 @@ static int virtual_dirent_at(const char* path,
             name = proc_entries[index];
             is_dir = path_eq(name, "self") || path_eq(name, "net");
         } else {
-            process_t* procs[SYS_PROCINFO_MAX];
-            int count = sched_snapshot_all(procs, SYS_PROCINFO_MAX);
+            process_t* procs[SCHED_MAX_PROCS];
+            int count = sched_snapshot_all(procs, SCHED_MAX_PROCS);
             unsigned int proc_index = index - proc_count;
             if (proc_index >= (unsigned int)count || !procs[proc_index]) return 0;
             {

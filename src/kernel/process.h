@@ -39,7 +39,8 @@ typedef enum {
 #define PROCESS_VM_PROT_WRITE 2u
 #define PROCESS_VM_PROT_EXEC  4u
 
-#define PROCESS_VM_AREA_MAX 96u
+#define PROCESS_VM_AREA_INITIAL 32u
+#define PROCESS_VM_AREA_MAX     512u
 
 typedef enum {
     PROCESS_VM_KIND_ANON = 1,
@@ -212,6 +213,17 @@ typedef struct process {
     unsigned int    vm_area_capacity;
 } process_t;
 
+typedef struct process_accounting {
+    unsigned int process_count;
+    unsigned int process_capacity;
+    unsigned int process_pages;
+    unsigned int kernel_stack_pages;
+    unsigned int fd_table_pages;
+    unsigned int vm_area_pages;
+    unsigned int private_mapping_pages;
+    unsigned int heap_bytes;
+} process_accounting_t;
+
 /* ------------------------------------------------------------------ */
 /* API                                                                */
 /* ------------------------------------------------------------------ */
@@ -276,6 +288,7 @@ void       process_wake_timerfds(process_t* proc, unsigned int now);
 void       process_claim_for_wait(process_t* proc);
 process_t* process_find_by_pid(u32 pid);
 process_t* process_find_by_pgid(u32 pgid);
+void       process_accounting_snapshot(process_accounting_t* out);
 void       process_wake_parent_waiter(process_t* child);
 int        process_wait_pid(process_t* parent,
                             int pid,
@@ -308,6 +321,8 @@ int        process_vm_add(process_t* proc,
 int        process_vm_range_free(process_t* proc, u32 start, u32 end);
 int        process_vm_remove_range(process_t* proc, u32 start, u32 end);
 int        process_vm_protect(process_t* proc, u32 start, u32 end, u32 prot);
+int        process_vm_remove_range_errno(process_t* proc, u32 start, u32 end);
+int        process_vm_protect_errno(process_t* proc, u32 start, u32 end, u32 prot);
 int        process_vm_handle_fault(process_t* proc, u32 fault_addr, u32 err);
 int        process_vm_fault_in_page(process_t* proc, u32 addr, int write);
 int        process_vm_page_may_write(void* ctx, u32 virt);

@@ -8,3 +8,14 @@ SYNOPSIS
 
 DESCRIPTION
     Prints kernel memory totals and allocation information.
+
+    The report includes the permanent kernel heap range, PMM free/total/used
+    frame counts, shared/refcounted frame diagnostics, process registry usage,
+    process-owned page categories, reclaimable kalloc usage, read-only file
+    cache totals, and E820 availability.
+
+    Existing labels are kept stable for scripts, and newer accounting fields
+    are appended in additional lines.
+
+SEE ALSO
+    top(1), procscaleprobe(1), memleakprobe(1), cowprobe(1)

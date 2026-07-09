@@ -217,11 +217,11 @@ safe kernel size = (0x80000 - 0x1000) / 512 sectors
                  = 1016 sectors = 508 KiB
 ```
 
-The required invariant is that `0x1000 + kernel_sectors * BOOT_SECTOR_SIZE` must stay below both the loader2 load address and the generated stage-2 stack top. This is a practical layout ceiling rather than a currently enforced build limit; if the kernel grows past it, stage 2 can overwrite itself while reading from disk. To raise the ceiling, move stage 2 higher and update the matching constants in `Makefile` and `loader2.asm`.
+The required invariant is that `0x1000 + kernel_sectors * BOOT_SECTOR_SIZE` must stay below both the loader2 load address and the generated stage-2 stack top. `make boot-layout-check` enforces this ceiling against the padded `kernel.bin` sector span; if the kernel grows past it, stage 2 can overwrite itself while reading from disk. To raise the ceiling, move stage 2 higher and update the matching constants in `Makefile` and `loader2.asm`.
 
 **Symptom of violation**: BIOS INT 0x13 hangs silently mid-transfer at `Loading...` with no error message printed.
 
-`make boot-layout-check` is the host-side guard for the fixed boot-stage layout. It verifies the built boot artifacts, the loader size/sector contract, and the generated stage-2 stack values before the disk image is assembled.
+`make boot-layout-check` is the host-side guard for the fixed boot-stage layout. It verifies the built boot artifacts, the loader size/sector contract, the padded kernel load span, and the generated stage-2 stack values before the disk image is assembled.
 
 `make image-layout-check` then validates the finished image for the active
 `DISPLAY_BACKEND`, including the MBR ext2 partition metadata and the sector
@@ -274,7 +274,7 @@ Do not allocate process-owned paging structures with `kmalloc_page()`. The bump 
 ```text
 kernel .bss              0x100000 – bss_end    static kernel storage
 kmalloc / kmalloc_page   bss_end – boot stack   permanent (no free)
-pmm_alloc_frame          0x200000 – 0x7FFFFFF  reclaimable on process exit; E820-filtered, with bump/stack reservations carved out
+pmm_alloc_frame          0x200000 – 0xFFFFFFF  reclaimable on process exit; E820-filtered, with bump/stack reservations carved out
 ```
 
 `memory_init()` seeds the bump allocator from page-aligned `bss_end`, not a

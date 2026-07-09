@@ -145,9 +145,21 @@ typedef struct sys_meminfo {
     unsigned int e820_count;
     unsigned int ro_file_cache_pages;
     unsigned int ro_file_cache_mapped_refs;
+    unsigned int pmm_used_frames;
+    unsigned int pmm_refcounted_frames;
+    unsigned int pmm_shared_frames;
+    unsigned int process_count;
+    unsigned int process_capacity;
+    unsigned int process_pages;
+    unsigned int kernel_stack_pages;
+    unsigned int fd_table_pages;
+    unsigned int vm_area_pages;
+    unsigned int kalloc_pages;
+    unsigned int kalloc_free_bytes;
+    unsigned int kalloc_used_bytes;
 } sys_meminfo_t;
 
-#define SYS_PROCINFO_MAX 32u
+#define SYS_PROCINFO_MAX 64u
 
 typedef struct sys_procinfo_entry {
     unsigned int pid;

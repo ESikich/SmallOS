@@ -41,7 +41,7 @@ kernel_main()
   gdt_init()        ← null, k-code, k-data, u-code, u-data, TSS + ltr
   paging_init()     ← identity-maps first 8 MB, enables CR0.PG
   memory_init()     ← bump allocator after high kernel BSS
-  pmm_init()        ← E820-filtered bitmap allocator at 0x200000–0x7FFFFFF
+  pmm_init()        ← E820-filtered bitmap allocator at 0x200000–0xFFFFFFF
   boot diagnostics  ← display-muted, serial/log PASS/WARN/FAIL checks
   fb_console_init() ← switch to framebuffer terminal when VBE boot info is valid
   keyboard/mouse/timer/idt
@@ -117,7 +117,7 @@ Inside `kernel_main()`:
 2. `gdt_init()` — install GDT with ring-3 segments and TSS; load task register with `ltr`
 3. `paging_init()` — enable paging, identity-map 8 MB
 4. `memory_init(PAGE_ALIGN(&bss_end))` — bump allocator starts after high kernel BSS
-5. `pmm_init()` — bitmap allocator covers 0x200000–0x7FFFFFF; E820 usable ranges are freed, then boot/runtime reservations are marked used again
+5. `pmm_init()` — bitmap allocator covers 0x200000 through the detected usable E820 ceiling, capped below 0x10000000; E820 usable ranges are freed, then boot/runtime reservations are marked used again
 6. `kernel_selfcheck()` — report splash checks for TSS selector, boot stack, heap base after BSS, and PMM baseline
 7. `fb_console_init()` — map and select the framebuffer backend when VBE boot info is valid
 8. `keyboard_init()`, `mouse_init()`, `timer_init(SMALLOS_TIMER_HZ)`, `idt_init()` — input/timer drivers and interrupt table
@@ -242,7 +242,11 @@ A round-robin preemptive scheduler runs on every timer tick. The hardware rate i
 
 ## Process table
 
-Fixed array of up to 32 `process_t*` entries stored in `s_table[SCHED_MAX_PROCS]`.
+The scheduler uses a PMM-backed dynamic `process_t*` run table. It starts at
+32 entries and doubles as needed up to the public hard cap
+`SCHED_MAX_PROCS == 128`. The separate process registry is also dynamic: it
+starts at 64 entries and grows to 256 entries for lookup, parent/child
+tracking, orphan handling, and accounting.
 
 There is **no reserved slot 0** and no static sentinel `process_t`. The scheduler
 treats the table as a simple dynamic array:
@@ -693,7 +697,7 @@ PAGE_ALIGN(bss_end)
                                    ELF segment frames, user stack frames,
                                    all process-private page tables,
                                    per-process kernel stack frames
-0x08000000   PMM ceiling (128 MB cap; default 64 MB guests expose less via E820)
+0x10000000   PMM ceiling (256 MB cap, 254 MB managed above 0x200000)
 0x00400000   USER_CODE_BASE — user ELF virtual address (per-process mapping)
 0x01000000   USER_PIE_BASE — deterministic PIE main executable base
 0x04000000   USER_MMAP_BASE — loader DSO / mmap arena base

@@ -884,13 +884,15 @@ static void kernel_selfcheck(void) {
     boot_splash_expect(tss_get_kernel_stack() == KERNEL_BOOT_STACK_TOP,
                        "tss: ESP0 uses boot stack top",
                        "TSS ESP0 does not match KERNEL_BOOT_STACK_TOP");
-    boot_splash_expect(memory_get_heap_top() >= 0x100000u &&
+    boot_splash_expect(memory_get_heap_base() >= 0x100000u &&
+                       (memory_get_heap_base() & 0xFFFu) == 0 &&
+                       memory_get_heap_top() >= memory_get_heap_base() &&
                        memory_get_heap_top() < KERNEL_BOOT_STACK_TOP - PMM_FRAME_SIZE &&
-                       (memory_get_heap_top() & 0xFFFu) == 0,
+                       pmm_free_count() <= pmm_managed_frame_count(),
                        "memory: heap starts after kernel BSS",
-                       "heap top is outside the kernel arena or not page-aligned");
+                       "heap base/top is outside the kernel arena or boot stack guard");
     boot_splash_expect(pmm_free_count() > 0 &&
-                       pmm_free_count() <= PMM_NUM_FRAMES,
+                       pmm_free_count() <= pmm_managed_frame_count(),
                        "pmm: free frame baseline sane",
                        "PMM free frame count is outside the managed bitmap");
     boot_splash_expect(esp <= KERNEL_BOOT_STACK_TOP &&

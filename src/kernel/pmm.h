@@ -17,11 +17,12 @@
  *                          are reserved during pmm_init(); later ones call
  *                          pmm_reserve_range() as they grow.
  *
- *   0x200000 – 0x7FFFFFF   PMM (this file)
+ *   0x200000 – 0xFFFFFFF   PMM (this file)
  *                          reclaimable per-process allocations such as
  *                          user ELF frames, user stack frames, process
  *                          page directories, and private page tables.
- *                          126 MB = 32256 frames = 4032 bytes of bitmap.
+ *                          Up to 254 MB = 65024 frames. Metadata is sized at
+ *                          boot from E820/fallback availability.
  *                          E820 limits which frames are actually free.
  *                          Kernel bump allocations and the boot stack can
  *                          reserve frames inside this range before PMM hands
@@ -35,11 +36,11 @@
  */
 
 #define PMM_BASE        0x200000u           /* 2 MB  */
-#define PMM_LIMIT       0x08000000u         /* 128 MB */
+#define PMM_LIMIT       0x10000000u         /* 256 MB */
 #define PMM_SIZE        (PMM_LIMIT - PMM_BASE)
 #define PMM_FALLBACK_SIZE 0x1E00000u        /* 30 MB when E820 is unavailable */
 #define PMM_FRAME_SIZE  4096u
-#define PMM_NUM_FRAMES  (PMM_SIZE / PMM_FRAME_SIZE)   /* 32256 */
+#define PMM_NUM_FRAMES  (PMM_SIZE / PMM_FRAME_SIZE)   /* max managed frames */
 
 void pmm_init(void);
 void pmm_reserve_range(u32 start, u32 end);
@@ -52,5 +53,11 @@ void pmm_free_contiguous_frames(u32 addr, u32 count);
 u32  pmm_frame_refcount(u32 addr);
 u32  pmm_free_count(void);
 u32  pmm_total_count(void);
+u32  pmm_used_count(void);
+u32  pmm_refcounted_count(void);
+u32  pmm_shared_count(void);
+u32  pmm_largest_free_run(void);
+u32  pmm_max_physical_addr(void);
+u32  pmm_managed_frame_count(void);
 
 #endif /* PMM_H */

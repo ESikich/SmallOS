@@ -315,6 +315,8 @@ int main(void) {
     fork_frame_drop = before.pmm_free_frames >= after_fork.pmm_free_frames ?
                       before.pmm_free_frames - after_fork.pmm_free_frames : 0u;
     passfail("cowprobe fork frame drop", fork_frame_drop < BIG_PAGES + 12u);
+    passfail("cowprobe shared frames rise",
+             after_fork.pmm_shared_frames > before.pmm_shared_frames);
 
     passfail("cowprobe parent globals", g_value == 11);
     passfail("cowprobe parent heap", heap[0] != 'c' && heap[4096] != 'd');
@@ -351,6 +353,8 @@ int main(void) {
     if (sys_meminfo(&after_wait) == 0) {
         passfail("cowprobe child frames released",
                  after_wait.pmm_free_frames >= after_fork.pmm_free_frames);
+        passfail("cowprobe shared frames fall",
+                 after_wait.pmm_shared_frames <= after_fork.pmm_shared_frames);
     } else {
         puts("cowprobe meminfo after wait: FAIL");
         failures++;

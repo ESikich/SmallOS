@@ -1234,9 +1234,19 @@ int sys_meminfo(sys_meminfo_t* out_info);
 ```
 
 Copies a kernel memory diagnostic summary into `out_info`, including the kernel
-heap range, PMM free/total frame counts, and whether E820 boot memory metadata
-is available. `pmm_total_frames` is the real managed frame count captured after
-E820 filtering and boot reservations, not the fixed PMM address-window ceiling.
+heap range, PMM free/total/used frame counts, refcounted and shared-frame
+diagnostics, process-registry counts and page categories, reclaimable `kalloc`
+usage, and whether E820 boot memory metadata is available. Fields are ABI-safe:
+newer accounting values are appended to `sys_meminfo_t` after the original
+members.
+
+`pmm_total_frames` is the real managed frame count captured after E820
+filtering and boot reservations, not the physical address-window ceiling.
+`pmm_shared_frames` is useful for copy-on-write validation after `fork()`.
+`process_count` / `process_capacity` expose the dynamic process registry, while
+`process_pages`, `kernel_stack_pages`, `fd_table_pages`, and `vm_area_pages`
+break down process-owned kernel memory. `kalloc_pages`, `kalloc_used_bytes`, and
+`kalloc_free_bytes` expose reclaimable kernel allocator state.
 `ro_file_cache_pages` and `ro_file_cache_mapped_refs` expose diagnostic counts
 for the shared read-only file mapping cache used by dynamic DSO text pages.
 
@@ -1560,8 +1570,11 @@ int sys_procinfo(sys_procinfo_t* out_info);
 
 Copies a scheduler/process diagnostic snapshot into `out_info`. The snapshot
 contains the current tick count, the number of copied tasks, and one
-`sys_procinfo_entry_t` per scheduled process up to `SYS_PROCINFO_MAX` (32,
-matching `SCHED_MAX_PROCS`). Each
+`sys_procinfo_entry_t` per scheduled process up to `SYS_PROCINFO_MAX` (64).
+`total_count` reports the full scheduled process count, so userland can detect
+truncation when more than 64 tasks are runnable or sleeping. The scheduler
+itself can hold up to `SCHED_MAX_PROCS` (128) scheduled processes, while the
+dynamic process registry can hold up to 256 entries. Each
 entry includes pid, parent pid, process group, state, accumulated CPU timer
 ticks, estimated task-owned RAM bytes, user heap bytes, and display name.
 Stopped processes are reported as the `T` state in `/proc`-style views.

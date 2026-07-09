@@ -1,0 +1,18 @@
+PROCSCALEPROBE(1)
+
+NAME
+    procscaleprobe - test process scaling and PID uniqueness
+
+SYNOPSIS
+    procscaleprobe
+
+DESCRIPTION
+    Spawns more than 32 sleeping children, verifies that all returned PIDs are
+    unique, waits for every child, and checks that process and PMM accounting
+    return close to their starting baseline.
+
+    This probe covers the dynamic scheduler/process-registry path and guards
+    against duplicate PID assignment during child churn.
+
+NOTES
+    This is primarily a diagnostic or self-test helper, but it is documented so installed programs are discoverable.

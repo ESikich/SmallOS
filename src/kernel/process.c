@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include "pmm.h"
 #include "paging.h"
+#include "kalloc.h"
 #include "klib.h"
 #include "terminal.h"
 #include "scheduler.h"
@@ -28,8 +29,10 @@ typedef char process_t_must_fit_in_one_frame[(sizeof(process_t) <= 4096u) ? 1 : 
 static process_t* s_foreground_reader = 0;
 static u32 s_foreground_pgid = 0;
 static u32 s_next_pid = 1;
-#define PROCESS_REGISTRY_MAX 64
-static process_t* s_process_registry[PROCESS_REGISTRY_MAX];
+#define PROCESS_REGISTRY_INITIAL 64u
+#define PROCESS_REGISTRY_MAX     256u
+static process_t** s_process_registry = 0;
+static unsigned int s_process_registry_capacity = 0;
 static volatile int s_terminal_interrupt_pending = 0;
 static process_t* s_terminal_interrupt_target = 0;
 static volatile int s_terminal_stop_pending = 0;
@@ -158,14 +161,48 @@ static sys_termios_t* console_termios(void) {
     return &s_console_termios;
 }
 
-static int process_registry_add(process_t* proc) {
-    if (!proc) return 0;
+static int process_registry_ensure(void) {
+    if (s_process_registry) return 1;
+    s_process_registry = (process_t**)kcalloc(PROCESS_REGISTRY_INITIAL, sizeof(process_t*));
+    if (!s_process_registry) return 0;
+    s_process_registry_capacity = PROCESS_REGISTRY_INITIAL;
+    return 1;
+}
 
-    for (unsigned int i = 0; i < PROCESS_REGISTRY_MAX; i++) {
-        if (!s_process_registry[i]) {
-            s_process_registry[i] = proc;
-            return 1;
+static int process_registry_grow(void) {
+    unsigned int new_capacity;
+    process_t** new_registry;
+
+    if (!process_registry_ensure()) return 0;
+    if (s_process_registry_capacity >= PROCESS_REGISTRY_MAX) return 0;
+
+    new_capacity = s_process_registry_capacity * 2u;
+    if (new_capacity > PROCESS_REGISTRY_MAX) {
+        new_capacity = PROCESS_REGISTRY_MAX;
+    }
+
+    new_registry = (process_t**)kcalloc(new_capacity, sizeof(process_t*));
+    if (!new_registry) return 0;
+    k_memcpy(new_registry,
+             s_process_registry,
+             s_process_registry_capacity * sizeof(process_t*));
+    kfree(s_process_registry);
+    s_process_registry = new_registry;
+    s_process_registry_capacity = new_capacity;
+    return 1;
+}
+
+static int process_registry_add(process_t* proc) {
+    if (!proc || !process_registry_ensure()) return 0;
+
+    for (;;) {
+        for (unsigned int i = 0; i < s_process_registry_capacity; i++) {
+            if (!s_process_registry[i]) {
+                s_process_registry[i] = proc;
+                return 1;
+            }
         }
+        if (!process_registry_grow()) break;
     }
 
     terminal_puts("process: registry full\n");
@@ -173,14 +210,39 @@ static int process_registry_add(process_t* proc) {
 }
 
 static void process_registry_remove(process_t* proc) {
-    if (!proc) return;
+    if (!proc || !s_process_registry) return;
 
-    for (unsigned int i = 0; i < PROCESS_REGISTRY_MAX; i++) {
+    for (unsigned int i = 0; i < s_process_registry_capacity; i++) {
         if (s_process_registry[i] == proc) {
             s_process_registry[i] = 0;
             return;
         }
     }
+}
+
+static u32 process_alloc_pid(void) {
+    u32 start = s_next_pid ? s_next_pid : 1u;
+
+    if (!process_registry_ensure()) return 0;
+    if (s_next_pid == 0u) s_next_pid = 1u;
+
+    for (;;) {
+        u32 pid = s_next_pid;
+        if (pid == 0u) pid = 1u;
+        s_next_pid = pid + 1u;
+        if (s_next_pid == 0u) s_next_pid = 1u;
+        if (!process_find_by_pid(pid)) return pid;
+        if (s_next_pid == start) break;
+    }
+
+    for (u32 pid = 1u; pid != 0u; pid++) {
+        if (!process_find_by_pid(pid)) {
+            s_next_pid = pid + 1u;
+            if (s_next_pid == 0u) s_next_pid = 1u;
+            return pid;
+        }
+    }
+    return 0;
 }
 
 static u32 page_floor(u32 value) {
@@ -228,25 +290,20 @@ int process_vm_init(process_t* proc) {
     if (!proc) return 0;
     if (proc->vm_areas) return 1;
 
-    unsigned int bytes = PROCESS_VM_AREA_MAX * sizeof(process_vm_area_t);
-    unsigned int frames = (bytes + PAGE_SIZE - 1u) / PAGE_SIZE;
-    u32 frame = pmm_alloc_contiguous_frames(frames);
-    if (!frame) return 0;
-
-    proc->vm_areas = (process_vm_area_t*)paging_phys_to_kernel_virt(frame);
-    proc->vm_area_frame = frame;
-    proc->vm_area_frames = frames;
-    proc->vm_area_capacity = PROCESS_VM_AREA_MAX;
+    unsigned int bytes = PROCESS_VM_AREA_INITIAL * sizeof(process_vm_area_t);
+    proc->vm_areas = (process_vm_area_t*)kcalloc(PROCESS_VM_AREA_INITIAL,
+                                                 sizeof(process_vm_area_t));
+    if (!proc->vm_areas) return 0;
+    proc->vm_area_frame = 0;
+    proc->vm_area_frames = PAGE_ALIGN(bytes) / PAGE_SIZE;
+    proc->vm_area_capacity = PROCESS_VM_AREA_INITIAL;
     proc->vm_area_count = 0;
-    k_memset(proc->vm_areas, 0, frames * PAGE_SIZE);
     return 1;
 }
 
 void process_vm_free(process_t* proc) {
     if (!proc) return;
-    if (proc->vm_area_frame && proc->vm_area_frames) {
-        pmm_free_contiguous_frames(proc->vm_area_frame, proc->vm_area_frames);
-    }
+    if (proc->vm_areas) kfree(proc->vm_areas);
     proc->vm_areas = 0;
     proc->vm_area_frame = 0;
     proc->vm_area_frames = 0;
@@ -258,15 +315,54 @@ void process_vm_clear(process_t* proc) {
     if (!proc) return;
     if (!proc->vm_areas && !process_vm_init(proc)) return;
     proc->vm_area_count = 0;
-    if (proc->vm_areas && proc->vm_area_frames) {
-        k_memset(proc->vm_areas, 0, proc->vm_area_frames * PAGE_SIZE);
+    if (proc->vm_areas && proc->vm_area_capacity) {
+        k_memset(proc->vm_areas,
+                 0,
+                 proc->vm_area_capacity * sizeof(process_vm_area_t));
     }
+}
+
+static int process_vm_ensure_capacity(process_t* proc, unsigned int needed) {
+    unsigned int new_capacity;
+    unsigned int bytes;
+    process_vm_area_t* new_areas;
+
+    if (!proc) return 0;
+    if (!proc->vm_areas && !process_vm_init(proc)) return 0;
+    if (needed <= proc->vm_area_capacity) return 1;
+    if (needed > PROCESS_VM_AREA_MAX) return 0;
+
+    new_capacity = proc->vm_area_capacity ? proc->vm_area_capacity
+                                          : PROCESS_VM_AREA_INITIAL;
+    while (new_capacity < needed) {
+        new_capacity *= 2u;
+        if (new_capacity > PROCESS_VM_AREA_MAX) {
+            new_capacity = PROCESS_VM_AREA_MAX;
+            break;
+        }
+    }
+    if (new_capacity < needed) return 0;
+
+    new_areas = (process_vm_area_t*)kcalloc(new_capacity, sizeof(process_vm_area_t));
+    if (!new_areas) return 0;
+    if (proc->vm_area_count > 0) {
+        k_memcpy(new_areas,
+                 proc->vm_areas,
+                 proc->vm_area_count * sizeof(process_vm_area_t));
+    }
+    kfree(proc->vm_areas);
+    proc->vm_areas = new_areas;
+    proc->vm_area_capacity = new_capacity;
+    bytes = new_capacity * sizeof(process_vm_area_t);
+    proc->vm_area_frames = PAGE_ALIGN(bytes) / PAGE_SIZE;
+    proc->vm_area_frame = 0;
+    return 1;
 }
 
 int process_vm_clone(process_t* dst, process_t* src) {
     if (!dst || !src) return 0;
     if (!process_vm_init(dst)) return 0;
-    if (src->vm_area_count > dst->vm_area_capacity) return 0;
+    if (!process_vm_ensure_capacity(dst, src->vm_area_capacity)) return 0;
     if (src->vm_area_count > 0) {
         k_memcpy(dst->vm_areas,
                  src->vm_areas,
@@ -296,7 +392,7 @@ static int process_vm_insert_area(process_t* proc,
                                   int merge) {
     if (!proc || !area || area->start >= area->end) return 0;
     if (!proc->vm_areas && !process_vm_init(proc)) return 0;
-    if (proc->vm_area_count >= proc->vm_area_capacity) return 0;
+    if (!process_vm_ensure_capacity(proc, proc->vm_area_count + 1u)) return 0;
 
     unsigned int pos = 0;
     while (pos < proc->vm_area_count && proc->vm_areas[pos].start < area->start) {
@@ -371,7 +467,7 @@ static int process_vm_split_at(process_t* proc, u32 addr) {
 
     process_vm_area_t* area = &proc->vm_areas[idx];
     if (addr == area->start || addr == area->end) return 1;
-    if (proc->vm_area_count >= proc->vm_area_capacity) return 0;
+    if (!process_vm_ensure_capacity(proc, proc->vm_area_count + 1u)) return 0;
 
     process_vm_area_t right = *area;
     u32 delta = addr - area->start;
@@ -398,6 +494,18 @@ static int process_vm_split_at(process_t* proc, u32 addr) {
     return 1;
 }
 
+static int process_vm_split_needed(process_t* proc, u32 addr) {
+    int idx;
+    process_vm_area_t* area;
+
+    if (!proc || !proc->vm_areas) return 0;
+    if ((addr & (PAGE_SIZE - 1u)) != 0u) return 0;
+    idx = process_vm_find_index(proc, addr);
+    if (idx < 0) return 0;
+    area = &proc->vm_areas[idx];
+    return addr != area->start && addr != area->end;
+}
+
 int process_vm_remove_range(process_t* proc, u32 start, u32 end) {
     if (!proc || start >= end) return 0;
     if ((start & (PAGE_SIZE - 1u)) != 0u || (end & (PAGE_SIZE - 1u)) != 0u) return 0;
@@ -420,6 +528,22 @@ int process_vm_remove_range(process_t* proc, u32 start, u32 end) {
     proc->vm_area_count = out;
     process_vm_merge(proc);
     return 1;
+}
+
+int process_vm_remove_range_errno(process_t* proc, u32 start, u32 end) {
+    unsigned int needed;
+
+    if (!proc || start >= end) return -EINVAL;
+    if ((start & (PAGE_SIZE - 1u)) != 0u || (end & (PAGE_SIZE - 1u)) != 0u) {
+        return -EINVAL;
+    }
+    if (!proc->vm_areas) return 0;
+
+    needed = proc->vm_area_count;
+    if (process_vm_split_needed(proc, start)) needed++;
+    if (process_vm_split_needed(proc, end)) needed++;
+    if (!process_vm_ensure_capacity(proc, needed)) return -ENOMEM;
+    return process_vm_remove_range(proc, start, end) ? 0 : -EINVAL;
 }
 
 static int process_vm_range_covered(process_t* proc, u32 start, u32 end) {
@@ -469,6 +593,25 @@ int process_vm_protect(process_t* proc, u32 start, u32 end, u32 prot) {
 
     process_vm_merge(proc);
     return 1;
+}
+
+int process_vm_protect_errno(process_t* proc, u32 start, u32 end, u32 prot) {
+    unsigned int needed;
+
+    if (!proc || start >= end) return -EINVAL;
+    if ((start & (PAGE_SIZE - 1u)) != 0u || (end & (PAGE_SIZE - 1u)) != 0u) {
+        return -EINVAL;
+    }
+    if ((prot & ~(PROCESS_VM_PROT_READ | PROCESS_VM_PROT_WRITE | PROCESS_VM_PROT_EXEC)) != 0u) {
+        return -EINVAL;
+    }
+    if (!process_vm_range_covered(proc, start, end)) return -EINVAL;
+
+    needed = proc->vm_area_count;
+    if (process_vm_split_needed(proc, start)) needed++;
+    if (process_vm_split_needed(proc, end)) needed++;
+    if (!process_vm_ensure_capacity(proc, needed)) return -ENOMEM;
+    return process_vm_protect(proc, start, end, prot) ? 0 : -EINVAL;
 }
 
 static int process_vm_load_file_page(process_vm_area_t* area, u32 page, u32 frame) {
@@ -578,8 +721,9 @@ int process_vm_page_may_write(void* ctx, u32 virt) {
 
 process_t* process_find_by_pid(u32 pid) {
     if (pid == 0) return 0;
+    if (!s_process_registry) return 0;
 
-    for (unsigned int i = 0; i < PROCESS_REGISTRY_MAX; i++) {
+    for (unsigned int i = 0; i < s_process_registry_capacity; i++) {
         process_t* proc = s_process_registry[i];
         if (proc && proc->pid == pid) {
             return proc;
@@ -591,8 +735,9 @@ process_t* process_find_by_pid(u32 pid) {
 
 process_t* process_find_by_pgid(u32 pgid) {
     if (pgid == 0) return 0;
+    if (!s_process_registry) return 0;
 
-    for (unsigned int i = 0; i < PROCESS_REGISTRY_MAX; i++) {
+    for (unsigned int i = 0; i < s_process_registry_capacity; i++) {
         process_t* proc = s_process_registry[i];
         if (proc && proc->pgid == pgid) {
             return proc;
@@ -600,6 +745,28 @@ process_t* process_find_by_pgid(u32 pgid) {
     }
 
     return 0;
+}
+
+void process_accounting_snapshot(process_accounting_t* out) {
+    if (!out) return;
+    k_memset(out, 0, sizeof(*out));
+    out->process_capacity = s_process_registry_capacity;
+    if (!s_process_registry) return;
+
+    for (unsigned int i = 0; i < s_process_registry_capacity; i++) {
+        process_t* proc = s_process_registry[i];
+        if (!proc) continue;
+
+        out->process_count++;
+        out->process_pages += 1u;
+        out->kernel_stack_pages += proc->kernel_stack_frames;
+        out->fd_table_pages += proc->fd_table_frames;
+        out->vm_area_pages += proc->vm_area_frames;
+        out->private_mapping_pages += process_pd_count_private_frames(proc->pd);
+        if (proc->heap_brk >= proc->heap_base) {
+            out->heap_bytes += proc->heap_brk - proc->heap_base;
+        }
+    }
 }
 
 void process_wake_parent_waiter(process_t* child) {
@@ -616,8 +783,9 @@ void process_wake_parent_waiter(process_t* child) {
 
 static process_t* process_find_child(process_t* parent, int pid) {
     if (!parent) return 0;
+    if (!s_process_registry) return 0;
 
-    for (unsigned int i = 0; i < PROCESS_REGISTRY_MAX; i++) {
+    for (unsigned int i = 0; i < s_process_registry_capacity; i++) {
         process_t* proc = s_process_registry[i];
         if (!proc || proc->parent_pid != parent->pid) {
             continue;
@@ -632,8 +800,9 @@ static process_t* process_find_child(process_t* parent, int pid) {
 
 static process_t* process_find_zombie_child(process_t* parent, int pid) {
     if (!parent) return 0;
+    if (!s_process_registry) return 0;
 
-    for (unsigned int i = 0; i < PROCESS_REGISTRY_MAX; i++) {
+    for (unsigned int i = 0; i < s_process_registry_capacity; i++) {
         process_t* proc = s_process_registry[i];
         if (!proc || proc->parent_pid != parent->pid) {
             continue;
@@ -651,8 +820,9 @@ static process_t* process_find_zombie_child(process_t* parent, int pid) {
 
 static process_t* process_find_stopped_child(process_t* parent, int pid) {
     if (!parent) return 0;
+    if (!s_process_registry) return 0;
 
-    for (unsigned int i = 0; i < PROCESS_REGISTRY_MAX; i++) {
+    for (unsigned int i = 0; i < s_process_registry_capacity; i++) {
         process_t* proc = s_process_registry[i];
         if (!proc || proc->parent_pid != parent->pid) {
             continue;
@@ -670,8 +840,9 @@ static process_t* process_find_stopped_child(process_t* parent, int pid) {
 
 static void process_orphan_children(u32 parent_pid) {
     if (parent_pid == 0) return;
+    if (!s_process_registry) return;
 
-    for (unsigned int i = 0; i < PROCESS_REGISTRY_MAX; i++) {
+    for (unsigned int i = 0; i < s_process_registry_capacity; i++) {
         process_t* proc = s_process_registry[i];
         if (proc && proc->parent_pid == parent_pid) {
             proc->parent_pid = 0;
@@ -3338,7 +3509,9 @@ int process_reap_unclaimed_zombies(void) {
     int reaped = 0;
     process_t* current = sched_current();
 
-    for (int i = PROCESS_REGISTRY_MAX - 1; i >= 0; i--) {
+    if (!s_process_registry) return 0;
+
+    for (int i = (int)s_process_registry_capacity - 1; i >= 0; i--) {
         process_t* proc = s_process_registry[i];
 
         if (!proc) continue;
@@ -3518,9 +3691,11 @@ process_t* process_create(const char* name) {
     process_t* proc = (process_t*)paging_phys_to_kernel_virt(frame);
     proc_zero(proc);
 
-    proc->pid = s_next_pid++;
-    if (s_next_pid == 0) {
-        s_next_pid = 1;
+    proc->pid = process_alloc_pid();
+    if (proc->pid == 0u) {
+        terminal_puts("process: out of pids\n");
+        pmm_free_frame(frame);
+        return 0;
     }
     {
         process_t* parent = sched_current();

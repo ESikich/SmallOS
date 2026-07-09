@@ -10,7 +10,7 @@ SmallOS currently uses three distinct memory pools:
 
 ```text
 0x100000 – 0x3FFFFF   kernel .bss, bump heap, and boot stack arena
-0x200000 – 0x7FFFFFF  PMM frame window, capped at 128 MB; kernel bump/stack frames inside it are reserved before reclaimable allocation
+0x200000 – 0xFFFFFFF  PMM frame window, capped below 256 MB; kernel bump/stack frames inside it are reserved before reclaimable allocation
 0x10000000+           per-process user heap (SYS_BRK)
 ```
 
@@ -41,6 +41,19 @@ Use this heap for:
 
 Do not use it for transient buffers. It has no free path.
 
+For reclaimable kernel-owned dynamic structures, use the PMM-backed kernel
+allocator instead:
+
+- `kalloc(size)`
+- `kcalloc(count, size)`
+- `kfree(ptr)`
+- `kalloc_stats(out)`
+
+`kalloc` uses page-sized slabs for small allocations up to 1024 bytes and whole
+contiguous PMM frame runs for larger allocations. It backs dynamic scheduler
+tables, process registries, VM metadata arrays, and temporary kernel diagnostic
+buffers that should not live forever in the permanent bump heap.
+
 Verification rule:
 
 ```text
@@ -55,11 +68,18 @@ The reported heap top should remain unchanged across user ELF runs when no kerne
 
 # PMM Frame Pool
 
-`pmm_init()` manages the fixed reclaimable window from `0x200000`
-through `0x7FFFFFF`, but the bitmap is initialized from BIOS E820 data.
-All frames start used, usable E820 RAM ranges inside the fixed window are
+`pmm_init()` manages the reclaimable window from `0x200000` through the detected
+usable E820 ceiling, capped at `0x10000000`. This gives a first expanded range
+of 254 MB of PMM-managed frames while still fitting the current fixed high
+kernel PMM alias at `KERNEL_PMM_MAP_BASE`. PMM bitmap and refcount metadata are
+sized at boot from the detected range, allocated from the permanent boot heap,
+and then reserved before reclaimable frames are released.
+
+All frames start used, usable E820 RAM ranges inside the managed window are
 marked free, and SmallOS-owned boot/runtime reservations are marked used again.
 If E820 is unavailable, PMM falls back to the old 30 MB fixed-window assumption.
+Managing physical memory beyond `0x10000000` will require a kernel virtual-map
+redesign because the current high PMM alias occupies fixed high virtual space.
 
 The protected ranges that are never handed to PMM include low BIOS memory,
 the boot sector, loader2, boot info at `0x90000`, the copied boot font at
@@ -75,9 +95,11 @@ Use PMM frames for:
 - kernel stack frames for processes
 - ELF segment frames
 - other memory that should be freed on process exit
+- reclaimable `kalloc` slabs and large allocations
 - dynamic per-process handle tables referenced by `process_t`
 - TCP listener and global 4-tuple connection tables
 - lazy TCP receive and transmit rings for accepted socket streams
+- dynamic scheduler, process-registry, and VM-area metadata
 
 Do not allocate process-owned paging structures with `kmalloc_page()`. They must come from PMM so the process can be torn down cleanly.
 
@@ -157,6 +179,7 @@ process page directory without switching CR3.
 
 - Use `kmalloc` / `kmalloc_page` only for permanent structures
 - Use `pmm_alloc_frame()` for anything that must be reclaimed
+- Use `kalloc` / `kfree` for reclaimable kernel-owned variable-size metadata
 - Treat `pmm_alloc_frame()` results as physical addresses; translate with
   `paging_phys_to_kernel_virt()` before dereferencing
 - Keep `.bss` zeroed before paging and PMM initialization
@@ -174,6 +197,8 @@ process page directory without switching CR3.
 - user processes are freed after they reach `PROCESS_STATE_ZOMBIE`
 - the reaper task reclaims unclaimed children
 - `process_destroy()` must only run from a safe stack
+- scheduled processes are capped at 128, registry entries at 256, and VM areas
+  per process at 512
 
 ---
 
@@ -182,6 +207,9 @@ process page directory without switching CR3.
 The following programs exercise the current memory model:
 
 - `heapprobe` - allocator behavior and reuse
+- `memleakprobe` - fork/pipe/file/mmap/socket churn accounting
+- `procscaleprobe` - more-than-32 child scaling and PID uniqueness
+- `cowprobe` - copy-on-write behavior and shared-frame accounting
 - `fileprobe` - file-handle and path write helpers
 - `statprobe` - path probing and file metadata
 - `compiler_demo` - file write/readback flows

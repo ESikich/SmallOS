@@ -249,6 +249,7 @@ KERNEL_C_SRCS=\
 		$(KERNEL_DIR)/timer.c \
 		$(KERNEL_DIR)/cpu.c \
 		$(KERNEL_DIR)/klib.c \
+	$(KERNEL_DIR)/kalloc.c \
 	$(KERNEL_DIR)/random.c \
 	$(KERNEL_DIR)/memory.c \
 	$(KERNEL_DIR)/boot_info.c \
@@ -286,7 +287,7 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/ext2.c \
 	$(DRIVERS_DIR)/serial.c
 
-USER_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell sh login passwd ip ipconfig meminfo memmap cpuz top netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest hello ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe jobctlprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe cowprobe execveprobe envprobe mathprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe binutilsprobe soundprobe plasma mandel wolf3d fractint tcpecho sockeof ftpd tinyssh-start
+USER_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell sh login passwd ip ipconfig meminfo memmap cpuz top netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest hello ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe jobctlprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe cowprobe memleakprobe procscaleprobe execveprobe envprobe mathprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe binutilsprobe soundprobe plasma mandel wolf3d fractint tcpecho sockeof ftpd tinyssh-start
 USER_PROGS := $(filter-out fractint,$(USER_PROGS))
 USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
 USER_LIBC_SRCS=\
@@ -347,12 +348,12 @@ USER_UAPI_FILES=$(wildcard $(KERNEL_DIR)/uapi_*.h)
 USER_UAPI_ENTRIES=$(foreach file,$(USER_UAPI_FILES),usr/include/$(notdir $(file))=$(CURDIR)/$(file))
 EXT2_BIN_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell sh login passwd ip ipconfig meminfo memmap cpuz netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest top soundprobe
 EXT2_DEMO_PROGS=hello plasma mandel wolf3d fractint
-EXT2_TEST_PROGS=ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe jobctlprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe cowprobe execveprobe envprobe mathprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe binutilsprobe
+EXT2_TEST_PROGS=ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe jobctlprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe cowprobe memleakprobe procscaleprobe execveprobe envprobe mathprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe binutilsprobe
 USER_DYNAMIC_NO_CRT0=echo about uptime date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv meminfo memmap cpuz top hello args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe dirprobe errnoprobe badptrprobe sleep_test timerfdprobe ptrguard preempt_test inputprobe stdioprobe ip ipconfig netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ticks fault signalfdprobe connectprobe spinwkr pgrpprobe tcpecho sockeof ftpd halt reboot ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest soundprobe displayprobe
-USER_DYNAMIC_WITH_CRT0=crtprobe mathprobe pipeprobe dupprobe forkprobe cowprobe execveprobe envprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe
+USER_DYNAMIC_WITH_CRT0=crtprobe mathprobe pipeprobe dupprobe forkprobe cowprobe memleakprobe procscaleprobe execveprobe envprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe
 USER_DYNAMIC_PROGS=$(USER_DYNAMIC_NO_CRT0) $(USER_DYNAMIC_WITH_CRT0)
 USER_DYNAMIC_PIE_NO_CRT0=hello pwd cat meminfo date echo about uptime more man fsread ls tree touch rm mkdir rmdir cp mv memmap cpuz args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe dirprobe errnoprobe badptrprobe sleep_test timerfdprobe ptrguard preempt_test inputprobe stdioprobe ticks fault signalfdprobe connectprobe spinwkr pgrpprobe ip ipconfig netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck tcpecho sockeof ftpd top halt reboot ataread
-USER_DYNAMIC_PIE_WITH_CRT0=crtprobe mathprobe pipeprobe dupprobe forkprobe cowprobe execveprobe envprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe
+USER_DYNAMIC_PIE_WITH_CRT0=crtprobe mathprobe pipeprobe dupprobe forkprobe cowprobe memleakprobe procscaleprobe execveprobe envprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe
 USER_DYNAMIC_PIE_PROGS=$(USER_DYNAMIC_PIE_NO_CRT0) $(USER_DYNAMIC_PIE_WITH_CRT0)
 USER_DYNAMIC_LEGACY_NO_CRT0=$(filter-out $(USER_DYNAMIC_PIE_NO_CRT0),$(USER_DYNAMIC_NO_CRT0))
 USER_DYNAMIC_LEGACY_WITH_CRT0=$(filter-out $(USER_DYNAMIC_PIE_WITH_CRT0),$(USER_DYNAMIC_WITH_CRT0))
@@ -1145,13 +1146,14 @@ $(BIN_DIR)/loader2.bin: $(GEN_DIR)/loader2.gen.asm | dirs
 $(BIN_DIR)/boot.bin: $(BOOT_DIR)/boot.asm | dirs
 	$(ASM) -f bin $< -o $@
 
-boot-layout-check: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(GEN_DIR)/loader2.gen.asm
+boot-layout-check: $(BIN_DIR)/boot.bin $(BIN_DIR)/loader2.bin $(BIN_DIR)/kernel.bin $(GEN_DIR)/loader2.gen.asm
 	$(PYTHON3) tools/verify_boot_layout.py \
 		--boot-asm $(BOOT_DIR)/boot.asm \
 		--loader2-asm $(BOOT_DIR)/loader2.asm \
 		--memory-h $(KERNEL_DIR)/memory.h \
 		--boot-bin $(BIN_DIR)/boot.bin \
 		--loader2-bin $(BIN_DIR)/loader2.bin \
+		--kernel-bin $(BIN_DIR)/kernel.bin \
 		--loader2-gen $(GEN_DIR)/loader2.gen.asm
 
 #

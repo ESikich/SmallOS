@@ -17,7 +17,8 @@
  * runs before being preempted.
  */
 
-#define SCHED_MAX_PROCS         32
+#define SCHED_MAX_PROCS         128
+#define SCHED_INITIAL_PROCS     32
 #define SCHED_QUANTUM_MS        20u
 #define SCHED_TICKS_PER_QUANTUM \
     ((SMALLOS_TIMER_HZ * SCHED_QUANTUM_MS + (SMALLOS_MS_PER_SECOND - 1u)) / SMALLOS_MS_PER_SECOND)
@@ -131,6 +132,8 @@ int sched_snapshot_process_group(unsigned int pgid, process_t** out, int max);
  * is intended for diagnostics and does not transfer ownership.
  */
 int sched_snapshot_all(process_t** out, int max);
+int sched_count(void);
+int sched_capacity(void);
 
 /*
  * sched_start(first_proc)

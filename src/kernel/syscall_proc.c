@@ -1,6 +1,7 @@
 #include "syscall_internal.h"
 #include "boot_info.h"
 #include "gdt.h"
+#include "kalloc.h"
 #include "klib.h"
 #include "memory.h"
 #include "paging.h"
@@ -659,7 +660,7 @@ int sys_munmap_impl(unsigned int addr, unsigned int length) {
     size = PAGE_ALIGN(length);
     if (!user_vm_range_ok(addr, size)) return -EINVAL;
 
-    return process_vm_remove_range(proc, addr, addr + size) ? 0 : -EINVAL;
+    return process_vm_remove_range_errno(proc, addr, addr + size);
 }
 
 int sys_mprotect_impl(unsigned int addr, unsigned int length, unsigned int prot) {
@@ -672,7 +673,7 @@ int sys_mprotect_impl(unsigned int addr, unsigned int length, unsigned int prot)
     if (!user_vm_range_ok(addr, size)) return -EINVAL;
     if ((prot & ~(SYS_PROT_READ | SYS_PROT_WRITE | SYS_PROT_EXEC)) != 0u) return -EINVAL;
 
-    return process_vm_protect(proc, addr, addr + size, prot) ? 0 : -EINVAL;
+    return process_vm_protect_errno(proc, addr, addr + size, prot);
 }
 
 int sys_sigaction_impl(int signum, const sys_sigaction_t* act, sys_sigaction_t* oldact) {
@@ -932,8 +933,14 @@ int sys_getrusage_impl(int who, sys_rusage_t* out) {
 
 int sys_meminfo_impl(sys_meminfo_t* out_info) {
     sys_meminfo_t info;
+    process_accounting_t proc_acct;
+    kalloc_stats_t ka;
 
     if (!out_info) return -EFAULT;
+
+    k_memset(&info, 0, sizeof(info));
+    process_accounting_snapshot(&proc_acct);
+    (void)kalloc_stats(&ka);
 
     info.heap_base = memory_get_heap_base();
     info.heap_top = memory_get_heap_top();
@@ -943,6 +950,18 @@ int sys_meminfo_impl(sys_meminfo_t* out_info) {
     info.e820_count = info.e820_valid ? boot_info_e820_count() : 0u;
     vfs_file_map_cache_stats(&info.ro_file_cache_pages,
                              &info.ro_file_cache_mapped_refs);
+    info.pmm_used_frames = pmm_used_count();
+    info.pmm_refcounted_frames = pmm_refcounted_count();
+    info.pmm_shared_frames = pmm_shared_count();
+    info.process_count = proc_acct.process_count;
+    info.process_capacity = proc_acct.process_capacity;
+    info.process_pages = proc_acct.process_pages;
+    info.kernel_stack_pages = proc_acct.kernel_stack_pages;
+    info.fd_table_pages = proc_acct.fd_table_pages;
+    info.vm_area_pages = proc_acct.vm_area_pages;
+    info.kalloc_pages = ka.pages;
+    info.kalloc_free_bytes = ka.free_bytes;
+    info.kalloc_used_bytes = ka.used_bytes;
 
     if (copy_to_user(out_info, &info, sizeof(info)) < 0) return -EFAULT;
     return 0;
@@ -971,7 +990,7 @@ int sys_procinfo_impl(sys_procinfo_t* out_info) {
 
     k_memset(&info, 0, sizeof(info));
     count = sched_snapshot_all(procs, SYS_PROCINFO_MAX);
-    info.total_count = (unsigned int)count;
+    info.total_count = (unsigned int)sched_count();
     info.out_count = (unsigned int)count;
     info.total_ticks = total_ticks;
 

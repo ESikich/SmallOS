@@ -40,6 +40,7 @@ def main() -> int:
     parser.add_argument("--memory-h", type=Path, required=True)
     parser.add_argument("--boot-bin", type=Path, required=True)
     parser.add_argument("--loader2-bin", type=Path, required=True)
+    parser.add_argument("--kernel-bin", type=Path, required=True)
     parser.add_argument("--loader2-gen", type=Path, required=True)
     args = parser.parse_args()
 
@@ -78,10 +79,21 @@ def main() -> int:
            f"stage2 32-bit stack top must be 0x{expected_stage2_stack_top_32:x}")
     boot_bin_size = args.boot_bin.stat().st_size
     loader2_bin_size = args.loader2_bin.stat().st_size
+    kernel_bin_size = args.kernel_bin.stat().st_size
+    kernel_sectors = (kernel_bin_size + boot_sector_size - 1) // boot_sector_size
+    kernel_load_end = kernel_offset + kernel_sectors * boot_sector_size
+    kernel_limit = min(loader2_load_addr, stage2_stack_top_phys)
+    max_kernel_sectors = (kernel_limit - kernel_offset) // boot_sector_size
+    max_kernel_size = max_kernel_sectors * boot_sector_size
 
     expect(boot_bin_size == 512, f"boot.bin must be 512 bytes, got {boot_bin_size}")
     expect(loader2_bin_size == loader2_size_bytes,
            f"loader2.bin must be {loader2_size_bytes} bytes, got {loader2_bin_size}")
+    expect(kernel_bin_size > 0, "kernel.bin must not be empty")
+    expect(kernel_load_end <= kernel_limit,
+           f"kernel.bin padded load end 0x{kernel_load_end:x} would reach "
+           f"loader2/stack limit 0x{kernel_limit:x}; max padded kernel size is "
+           f"{max_kernel_size} bytes")
     expect(loader2_sectors * boot_sector_size == loader2_size_bytes,
            "boot sector LOADER2_SECTORS must match LOADER2_SIZE_BYTES")
     expect("jmp dword CODE_SEG:init_pm" in loader2_asm,
@@ -95,6 +107,9 @@ def main() -> int:
     print(f"  loader2 size        = {loader2_size_bytes} bytes")
     print(f"  loader2 sectors     = {loader2_sectors}")
     print(f"  kernel offset       = 0x{kernel_offset:x}")
+    print(f"  kernel size         = {kernel_bin_size} bytes ({kernel_sectors} sectors padded)")
+    print(f"  kernel load end     = 0x{kernel_load_end:x} (limit 0x{kernel_limit:x})")
+    print(f"  kernel headroom     = {kernel_limit - kernel_load_end} bytes")
     print(f"  stage2 stack top    = 0x{stage2_stack_top:x} (phys 0x{stage2_stack_top_phys:x})")
     print(f"  kernel boot stack   = 0x{kernel_boot_stack_top:x}")
     print(f"  partition table off = {partition_table_offset}")

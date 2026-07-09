@@ -1,0 +1,17 @@
+MEMLEAKPROBE(1)
+
+NAME
+    memleakprobe - test kernel memory drift under common workloads
+
+SYNOPSIS
+    memleakprobe
+
+DESCRIPTION
+    Runs repeated fork/wait, pipe, file, mmap/munmap, and socket create/close
+    workloads while sampling sys_meminfo before and after the run.
+
+    The probe reports PASS only when the workload succeeds and PMM/kalloc
+    accounting returns to baseline within the documented probe tolerance.
+
+NOTES
+    This is primarily a diagnostic or self-test helper, but it is documented so installed programs are discoverable.

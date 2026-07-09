@@ -1506,6 +1506,8 @@ void sh_selftest(void) {
     sh_selftest_exec("dupprobe", "usr/libexec/tests/dupprobe");
     sh_selftest_exec("forkprobe", "usr/libexec/tests/forkprobe");
     sh_selftest_exec("cowprobe", "usr/libexec/tests/cowprobe");
+    sh_selftest_exec("memleakprobe", "usr/libexec/tests/memleakprobe");
+    sh_selftest_exec("procscaleprobe", "usr/libexec/tests/procscaleprobe");
     sh_selftest_exec("execveprobe", "usr/libexec/tests/execveprobe");
     sh_selftest_exec("mathprobe", "usr/libexec/tests/mathprobe");
     sh_selftest_exec_expect("compatprobe", "usr/libexec/tests/compatprobe", 0);

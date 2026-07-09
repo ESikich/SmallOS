@@ -715,7 +715,10 @@ Runtime coverage currently lives in guest ELF probes:
 - `forkprobe` - parent/child return values, copied memory independence, `waitpid`, and inherited shared file offsets
 - `cowprobe` - copy-on-write fork isolation for globals, heap,
   mmap-anonymous pages, stack writes, lazy frame allocation, partial
-  `munmap`/fixed remap behavior, and `mprotect` write restoration across fork
+  `munmap`/fixed remap behavior, `mprotect` write restoration across fork, and
+  shared-frame accounting rise/fall
+- `memleakprobe` - PMM/kalloc drift across fork, pipe, file, mmap, and socket churn
+- `procscaleprobe` - more-than-32 child process scaling, PID uniqueness, and accounting release
 - `execveprobe` - replacing `execve` image handoff and argv delivery
 
 Run the full acceptance suite with:

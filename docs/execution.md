@@ -416,7 +416,9 @@ That transitions the CPU from CPL 0 to CPL 3 and begins execution at `e_entry` w
 # Parent / Child Tracking
 
 The current design combines scheduler ownership, foreground input ownership, a
-small process registry, and automatic zombie reaping:
+dynamic process registry, and automatic zombie reaping. The scheduler run table
+grows from 32 entries to a hard cap of 128 scheduled processes; the process
+registry grows from 64 entries to a hard cap of 256 tracked processes:
 
 - foreground shell execution launches the child, then waits for it
 - `bg` launches the child and returns immediately, but shell job control owns cleanup until `fg <jobid>` reaps it or `kill <jobid>` stops it
