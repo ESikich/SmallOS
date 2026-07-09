@@ -21,6 +21,7 @@ double atan2(double y, double x);
 double asin(double x);
 double acos(double x);
 double exp(double x);
+double ldexp(double x, int exp);
 double frexp(double x, int* exp_out);
 double log(double x);
 double log10(double x);

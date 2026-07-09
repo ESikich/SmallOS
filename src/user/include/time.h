@@ -27,6 +27,7 @@ struct tm {
 time_t time(time_t* out);
 clock_t clock(void);
 char* ctime(const time_t* timep);
+struct tm* gmtime(const time_t* timep);
 struct tm* localtime(const time_t* timep);
 struct tm* localtime_r(const time_t* timep, struct tm* result);
 struct tm* gmtime_r(const time_t* timep, struct tm* result);

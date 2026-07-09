@@ -161,10 +161,12 @@ relative to the shell cwd. Commands like `echo`, `about`,
 `ipconfig` are shipped this way under `/bin/`.
 
 Larger demo and port binaries are staged under `/usr/bin/`, including
-`hello`, `plasma`, `mandel`, `fractint`, `wolf3d`, `tcc`, and `busybox`.
+`hello`, `plasma`, `mandel`, `fractint`, `wolf3d`, `tcc`, `busybox`, and the
+hosted GNU binutils tools (`as`, `ld`, `ar`, `ranlib`, `nm`, `objdump`,
+`readelf`, `objcopy`, `strip`, `strings`, `size`, and `addr2line`).
 Regression probes that are useful to keep out of the normal command namespace
-live under `/usr/libexec/tests/`, including `mathprobe`, `compatprobe`, and
-`wolf3d-srcprobe`.
+live under `/usr/libexec/tests/`, including `mathprobe`, `compatprobe`,
+`binutilsprobe`, and `wolf3d-srcprobe`.
 
 If no native command matches a bare name, the shell tries
 `/usr/bin/busybox <name> ...`. That keeps native SmallOS behavior preferred
@@ -237,6 +239,13 @@ under `/var/tmp/`.
 
 TinyCC's runtime expectations are part of the user runtime contract in
 [`docs/user-runtime.md`](user-runtime.md).
+
+The same execution path is used by the binutils round-trip test. The static
+`binutilsprobe` creates temporary source and data files, runs the guest
+assembler, archiver, indexer, and linker, then executes the linked ELF and the
+ELFs produced by `objcopy` and `strip`. That keeps binutils validation tied to
+real SmallOS `fork`/`execve`/`waitpid`, ext2 writes, and ELF loading rather
+than only command startup.
 
 For the TCP service path, FTP, cserve, and TinySSH are boot-started by default. The shell
 can still launch additional long-lived reattachable services with commands such

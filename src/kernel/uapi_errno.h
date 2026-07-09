@@ -71,6 +71,7 @@
 #define EINPROGRESS  115
 #define ENAMETOOLONG  36
 #define EUSERS        87
+#define EILSEQ        84
 #define EDQUOT       122
 #define ESTALE       116
 #define EREMOTE       66

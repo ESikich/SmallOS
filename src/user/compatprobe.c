@@ -83,6 +83,10 @@ static void probe_metadata(void) {
     char linkbuf[64];
     int fd;
     int n;
+    unsigned long long ull = 0;
+    unsigned long long hexll = 0;
+    long long sll = 0;
+    unsigned long ul = 0;
 
     unlink("/tmp/compatprobe-file");
     unlink("/tmp/compatprobe-hard");
@@ -94,6 +98,13 @@ static void probe_metadata(void) {
     check("stat absolute dir", stat("/etc", &st) == 0 && S_ISDIR(st.st_mode));
     check("stat timespec", st.st_mtim.tv_sec == st.st_mtime &&
                            st.st_mtim.tv_nsec == 0);
+    check("sscanf long long", sscanf("1234567890123 -44 2a 77",
+                                     "%llu %lld %llx %lu",
+                                     &ull, &sll, &hexll, &ul) == 4 &&
+                              ull == 1234567890123ULL &&
+                              sll == -44 &&
+                              hexll == 0x2aULL &&
+                              ul == 77UL);
     check("stat interp", stat("/lib/ld-smallos.so", &st) == 0 && S_ISREG(st.st_mode));
     fd = open("/usr/bin/hello", O_RDONLY);
     check("open hello", fd >= 0);
@@ -305,6 +316,8 @@ static void probe_unix_layer(void) {
     fd = open("/dev/null", O_RDWR);
     check("open dev null", fd >= 0);
     if (fd >= 0) {
+        int fl = fcntl(fd, F_GETFL);
+        check("fcntl getfl rdwr", (fl & 3) == O_RDWR);
         check("write dev null", write(fd, "x", 1) == 1);
         check("read dev null eof", read(fd, buf, sizeof(buf)) == 0);
         fd2 = fcntl(fd, F_DUPFD, 3);

@@ -7,7 +7,7 @@ typedef unsigned int   u32;
 typedef unsigned short u16;
 typedef unsigned char  u8;
 
-#define EXT2_MAX_LOAD_FILE_BYTES   (1024u * 1024u)
+#define EXT2_MAX_LOAD_FILE_BYTES   (4u * 1024u * 1024u)
 #define EXT2_MAX_WRITE_FILE_BYTES  (15u * 1024u * 1024u)
 
 typedef int (*ext2_read_source_fn)(void* ctx, u32 offset, u8* out, u32 len);

@@ -8,8 +8,8 @@ the technical notes under `docs/`.
 
 SmallOS is a small 32-bit x86 operating system that boots into its own shell.
 It has a writable filesystem, user programs, a text editor, manual pages,
-network tools, BusyBox-backed Unix commands, a tiny C compiler, and simple FTP
-and HTTP services.
+network tools, BusyBox-backed Unix commands, a tiny C compiler, GNU binutils,
+and simple FTP and HTTP services.
 
 Most day-to-day use looks like this:
 
@@ -241,6 +241,25 @@ tcc -nostdlib -o tccmini /usr/share/examples/tinycc/tccmini.c
 
 Generated programs written under `/var/tmp` remain on the mutable guest disk
 until you remove them or run `make reset-disk` on the host.
+
+GNU binutils tools are also available in `/usr/bin` for inspecting and
+manipulating ELF files:
+
+```text
+as --version
+ld --version
+readelf -h /usr/bin/hello
+objdump -f /usr/bin/hello
+nm /usr/bin/hello
+size /usr/bin/hello
+```
+
+The automated guest suite also runs `usr/libexec/tests/binutilsprobe`, which
+creates a tiny assembly file under `/tmp`, assembles it, archives and indexes
+it, links a generated ELF, inspects that ELF with the binutils readers, copies
+and strips it, and executes the linked, copied, and stripped outputs. That test
+is the supported SmallOS-hosted binutils coverage target; it is not intended to
+replace GNU binutils' full upstream testsuite.
 
 ## Networking Basics
 

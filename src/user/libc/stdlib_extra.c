@@ -1,5 +1,7 @@
 #include "stdlib.h"
 #include "errno.h"
+#include "locale.h"
+#include "string.h"
 #include "sys/wait.h"
 #include "unistd.h"
 
@@ -56,6 +58,56 @@ void srand(unsigned int seed) {
 int rand(void) {
     s_rand_state = s_rand_state * 1103515245u + 12345u;
     return (int)(s_rand_state & 0x7fffffffu);
+}
+
+size_t mbstowcs(wchar_t* dest, const char* src, size_t n) {
+    size_t i = 0;
+
+    if (!src) {
+        errno = EINVAL;
+        return (size_t)-1;
+    }
+
+    while (src[i]) {
+        unsigned char ch = (unsigned char)src[i];
+        if (ch >= 0x80u) {
+            errno = EILSEQ;
+            return (size_t)-1;
+        }
+        if (dest) {
+            if (i >= n) {
+                return i;
+            }
+            dest[i] = (wchar_t)ch;
+        }
+        i++;
+    }
+
+    if (dest && i < n) {
+        dest[i] = 0;
+    }
+    return i;
+}
+
+char* setlocale(int category, const char* locale) {
+    if (category < LC_CTYPE || category > LC_ALL) {
+        errno = EINVAL;
+        return NULL;
+    }
+    if (!locale || locale[0] == '\0' || strcmp(locale, "C") == 0 ||
+        strcmp(locale, "POSIX") == 0) {
+        return "C";
+    }
+    return NULL;
+}
+
+struct lconv* localeconv(void) {
+    static struct lconv lc = {
+        ".", "", "", "", "", "", "", "", "", "",
+        127, 127, 127, 127, 127, 127, 127, 127,
+        127, 127, 127, 127, 127, 127
+    };
+    return &lc;
 }
 
 double atof(const char* nptr) {

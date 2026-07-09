@@ -32,6 +32,7 @@ double atof(const char* nptr);
 long atol(const char* nptr);
 long long atoll(const char* nptr);
 int abs(int x);
+size_t mbstowcs(wchar_t* dest, const char* src, size_t n);
 void srand(unsigned int seed);
 int rand(void);
 long int strtol(const char* nptr, char** endptr, int base);
@@ -45,5 +46,6 @@ long double ldexpl(long double x, int exp);
 int system(const char* command);
 int atexit(void (*function)(void));
 __attribute__((noreturn)) void exit(int code);
+__attribute__((noreturn)) void abort(void);
 
 #endif

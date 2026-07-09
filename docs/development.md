@@ -35,7 +35,10 @@ qemu-system-i386 -drive format=raw,file=smallos.img -boot c -m 64 -serial stdio 
 `make test` runs the same image headlessly, launches the shell `selftest`
 command, feeds the interactive `readline` prompt, and verifies both the
 built-in shell commands (`tests/shell/`) and shipped test programs
-(`tests/elfs/`).
+(`tests/elfs/`). Binutils coverage is split between a quick shell command
+smoke test and `usr/libexec/tests/binutilsprobe`, which performs a generated
+ELF assemble/archive/ranlib/link/inspect/copy/strip/execute round trip inside
+the guest.
 
 The scripted shell/selftest tables live in the user shell and are kept in static
 storage. If you add more scripted command cases, keep the large tables off the

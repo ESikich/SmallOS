@@ -3089,6 +3089,8 @@ int process_fd_set_flags(fd_entry_t* ent, unsigned int flags) {
 
 unsigned int process_fd_get_flags(fd_entry_t* ent) {
     if (!ent || !ent->valid) return 0;
+    if (ent->readable && ent->writable) return ent->flags | 2u;
+    if (ent->writable) return ent->flags | 1u;
     return ent->flags;
 }
 

@@ -628,6 +628,36 @@ tinycc_run
 Any runtime or filesystem change should keep those tests passing unless the
 change explicitly updates the TinyCC contract and tests in the same patch.
 
+---
+
+# Binutils Expectations
+
+GNU binutils is built from upstream source as hosted SmallOS userland and
+installed under `/usr/bin` as `addr2line`, `ar`, `as`, `ld`, `nm`, `objcopy`,
+`objdump`, `ranlib`, `readelf`, `size`, `strings`, and `strip`. SmallOS only
+claims the staged tool surface, not the full upstream binutils test matrix.
+The build intentionally leaves out `gold`, `gprof`, `gprofng`, plugins, NLS,
+and shared binutils libraries.
+
+The runtime contract is the generated-ELF path covered by `binutilsprobe`:
+temporary files under `/tmp`, fd-backed stdio, correct `F_GETFL` access mode
+bits, archive parsing through `scanf`/`fscanf` `ll` integer formats, normal
+`fork`/`execve`/`waitpid`, ext2 writeback for object/archive/ELF outputs, and
+execution of static i386 ELFs linked by the guest `ld`.
+
+The acceptance gate is:
+
+```text
+shell: binutils_smoke
+elf: binutilsprobe
+```
+
+`binutils_smoke` keeps the command surface visible from the shell.
+`binutilsprobe` assembles a tiny program, creates an archive without a symbol
+index, indexes it with `ranlib`, links a generated executable, checks the ELF
+with the inspection tools, copies and strips it, and verifies that the linked,
+copied, and stripped ELFs all print `binutils roundtrip ok`.
+
 The generic CRT adapter is also the preferred startup path for new hosted-ish
 SmallOS user programs:
 

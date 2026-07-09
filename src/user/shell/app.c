@@ -1337,6 +1337,13 @@ void sh_shelltest(void) {
     sh_shelltest_exec("ls_nested_removed", "ls NESTPARENT");
     sh_shelltest_exec("compiler_demo", "usr/libexec/tests/compiler_demo");
     sh_shelltest_exec("tinycc", "tcc -v");
+    sh_shelltest_exec("binutils_as", "as --version");
+    sh_shelltest_exec("binutils_ld", "ld --version");
+    sh_shelltest_exec("binutils_ar", "ar --version");
+    sh_shelltest_exec("binutils_readelf", "readelf -h usr/bin/hello");
+    sh_shelltest_exec("binutils_objdump", "objdump -f usr/bin/hello");
+    sh_shelltest_exec("binutils_size", "size usr/bin/hello");
+    sh_shelltest_exec("binutils_nm", "nm usr/bin/hello");
     sh_shelltest_exec("mkdir_var_tmp", "mkdir var/tmp");
     sh_shelltest_exec("mkdir_work", "mkdir var/tmp/WORK");
     sh_shelltest_exec("mkdir_samples", "mkdir var/tmp/samples");
@@ -1510,6 +1517,7 @@ void sh_selftest(void) {
     sh_selftest_exec_expect("jobctlprobe", "usr/libexec/tests/jobctlprobe", 0);
     sh_selftest_exec_expect("mountprobe", "usr/libexec/tests/mountprobe", 0);
     sh_selftest_exec_expect("netbbprobe", "usr/libexec/tests/netbbprobe", 0);
+    sh_selftest_exec_expect("binutilsprobe", "usr/libexec/tests/binutilsprobe", 0);
     sh_selftest_exec_expect("busybox true", "usr/bin/busybox true", 0);
     sh_selftest_exec_expect("busybox false", "usr/bin/busybox false", 1);
     sh_selftest_exec_expect("busybox echo", "usr/bin/busybox echo busybox-echo-ok", 0);

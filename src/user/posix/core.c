@@ -1,4 +1,5 @@
 #include "stdio.h"
+#include "stdarg.h"
 #include "string.h"
 #include "sys/stat.h"
 #include "sys/socket.h"
@@ -22,6 +23,7 @@
 #include "sys/statvfs.h"
 #include "sys/sysinfo.h"
 #include "sys/reboot.h"
+#include "limits.h"
 #include "libgen.h"
 #include "fnmatch.h"
 #include "netdb.h"
@@ -1474,17 +1476,27 @@ long sysconf(int name) {
     return -1;
 }
 
-int prctl(int option, unsigned long arg2, unsigned long arg3,
-          unsigned long arg4, unsigned long arg5) {
+long pathconf(const char* path, int name) {
+    (void)path;
+    if (name == _PC_PATH_MAX) {
+        return PATH_MAX;
+    }
+    set_errno(EINVAL);
+    return -1;
+}
+
+int prctl(int option, ...) {
     static char comm[16] = "busybox";
+    va_list ap;
+    unsigned long arg2;
     char* out;
     const char* in;
     unsigned int i;
 
-    (void)arg3;
-    (void)arg4;
-    (void)arg5;
+    va_start(ap, option);
     if (option == PR_GET_NAME) {
+        arg2 = va_arg(ap, unsigned long);
+        va_end(ap);
         out = (char*)arg2;
         if (!out) {
             set_errno(EFAULT);
@@ -1500,6 +1512,8 @@ int prctl(int option, unsigned long arg2, unsigned long arg3,
         return 0;
     }
     if (option == PR_SET_NAME) {
+        arg2 = va_arg(ap, unsigned long);
+        va_end(ap);
         in = (const char*)arg2;
         if (!in) {
             set_errno(EFAULT);
@@ -1511,6 +1525,7 @@ int prctl(int option, unsigned long arg2, unsigned long arg3,
         comm[i] = '\0';
         return 0;
     }
+    va_end(ap);
     set_errno(ENOSYS);
     return -1;
 }

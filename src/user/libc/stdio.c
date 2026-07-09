@@ -2,6 +2,7 @@
 #include "stdio.h"
 #include "string.h"
 #include "stdlib.h"
+#include "signal.h"
 #include "dlfcn.h"
 #include "errno.h"
 #include "stdint.h"
@@ -328,10 +329,11 @@ int fseek(FILE* stream, long offset, int whence) {
     if (r < 0) {
         stdio_set_errno_from_raw(r);
         stream->error = 1;
+        return -1;
     } else {
         stream->eof = 0;
     }
-    return r;
+    return 0;
 }
 
 long ftell(FILE* stream) {
@@ -1951,6 +1953,10 @@ long double ldexpl(long double x, int exp) {
     return x;
 }
 
+double ldexp(double x, int exp) {
+    return (double)ldexpl((long double)x, exp);
+}
+
 void (*__smallos_fini_hook)(void);
 static void (*__smallos_atexit_handlers[16])(void);
 static int __smallos_atexit_count;
@@ -1985,6 +1991,12 @@ __attribute__((weak, noreturn)) void exit(int code) {
 
 __attribute__((noreturn)) void _exit(int status) {
     sys_exit(status);
+    for (;;) {}
+}
+
+__attribute__((noreturn)) void abort(void) {
+    raise(SIGABRT);
+    sys_exit(128 + SIGABRT);
     for (;;) {}
 }
 

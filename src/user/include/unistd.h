@@ -22,6 +22,8 @@ typedef int ssize_t;
 #define _SC_PAGESIZE 2
 #define _SC_PAGE_SIZE _SC_PAGESIZE
 
+#define _PC_PATH_MAX 1
+
 extern char** environ;
 extern char* optarg;
 extern int optind;
@@ -96,6 +98,7 @@ int gethostname(char* name, size_t len);
 int sethostname(const char* name, size_t len);
 int getopt(int argc, char* const argv[], const char* optstring);
 long sysconf(int name);
+long pathconf(const char* path, int name);
 __attribute__((noreturn)) void _exit(int status);
 
 #endif

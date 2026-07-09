@@ -425,6 +425,13 @@ applets, virtual `/proc` and `/dev` paths, link/symlink/node applets, and
 compatibility wrappers such as `statfs`, `sysinfo`, metadata updates, and
 truncate.
 
+Binutils coverage also lives in the guest pass. `tests/shell/binutils.py`
+keeps a quick human-visible command smoke over `as`, `ld`, `ar`, `readelf`,
+`objdump`, `size`, and `nm`. `tests/elfs/binutilsprobe.py` validates the
+functional hosted round trip for all staged tools: `addr2line`, `ar`, `as`,
+`ld`, `nm`, `objcopy`, `objdump`, `ranlib`, `readelf`, `size`, `strings`, and
+`strip`.
+
 The user runtime behavior that those tests depend on is documented in
 [`docs/user-runtime.md`](user-runtime.md), including `errno`, cwd-aware
 wrappers, stdio, directory traversal, TinyCC expectations, and BusyBox-facing
@@ -859,6 +866,16 @@ The suite also runs `tcc -run` against the hosted sysroot sample and
 `tcc -bt -run` against `tccrun_fault.c` to verify TinyCC's upstream
 signal/ucontext crash-reporting path.
 
+GNU binutils 2.42 is built as hosted SmallOS userland and staged under
+`/usr/bin` as `addr2line`, `ar`, `as`, `ld`, `nm`, `objcopy`, `objdump`,
+`ranlib`, `readelf`, `size`, `strings`, and `strip`. The build uses the
+SmallOS sysroot and keeps the scope intentionally narrow: no `gold`, `gprof`,
+`gprofng`, plugins, NLS, or shared binutils libraries. The shell smoke checks
+verify the visible command surface, while the static `binutilsprobe` guest test
+creates a tiny assembly program, archives it without an index, runs `ranlib`,
+links an i386 ELF, inspects it, copies it, strips it, and executes each
+generated executable form.
+
 BusyBox ships as `usr/bin/busybox`, configured for a useful Unix compatibility
 set rather than full Linux emulation. `ash` is enabled as `/bin/sh` with basic
 job control and interactive console input through the kernel termios and
@@ -1030,6 +1047,10 @@ Shipped ext2 programs:
   interface/route ioctls, minimal rtnetlink link/address/route/neighbor dumps,
   `/proc/net/dev`, `/proc/net/route`, UDP datagram basics, and
   localhost/numeric resolver compatibility
+- `usr/libexec/tests/binutilsprobe` - exercise all staged GNU binutils tools
+  with a SmallOS-hosted generated ELF round trip: assemble, archive, `ranlib`,
+  link, inspect, `addr2line`, copy, strip, and execute linked/copied/stripped
+  outputs
 - `usr/libexec/tests/badptrprobe` - exercise unmapped user pointers, page-crossing buffers/structs, and wrapped syscall byte counts
 - `usr/libexec/tests/sleep_test` - exercise SYS_SLEEP semantics
 - `usr/libexec/tests/ptrguard` - exercise syscall pointer validation
@@ -1041,6 +1062,10 @@ Shipped ext2 programs:
   `src/user/crt/crt0.c`
 - `usr/bin/busybox` - BusyBox multi-call binary used as the broad Unix applet
   layer
+- `usr/bin/addr2line`, `usr/bin/ar`, `usr/bin/as`, `usr/bin/ld`, `usr/bin/nm`,
+  `usr/bin/objcopy`, `usr/bin/objdump`, `usr/bin/ranlib`, `usr/bin/readelf`,
+  `usr/bin/size`, `usr/bin/strings`, and `usr/bin/strip` - hosted GNU
+  binutils tools for guest ELF creation and inspection
 - `bin/login` - native SmallOS login prompt used by normal boot
 - `bin/passwd` - native SmallOS password setter for `/etc/shadow`
 - `bin/sh` - launcher that execs `/usr/bin/busybox sh`
@@ -1063,7 +1088,7 @@ Shipped ext2 programs:
 * root directory is intended to stay directory-only during normal use
 * `bin/` contains command-style app binaries found first by bare shell command lookup
 * `proc/` and `dev/` are seeded mountpoint directories; their visible contents are provided by the kernel's virtual proc/dev providers rather than stored ext2 files
-* `usr/bin/` contains demos, development tools, and larger user-facing programs such as `hello`, `plasma`, `mandel`, `fractint`, `tcc`, and `busybox`
+* `usr/bin/` contains demos, development tools, and larger user-facing programs such as `hello`, `plasma`, `mandel`, `fractint`, `tcc`, `busybox`, and hosted GNU binutils tools
 * `usr/libexec/tests/` contains the remaining shipped test binaries; most probes, including `displayprobe`, are staged dynamically
 * `usr/sbin/` contains guest service binaries; `tcpecho`, `sockeof`, `ftpd`, and `tinyssh-start` are staged dynamically, while `cserve` and the TinySSH binaries are staged as static service ELFs; BusyBox service applets such as `tcpsvd`, `udpsvd`, `tftpd`, and `udhcpd` live under `usr/bin/busybox`, although the DHCP server applet is not run by automated smoke tests
 * `usr/include/` and `usr/lib/` contain the guest C build sysroot, including public SmallOS helpers such as `term_keys.h`

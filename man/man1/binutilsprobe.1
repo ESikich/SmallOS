@@ -1,0 +1,29 @@
+BINUTILSPROBE(1)
+
+NAME
+    binutilsprobe - test hosted GNU binutils round-trip behavior
+
+SYNOPSIS
+    /usr/libexec/tests/binutilsprobe
+
+DESCRIPTION
+    binutilsprobe is a guest regression probe for the staged GNU binutils
+    tools. It writes a tiny assembly source and marker data file under /tmp,
+    assembles the source with as, prepares an archive member, creates an
+    archive with ar, indexes it with ranlib, links a generated i386 ELF with
+    ld, and runs the resulting executable.
+
+    The probe then checks the generated ELF with readelf, objdump, nm, size,
+    strings, and addr2line. It also copies the ELF with objcopy, strips it
+    with strip, and verifies that both transformed executables still run and
+    print the stable marker:
+
+        binutils roundtrip ok
+
+    The probe is installed under /usr/libexec/tests and is normally run by the
+    host-driven selftest suite rather than by hand. It is intended to validate
+    the SmallOS-hosted binutils surface, not to replace the full upstream GNU
+    binutils testsuite.
+
+SEE ALSO
+    selftest(1), tcc(1), shell(1)

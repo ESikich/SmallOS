@@ -54,6 +54,11 @@ struct tm* gmtime_r(const time_t* timep, struct tm* result) {
     return result;
 }
 
+struct tm* gmtime(const time_t* timep) {
+    static struct tm tm;
+    return gmtime_r(timep, &tm);
+}
+
 clock_t clock(void) {
     return (clock_t)sys_get_ticks();
 }

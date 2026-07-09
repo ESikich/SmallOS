@@ -75,6 +75,11 @@ BusyBox-backed Unix compatibility layer inside the guest.
 - TinyCC is built as `usr/bin/tcc` from unmodified upstream sources and can
   compile and `-run` sample C programs inside SmallOS through the installed
   `/usr/include` and `/usr/lib` sysroot.
+- GNU binutils is built as hosted SmallOS userland and staged in `/usr/bin`,
+  including `as`, `ld`, `ar`, `ranlib`, `nm`, `objdump`, `readelf`, `objcopy`,
+  `strip`, `strings`, `size`, and `addr2line`. The guest test suite includes a
+  static `binutilsprobe` round trip that assembles, archives, indexes, links,
+  inspects, copies, strips, and executes generated i386 ELFs inside SmallOS.
 
 ## Requirements
 
@@ -302,7 +307,9 @@ make test
 
 `make test` boots headlessly, checks the boot diagnostics, runs the shell
 selftest, drives the interactive `readline` prompt, and verifies shipped
-programs against expectations under `tests/shell/` and `tests/elfs/`.
+programs against expectations under `tests/shell/` and `tests/elfs/`. The suite
+covers the quick shell-visible binutils smoke test plus the deeper
+`usr/libexec/tests/binutilsprobe` generated-ELF round trip.
 
 Useful verification targets:
 

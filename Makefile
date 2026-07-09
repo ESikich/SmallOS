@@ -2,6 +2,8 @@ ASM=nasm
 CC=i686-elf-gcc
 LD=i686-elf-ld
 AR?=$(if $(shell command -v i686-elf-ar 2>/dev/null),i686-elf-ar,ar)
+HOST_AR?=ar
+HOST_RANLIB?=ranlib
 OBJCOPY=i686-elf-objcopy
 QEMU_IMG?=qemu-img
 MAKEFLAGS += --no-print-directory
@@ -123,6 +125,18 @@ BUSYBOX_OUT_DIR=$(OBJ_DIR)/busybox-smalos
 BUSYBOX_CONFIG_STAMP=$(BUSYBOX_OUT_DIR)/.smallos-configured
 BUSYBOX_SMALOS_BIN=$(BIN_DIR)/busybox.elf
 BUSYBOX_UDHCPC_OBJ=$(OBJ_DIR)/user/ports/busybox_udhcpc.o
+BINUTILS_VERSION=2.42
+BINUTILS_URL=https://ftp.gnu.org/gnu/binutils/binutils-$(BINUTILS_VERSION).tar.bz2
+BINUTILS_TARBALL=$(STATE_DIR)/downloads/binutils-$(BINUTILS_VERSION).tar.bz2
+BINUTILS_SRC_DIR=$(BUILD_DIR)/binutils-smalos-src
+BINUTILS_PREP_STAMP=$(BINUTILS_SRC_DIR)/.smallos-prepared
+BINUTILS_OUT_DIR=$(OBJ_DIR)/binutils-smalos
+BINUTILS_CONFIG_STAMP=$(BINUTILS_OUT_DIR)/.smallos-configured
+BINUTILS_BUILD_STAMP=$(BINUTILS_OUT_DIR)/.smallos-built
+BINUTILS_STAGE_DIR=$(BIN_DIR)/binutils
+BINUTILS_TOOL_NAMES=addr2line ar as ld nm objcopy objdump ranlib readelf size strings strip
+BINUTILS_GUEST_BINS=$(addprefix $(BINUTILS_STAGE_DIR)/,$(BINUTILS_TOOL_NAMES))
+BINUTILS_STAGE_ENTRIES=$(foreach tool,$(BINUTILS_TOOL_NAMES),usr/bin/$(tool)=$(BINUTILS_STAGE_DIR)/$(tool))
 TINYSSH_COMMIT=3d93382cde06c109d5d274fa2dddea064e543c85
 TINYSSH_URL=https://github.com/janmojzis/tinyssh/archive/$(TINYSSH_COMMIT).tar.gz
 TINYSSH_TARBALL=$(STATE_DIR)/downloads/tinyssh-$(TINYSSH_COMMIT).tar.gz
@@ -203,8 +217,13 @@ USER_CFLAGS ?= -O2
 DEPFLAGS=-MMD -MP
 HOST_CC=gcc
 LIBGCC_FILE ?= $(shell $(CC) -m32 -print-libgcc-file-name)
+LIBGCC_DIR=$(patsubst %/,%,$(dir $(LIBGCC_FILE)))
+GCC_INCLUDE_DIR=$(shell $(CC) -m32 -print-file-name=include)
 LDFLAGS=-T linker.ld -m elf_i386
 USER_LDFLAGS=-m elf_i386 -Ttext-segment 0x400000 -e _start --gc-sections
+BINUTILS_CFLAGS=-m32 -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdinc -isystem $(GCC_INCLUDE_DIR) -isystem $(CURDIR)/$(USER_INCLUDE_DIR) -isystem $(CURDIR)/$(KERNEL_DIR) -DSMALLOS -DTLS= -Os -ffunction-sections -fdata-sections
+BINUTILS_LDFLAGS=-m32 -no-pie -nostdlib -nostartfiles -Wl,--allow-multiple-definition -Wl,-Ttext-segment,0x400000 -L$(CURDIR)/$(USER_LIB_DIR) -L$(LIBGCC_DIR)
+BINUTILS_CONFIGURE_ARGS=--build=x86_64-pc-linux-gnu --host=i686-pc-elf --target=i386-elf --prefix=/usr --disable-nls --disable-werror --disable-shared --enable-static --disable-gdb --disable-gdbserver --disable-gprof --disable-gprofng --disable-gold --disable-libctf --disable-plugins --disable-readline --without-zlib --without-zstd --with-sysroot=/
 USER_DYN_LDFLAGS=-m elf_i386 -Ttext-segment 0x400000 -e _start --dynamic-linker /lib/ld-smallos.so --hash-style=sysv -z now
 USER_PIE_LDFLAGS=-m elf_i386 -pie -e _start --dynamic-linker /lib/ld-smallos.so --hash-style=sysv -z now --gc-sections
 LD_SMALLOS_LDFLAGS=-m elf_i386 -shared -e _start --gc-sections --hash-style=sysv -z now -z notext
@@ -267,7 +286,7 @@ KERNEL_C_SRCS=\
 	$(DRIVERS_DIR)/ext2.c \
 	$(DRIVERS_DIR)/serial.c
 
-USER_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell sh login passwd ip ipconfig meminfo memmap cpuz top netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest hello ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe jobctlprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe cowprobe execveprobe envprobe mathprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe soundprobe plasma mandel wolf3d fractint tcpecho sockeof ftpd tinyssh-start
+USER_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell sh login passwd ip ipconfig meminfo memmap cpuz top netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest hello ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe jobctlprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe cowprobe execveprobe envprobe mathprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe binutilsprobe soundprobe plasma mandel wolf3d fractint tcpecho sockeof ftpd tinyssh-start
 USER_PROGS := $(filter-out fractint,$(USER_PROGS))
 USER_SRCS=$(addprefix $(USER_DIR)/,$(addsuffix .c,$(USER_PROGS)))
 USER_LIBC_SRCS=\
@@ -328,7 +347,7 @@ USER_UAPI_FILES=$(wildcard $(KERNEL_DIR)/uapi_*.h)
 USER_UAPI_ENTRIES=$(foreach file,$(USER_UAPI_FILES),usr/include/$(notdir $(file))=$(CURDIR)/$(file))
 EXT2_BIN_PROGS=echo about uptime halt reboot date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv edit bmpview bootsplash diskview gui shell sh login passwd ip ipconfig meminfo memmap cpuz netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest top soundprobe
 EXT2_DEMO_PROGS=hello plasma mandel wolf3d fractint
-EXT2_TEST_PROGS=ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe jobctlprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe cowprobe execveprobe envprobe mathprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe
+EXT2_TEST_PROGS=ticks args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe stdioprobe dirprobe errnoprobe badptrprobe fault sleep_test timerfdprobe signalfdprobe connectprobe ptrguard spinwkr pgrpprobe jobctlprobe preempt_test crtprobe displayprobe inputprobe pipeprobe dupprobe forkprobe cowprobe execveprobe envprobe mathprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe binutilsprobe
 USER_DYNAMIC_NO_CRT0=echo about uptime date pwd cat more man fsread ls tree touch rm mkdir rmdir cp mv meminfo memmap cpuz top hello args exec_args readline exec_test waitprobe fileread compiler_demo heapprobe statprobe fileprobe cwdprobe dirprobe errnoprobe badptrprobe sleep_test timerfdprobe ptrguard preempt_test inputprobe stdioprobe ip ipconfig netinfo dhcp netsend netrecv arpgw ping pinggw pingpublic netcheck ticks fault signalfdprobe connectprobe spinwkr pgrpprobe tcpecho sockeof ftpd halt reboot ataread usbinfo usbports usbdiag usbpeek usbpower usbmouse mousetest soundprobe displayprobe
 USER_DYNAMIC_WITH_CRT0=crtprobe mathprobe pipeprobe dupprobe forkprobe cowprobe execveprobe envprobe compatprobe permprobe atprobe ttyprobe rsrcprobe sessprobe mountprobe netbbprobe
 USER_DYNAMIC_PROGS=$(USER_DYNAMIC_NO_CRT0) $(USER_DYNAMIC_WITH_CRT0)
@@ -405,7 +424,7 @@ else
 WOLF3D_DATA_ENTRIES=
 endif
 EXT2_EXTRA_DIRS=tmp/ var/log/ lib/ proc/ dev/ dev/fd/ dev/pts/ usr/include/ usr/include/arpa/ usr/include/linux/ usr/include/netinet/ usr/include/sys/ usr/lib/ usr/lib/smallos/ usr/lib/smallos/plugins/ usr/libexec/tests/static/ usr/share/examples/tinycc/ usr/share/man/man1/ usr/share/man/man2/ usr/share/man/man3/ usr/share/man/man4/ usr/share/man/man5/ usr/share/man/man6/ usr/share/man/man7/ usr/share/man/man8/ usr/share/wolf3d/ .ssh/ etc/tinyssh/
-EXT2_BASE_EXTRA_ENTRIES=usr/bin/tcc=$(TINYCC_SMALOS_BIN) usr/bin/busybox=$(BUSYBOX_SMALOS_BIN) $(USER_INCLUDE_ENTRIES) $(USER_UAPI_ENTRIES) usr/share/examples/tinycc/tccmath.c=$(CURDIR)/samples/tccmath.c usr/share/examples/tinycc/tccagg.c=$(CURDIR)/samples/tccagg.c usr/share/examples/tinycc/tcctree.c=$(CURDIR)/samples/tcctree.c usr/share/examples/tinycc/tccmini.c=$(CURDIR)/samples/tccmini.c usr/share/examples/tinycc/tccsysroot.c=$(CURDIR)/samples/tccsysroot.c usr/share/examples/tinycc/tccposix.c=$(CURDIR)/samples/tccposix.c usr/share/examples/tinycc/tccrun_fault.c=$(CURDIR)/samples/tccrun_fault.c etc/passwd=$(CURDIR)/samples/passwd etc/shadow=$(CURDIR)/samples/shadow etc/group=$(CURDIR)/samples/group etc/random-seed=$(RANDOM_SEED_FILE) .ssh/authorized_keys=$(TINYSSH_AUTHORIZED_KEYS) etc/cserve.ini=$(CURDIR)/samples/cserve.ini var/www/index.html=$(CURDIR)/samples/cserve_index.html var/log/boot.txt=$(CURDIR)/samples/boot.txt boot/splash.bmp=$(CURDIR)/assets/boot_splash.bmp $(MAN_PAGE_ENTRIES)
+EXT2_BASE_EXTRA_ENTRIES=usr/bin/tcc=$(TINYCC_SMALOS_BIN) usr/bin/busybox=$(BUSYBOX_SMALOS_BIN) $(BINUTILS_STAGE_ENTRIES) $(USER_INCLUDE_ENTRIES) $(USER_UAPI_ENTRIES) usr/share/examples/tinycc/tccmath.c=$(CURDIR)/samples/tccmath.c usr/share/examples/tinycc/tccagg.c=$(CURDIR)/samples/tccagg.c usr/share/examples/tinycc/tcctree.c=$(CURDIR)/samples/tcctree.c usr/share/examples/tinycc/tccmini.c=$(CURDIR)/samples/tccmini.c usr/share/examples/tinycc/tccsysroot.c=$(CURDIR)/samples/tccsysroot.c usr/share/examples/tinycc/tccposix.c=$(CURDIR)/samples/tccposix.c usr/share/examples/tinycc/tccrun_fault.c=$(CURDIR)/samples/tccrun_fault.c etc/passwd=$(CURDIR)/samples/passwd etc/shadow=$(CURDIR)/samples/shadow etc/group=$(CURDIR)/samples/group etc/random-seed=$(RANDOM_SEED_FILE) .ssh/authorized_keys=$(TINYSSH_AUTHORIZED_KEYS) etc/cserve.ini=$(CURDIR)/samples/cserve.ini var/www/index.html=$(CURDIR)/samples/cserve_index.html var/log/boot.txt=$(CURDIR)/samples/boot.txt boot/splash.bmp=$(CURDIR)/assets/boot_splash.bmp $(MAN_PAGE_ENTRIES)
 EXT2_EXTRA_ENTRIES=$(EXT2_BASE_EXTRA_ENTRIES) $(USER_LIB_ENTRIES)
 FRACTINT_EXTRA_ENTRIES=usr/share/xfractint/fractint.hlp=$(FRACTINT_DIR)/fractint.hlp usr/share/xfractint/sstools.ini=$(FRACTINT_DIR)/sstools.ini $(FRACTINT_DATA_ENTRIES)
 EXT2_ALL_EXTRA_ENTRIES=$(EXT2_EXTRA_ENTRIES) $(FRACTINT_EXTRA_ENTRIES) $(WOLF3D_DATA_ENTRIES)
@@ -523,7 +542,7 @@ OBJ_SUBDIRS=$(sort \
 )
 
 BUILD_SUBDIRS=$(BUILD_DIR) $(OBJ_DIR) $(BIN_DIR) $(GEN_DIR) $(IMG_DIR) $(dir $(IMG_FILE)) $(TOOLS_DIR) $(OBJ_SUBDIRS) $(STATE_DIR)
-BUILD_SUBDIRS+=$(TINYCC_SMALOS_OBJ_DIR) $(BUSYBOX_OUT_DIR) $(CSERVER_OBJ_DIR) $(TINYSSH_OBJ_DIR)
+BUILD_SUBDIRS+=$(TINYCC_SMALOS_OBJ_DIR) $(BUSYBOX_OUT_DIR) $(BINUTILS_OUT_DIR) $(BINUTILS_STAGE_DIR) $(CSERVER_OBJ_DIR) $(TINYSSH_OBJ_DIR)
 
 all: artifacts
 
@@ -835,6 +854,81 @@ $(BUSYBOX_SMALOS_BIN): $(BUSYBOX_CONFIG_STAMP) $(USER_CRT0_OBJ) $(BUSYBOX_UDHCPC
 	$(MAKE) -C $(BUSYBOX_SRC_DIR) O=$(CURDIR)/$(BUSYBOX_OUT_DIR) ARCH=i386 CC="$(CC)" busybox
 	cp $(BUSYBOX_OUT_DIR)/busybox $@
 
+$(BINUTILS_TARBALL): | dirs
+	mkdir -p $(dir $@)
+	curl -L --fail -o $@ $(BINUTILS_URL)
+
+$(BINUTILS_PREP_STAMP): $(BINUTILS_TARBALL) | dirs
+	rm -rf $(BINUTILS_SRC_DIR)
+	mkdir -p $(BINUTILS_SRC_DIR)
+	tar -xjf $(BINUTILS_TARBALL) --strip-components=1 -C $(BINUTILS_SRC_DIR)
+	touch $@
+
+$(BINUTILS_CONFIG_STAMP): $(BINUTILS_PREP_STAMP) tools/smallos_hosted_cc.sh $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) Makefile | dirs
+	rm -rf $(BINUTILS_OUT_DIR)
+	mkdir -p $(BINUTILS_OUT_DIR)
+	cd $(BINUTILS_OUT_DIR) && \
+		SMALLOS_CC="$(CC)" \
+		SMALLOS_CRT0="$(CURDIR)/$(USER_CRT0_OBJ)" \
+		SMALLOS_HOSTED_LIBS="-lc -lgcc" \
+		CC="$(CURDIR)/tools/smallos_hosted_cc.sh" \
+		AR="$(HOST_AR)" RANLIB="$(HOST_RANLIB)" \
+		CFLAGS="$(BINUTILS_CFLAGS)" \
+		LDFLAGS="$(BINUTILS_LDFLAGS)" \
+		ac_cv_header_spawn_h=no ac_cv_func_posix_spawn=no ac_cv_func_posix_spawnp=no \
+		ac_cv_tls=none \
+		$(CURDIR)/$(BINUTILS_SRC_DIR)/configure $(BINUTILS_CONFIGURE_ARGS)
+	touch $@
+
+$(BINUTILS_BUILD_STAMP): $(BINUTILS_CONFIG_STAMP) tools/smallos_hosted_cc.sh $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) $(USER_INCLUDE_FILES) $(USER_UAPI_FILES) Makefile | dirs
+	SMALLOS_CC="$(CC)" \
+	SMALLOS_CRT0="$(CURDIR)/$(USER_CRT0_OBJ)" \
+	SMALLOS_HOSTED_LIBS="-lc -lgcc" \
+	CC="$(CURDIR)/tools/smallos_hosted_cc.sh" \
+	AR="$(HOST_AR)" RANLIB="$(HOST_RANLIB)" \
+	CFLAGS="$(BINUTILS_CFLAGS)" \
+	LDFLAGS="$(BINUTILS_LDFLAGS)" \
+	ac_cv_header_spawn_h=no ac_cv_func_posix_spawn=no ac_cv_func_posix_spawnp=no \
+	ac_cv_tls=none \
+	$(MAKE) -C $(BINUTILS_OUT_DIR) MAKEINFO=true LDFLAGS="$(BINUTILS_LDFLAGS)" all-binutils all-gas all-ld
+	touch $@
+
+$(BINUTILS_STAGE_DIR)/addr2line: $(BINUTILS_BUILD_STAMP) | dirs
+	cp $(BINUTILS_OUT_DIR)/binutils/addr2line $@
+
+$(BINUTILS_STAGE_DIR)/ar: $(BINUTILS_BUILD_STAMP) | dirs
+	cp $(BINUTILS_OUT_DIR)/binutils/ar $@
+
+$(BINUTILS_STAGE_DIR)/as: $(BINUTILS_BUILD_STAMP) | dirs
+	cp $(BINUTILS_OUT_DIR)/gas/as-new $@
+
+$(BINUTILS_STAGE_DIR)/ld: $(BINUTILS_BUILD_STAMP) | dirs
+	cp $(BINUTILS_OUT_DIR)/ld/ld-new $@
+
+$(BINUTILS_STAGE_DIR)/nm: $(BINUTILS_BUILD_STAMP) | dirs
+	cp $(BINUTILS_OUT_DIR)/binutils/nm-new $@
+
+$(BINUTILS_STAGE_DIR)/objcopy: $(BINUTILS_BUILD_STAMP) | dirs
+	cp $(BINUTILS_OUT_DIR)/binutils/objcopy $@
+
+$(BINUTILS_STAGE_DIR)/objdump: $(BINUTILS_BUILD_STAMP) | dirs
+	cp $(BINUTILS_OUT_DIR)/binutils/objdump $@
+
+$(BINUTILS_STAGE_DIR)/ranlib: $(BINUTILS_BUILD_STAMP) | dirs
+	cp $(BINUTILS_OUT_DIR)/binutils/ranlib $@
+
+$(BINUTILS_STAGE_DIR)/readelf: $(BINUTILS_BUILD_STAMP) | dirs
+	cp $(BINUTILS_OUT_DIR)/binutils/readelf $@
+
+$(BINUTILS_STAGE_DIR)/size: $(BINUTILS_BUILD_STAMP) | dirs
+	cp $(BINUTILS_OUT_DIR)/binutils/size $@
+
+$(BINUTILS_STAGE_DIR)/strings: $(BINUTILS_BUILD_STAMP) | dirs
+	cp $(BINUTILS_OUT_DIR)/binutils/strings $@
+
+$(BINUTILS_STAGE_DIR)/strip: $(BINUTILS_BUILD_STAMP) | dirs
+	cp $(BINUTILS_OUT_DIR)/binutils/strip-new $@
+
 $(TINYSSH_TARBALL): | dirs
 	mkdir -p $(dir $@)
 	curl -L --fail -o $@ $(TINYSSH_URL)
@@ -905,6 +999,9 @@ $(BIN_DIR)/jobctlprobe.elf: $(OBJ_DIR)/user/jobctlprobe.o $(USER_CRT0_OBJ) $(USE
 	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
 
 $(BIN_DIR)/execveprobe.elf: $(OBJ_DIR)/user/execveprobe.o $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
+	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
+
+$(BIN_DIR)/binutilsprobe.elf: $(OBJ_DIR)/user/binutilsprobe.o $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
 	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
 
 $(BIN_DIR)/envprobe.elf: $(OBJ_DIR)/user/envprobe.o $(USER_CRT0_OBJ) $(USER_LIB_ARCHIVES) | dirs
@@ -1021,6 +1118,8 @@ tinycc-host-clean:
 tinycc-smalos: $(TINYCC_SMALOS_BIN)
 
 busybox-smalos: $(BUSYBOX_SMALOS_BIN)
+
+binutils-smalos: $(BINUTILS_GUEST_BINS)
 
 tinyssh-smalos: $(TINYSSH_ELFS)
 
@@ -1215,7 +1314,7 @@ QEMU_USB_STORAGE_FLAGS=-drive if=none,id=stick,format=raw,file=$(IMG_FILE) \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all image img artifacts dirs deps fractint-source wolf3d-shareware-data wolf3d-source-probe check-third-party dyn-size-report dynamic-link-check dyn-reloc-inventory dynlink-negative-smoke run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage run-usb-storage-fallback run-headless-usb-storage-fallback usb-storage-smoke usb-ramdisk-fallback-smoke test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke busybox-net-smoke tinyssh-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean tinycc-smalos busybox-smalos tinyssh-smalos FORCE
+.PHONY: all image img artifacts dirs deps fractint-source wolf3d-shareware-data wolf3d-source-probe check-third-party dyn-size-report dynamic-link-check dyn-reloc-inventory dynlink-negative-smoke run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage run-usb-storage-fallback run-headless-usb-storage-fallback usb-storage-smoke usb-ramdisk-fallback-smoke test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke busybox-net-smoke tinyssh-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean tinycc-smalos busybox-smalos binutils-smalos tinyssh-smalos FORCE
 
 FORCE:
 

@@ -59,8 +59,8 @@ int vsscanf(const char* input, const char* fmt, va_list ap) {
         while (*fmt >= '0' && *fmt <= '9') {
             width = width * 10 + (*fmt++ - '0');
         }
-        if (*fmt == 'l') {
-            longmod = 1;
+        while (*fmt == 'l' && longmod < 2) {
+            longmod++;
             fmt++;
         }
 
@@ -71,25 +71,36 @@ int vsscanf(const char* input, const char* fmt, va_list ap) {
                 *out++ = *input++;
             }
             assigned++;
-        } else if (*fmt == 'd' || *fmt == 'u' || *fmt == 'x') {
+        } else if (*fmt == 'd' || *fmt == 'u' || *fmt == 'x' || *fmt == 'X') {
             char* end = NULL;
-            int base = *fmt == 'x' ? 16 : 10;
+            int base = (*fmt == 'x' || *fmt == 'X') ? 16 : 10;
             while (scan_isspace((unsigned char)*input)) input++;
-            if (*fmt == 'u') {
-                unsigned long value = strtoul(input, &end, base);
-                unsigned int* out = va_arg(ap, unsigned int*);
+            if (*fmt == 'u' || *fmt == 'x' || *fmt == 'X') {
+                unsigned long long value = strtoull(input, &end, base);
                 if (end == input) break;
-                *out = (unsigned int)value;
-            } else {
-                long value = strtol(input, &end, base);
-                if (longmod) {
-                    long* out = va_arg(ap, long*);
+                if (longmod >= 2) {
+                    unsigned long long* out = va_arg(ap, unsigned long long*);
                     *out = value;
+                } else if (longmod == 1) {
+                    unsigned long* out = va_arg(ap, unsigned long*);
+                    *out = (unsigned long)value;
+                } else {
+                    unsigned int* out = va_arg(ap, unsigned int*);
+                    *out = (unsigned int)value;
+                }
+            } else {
+                long long value = strtoll(input, &end, base);
+                if (end == input) break;
+                if (longmod >= 2) {
+                    long long* out = va_arg(ap, long long*);
+                    *out = value;
+                } else if (longmod == 1) {
+                    long* out = va_arg(ap, long*);
+                    *out = (long)value;
                 } else {
                     int* out = va_arg(ap, int*);
                     *out = (int)value;
                 }
-                if (end == input) break;
             }
             input = end;
             assigned++;
@@ -207,8 +218,8 @@ int fscanf(FILE* stream, const char* fmt, ...) {
         while (*fmt >= '0' && *fmt <= '9') {
             width = width * 10 + (*fmt++ - '0');
         }
-        if (*fmt == 'l') {
-            longmod = 1;
+        while (*fmt == 'l' && longmod < 2) {
+            longmod++;
             fmt++;
         }
 
@@ -233,12 +244,15 @@ int fscanf(FILE* stream, const char* fmt, ...) {
             tok[count] = '\0';
             if (count == 0) break;
             if (*fmt == 'u' || *fmt == 'x' || *fmt == 'X') {
-                unsigned long value = strtoul(tok, &end, base);
+                unsigned long long value = strtoull(tok, &end, base);
                 if (end == tok) break;
                 if (!suppress) {
-                    if (longmod) {
-                        unsigned long* out = va_arg(ap, unsigned long*);
+                    if (longmod >= 2) {
+                        unsigned long long* out = va_arg(ap, unsigned long long*);
                         *out = value;
+                    } else if (longmod == 1) {
+                        unsigned long* out = va_arg(ap, unsigned long*);
+                        *out = (unsigned long)value;
                     } else {
                         unsigned int* out = va_arg(ap, unsigned int*);
                         *out = (unsigned int)value;
@@ -246,12 +260,15 @@ int fscanf(FILE* stream, const char* fmt, ...) {
                     assigned++;
                 }
             } else {
-                long value = strtol(tok, &end, base);
+                long long value = strtoll(tok, &end, base);
                 if (end == tok) break;
                 if (!suppress) {
-                    if (longmod) {
-                        long* out = va_arg(ap, long*);
+                    if (longmod >= 2) {
+                        long long* out = va_arg(ap, long long*);
                         *out = value;
+                    } else if (longmod == 1) {
+                        long* out = va_arg(ap, long*);
+                        *out = (long)value;
                     } else {
                         int* out = va_arg(ap, int*);
                         *out = (int)value;
