@@ -68,9 +68,9 @@ ELF interpreter. The image stages conventional TinyCC-facing artifacts such as
 `bt-log.o`, and a compatibility `libpthread.a` archive alongside the SmallOS
 runtime archives.
 
-BusyBox is downloaded into `.state/downloads/`, gets SmallOS platform
-capability overrides from `patches/busybox/smallos.patch`, links SmallOS-owned
-port objects such as the `udhcpc` DHCP wrapper, is configured by
+BusyBox is downloaded into `.state/downloads/`, builds from the unmodified
+upstream source against the SmallOS libc compatibility surface, links
+SmallOS-owned port objects such as the `udhcpc` DHCP wrapper, is configured by
 `tools/configure_busybox_smalos.sh`, and is built in a profile-local object tree.
 The installed binary is `usr/bin/busybox`. The image also includes `/bin/sh`,
 a tiny launcher that execs `busybox sh`, so BusyBox `ash` can serve script-like

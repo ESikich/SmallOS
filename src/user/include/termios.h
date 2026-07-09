@@ -80,6 +80,8 @@ struct termios {
 #define IUCLC 0001000
 #define IMAXBEL 0020000
 #define ONLCR 0000004
+#define TAB3 0014000
+#define XTABS TAB3
 
 #define CS5 0000000
 #define CS6 0000020

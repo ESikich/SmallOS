@@ -123,7 +123,7 @@ static int check_foreground_exec_stdout_inheritance(void) {
             ok = 0;
         } else {
             buf[n] = '\0';
-            ok = buffer_contains(buf, n, "hello from elf via int 0x80");
+            ok = buffer_contains(buf, n, "hello from user mode via int 0x80");
         }
     }
 

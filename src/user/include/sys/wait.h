@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "uapi_syscall.h"
+#include "resource.h"
 
 #define WNOHANG SYS_WAITPID_WNOHANG
 #define WUNTRACED SYS_WAITPID_WUNTRACED
@@ -17,5 +18,6 @@
 
 pid_t waitpid(pid_t pid, int* status, int options);
 pid_t wait(int* status);
+pid_t wait3(int* status, int options, struct rusage* rusage);
 
 #endif /* USER_SYS_WAIT_H */

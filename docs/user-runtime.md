@@ -537,11 +537,14 @@ and login environment variables, then starts the account shell (`/bin/shell` in
 the default image). Native `/bin/passwd` sets `$smallos-sha256$` shadow hashes
 and can clear root's password with `passwd -d root` for development recovery.
 
-`usr/bin/busybox` is built as the broad Unix applet layer. The configuration
-keeps the native SmallOS command set intact and enables BusyBox where it fills
-compatibility gaps: `ash` as `/bin/sh`, standalone applets, core file tools,
-text filters, gzip/archive/hexdump tools, checksum helpers, and lightweight
-process/filesystem diagnostics. Filesystem-facing applets such as `ln`,
+`usr/bin/busybox` is built from unmodified upstream source as the broad Unix
+applet layer. The configuration keeps the native SmallOS command set intact,
+while the SmallOS libc/sysroot provides the small POSIX/GNU compatibility
+surface BusyBox expects: string helpers, unlocked stdio, `getline`, `%m`
+formatting, terminal name wrappers, and a few POSIX process/filesystem shims.
+BusyBox fills compatibility gaps with `ash` as `/bin/sh`, standalone applets,
+core file tools, text filters, gzip/archive/hexdump tools, checksum helpers,
+and lightweight process/filesystem diagnostics. Filesystem-facing applets such as `ln`,
 `link`, `readlink`, `mkfifo`, `mknod`, `chmod`, `chown`, `chgrp`, `touch`,
 `stat`, and `find -type` exercise the real ext2 metadata and node support.
 Native `/bin` tools stay first in command lookup; if a bare command is missing,
@@ -578,7 +581,8 @@ lease renewal/expiry semantics, telnet/telnetd, inetd, richer TFTP server
 modes, AF_PACKET applets, `ip` rule/tunnel modes, multi-interface and IPv6
 behavior, HTTPS/TLS, and complete Linux device behavior remain disabled or
 stubbed. New BusyBox applets should grow the shared runtime, headers, and
-virtual filesystem behavior when they reveal a portable Unix expectation.
+virtual filesystem behavior when they reveal a portable Unix expectation,
+rather than carrying local source patches against BusyBox itself.
 
 ---
 

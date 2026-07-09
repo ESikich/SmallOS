@@ -56,18 +56,18 @@ BusyBox-backed Unix compatibility layer inside the guest.
 - Normal boot now hands the console to native `/bin/login`. The sample image
   stages `root:x` in `/etc/passwd` with an empty `/etc/shadow` password so
   development boots remain passwordless until `passwd` sets a SmallOS hash.
-- BusyBox is staged as `usr/bin/busybox`; native `/bin` tools remain first in
-  shell command lookup, while BusyBox fills gaps such as `grep`, `sed`, `awk`,
-  `df`, `du`, `free`, `ps`, `tar`, `gzip`, `gunzip`, checksum tools, and
-  `hexdump`, network applets such as `ifconfig`, `route`, `arp`, `ip`,
-  `hostname`, `ipcalc`, `netstat`, `nslookup`, `pscan`, `ping`, `nc`, plain
-  HTTP `wget`, `whois`, `ftpget`, `ftpput`, `tftp`, `tcpsvd`, `udpsvd`,
-  `tftpd`, `httpd`, `udhcpc`, `udhcpd`, and `dumpleases`, login-flow applets
-  such as `init`, `login`, and `getty`, plus link/node utilities such as `ln`,
-  `link`, `readlink`,
-  `mkfifo`, and `mknod`. `/bin/sh` launches BusyBox `ash` with basic POSIX
-  job-control support for script-style compatibility without replacing
-  `/bin/shell`.
+- BusyBox is staged as `usr/bin/busybox` from unmodified upstream source; the
+  SmallOS libc/sysroot now carries the small POSIX/GNU compatibility surface it
+  needs. Native `/bin` tools remain first in shell command lookup, while BusyBox
+  fills gaps such as `grep`, `sed`, `awk`, `df`, `du`, `free`, `ps`, `tar`,
+  `gzip`, `gunzip`, checksum tools, and `hexdump`, network applets such as
+  `ifconfig`, `route`, `arp`, `ip`, `hostname`, `ipcalc`, `netstat`,
+  `nslookup`, `pscan`, `ping`, `nc`, plain HTTP `wget`, `whois`, `ftpget`,
+  `ftpput`, `tftp`, `tcpsvd`, `udpsvd`, `tftpd`, `httpd`, `udhcpc`, `udhcpd`,
+  and `dumpleases`, login-flow applets such as `init`, `login`, and `getty`,
+  plus link/node utilities such as `ln`, `link`, `readlink`, `mkfifo`, and
+  `mknod`. `/bin/sh` launches BusyBox `ash` with basic POSIX job-control support
+  for script-style compatibility without replacing `/bin/shell`.
 - The root image seeds visible `/proc` and `/dev` mountpoint directories, while
   the compatibility layer supplies their virtual entries for Unix tools:
   memory, uptime, process, mount, filesystem, network, null, zero, urandom, tty,

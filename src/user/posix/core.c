@@ -208,6 +208,15 @@ int unsetenv(const char* name) {
     return 0;
 }
 
+int clearenv(void) {
+    if (s_environ_owned && environ && environ != __smallos_empty_env) {
+        free(environ);
+    }
+    environ = __smallos_empty_env;
+    s_environ_owned = 0;
+    return 0;
+}
+
 int getopt(int argc, char* const argv[], const char* optstring) {
     static const char* next = 0;
     const char* optdecl;
@@ -339,6 +348,17 @@ int mkstemp(char* template) {
         return -1;
     }
     return open(path, O_CREAT | O_EXCL | O_RDWR, 0600);
+}
+
+char* mkdtemp(char* template) {
+    char* path = mktemp(template);
+    if (!path || !path[0]) {
+        return 0;
+    }
+    if (mkdir(path, 0700) < 0) {
+        return 0;
+    }
+    return path;
 }
 
 static uint32_t open_flags_to_mode(int flags) {
@@ -1131,6 +1151,10 @@ int fsync(int fd) {
     return errno_from_raw(sys_fsync(fd));
 }
 
+int fdatasync(int fd) {
+    return fsync(fd);
+}
+
 int ftruncate(int fd, off_t length) {
     if (length < 0) {
         set_errno(EINVAL);
@@ -1539,6 +1563,13 @@ pid_t waitpid(pid_t pid, int* status, int options) {
 
 pid_t wait(int* status) {
     return waitpid((pid_t)-1, status, 0);
+}
+
+pid_t wait3(int* status, int options, struct rusage* rusage) {
+    if (rusage) {
+        memset(rusage, 0, sizeof(*rusage));
+    }
+    return waitpid((pid_t)-1, status, options);
 }
 
 int kill(int pid, int signum) {
@@ -2699,8 +2730,31 @@ char* ttyname(int fd) {
     return pty_name_for_fd(fd, name, sizeof(name));
 }
 
+int ttyname_r(int fd, char* buf, size_t buflen) {
+    char* name;
+    size_t len;
+
+    if (!buf || buflen == 0u) {
+        return EINVAL;
+    }
+    name = ttyname(fd);
+    if (!name) {
+        return errno ? errno : ENOTTY;
+    }
+    len = strlen(name);
+    if (len + 1u > buflen) {
+        return ERANGE;
+    }
+    memcpy(buf, name, len + 1u);
+    return 0;
+}
+
 char* ptsname(int fd) {
     return ttyname(fd);
+}
+
+int ptsname_r(int fd, char* buf, size_t buflen) {
+    return ttyname_r(fd, buf, buflen);
 }
 
 int grantpt(int fd) {

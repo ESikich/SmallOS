@@ -216,6 +216,12 @@ int main(void) {
                                strncmp(ttyname(ofds[1]), "/dev/pts/", 9) == 0);
         check("ptsname master", ptsname(ofds[0]) &&
                                 strncmp(ptsname(ofds[0]), "/dev/pts/", 9) == 0);
+        memset(name, 0, sizeof(name));
+        check("ttyname_r slave", ttyname_r(ofds[1], name, sizeof(name)) == 0 &&
+                                 strncmp(name, "/dev/pts/", 9) == 0);
+        memset(name, 0, sizeof(name));
+        check("ptsname_r master", ptsname_r(ofds[0], name, sizeof(name)) == 0 &&
+                                  strncmp(name, "/dev/pts/", 9) == 0);
         check("grantpt wrapper", grantpt(ofds[0]) == 0);
         check("unlockpt wrapper", unlockpt(ofds[0]) == 0);
         child = fork();
@@ -246,6 +252,7 @@ int main(void) {
         check("tcgetattr enotty", tcgetattr(nullfd, &tio) < 0 && errno == ENOTTY);
         errno = 0;
         check("ioctl enotty", ioctl(nullfd, TIOCGWINSZ, &ws) < 0 && errno == ENOTTY);
+        check("ttyname_r enotty", ttyname_r(nullfd, name, sizeof(name)) == ENOTTY);
         check("isatty false", isatty(nullfd) == 0);
         close(nullfd);
     }

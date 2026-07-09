@@ -206,6 +206,10 @@ int fgetc(FILE* stream) {
     return (int)ch;
 }
 
+int fgetc_unlocked(FILE* stream) {
+    return fgetc(stream);
+}
+
 char* fgets(char* s, int size, FILE* stream) {
     if (!s || size <= 0 || !stream) return 0;
     int i = 0;
@@ -220,12 +224,24 @@ char* fgets(char* s, int size, FILE* stream) {
     return s;
 }
 
+char* fgets_unlocked(char* s, int size, FILE* stream) {
+    return fgets(s, size, stream);
+}
+
 int getc(FILE* stream) {
     return fgetc(stream);
 }
 
+int getc_unlocked(FILE* stream) {
+    return getc(stream);
+}
+
 int getchar(void) {
     return fgetc(stdin);
+}
+
+int getchar_unlocked(void) {
+    return getchar();
 }
 
 char* gets(char* s) {
@@ -261,12 +277,24 @@ int fflush(FILE* stream) {
     return 0;
 }
 
+int fflush_unlocked(FILE* stream) {
+    return fflush(stream);
+}
+
 int feof(FILE* stream) {
     return stream ? stream->eof : 0;
 }
 
+int feof_unlocked(FILE* stream) {
+    return feof(stream);
+}
+
 int ferror(FILE* stream) {
     return stream ? stream->error : 0;
+}
+
+int ferror_unlocked(FILE* stream) {
+    return ferror(stream);
 }
 
 void clearerr(FILE* stream) {
@@ -281,9 +309,17 @@ int fputc(int c, FILE* stream) {
     return c;
 }
 
+int fputc_unlocked(int c, FILE* stream) {
+    return fputc(c, stream);
+}
+
 int fputs(const char* s, FILE* stream) {
     size_t len = strlen(s);
     return stream_write_raw(stream, s, len) == (int)len ? 0 : EOF;
+}
+
+int fputs_unlocked(const char* s, FILE* stream) {
+    return fputs(s, stream);
 }
 
 int fseek(FILE* stream, long offset, int whence) {
@@ -324,15 +360,76 @@ int fileno(FILE* stream) {
     return stream->fd;
 }
 
+int fileno_unlocked(FILE* stream) {
+    return fileno(stream);
+}
+
+int putc_unlocked(int c, FILE* stream) {
+    return putc(c, stream);
+}
+
 int putchar(int c) {
     sys_putc((char)c);
     return c;
+}
+
+int putchar_unlocked(int c) {
+    return putchar(c);
 }
 
 int puts(const char* s) {
     u_puts(s);
     sys_putc('\n');
     return 0;
+}
+
+ssize_t getline(char** lineptr, size_t* n, FILE* stream) {
+    char* line;
+    size_t cap;
+    size_t len = 0;
+    int ch;
+
+    if (!lineptr || !n || !stream) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    line = *lineptr;
+    cap = *n;
+    if (!line || cap == 0u) {
+        cap = 128u;
+        line = (char*)malloc(cap);
+        if (!line) {
+            errno = ENOMEM;
+            return -1;
+        }
+    }
+
+    while ((ch = fgetc(stream)) != EOF) {
+        if (len + 1u >= cap) {
+            size_t next_cap = cap + cap / 2u + 32u;
+            char* next = (char*)realloc(line, next_cap);
+            if (!next) {
+                if (!*lineptr) free(line);
+                errno = ENOMEM;
+                return -1;
+            }
+            line = next;
+            cap = next_cap;
+        }
+        line[len++] = (char)ch;
+        if (ch == '\n') break;
+    }
+
+    if (len == 0u) {
+        if (!*lineptr) free(line);
+        return -1;
+    }
+
+    line[len] = '\0';
+    *lineptr = line;
+    *n = cap;
+    return (ssize_t)len;
 }
 
 static void append_char(char** out, size_t* left, char c, size_t* count) {
@@ -1059,6 +1156,11 @@ static int format_into(char* str, size_t size, const char* fmt, va_list ap) {
                 append_str(&out, &left, "0x", &count);
                 append_uint(&out, &left, (unsigned long)(unsigned int)va_arg(ap, void*), 16, 0, &count);
                 break;
+            case 'm':
+                append_str_width(&out, &left, strerror(errno),
+                                 width_present ? width : 0,
+                                 left_adjust, precision, &count);
+                break;
             case 'f':
             case 'F':
             case 'e':
@@ -1290,6 +1392,14 @@ char* strcpy(char* dest, const char* src) {
     return dest;
 }
 
+char* stpcpy(char* dest, const char* src) {
+    while ((*dest = *src) != '\0') {
+        dest++;
+        src++;
+    }
+    return dest;
+}
+
 char* strncpy(char* dest, const char* src, size_t n) {
     size_t i = 0;
     for (; i < n && src[i]; i++) {
@@ -1301,11 +1411,30 @@ char* strncpy(char* dest, const char* src, size_t n) {
     return dest;
 }
 
+char* stpncpy(char* dest, const char* src, size_t n) {
+    size_t i = 0;
+    for (; i < n && src[i]; i++) {
+        dest[i] = src[i];
+    }
+    if (i < n) {
+        char* end = dest + i;
+        for (; i < n; i++) {
+            dest[i] = '\0';
+        }
+        return end;
+    }
+    return dest + n;
+}
+
 void* memcpy(void* dest, const void* src, size_t n) {
     unsigned char* d = (unsigned char*)dest;
     const unsigned char* s = (const unsigned char*)src;
     for (size_t i = 0; i < n; i++) d[i] = s[i];
     return dest;
+}
+
+void* mempcpy(void* dest, const void* src, size_t n) {
+    return (unsigned char*)memcpy(dest, src, n) + n;
 }
 
 void* memmove(void* dest, const void* src, size_t n) {
@@ -1343,6 +1472,15 @@ void* memchr(const void* s, int c, size_t n) {
         if (p[i] == ch) {
             return (void*)(p + i);
         }
+    }
+    return 0;
+}
+
+void* memrchr(const void* s, int c, size_t n) {
+    const unsigned char* p = (const unsigned char*)s;
+    unsigned char ch = (unsigned char)c;
+    for (size_t i = n; i > 0u; i--) {
+        if (p[i - 1u] == ch) return (void*)(p + i - 1u);
     }
     return 0;
 }
@@ -1476,6 +1614,82 @@ char* strstr(const char* haystack, const char* needle) {
         if (!*n) return (char*)haystack;
     }
     return 0;
+}
+
+char* strcasestr(const char* haystack, const char* needle) {
+    size_t needle_len;
+    if (!*needle) return (char*)haystack;
+    needle_len = strlen(needle);
+    for (; *haystack; haystack++) {
+        if (strncasecmp(haystack, needle, needle_len) == 0) {
+            return (char*)haystack;
+        }
+    }
+    return 0;
+}
+
+char* strchrnul(const char* s, int c) {
+    char ch = (char)c;
+    while (*s && *s != ch) {
+        s++;
+    }
+    return (char*)s;
+}
+
+char* strsep(char** stringp, const char* delim) {
+    char* start;
+    char* end;
+
+    if (!stringp || !*stringp) return 0;
+    start = *stringp;
+    if (!delim || !*delim) {
+        *stringp = 0;
+        return start;
+    }
+    end = strpbrk(start, delim);
+    if (!end) {
+        *stringp = 0;
+        return start;
+    }
+    *end = '\0';
+    *stringp = end + 1;
+    return start;
+}
+
+int strverscmp(const char* a, const char* b) {
+    while (*a && *b) {
+        if (*a >= '0' && *a <= '9' && *b >= '0' && *b <= '9') {
+            const char* az = a;
+            const char* bz = b;
+            const char* an;
+            const char* bn;
+            size_t alen;
+            size_t blen;
+
+            while (*az == '0') az++;
+            while (*bz == '0') bz++;
+            an = az;
+            bn = bz;
+            while (*an >= '0' && *an <= '9') an++;
+            while (*bn >= '0' && *bn <= '9') bn++;
+            alen = (size_t)(an - az);
+            blen = (size_t)(bn - bz);
+            if (alen != blen) return alen < blen ? -1 : 1;
+            for (size_t i = 0; i < alen; i++) {
+                if (az[i] != bz[i]) {
+                    return (unsigned char)az[i] - (unsigned char)bz[i];
+                }
+            }
+            if ((az - a) != (bz - b)) return (az - a) < (bz - b) ? -1 : 1;
+            a = an;
+            b = bn;
+            continue;
+        }
+        if (*a != *b) return (unsigned char)*a - (unsigned char)*b;
+        a++;
+        b++;
+    }
+    return (unsigned char)*a - (unsigned char)*b;
 }
 
 char* strtok(char* s, const char* delim) {

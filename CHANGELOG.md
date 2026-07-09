@@ -70,6 +70,7 @@ wrappers in `src/user/posix`.
   * Added raw IPv4 ICMP socket send/receive support sufficient for BusyBox `ping`, UDP datagram send/receive for DNS-sized traffic, and libc DNS A-record lookups through the configured DNS server.
   * Enabled basic BusyBox TCP applets (`nc`, plain HTTP `wget`, and `httpd`) and added `make busybox-net-smoke` coverage for guest `httpd`, guest `wget` against a host HTTP server, and guest `nc` against a host echo socket.
   * Added minimal `AF_NETLINK`/`NETLINK_ROUTE` support, Linux rtnetlink headers, `sendmsg`/`recvmsg` wrappers, and BusyBox smoke coverage for `ip link`, `ip addr`, and `ip route` backed by the existing `eth0` IPv4 state.
+  * Removed the local BusyBox source patch by growing the SmallOS libc/sysroot compatibility surface with BusyBox-facing string helpers, unlocked stdio, `getline`, `%m` printf formatting, POSIX wrappers, and terminal name helpers; BusyBox now builds from unmodified upstream source.
   * Batched buffered file flushes into 64 KiB ext2 writes so large FTP uploads no longer fall off a 4 KiB-per-inode-update cliff when they grow past the VFS write cache.
   * Switched ext2 block I/O to single 8-sector ATA commands instead of issuing one ATA command per 512-byte sector.
   * Cached ext2 block/inode bitmaps in memory after the first read to avoid repeated bitmap rereads during block-heavy writes.

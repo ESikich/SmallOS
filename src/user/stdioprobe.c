@@ -1,5 +1,7 @@
 #include "stdio.h"
 #include "string.h"
+#include "stdlib.h"
+#include "errno.h"
 #include "fcntl.h"
 #include "unistd.h"
 #include "user_syscall.h"
@@ -97,6 +99,44 @@ void _start(int argc, char** argv) {
     } else {
         puts("stdio numeric width: PASS");
     }
+
+    errno = ENOENT;
+    snprintf(fmtbuf, sizeof(fmtbuf), "%m");
+    if (strcmp(fmtbuf, "no such file or directory") != 0) {
+        puts("stdio percent m: FAIL");
+        ok = 0;
+    } else {
+        puts("stdio percent m: PASS");
+    }
+
+    out = fopen("stdioprobe.tmp", "w");
+    int unlocked_ok = out &&
+                      fputs_unlocked("line one\nline two\n", out) == 0 &&
+                      putc_unlocked('!', out) != EOF;
+    if (out && fclose(out) != 0) unlocked_ok = 0;
+    if (!unlocked_ok) {
+        puts("stdio unlocked write: FAIL");
+        ok = 0;
+    } else {
+        puts("stdio unlocked write: PASS");
+    }
+
+    in = fopen("stdioprobe.tmp", "r");
+    char* line = 0;
+    size_t line_cap = 0;
+    ssize_t line_len = getline(&line, &line_cap, in);
+    int got = in ? getc_unlocked(in) : EOF;
+    if (!in || line_len != 9 || strcmp(line, "line one\n") != 0 ||
+        got != 'l' || feof_unlocked(in) || ferror_unlocked(in) ||
+        fileno_unlocked(in) < 0) {
+        puts("stdio getline unlocked: FAIL");
+        ok = 0;
+    } else {
+        puts("stdio getline unlocked: PASS");
+    }
+    if (line) free(line);
+    if (in) fclose(in);
+    unlink("stdioprobe.tmp");
 
     in = fopen("usr/bin/hello", "r");
     if (!in || fwrite("x", 1, 1, in) != 0 || !ferror(in)) {

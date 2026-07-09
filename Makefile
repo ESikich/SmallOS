@@ -118,7 +118,7 @@ BUSYBOX_VERSION=1.36.1
 BUSYBOX_URL=https://busybox.net/downloads/busybox-$(BUSYBOX_VERSION).tar.bz2
 BUSYBOX_TARBALL=$(STATE_DIR)/downloads/busybox-$(BUSYBOX_VERSION).tar.bz2
 BUSYBOX_SRC_DIR=$(BUILD_DIR)/busybox-smalos-src
-BUSYBOX_PATCH_STAMP=$(BUSYBOX_SRC_DIR)/.smallos-patched
+BUSYBOX_PREP_STAMP=$(BUSYBOX_SRC_DIR)/.smallos-prepared
 BUSYBOX_OUT_DIR=$(OBJ_DIR)/busybox-smalos
 BUSYBOX_CONFIG_STAMP=$(BUSYBOX_OUT_DIR)/.smallos-configured
 BUSYBOX_SMALOS_BIN=$(BIN_DIR)/busybox.elf
@@ -819,14 +819,13 @@ $(BUSYBOX_TARBALL): | dirs
 	mkdir -p $(dir $@)
 	curl -L --fail -o $@ $(BUSYBOX_URL)
 
-$(BUSYBOX_PATCH_STAMP): $(BUSYBOX_TARBALL) patches/busybox/smallos.patch | dirs
+$(BUSYBOX_PREP_STAMP): $(BUSYBOX_TARBALL) | dirs
 	rm -rf $(BUSYBOX_SRC_DIR)
 	mkdir -p $(BUSYBOX_SRC_DIR)
 	tar -xjf $(BUSYBOX_TARBALL) --strip-components=1 -C $(BUSYBOX_SRC_DIR)
-	patch -d $(BUSYBOX_SRC_DIR) -p1 < patches/busybox/smallos.patch
 	touch $@
 
-$(BUSYBOX_CONFIG_STAMP): $(BUSYBOX_PATCH_STAMP) tools/configure_busybox_smalos.sh $(USER_CRT0_OBJ) $(BUSYBOX_UDHCPC_OBJ) $(USER_LIB_ARCHIVES) | dirs
+$(BUSYBOX_CONFIG_STAMP): $(BUSYBOX_PREP_STAMP) tools/configure_busybox_smalos.sh $(USER_CRT0_OBJ) $(BUSYBOX_UDHCPC_OBJ) $(USER_LIB_ARCHIVES) | dirs
 	rm -rf $(BUSYBOX_OUT_DIR)
 	mkdir -p $(BUSYBOX_OUT_DIR)
 	tools/configure_busybox_smalos.sh $(CURDIR) $(CURDIR)/$(BUSYBOX_SRC_DIR) $(CURDIR)/$(BUSYBOX_OUT_DIR) $(CC) $(LIBGCC_FILE) $(OBJ_DIR)

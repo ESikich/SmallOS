@@ -1,5 +1,6 @@
 #include "string.h"
 #include "errno.h"
+#include "signal.h"
 #include "netinet/ether.h"
 
 static int ether_hex_value(char c) {
@@ -66,6 +67,39 @@ int bcmp(const void* a, const void* b, size_t len) {
 
 int strncasecmp(const char* a, const char* b, size_t n) {
     return strnicmp(a, b, n);
+}
+
+char* strsignal(int signum) {
+    switch (signum) {
+        case SIGHUP: return "Hangup";
+        case SIGINT: return "Interrupt";
+        case SIGQUIT: return "Quit";
+        case SIGILL: return "Illegal instruction";
+        case SIGTRAP: return "Trace trap";
+        case SIGABRT: return "Aborted";
+        case SIGBUS: return "Bus error";
+        case SIGFPE: return "Floating point exception";
+        case SIGKILL: return "Killed";
+        case SIGUSR1: return "User signal 1";
+        case SIGSEGV: return "Segmentation fault";
+        case SIGUSR2: return "User signal 2";
+        case SIGPIPE: return "Broken pipe";
+        case SIGALRM: return "Alarm clock";
+        case SIGTERM: return "Terminated";
+        case SIGCHLD: return "Child exited";
+        case SIGCONT: return "Continued";
+        case SIGSTOP: return "Stopped";
+        case SIGTSTP: return "Stopped";
+        case SIGTTIN: return "Stopped";
+        case SIGTTOU: return "Stopped";
+        case SIGURG: return "Urgent I/O condition";
+        case SIGXCPU: return "CPU time limit exceeded";
+        case SIGXFSZ: return "File size limit exceeded";
+        case SIGVTALRM: return "Virtual timer expired";
+        case SIGPROF: return "Profiling timer expired";
+        case SIGWINCH: return "Window changed";
+        default: return "Unknown signal";
+    }
 }
 
 struct ether_addr* ether_aton_r(const char* ascii, struct ether_addr* addr) {

@@ -26,6 +26,7 @@
 #include "sys/time.h"
 #include "sys/types.h"
 #include "sys/vfs.h"
+#include "sys/wait.h"
 
 static int g_failures = 0;
 
@@ -382,6 +383,64 @@ static void probe_dirent(void) {
     check("dirent tmp dir", saw_tmp == 1);
 }
 
+static void probe_libc_compat(void) {
+    char dst[32];
+    char copy_src[] = "hello";
+    char rchr_src[] = "abca";
+    char sep_src[] = "one,two";
+    char* sep = sep_src;
+    char tmpl[] = "/tmp/compatXXXXXX";
+    char ttybuf[32];
+    int fd;
+    int child;
+    int status = -1;
+    struct rusage usage;
+
+    memset(dst, 0, sizeof(dst));
+    check("mempcpy helper", mempcpy(dst, "abc", 3) == dst + 3 &&
+                            memcmp(dst, "abc", 3) == 0);
+    check("memrchr helper", memrchr(rchr_src, 'a', 4) == (void*)(rchr_src + 3));
+    check("stpcpy helper", stpcpy(dst, "busy") == dst + 4 &&
+                           strcmp(dst, "busy") == 0);
+    memset(dst, 'x', sizeof(dst));
+    check("stpncpy helper", stpncpy(dst, copy_src, 8) == dst + 5 &&
+                            memcmp(dst, "hello\0\0\0", 8) == 0);
+    check("strcasestr helper", strcasestr("SmallOS BusyBox", "busy") != 0);
+    check("strchrnul helper", strchrnul("abc", 'z') == "abc" + 3);
+    check("strsep helper", strcmp(strsep(&sep, ","), "one") == 0 &&
+                           sep && strcmp(strsep(&sep, ","), "two") == 0 &&
+                           sep == 0);
+    check("strsignal term", strcmp(strsignal(SIGTERM), "Terminated") == 0);
+    check("strverscmp basic", strverscmp("a9", "a10") < 0);
+
+    fd = open("/tmp/compat-fdatasync", O_CREAT | O_TRUNC | O_RDWR, 0600);
+    check("fdatasync wrapper", fd >= 0 && write(fd, "x", 1) == 1 &&
+                               fdatasync(fd) == 0);
+    if (fd >= 0) {
+        close(fd);
+        unlink("/tmp/compat-fdatasync");
+    }
+
+    check("mkdtemp helper", mkdtemp(tmpl) == tmpl && strncmp(tmpl, "/tmp/compat", 11) == 0);
+    rmdir(tmpl);
+
+    check("ttyname_r stdout", ttyname_r(STDOUT_FILENO, ttybuf, sizeof(ttybuf)) == 0 &&
+                              strncmp(ttybuf, "/dev/pts/", 9) == 0);
+
+    child = fork();
+    if (child == 0) {
+        _exit(0);
+    }
+    memset(&usage, 0xAA, sizeof(usage));
+    check("wait3 wrapper", child > 0 && wait3(&status, 0, &usage) == child &&
+                           WIFEXITED(status) && WEXITSTATUS(status) == 0 &&
+                           usage.ru_utime.tv_sec == 0);
+
+    check("setenv before clearenv", setenv("COMPAT_CLEAR", "yes", 1) == 0 &&
+                                    getenv("COMPAT_CLEAR") != 0);
+    check("clearenv helper", clearenv() == 0 && getenv("COMPAT_CLEAR") == 0);
+}
+
 static void probe_stubs(void) {
     struct rlimit lim;
     struct passwd* pw;
@@ -448,6 +507,7 @@ int main(void) {
     probe_metadata();
     probe_unix_layer();
     probe_dirent();
+    probe_libc_compat();
     probe_stubs();
     printf("compatprobe %s\n", g_failures ? "FAIL" : "PASS");
     return g_failures ? 1 : 0;

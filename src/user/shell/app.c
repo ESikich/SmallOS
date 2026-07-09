@@ -1577,7 +1577,7 @@ void sh_selftest(void) {
     sh_selftest_exec_expect("busybox printenv", "usr/bin/busybox printenv", 0);
     sh_selftest_exec_expect("busybox whoami", "usr/bin/busybox whoami", 0);
     sh_selftest_exec_expect("busybox uname", "usr/bin/busybox uname", 0);
-    sh_selftest_exec_expect("busybox tty", "usr/bin/busybox tty", 1);
+    sh_selftest_exec_expect("busybox tty", "usr/bin/busybox tty", 0);
     sh_selftest_exec_expect("busybox seq", "usr/bin/busybox seq 3", 0);
     sh_selftest_exec_expect("busybox sleep", "usr/bin/busybox sleep 0", 0);
     sh_selftest_exec_expect("busybox usleep", "usr/bin/busybox usleep 1", 0);
