@@ -279,7 +279,10 @@ fixed `0x100000` address. `kmalloc` / `kmalloc_page` are for permanent kernel
 structures only. Do not use them for transient buffers — the bump allocator has
 no free path and heap used will grow permanently with each call.
 
-`pmm_alloc_frame` is for everything reclaimed on exit: `process_t` structs, process page directories, ELF frames, stack frames, all process-private page tables, kernel stack frames, and dynamic per-process handle tables.
+`pmm_alloc_frame` is for everything reclaimed on exit: `process_t` structs,
+process page directories, ELF frames, stack frames, all process-private page
+tables, kernel stack frames, dynamic per-process handle tables, and
+PMM-backed argv/environment arenas.
 
 PMM frame values are physical addresses, not normal C pointers. Page tables,
 CR3 values, fd cache entries, `process_t::pd`, and `process_t::kernel_stack_frame`
@@ -317,7 +320,7 @@ meminfo              ← still identical after second run
 ### Process Data Ownership Rules
 
 * Do not rely on shell input buffers for process data.
-* All user-process arguments must be copied into process-owned storage before execution.
+* All user-process arguments and environment strings must be copied into process-owned storage before execution.
 * Pointers passed into a process must remain valid for the entire lifetime of that process.
 * Descriptor lifetime is owned by `process.c`; file behavior is owned by `vfs.c`; the syscall layer should only validate arguments and dispatch through handle or VFS ops.
 
@@ -345,7 +348,8 @@ meminfo              ← still identical after second run
 
 `process_create(name)` allocates from PMM. Fill `pd`, `kernel_stack_frame`, and `sched_esp` (leave 0 — set by first preemption) before launching.
 
-`process_destroy(proc)` frees PD, kernel stack frame, and the process_t frame. After this call `proc` is dangling.
+`process_destroy(proc)` frees PD, kernel stack frame, PMM-backed launch-context
+arenas, and the process_t frame. After this call `proc` is dangling.
 
 Exited tasks must be marked `PROCESS_STATE_ZOMBIE` and destroyed later from a safe stack. Do not free a task from inside `sched_exit_current()`, because the kernel is still running on that task's kernel stack.
 

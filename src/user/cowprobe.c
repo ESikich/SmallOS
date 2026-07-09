@@ -314,7 +314,7 @@ int main(void) {
 
     fork_frame_drop = before.pmm_free_frames >= after_fork.pmm_free_frames ?
                       before.pmm_free_frames - after_fork.pmm_free_frames : 0u;
-    passfail("cowprobe fork frame drop", fork_frame_drop < BIG_PAGES + 10u);
+    passfail("cowprobe fork frame drop", fork_frame_drop < BIG_PAGES + 12u);
 
     passfail("cowprobe parent globals", g_value == 11);
     passfail("cowprobe parent heap", heap[0] != 'c' && heap[4096] != 'd');

@@ -886,6 +886,56 @@ static void process_fd_table_free(process_t* proc) {
     proc->fd_table_frames = 0;
 }
 
+static int process_string_arena_ensure(char** out_data,
+                                       u32* out_frame,
+                                       u32* out_frames,
+                                       unsigned int bytes) {
+    u32 frames;
+    u32 frame;
+    char* data;
+
+    if (!out_data || !out_frame || !out_frames || bytes == 0u) return -EINVAL;
+    if (*out_data) return 0;
+
+    frames = PAGE_ALIGN(bytes) / PAGE_SIZE;
+    frame = pmm_alloc_contiguous_frames(frames);
+    if (!frame) return -ENOMEM;
+
+    data = (char*)paging_phys_to_kernel_virt(frame);
+    k_memset(data, 0, frames * PAGE_SIZE);
+
+    *out_data = data;
+    *out_frame = frame;
+    *out_frames = frames;
+    return 0;
+}
+
+static void process_string_arena_free(char** data, u32* frame, u32* frames) {
+    if (!data || !frame || !frames) return;
+    if (*frame && *frames) {
+        pmm_free_contiguous_frames(*frame, *frames);
+    }
+    *data = 0;
+    *frame = 0;
+    *frames = 0;
+}
+
+static void process_launch_context_free(process_t* proc) {
+    if (!proc) return;
+
+    proc->user_argc = 0;
+    for (int i = 0; i <= PROCESS_MAX_ARGS; i++) proc->user_argv[i] = 0;
+    process_string_arena_free(&proc->user_arg_data,
+                              &proc->user_arg_frame,
+                              &proc->user_arg_frames);
+
+    proc->user_envc = 0;
+    for (int i = 0; i <= PROCESS_MAX_ENVS; i++) proc->user_envp[i] = 0;
+    process_string_arena_free(&proc->user_env_data,
+                              &proc->user_env_frame,
+                              &proc->user_env_frames);
+}
+
 static int process_fd_table_init(process_t* proc, unsigned int limit) {
     fd_entry_t* fds = 0;
     u32 frame = 0;
@@ -3309,23 +3359,41 @@ int process_reap_unclaimed_zombies(void) {
  */
 int process_set_args(process_t* proc, int argc, char** argv) {
     unsigned int used = 0;
+    int rc;
 
     if (!proc) return -EINVAL;
     if (argc < 0 || argc > PROCESS_MAX_ARGS) return -EINVAL;
     if (argc > 0 && !argv) return -EFAULT;
 
-    proc->user_argc = 0;
-    proc->user_argv[0] = 0;
-    proc->user_arg_data[0] = '\0';
-
     for (int i = 0; i < argc; i++) {
+        int len;
+
         if (!argv[i]) return -EFAULT;
 
-        int len = k_strlen(argv[i]) + 1;
+        len = k_strlen(argv[i]) + 1;
         if (used + (unsigned int)len > PROCESS_ARG_BYTES) {
             return -EINVAL;
         }
+        used += (unsigned int)len;
+    }
 
+    if (argc > 0) {
+        rc = process_string_arena_ensure(&proc->user_arg_data,
+                                         &proc->user_arg_frame,
+                                         &proc->user_arg_frames,
+                                         PROCESS_ARG_BYTES);
+        if (rc < 0) return rc;
+    }
+
+    proc->user_argc = 0;
+    for (int i = 0; i <= PROCESS_MAX_ARGS; i++) proc->user_argv[i] = 0;
+    if (proc->user_arg_data) {
+        k_memset(proc->user_arg_data, 0, PROCESS_ARG_BYTES);
+    }
+
+    used = 0;
+    for (int i = 0; i < argc; i++) {
+        int len = k_strlen(argv[i]) + 1;
         proc->user_argv[i] = &proc->user_arg_data[used];
         k_memcpy(proc->user_argv[i], argv[i], (k_size_t)len);
         used += (unsigned int)len;
@@ -3338,23 +3406,41 @@ int process_set_args(process_t* proc, int argc, char** argv) {
 
 int process_set_env(process_t* proc, int envc, char** envp) {
     unsigned int used = 0;
+    int rc;
 
     if (!proc) return -EINVAL;
     if (envc < 0 || envc > PROCESS_MAX_ENVS) return -EINVAL;
     if (envc > 0 && !envp) return -EFAULT;
 
-    proc->user_envc = 0;
-    proc->user_envp[0] = 0;
-    proc->user_env_data[0] = '\0';
-
     for (int i = 0; i < envc; i++) {
+        int len;
+
         if (!envp[i]) return -EFAULT;
 
-        int len = k_strlen(envp[i]) + 1;
+        len = k_strlen(envp[i]) + 1;
         if (used + (unsigned int)len > PROCESS_ENV_BYTES) {
             return -EINVAL;
         }
+        used += (unsigned int)len;
+    }
 
+    if (envc > 0) {
+        rc = process_string_arena_ensure(&proc->user_env_data,
+                                         &proc->user_env_frame,
+                                         &proc->user_env_frames,
+                                         PROCESS_ENV_BYTES);
+        if (rc < 0) return rc;
+    }
+
+    proc->user_envc = 0;
+    for (int i = 0; i <= PROCESS_MAX_ENVS; i++) proc->user_envp[i] = 0;
+    if (proc->user_env_data) {
+        k_memset(proc->user_env_data, 0, PROCESS_ENV_BYTES);
+    }
+
+    used = 0;
+    for (int i = 0; i < envc; i++) {
+        int len = k_strlen(envp[i]) + 1;
         proc->user_envp[i] = &proc->user_env_data[used];
         k_memcpy(proc->user_envp[i], envp[i], (k_size_t)len);
         used += (unsigned int)len;
@@ -3477,12 +3563,20 @@ process_t* process_create(const char* name) {
         return 0;
     }
     process_init_standard_fds(proc);
-    (void)process_set_default_env(proc);
+    if (process_set_default_env(proc) < 0) {
+        terminal_puts("process: out of frames for environment\n");
+        process_launch_context_free(proc);
+        process_fd_table_free(proc);
+        process_vm_free(proc);
+        pmm_free_frame(frame);
+        return 0;
+    }
     if (name) {
         str_copy_n(proc->name, name, PROCESS_NAME_MAX);
     }
 
     if (!process_registry_add(proc)) {
+        process_launch_context_free(proc);
         process_fd_table_free(proc);
         process_vm_free(proc);
         pmm_free_frame(frame);
@@ -3592,25 +3686,10 @@ process_t* process_fork_from_syscall(unsigned int regs_esp, unsigned int frame_t
     child->umask = parent->umask;
     child->user_entry = parent->user_entry;
     child->user_stack_esp = parent->user_stack_esp;
-    child->user_argc = parent->user_argc;
-    k_memcpy(child->user_arg_data, parent->user_arg_data, sizeof(child->user_arg_data));
-    for (int i = 0; i <= PROCESS_MAX_ARGS; i++) {
-        if (parent->user_argv[i]) {
-            unsigned int off = (unsigned int)(parent->user_argv[i] - parent->user_arg_data);
-            child->user_argv[i] = child->user_arg_data + off;
-        } else {
-            child->user_argv[i] = 0;
-        }
-    }
-    child->user_envc = parent->user_envc;
-    k_memcpy(child->user_env_data, parent->user_env_data, sizeof(child->user_env_data));
-    for (int i = 0; i <= PROCESS_MAX_ENVS; i++) {
-        if (parent->user_envp[i]) {
-            unsigned int off = (unsigned int)(parent->user_envp[i] - parent->user_env_data);
-            child->user_envp[i] = child->user_env_data + off;
-        } else {
-            child->user_envp[i] = 0;
-        }
+    if (process_set_args(child, parent->user_argc, parent->user_argv) < 0 ||
+        process_set_env(child, parent->user_envc, parent->user_envp) < 0) {
+        process_destroy(child);
+        return 0;
     }
     child->user_auxc = parent->user_auxc;
     k_memcpy(child->user_auxv, parent->user_auxv, sizeof(child->user_auxv));
@@ -3663,6 +3742,7 @@ void process_destroy(process_t* proc) {
         proc->pd = 0;
     }
     process_vm_free(proc);
+    process_launch_context_free(proc);
 
     if (proc->kernel_stack_frame) {
         u32 frames = proc->kernel_stack_frames ? proc->kernel_stack_frames : 1u;

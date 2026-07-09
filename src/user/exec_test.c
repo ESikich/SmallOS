@@ -163,7 +163,7 @@ void _start(int argc, char** argv) {
     }
 
     u_puts("[6] calling sys_exec with too many args\n");
-    int r3 = sys_exec("usr/bin/hello", 17, av);
+    int r3 = sys_exec("usr/bin/hello", 65, av);
     write_result_line("[7] too many args returned ", r3);
     if (r3 != -EINVAL) {
         ok = 0;

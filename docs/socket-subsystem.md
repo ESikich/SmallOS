@@ -105,8 +105,8 @@ and connected streams allocate lazy RX/TX rings on first use.
 ### Process Allocation
 
 `process_t` is expected to fit in one 4 KiB frame. Expandable state such as the
-fd table now lives behind pointers instead of growing the process struct with
-large inline arrays.
+fd table and argv/environment string arenas now lives behind pointers instead
+of growing the process struct with large inline arrays.
 
 ## Implementation Notes
 

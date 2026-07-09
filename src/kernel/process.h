@@ -143,10 +143,10 @@ struct fd_entry {
 /* ------------------------------------------------------------------ */
 
 #define PROCESS_NAME_MAX  32
-#define PROCESS_MAX_ARGS  16
-#define PROCESS_ARG_BYTES 256
-#define PROCESS_MAX_ENVS  16
-#define PROCESS_ENV_BYTES 512
+#define PROCESS_MAX_ARGS  64
+#define PROCESS_ARG_BYTES 1536
+#define PROCESS_MAX_ENVS  32
+#define PROCESS_ENV_BYTES 1024
 #define PROCESS_AUXV_MAX  16
 #define PROCESS_CWD_MAX   PROCESS_FD_NAME_MAX
 #define PROCESS_KERNEL_STACK_FRAMES 8u
@@ -182,10 +182,14 @@ typedef struct process {
     unsigned int    user_stack_esp;
     int             user_argc;
     char*           user_argv[PROCESS_MAX_ARGS + 1];
-    char            user_arg_data[PROCESS_ARG_BYTES];
+    char*           user_arg_data;
+    u32             user_arg_frame;
+    u32             user_arg_frames;
     int             user_envc;
     char*           user_envp[PROCESS_MAX_ENVS + 1];
-    char            user_env_data[PROCESS_ENV_BYTES];
+    char*           user_env_data;
+    u32             user_env_frame;
+    u32             user_env_frames;
     int             user_auxc;
     unsigned int    user_auxv[PROCESS_AUXV_MAX * 2 + 2];
     unsigned int    heap_base;

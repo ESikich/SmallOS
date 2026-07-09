@@ -380,9 +380,12 @@ effective uid/gid, and enforce mode bits. Seeded regular files are executable
 so the new exec permission checks can launch shipped programs.
 
 `execve(path, argv, envp)` copies both argument and environment vectors into
-kernel-owned storage before replacing the image. Passing `NULL` for `envp`
-inherits the caller's current environment. `execv` and `execvp` use `environ`,
-and `execvp` searches `PATH`, falling back to `/bin:/usr/bin:/usr/sbin`.
+kernel-owned storage before replacing the image. The copied launch context is
+kept in PMM-backed per-process arenas, with room for 64 argv entries plus 1536
+bytes of argv strings and 32 environment entries plus 1024 bytes of environment
+strings. Passing `NULL` for `envp` inherits the caller's current environment.
+`execv` and `execvp` use `environ`, and `execvp` searches `PATH`, falling back
+to `/bin:/usr/bin:/usr/sbin`.
 
 ---
 

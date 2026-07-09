@@ -9,6 +9,7 @@ static int streq(const char* a, const char* b) {
 
 int main(int argc, char** argv, char** envp) {
     int ok = 1;
+    const char* budget = "abcdefghijklmnopqrstuvwxyz0123456789-abcdefghijklmnopqrstuvwxyz0123456789";
 
     puts("envprobe start");
     if (argc < 2 || !streq(argv[1], "execve-env")) {
@@ -16,6 +17,13 @@ int main(int argc, char** argv, char** envp) {
         ok = 0;
     } else {
         puts("envprobe argv: PASS");
+    }
+
+    if (argc != 22 || !streq(argv[21], "arg-budget-19")) {
+        puts("envprobe argv budget: FAIL");
+        ok = 0;
+    } else {
+        puts("envprobe argv budget: PASS");
     }
 
     if (!envp || envp != environ) {
@@ -37,6 +45,13 @@ int main(int argc, char** argv, char** envp) {
         ok = 0;
     } else {
         puts("envprobe path: PASS");
+    }
+
+    if (!streq(getenv("SMALLOS_ENV_BUDGET"), budget)) {
+        puts("envprobe env budget: FAIL");
+        ok = 0;
+    } else {
+        puts("envprobe env budget: PASS");
     }
 
     puts(ok ? "envprobe PASS" : "envprobe FAIL");

@@ -152,7 +152,7 @@ static void elf_enter_ring3(unsigned int entry,
                             const unsigned int* auxv)
 {
     char* sp = (char*)user_esp;
-    char* user_argv_ptrs[32];
+    char* user_argv_ptrs[PROCESS_MAX_ARGS + 1];
     char* user_envp_ptrs[PROCESS_MAX_ENVS + 1];
     unsigned int* user_auxv;
 

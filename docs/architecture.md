@@ -166,8 +166,15 @@ typedef struct {
     void          (*kernel_entry)(void);    /* kernel task entry point             */
     unsigned int    user_entry;             /* first ring-3 EIP for ELF tasks      */
     int             user_argc;              /* saved argc for bootstrap            */
-    char*           user_argv[17];          /* saved argv pointers plus NULL       */
-    char            user_arg_data[256];     /* argv string storage (kernel-side)   */
+    char*           user_argv[PROCESS_MAX_ARGS + 1]; /* saved argv pointers plus NULL */
+    char*           user_arg_data;          /* PMM-backed argv string arena        */
+    u32             user_arg_frame;         /* argv arena physical frame           */
+    u32             user_arg_frames;        /* argv arena frame count              */
+    int             user_envc;              /* saved env count for bootstrap       */
+    char*           user_envp[PROCESS_MAX_ENVS + 1];  /* saved env pointers plus NULL  */
+    char*           user_env_data;          /* PMM-backed env string arena         */
+    u32             user_env_frame;         /* env arena physical frame            */
+    u32             user_env_frames;        /* env arena frame count               */
     char            name[32];               /* null-terminated process name        */
     fd_entry_t*     fds;                    /* PMM-backed handle table             */
     unsigned int    fd_capacity;            /* allocated fd slots                  */
@@ -177,10 +184,11 @@ typedef struct {
 
 For runnable tasks, `sched_esp` is the saved kernel resume stack pointer used by the scheduler. Kernel tasks and ELF tasks can both have a valid seeded `sched_esp` before their first timer-driven switch.
 
-`process_set_args()` copies argv strings into `user_arg_data`, populates
-`user_argv`, and guarantees `user_argv[user_argc] == NULL`. This process-owned
+`process_set_args()` copies argv strings into a PMM-backed `user_arg_data`
+arena, populates `user_argv`, and guarantees `user_argv[user_argc] == NULL`.
+`process_set_env()` does the same for the environment. This process-owned
 storage is independent of syscall caller memory and remains valid until the
-process exits.
+process is finally destroyed after exit/reaping.
 
 The handle table is generic rather than file-specific now. `process_create()`
 pre-opens fd `0`, `1`, and `2` as console handles for stdin/stdout/stderr;
@@ -816,7 +824,7 @@ process_pd_create()             → fresh physical PD frame (pmm_alloc_frame), k
 map ELF segments                → pmm_alloc_frame() per page, PAGE_USER at 0x400000
 map user stack                  → pmm_alloc_frame(), PAGE_USER at 0xBFFFF000
 alloc kernel stack              → pmm_alloc_frame(), per-process ring-0 stack for syscalls/interrupts
-elf_seed_sched_context()        → copy argv into process_t.user_arg_data, set proc->user_entry, build proc->sched_esp
+elf_seed_sched_context()        → copy argv into the PMM-backed argv arena, set proc->user_entry, build proc->sched_esp
                                    seeded to re-enter via elf_user_task_bootstrap()
 proc->state = RUNNING
 sched_enqueue(proc)             → child becomes a runnable task

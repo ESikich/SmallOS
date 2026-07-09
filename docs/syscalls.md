@@ -1206,13 +1206,16 @@ int sys_execve(const char* path, char* const argv[], char* const envp[]);
 Replaces the current user image with a named ELF while preserving the process
 pid, cwd, process group, and descriptors that do not have `FD_CLOEXEC` set.
 The kernel validates and copies `path`, `argv`, and `envp` from user memory,
-loads the program through a private PMM-backed image buffer, closes
+stores argv/environment strings in PMM-backed per-process arenas, loads the
+program through a private PMM-backed image buffer, closes
 close-on-exec descriptors, installs the new ELF address space, frees the
 temporary image buffer, and returns to the new program entry point. Passing
 `NULL` for `envp` inherits the caller's current environment.
 
 The new program is entered as `_start(argc, argv, envp)`. `argv[argc]` and the
-environment vector are both NULL-terminated.
+environment vector are both NULL-terminated. The current launch-context limits
+are 64 argv entries with 1536 bytes of argv strings, and 32 environment entries
+with 1024 bytes of environment strings.
 
 ### SYS_WAITPID_FG (76)
 
@@ -1564,10 +1567,10 @@ ticks, estimated task-owned RAM bytes, user heap bytes, and display name.
 Stopped processes are reported as the `T` state in `/proc`-style views.
 
 The RAM estimate is frame-based: `process_t`, kernel stack frames, dynamic fd
-table frames, and private user page-directory/page-table/user frames. Kernel
-mappings shared into every process are not charged per process. `/bin/top`
-uses repeated snapshots to compute per-refresh CPU percentages and render the
-live process table.
+table frames, PMM-backed launch-context arenas, and private user
+page-directory/page-table/user frames. Kernel mappings shared into every
+process are not charged per process. `/bin/top` uses repeated snapshots to
+compute per-refresh CPU percentages and render the live process table.
 
 `/proc/lastfault` is a virtual diagnostic file, not a syscall. It reports the
 most recent unhandled CPU exception seen by the common fault dispatcher:
