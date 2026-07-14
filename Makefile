@@ -437,8 +437,10 @@ KERNEL_OBJS=$(patsubst $(SRC_DIR)/%.asm,$(OBJ_DIR)/%.o,$(KERNEL_ASM_SRCS)) \
 
 USER_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(USER_SRCS))
 GUI_OBJS=$(OBJ_DIR)/user/gui/app.o $(OBJ_DIR)/user/gui/canvas.o \
+	$(OBJ_DIR)/user/gui/cursor.o $(OBJ_DIR)/user/gui/damage.o \
 	$(OBJ_DIR)/user/gui/region.o $(OBJ_DIR)/user/gui/window.o \
-	$(OBJ_DIR)/user/gui/shell_window.o
+	$(OBJ_DIR)/user/gui/widgets.o $(OBJ_DIR)/user/gui/shell_window.o \
+	$(OBJ_DIR)/user/editor_model.o
 USER_SHELL_OBJS=$(OBJ_DIR)/user/shell/app.o
 USER_LIBC_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(filter $(USER_DIR)/%.c,$(USER_LIBC_SRCS))) \
                $(patsubst $(USER_DIR)/%.asm,$(OBJ_DIR)/user/%.o,$(filter $(USER_DIR)/%.asm,$(USER_LIBC_SRCS)))
@@ -1028,6 +1030,9 @@ $(BIN_DIR)/diskview.elf: $(OBJ_DIR)/user/diskview.o $(OBJ_DIR)/user/gfx.o $(USER
 $(BIN_DIR)/gui.elf: $(OBJ_DIR)/user/gui.o $(GUI_OBJS) $(OBJ_DIR)/user/gfx.o $(USER_LIB_ARCHIVES) | dirs
 	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
 
+$(BIN_DIR)/edit.elf: $(OBJ_DIR)/user/edit.o $(OBJ_DIR)/user/editor_model.o $(USER_LIB_ARCHIVES) | dirs
+	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
+
 $(BIN_DIR)/shell.elf: $(OBJ_DIR)/user/shell.o $(USER_SHELL_OBJS) $(USER_LIB_ARCHIVES) | dirs
 	$(LD) $(USER_LDFLAGS) $(filter %.o,$^) $(USER_LINK_LIBS) -o $@
 
@@ -1318,7 +1323,16 @@ QEMU_USB_STORAGE_FLAGS=-drive if=none,id=stick,format=raw,file=$(IMG_FILE) \
           -serial file:$(SERIAL_LOG) \
           $(QEMU_NETFLAGS)
 
-.PHONY: all image img artifacts dirs deps fractint-source wolf3d-shareware-data wolf3d-source-probe check-third-party dyn-size-report dynamic-link-check dyn-reloc-inventory dynlink-negative-smoke run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage run-usb-storage-fallback run-headless-usb-storage-fallback usb-storage-smoke usb-ramdisk-fallback-smoke test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke busybox-net-smoke tinyssh-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean tinycc-smalos busybox-smalos binutils-smalos tinyssh-smalos FORCE
+.PHONY: all image img artifacts dirs deps fractint-source wolf3d-shareware-data wolf3d-source-probe check-third-party dyn-size-report dynamic-link-check dyn-reloc-inventory dynlink-negative-smoke run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage run-usb-storage-fallback run-headless-usb-storage-fallback usb-storage-smoke usb-ramdisk-fallback-smoke gui-unit test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke busybox-net-smoke tinyssh-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean tinycc-smalos busybox-smalos binutils-smalos tinyssh-smalos FORCE
+
+gui-unit: | dirs
+	cc -std=c11 -O2 -Wno-pointer-to-int-cast -Wno-builtin-declaration-mismatch \
+		-Isrc/kernel -Isrc/user/include -Isrc/user/internal -Isrc/user \
+		-Isrc/user/gui tools/gui_unit.c src/user/gui/region.c \
+		src/user/gui/window.c src/user/gui/canvas.c src/user/gui/cursor.c \
+		src/user/gui/damage.c src/user/gui/widgets.c \
+		src/user/editor_model.c -o $(TOOLS_DIR)/gui_unit
+	$(TOOLS_DIR)/gui_unit
 
 FORCE:
 
@@ -1409,7 +1423,7 @@ dynlink-negative-smoke: $(DYN_NO_LOADER_IMG) $(DYN_NO_LIBC_IMG)
 		--net-mac $(QEMU_NET_MAC) \
 		--timeout $(SMOKE_TIMEOUT)
 
-test:
+test: gui-unit
 	@mkdir -p $(BUILD_DIR)
 	@printf '%-38s ' '[test] reset disk'
 	@if $(MAKE) --silent reset-disk SERIAL_CONSOLE=1 >$(TEST_SETUP_LOG) 2>&1; then \

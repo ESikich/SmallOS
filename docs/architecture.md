@@ -488,13 +488,18 @@ Those copy-style blit syscalls keep every framebuffer page coherent when page
 flipping is available, so dirty-rectangle applications such as `gui` can keep
 using normal backbuffer semantics without exposing stale pixels from a hidden
 page.
-The GUI layers a small clipped canvas, dirty-region operations, and a bounded
-z-order stack over `gfx.c`. Application types provide lifecycle and drawing
-callbacks and allocate private window state only while open. Scene changes are
-composed into the software backbuffer and copied by dirty rectangle; events
-that produce no pixel damage never become implicit full-screen repaints. The
-software mouse pointer is presented as an immediate overlay, so pointer motion
-can restore and redraw its small rectangles independently of the paced scene.
+The GUI layers a clipped canvas, bounded damage collector, reusable controls,
+software cursor, and z-order stack over `gfx.c`. Application types receive
+keyboard, pointer, wheel, resize, tick, and guarded-close events and return
+explicit handled/redraw/close results. Private state exists only while its
+window is open. Scene changes are copied by dirty rectangle; events that
+produce no pixel damage never become implicit full-screen repaints. The mouse
+pointer remains an immediate overlay that restores and redraws independently
+of the paced scene. The GUI and terminal editors share one line-buffer and
+file-persistence model. GUI editor selections are anchor/caret ranges; keyboard
+and captured pointer motion update the caret, while range deletion stays in the
+shared model. The desktop owns an internal clipboard shared by editor windows,
+so no kernel clipboard ABI is required.
 When the framebuffer backend can page flip, the display owner can also map the
 page-flip aperture with `SYS_DISPLAY_MAP` and present already-rendered hidden
 pages with `SYS_DISPLAY_PRESENT_PAGE`. That path is intentionally lower level
@@ -604,7 +609,7 @@ The active consumer is managed by `keyboard_set_consumer()`:
 - `process_set_foreground(proc)` clears `kb_buf` (discarding any stale input, e.g. the Enter that launched the foreground program), records the foreground process group, then registers `process_key_consumer` when a user process takes the foreground
 - `process_set_foreground_preserve_input(proc)` keeps already-buffered input while refreshing the same foreground owner; bootseq uses an explicit `process_set_foreground(shell)` before resuming the suspended user shell so PS/2 and USB keyboard events are routed to the prompt immediately
 - `process_key_consumer` pushes ASCII into `kb_buf`; after each push it checks `keyboard_get_waiting_process()` and, if a process is parked in `PROCESS_STATE_WAITING`, sets it back to `PROCESS_STATE_RUNNING` and clears the waiter slot so the scheduler picks it up. The waiter may come from blocking `SYS_READ`, `SYS_READ_RAW`, or sleeping `SYS_POLL`/`SYS_EPOLL_WAIT` on a console descriptor.
-- Ctrl+C is normally handled by `process_key_consumer` as a terminal interrupt for the foreground process group. Matching signalfds receive `SIGINT`; otherwise the group gets exit status `130`, pending console/socket waits are cleared, and any actively running member is switched away from the IRQ1 frame. If the foreground console owner is parked in `SYS_READ_RAW`, as the user shell is while editing its prompt, Ctrl+C is queued as byte `0x03` so the editor can cancel the current line without killing the shell.
+- Ctrl+C is normally handled by `process_key_consumer` as a terminal interrupt for the foreground process group. Matching signalfds receive `SIGINT`; otherwise the group gets exit status `130`, pending console/socket waits are cleared, and any actively running member is switched away from the IRQ1 frame. If the foreground console owner is parked in `SYS_READ_RAW`, as the user shell is while editing its prompt, Ctrl+C is queued as byte `0x03` so the editor can cancel the current line without killing the shell. An exclusive display/input owner instead consumes the already-queued structured key event, so GUI shortcuts such as copy do not also generate terminal signals.
 - Ctrl+Z keeps the native shell's detachable `fg` behavior for shell-owned jobs,
   and otherwise delivers `SIGTSTP` to the foreground process group. Stopped
   tasks remain waitable through `waitpid(..., WUNTRACED)` and resume on

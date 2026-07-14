@@ -458,11 +458,13 @@ PPM screenshot, and verifies that the image is a nonblank 1024x768 framebuffer.
 `make vga-smoke` rebuilds with `DISPLAY_BACKEND=vga`, waits for the forced-VGA
 serial marker, asks the QEMU monitor for a PPM screenshot, verifies that VGA
 text output is visible, and fails if the framebuffer backend is selected
-anyway. `make gui-smoke` boots the normal framebuffer image, launches `gui`
-from the shell, captures screenshots while opening and mouse-resizing Files,
-opens a PTY-backed Shell and runs a command, checks that the desktop background
-outside the windows remains intact, then exits and verifies that the shell
-prompt returns. `make display-smoke` runs all three.
+anyway. `make gui-smoke` boots the normal framebuffer image, creates a text
+fixture, exercises the windowed editor's selection, clipboard, save, and
+guarded-close paths, captures screenshots while opening, scrollbar-dragging,
+and mouse-resizing Files, then runs a command in a PTY-backed Shell. It verifies
+editor persistence, intact background pixels, clean exit, and return to the
+shell prompt. `make gui-unit` runs the fast host-side GUI/model tests.
+`make display-smoke` runs all three display smokes.
 The visual screenshot checks use QEMU's VNC display backend by default so the
 VM can stay daemonized while still rendering screenshots. They are
 intentionally separate from plain `make test` because screenshots depend more

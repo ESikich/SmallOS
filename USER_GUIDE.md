@@ -439,8 +439,15 @@ icons. Shell windows run real child shells through PTYs. The Config window can
 toggle the GUI perf readout; on writable ATA-backed boots the setting is saved
 in `/etc/gui.conf`, while USB mass-storage boots are read-only for now. Drag a
 window's title bar to move it or its bottom-right grip to resize it. When a
-Shell window is not focused, `F`, `T`, `S`, `C`, and `A` open the matching
+text-entry window is not focused, `F`, `T`, `S`, `C`, and `A` open the matching
 windows, `X` closes the focused window, and `Q` or Escape exits the desktop.
+Double-click a text file in Files, or run `gui <text-path>`, to edit it inside
+the desktop. F2 or Ctrl+S saves; navigation, typing, mouse placement, wheel
+scrolling, draggable scrollbar thumbs, and resizing work normally. Drag across
+text or hold Shift while navigating to highlight a selection. Ctrl+A selects
+all; Ctrl+C, Ctrl+X, and Ctrl+V copy, cut, and paste through a clipboard shared
+by the desktop's editor windows. Closing a modified document asks whether to
+save, discard, or cancel. The terminal-oriented `/bin/edit` remains available.
 
 ## Testing A Build
 

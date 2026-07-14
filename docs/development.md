@@ -62,12 +62,17 @@ before asking QEMU's monitor for `screendump`. For the framebuffer path it
 verifies that the PPM is present, 1024x768, and not blank; for
 `DISPLAY_BACKEND=vga` it verifies the forced-VGA marker, fails if the
 framebuffer backend is selected, and also requires a nonblank VGA text
-screenshot. `make gui-smoke` launches `/bin/gui`, captures the desktop, opens
-and resizes Files with keyboard and mouse input, then opens a PTY-backed Shell
-and runs a command. It compares screenshots for meaningful window changes and
-checks untouched background pixels before exiting and verifying that the shell
-prompt returns. The mouse resize path also crosses a window boundary, covering
-the cursor/damage transition used by the software pointer overlay.
+screenshot. `make gui-smoke` creates a text fixture, launches `/bin/gui` with
+that path, edits and saves it, exercises selection, copy/paste, dirty-close
+confirmation and cancel, then opens and resizes Files and runs a command in a
+PTY-backed Shell. It checks screenshots, untouched background pixels, the saved
+file contents, clean exit, and return to the shell prompt. The mouse resize path
+also crosses a window boundary, covering the cursor/damage transition used by
+the pointer overlay. The Files path creates enough entries to drag its scrollbar
+thumb and verifies that the visible rows change.
+`make gui-unit` provides fast host coverage for regions, damage, clipping,
+cursor drawing, z-order, scrollbar mapping, controls, editor range mutations,
+and event result flags; it also runs at the start of `make test`.
 Keep these checks out of the regular `make test` loop until they have proven
 stable across host QEMU setups.
 

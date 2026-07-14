@@ -878,6 +878,15 @@ static void process_clear_display_input_owner(process_t* proc) {
  *   after keyboard_handle_irq() returns with the saved IRQ frame ESP.
  */
 static void process_key_consumer(key_event_t ev) {
+    /*
+     * Exclusive display owners consume the structured input queue directly.
+     * The event has already been queued by keyboard_emit_event(); do not also
+     * translate it into terminal bytes or signals (notably Ctrl+C/SIGINT).
+     */
+    if (s_display_input_owner &&
+        s_display_input_owner == s_foreground_reader) {
+        return;
+    }
     if (ev.ctrl && ev.key == KEY_C) {
         u32 pgid = s_foreground_pgid;
         int defaulted;

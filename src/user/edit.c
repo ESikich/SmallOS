@@ -1,7 +1,8 @@
 #include "term_keys.h"
 #include "user_lib.h"
+#include "editor_model.h"
 
-#define EDIT_LINE_MAX 256u
+#define EDIT_LINE_MAX EDITOR_LINE_MAX
 #define EDIT_DEFAULT_ROWS 25u
 #define EDIT_DEFAULT_COLS 80u
 
@@ -28,13 +29,7 @@ typedef struct {
     char ch;
 } key_t;
 
-typedef struct {
-    char** lines;
-    uint32_t count;
-    uint32_t cap;
-    int dirty;
-    const char* path;
-} edit_buffer_t;
+typedef editor_model_t edit_buffer_t;
 
 typedef struct {
     uint32_t cy;
@@ -97,97 +92,29 @@ static void copy_status(edit_view_t* view, const char* msg) {
     view->status_ticks = 2;
 }
 
-static char* alloc_line(const char* src) {
-    char* out = (char*)malloc(EDIT_LINE_MAX);
-    if (!out) return 0;
-
-    uint32_t i = 0;
-    while (src && src[i] && i < EDIT_LINE_MAX - 1u) {
-        out[i] = src[i];
-        i++;
-    }
-    out[i] = '\0';
-    return out;
-}
-
 static void free_buffer(edit_buffer_t* buf) {
-    if (!buf) return;
-    for (uint32_t i = 0; i < buf->count; i++) {
-        free(buf->lines[i]);
-    }
-    free(buf->lines);
-    buf->lines = 0;
-    buf->count = 0;
-    buf->cap = 0;
-}
-
-static int reserve_lines(edit_buffer_t* buf, uint32_t needed) {
-    if (needed <= buf->cap) return 1;
-
-    uint32_t cap = buf->cap ? buf->cap : 16u;
-    while (cap < needed) {
-        cap *= 2u;
-    }
-
-    char** lines = (char**)realloc(buf->lines, cap * sizeof(char*));
-    if (!lines) return 0;
-    buf->lines = lines;
-    buf->cap = cap;
-    return 1;
+    editor_model_destroy(buf);
 }
 
 static int insert_line(edit_buffer_t* buf, uint32_t index, const char* text) {
-    if (index > buf->count) return 0;
-    if (!reserve_lines(buf, buf->count + 1u)) return 0;
-
-    char* copy = alloc_line(text);
-    if (!copy) return 0;
-
-    for (uint32_t i = buf->count; i > index; i--) {
-        buf->lines[i] = buf->lines[i - 1u];
-    }
-    buf->lines[index] = copy;
-    buf->count++;
-    buf->dirty = 1;
-    return 1;
+    return editor_model_insert_line(buf, index, text);
 }
 
 static int delete_range(edit_buffer_t* buf, uint32_t first, uint32_t last) {
-    uint32_t remove_count;
-
     if (first == 0 || last < first || first > buf->count) return 0;
-    if (last > buf->count) last = buf->count;
-
-    remove_count = last - first + 1u;
-    for (uint32_t i = first - 1u; i < last; i++) {
-        free(buf->lines[i]);
-    }
-    for (uint32_t i = last; i < buf->count; i++) {
-        buf->lines[i - remove_count] = buf->lines[i];
-    }
-    buf->count -= remove_count;
-    buf->dirty = 1;
-    return 1;
+    return editor_model_delete_lines(buf, first - 1u, last - 1u);
 }
 
 static void clear_buffer(edit_buffer_t* buf) {
-    for (uint32_t i = 0; i < buf->count; i++) {
-        free(buf->lines[i]);
-    }
-    buf->count = 0;
-    buf->dirty = 1;
+    editor_model_clear(buf);
 }
 
 static uint32_t line_len(edit_buffer_t* buf, uint32_t y) {
-    if (y >= buf->count) return 0;
-    return str_len(buf->lines[y]);
+    return editor_model_line_length(buf, y);
 }
 
 static int ensure_line(edit_buffer_t* buf, uint32_t y) {
-    while (buf->count <= y) {
-        if (!insert_line(buf, buf->count, "")) return 0;
-    }
-    return 1;
+    return editor_model_ensure_line(buf, y);
 }
 
 static void term_write(const char* s) {
@@ -404,185 +331,36 @@ static key_t read_key(void) {
 }
 
 static int save_file(edit_buffer_t* buf) {
-    int fd = sys_open_mode(buf->path, SYS_OPEN_MODE_WRITE | SYS_OPEN_MODE_CREATE | SYS_OPEN_MODE_TRUNC);
-    if (fd < 0) return 0;
-
-    for (uint32_t i = 0; i < buf->count; i++) {
-        uint32_t len = str_len(buf->lines[i]);
-        if (len && sys_writefd(fd, buf->lines[i], len) != (int)len) {
-            sys_close(fd);
-            return 0;
-        }
-        if (sys_writefd(fd, "\n", 1u) != 1) {
-            sys_close(fd);
-            return 0;
-        }
-    }
-
-    if (sys_fsync(fd) < 0) {
-        sys_close(fd);
-        return 0;
-    }
-    sys_close(fd);
-    buf->dirty = 0;
-    return 1;
+    return editor_model_save(buf);
 }
 
 static int load_file(edit_buffer_t* buf) {
-    uint32_t size = 0;
-    int is_dir = 0;
-    int stat = u_stat(buf->path, &size, &is_dir);
-
-    if (stat < 0) {
-        return 1;
-    }
-    if (is_dir) {
-        u_puts("edit: path is a directory\n");
-        return 0;
-    }
-
-    int fd = sys_open(buf->path);
-    if (fd < 0) {
-        u_puts("edit: open failed\n");
-        return 0;
-    }
-
-    char line[EDIT_LINE_MAX];
-    uint32_t len = 0;
-    char chunk[128];
-
-    for (;;) {
-        int n = sys_fread(fd, chunk, sizeof(chunk));
-        if (n < 0) {
-            sys_close(fd);
-            u_puts("edit: read failed\n");
-            return 0;
-        }
-        if (n == 0) break;
-
-        for (int i = 0; i < n; i++) {
-            char c = chunk[i];
-            if (c == '\r') continue;
-            if (c == '\n') {
-                line[len] = '\0';
-                if (!insert_line(buf, buf->count, line)) {
-                    sys_close(fd);
-                    u_puts("edit: out of memory\n");
-                    return 0;
-                }
-                buf->dirty = 0;
-                len = 0;
-            } else if (len < EDIT_LINE_MAX - 1u) {
-                line[len++] = c;
-            }
-        }
-    }
-
-    if (len > 0) {
-        line[len] = '\0';
-        if (!insert_line(buf, buf->count, line)) {
-            sys_close(fd);
-            u_puts("edit: out of memory\n");
-            return 0;
-        }
-    }
-
-    sys_close(fd);
-    buf->dirty = 0;
-    return 1;
+    return editor_model_load(buf);
 }
 
 static int line_insert_char(edit_buffer_t* buf, edit_view_t* view, char c) {
+    uint32_t len;
     if (!ensure_line(buf, view->cy)) return 0;
-
-    char* line = buf->lines[view->cy];
-    uint32_t len = str_len(line);
-    if (len >= EDIT_LINE_MAX - 1u) return 0;
+    len = line_len(buf, view->cy);
     if (view->cx > len) view->cx = len;
-
-    for (uint32_t i = len + 1u; i > view->cx; i--) {
-        line[i] = line[i - 1u];
-    }
-    line[view->cx] = c;
+    if (!editor_model_insert_char(buf, view->cy, view->cx, c)) return 0;
     view->cx++;
-    buf->dirty = 1;
     return 1;
 }
 
 static int split_line(edit_buffer_t* buf, edit_view_t* view) {
-    if (!ensure_line(buf, view->cy)) return 0;
-
-    char* line = buf->lines[view->cy];
-    uint32_t len = str_len(line);
-    if (view->cx > len) view->cx = len;
-
-    char* tail = alloc_line(&line[view->cx]);
-    if (!tail) return 0;
-    if (!reserve_lines(buf, buf->count + 1u)) {
-        free(tail);
-        return 0;
-    }
-    line[view->cx] = '\0';
-    for (uint32_t i = buf->count; i > view->cy + 1u; i--) {
-        buf->lines[i] = buf->lines[i - 1u];
-    }
-    buf->lines[view->cy + 1u] = tail;
-    buf->count++;
+    if (!editor_model_split_line(buf, view->cy, view->cx)) return 0;
     view->cy++;
     view->cx = 0;
-    buf->dirty = 1;
-    return 1;
-}
-
-static int join_with_next(edit_buffer_t* buf, uint32_t y) {
-    if (y + 1u >= buf->count) return 0;
-    uint32_t len = str_len(buf->lines[y]);
-    uint32_t next_len = str_len(buf->lines[y + 1u]);
-    if (len + next_len >= EDIT_LINE_MAX) return 0;
-
-    for (uint32_t i = 0; i <= next_len; i++) {
-        buf->lines[y][len + i] = buf->lines[y + 1u][i];
-    }
-    delete_range(buf, y + 2u, y + 2u);
-    buf->dirty = 1;
     return 1;
 }
 
 static void backspace_key(edit_buffer_t* buf, edit_view_t* view) {
-    if (buf->count == 0) return;
-    if (view->cy >= buf->count) view->cy = buf->count - 1u;
-
-    if (view->cx > 0) {
-        char* line = buf->lines[view->cy];
-        uint32_t len = str_len(line);
-        if (view->cx > len) view->cx = len;
-        for (uint32_t i = view->cx - 1u; i < len; i++) {
-            line[i] = line[i + 1u];
-        }
-        view->cx--;
-        buf->dirty = 1;
-    } else if (view->cy > 0) {
-        uint32_t prev_len = str_len(buf->lines[view->cy - 1u]);
-        if (join_with_next(buf, view->cy - 1u)) {
-            view->cy--;
-            view->cx = prev_len;
-        }
-    }
+    (void)editor_model_backspace(buf, &view->cy, &view->cx);
 }
 
 static void delete_key(edit_buffer_t* buf, edit_view_t* view) {
-    if (buf->count == 0 || view->cy >= buf->count) return;
-
-    char* line = buf->lines[view->cy];
-    uint32_t len = str_len(line);
-    if (view->cx < len) {
-        for (uint32_t i = view->cx; i < len; i++) {
-            line[i] = line[i + 1u];
-        }
-        buf->dirty = 1;
-    } else {
-        join_with_next(buf, view->cy);
-    }
+    (void)editor_model_delete(buf, view->cy, view->cx);
 }
 
 static void move_vertical(edit_buffer_t* buf, edit_view_t* view, int delta) {
@@ -852,11 +630,7 @@ void _start(int argc, char** argv) {
         sys_exit(1);
     }
 
-    buf.lines = 0;
-    buf.count = 0;
-    buf.cap = 0;
-    buf.dirty = 0;
-    buf.path = argv[1];
+    editor_model_init(&buf, argv[1]);
 
     if (!load_file(&buf)) {
         free_buffer(&buf);

@@ -23,9 +23,14 @@
 #include "dirent.h"
 #include "gui.h"
 #include "canvas.h"
+#include "app_event.h"
+#include "cursor.h"
+#include "damage.h"
 #include "region.h"
 #include "shell_window.h"
+#include "widgets.h"
 #include "window.h"
+#include "../editor_model.h"
 
 /* ---------------- colors ---------------- */
 
@@ -44,6 +49,11 @@
 #define COL_TOPBAR    0x00FFFFFFu
 #define COL_SHADOW    0x00606060u
 
+static const gui_widget_theme_t GUI_WIDGET_THEME = {
+    COL_BTN_BG, 0x00D8D8D8u, 0x00A8A8A8u, COL_FRAME,
+    COL_TEXT, 0x00808080u, COL_TITLE_BG
+};
+
 typedef int gui_fp_t;
 
 #define make_rect gui_rect_make
@@ -59,6 +69,8 @@ typedef int gui_fp_t;
 #define hline gui_canvas_hline
 #define vline gui_canvas_vline
 #define rect gui_canvas_rect
+#define draw_cursor gui_cursor_draw
+#define cursor_screen_rect gui_cursor_rect
 #define g_clip_enabled gui_canvas_has_clip()
 #define g_clip_rect (*gui_canvas_clip())
 
@@ -245,7 +257,6 @@ static void utoa10(unsigned int v, char* buf) {
 #define MAX_WINDOWS GUI_WINDOW_CAPACITY
 #define MAX_ROWS    256
 #define INPUT_BATCH 32
-#define DIRTY_MAX   32
 #define MOUSE_COALESCE_MAX INPUT_BATCH
 #define MOUSE_MERGE_MAX_DELTA 48
 #define GUI_PERF_WINDOW_TICKS SMALLOS_TIMER_HZ
@@ -270,10 +281,12 @@ typedef enum {
     WT_CONFIG,
     WT_ABOUT,
     WT_SHELL,
+    WT_EDITOR,
 } win_type_t;
 
 typedef struct {
     int scroll;
+    int scroll_drag_offset;
     char cwd[256];
     char rows[MAX_ROWS][NAME_MAX + 1];
     int row_dir[MAX_ROWS];
@@ -282,26 +295,63 @@ typedef struct {
 } files_window_state_t;
 
 typedef struct {
+    editor_model_t model;
+    uint32_t row;
+    uint32_t column;
+    uint32_t top;
+    uint32_t hscroll;
+    uint32_t next_blink;
+    int caret_visible;
+    int confirm_close;
+    int confirm_choice;
+    uint32_t anchor_row;
+    uint32_t anchor_column;
+    int selection_active;
+    int scroll_drag_offset;
+    char status[80];
+} editor_window_state_t;
+
+typedef struct {
     int   active;
     win_type_t type;
     int   x, y, w, h;
     void* state;
+    int focused_widget;
+    int pressed_widget;
+    uint32_t next_tick;
 } window_t;
 
 typedef struct {
     const char* title;
     unsigned int state_size;
-    void (*open)(window_t* window);
+    int default_width;
+    int default_height;
+    int min_width;
+    int min_height;
+    uint32_t tick_interval;
+    void (*open)(window_t* window, const char* argument);
     void (*close)(window_t* window);
     void (*draw)(gfx_surface_t* surface, window_t* window, int mx, int my);
+    unsigned int (*event)(window_t* window, const gui_app_event_t* event);
 } window_app_ops_t;
 
 static const window_app_ops_t* window_app_ops(win_type_t type);
+static void action_editor(int sw, int sh, const char* path);
 
 #define FILES_STATE(w) ((files_window_state_t*)(w)->state)
 #define SHELL_STATE(w) ((gui_shell_window_t*)(w)->state)
+#define EDITOR_STATE(w) ((editor_window_state_t*)(w)->state)
 
 static window_t g_wins[MAX_WINDOWS];
+static int g_screen_width;
+static int g_screen_height;
+static int g_last_file_win = -1;
+static int g_last_file_row = -1;
+static uint32_t g_last_file_tick;
+#define GUI_CLIPBOARD_CAPACITY 8192u
+static char g_editor_clipboard[GUI_CLIPBOARD_CAPACITY];
+
+static int point_in(int x, int y, int rx, int ry, int rw, int rh);
 
 #define TITLE_H 14
 #define CLOSE_W 14
@@ -309,14 +359,15 @@ static window_t g_wins[MAX_WINDOWS];
 #define RESIZE_GRIP 10
 #define WINDOW_MIN_W 160
 #define WINDOW_MIN_H 80
-#define CURSOR_W 9
-#define CURSOR_H 12
+#define CURSOR_W GUI_CURSOR_WIDTH
+#define CURSOR_H GUI_CURSOR_HEIGHT
 #define CURSOR_MOVE_MAX_W 64
 #define CURSOR_MOVE_MAX_H 64
 
-static gui_rect_t g_dirty[DIRTY_MAX];
-static int g_dirty_count = 0;
-static int g_dirty_full = 0;
+static gui_damage_t g_damage;
+#define g_dirty (g_damage.rects)
+#define g_dirty_count (g_damage.count)
+#define g_dirty_full (g_damage.full)
 
 typedef enum {
     DRAG_NONE = 0,
@@ -334,7 +385,6 @@ static int g_resize_start_mx = 0, g_resize_start_my = 0;
 static int g_resize_start_w = 0, g_resize_start_h = 0;
 static int g_frame_pending = 0;
 static uint32_t g_frame_next_tick = 0;
-static uint32_t g_shell_next_poll_tick = 0;
 
 static void icons_layout(int sw);
 
@@ -486,34 +536,15 @@ static gui_rect_t window_screen_rect(window_t* w) {
 }
 
 static void dirty_clear(void) {
-    g_dirty_count = 0;
-    g_dirty_full = 0;
+    gui_damage_clear(&g_damage);
 }
 
 static void invalidate_full(int sw, int sh) {
-    g_dirty_full = 1;
-    g_dirty_count = 1;
-    g_dirty[0] = make_rect(0, 0, sw, sh);
+    gui_damage_full(&g_damage, sw, sh);
 }
 
 static void invalidate_rect(int sw, int sh, gui_rect_t r) {
-    r = rect_clip_screen(r, sw, sh);
-    if (rect_empty(r)) return;
-    if (g_dirty_full) return;
-
-    for (int i = 0; i < g_dirty_count; i++) {
-        if (rect_should_merge(g_dirty[i], r)) {
-            g_dirty[i] = rect_union(g_dirty[i], r);
-            g_dirty[i] = rect_clip_screen(g_dirty[i], sw, sh);
-            return;
-        }
-    }
-
-    if (g_dirty_count >= DIRTY_MAX) {
-        invalidate_full(sw, sh);
-        return;
-    }
-    g_dirty[g_dirty_count++] = r;
+    gui_damage_add(&g_damage, r, sw, sh);
 }
 
 static void invalidate_window(int sw, int sh, window_t* w) {
@@ -826,6 +857,8 @@ static int run_queued_launch(gfx_context_t* gfx, int* sw, int* sh) {
 
     *sw = (int)gfx->backbuffer.width;
     *sh = (int)gfx->backbuffer.height;
+    g_screen_width = *sw;
+    g_screen_height = *sh;
     icons_layout(*sw);
     return 1;
 }
@@ -910,17 +943,11 @@ static void draw_files_body(gfx_surface_t* s, window_t* w, int mx, int my) {
         draw_text(s, bx + 28, ry + 2, files->rows[idx], color);
     }
 
-    /* scrollbar */
-    int sx = bx + bw - 10;
-    fillr(s, sx, by + 14, 10, row_area, COL_BTN_BG);
-    vline(s, sx, by + 14, row_area, COL_FRAME);
-    if (files->row_count > visible) {
-        int thumb_h = row_area * visible / files->row_count;
-        if (thumb_h < 8) thumb_h = 8;
-        int thumb_y = by + 14 + (row_area - thumb_h) * files->scroll /
-                                 (files->row_count - visible);
-        fillr(s, sx + 2, thumb_y, 6, thumb_h, COL_TITLE_BG);
-    }
+    gui_widget_scrollbar(s, make_rect(bx + bw - 10, by + 14, 10, row_area),
+                         files->row_count, visible, files->scroll,
+                         (gui_widget_state_t){0,
+                             w->pressed_widget == 1, 0, 0},
+                         &GUI_WIDGET_THEME);
 
     hline(s, bx, by + bh - status_h, bw, COL_FRAME);
     if (files->status[0]) {
@@ -1001,18 +1028,6 @@ static void draw_system_body(gfx_surface_t* s, window_t* w) {
     rect(s, w->x, w->y, w->w, w->h, COL_FRAME);
 }
 
-static void draw_checkbox(gfx_surface_t* s, int x, int y, int checked) {
-    rect(s, x, y, 10, 10, COL_FRAME);
-    if (checked) {
-        hline(s, x + 2, y + 5, 2, COL_FRAME);
-        hline(s, x + 3, y + 6, 2, COL_FRAME);
-        hline(s, x + 4, y + 7, 2, COL_FRAME);
-        hline(s, x + 5, y + 6, 2, COL_FRAME);
-        hline(s, x + 6, y + 5, 2, COL_FRAME);
-        hline(s, x + 7, y + 4, 2, COL_FRAME);
-    }
-}
-
 static void draw_config_body(gfx_surface_t* s, window_t* w) {
     int bx = w->x;
     int by = w->y + TITLE_H;
@@ -1023,10 +1038,10 @@ static void draw_config_body(gfx_surface_t* s, window_t* w) {
     fillr(s, bx, by, bw, bh, COL_WIN_BG);
     draw_text(s, bx + 12, by + 12, "GUI", COL_SUBTEXT);
 
-    fillr(s, bx + 8, row_y - 4, bw - 16, 20, COL_BTN_BG);
-    rect(s, bx + 8, row_y - 4, bw - 16, 20, COL_FRAME);
-    draw_checkbox(s, bx + 14, row_y + 1, g_perf_visible);
-    draw_text(s, bx + 32, row_y + 3, "Perf readout", COL_TEXT);
+    gui_widget_checkbox(s, make_rect(bx + 8, row_y - 4, bw - 16, 20),
+                        "Perf readout", g_perf_visible,
+                        (gui_widget_state_t){0, 0, 1, 0},
+                        &GUI_WIDGET_THEME, draw_text);
 
     rect(s, w->x, w->y, w->w, w->h, COL_FRAME);
 }
@@ -1114,14 +1129,16 @@ static void draw_shell_body(gfx_surface_t* s, window_t* w) {
     rect(s, w->x, w->y, w->w, w->h, COL_FRAME);
 }
 
-static void files_app_open(window_t* w) {
+static void files_app_open(window_t* w, const char* argument) {
     files_window_state_t* files = FILES_STATE(w);
+    (void)argument;
     u_strcpy_n(files->cwd, "/", sizeof(files->cwd));
     u_strcpy_n(files->status, "Double-click files to open", sizeof(files->status));
     load_dir(w);
 }
 
-static void shell_app_open(window_t* w) {
+static void shell_app_open(window_t* w, const char* argument) {
+    (void)argument;
     gui_shell_open(SHELL_STATE(w));
 }
 
@@ -1157,20 +1174,795 @@ static void shell_app_draw(gfx_surface_t* s, window_t* w, int mx, int my) {
     draw_shell_body(s, w);
 }
 
+static unsigned int shell_app_event(window_t* w,
+                                    const gui_app_event_t* event) {
+    gui_shell_window_t* shell = SHELL_STATE(w);
+    if (event->type == GUI_APP_EVENT_KEY) {
+        if (event->key == KEY_ESC || (event->ascii & 0xFFu) == 27u)
+            return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_CLOSE;
+        if (gui_shell_handle_key(shell, event->ascii & 0xFFu, event->key,
+                                 event->modifiers) == GUI_SHELL_KEY_CLOSE)
+            return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_CLOSE;
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->type == GUI_APP_EVENT_WHEEL) {
+        int max_scroll = shell->line_count - 1;
+        if (max_scroll < 0) max_scroll = 0;
+        shell->scroll += event->wheel * 3;
+        if (shell->scroll < 0) shell->scroll = 0;
+        if (shell->scroll > max_scroll) shell->scroll = max_scroll;
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->type == GUI_APP_EVENT_TICK) {
+        return gui_shell_poll(shell) ? GUI_APP_RESULT_REDRAW
+                                     : GUI_APP_RESULT_NONE;
+    }
+    return GUI_APP_RESULT_NONE;
+}
+
+static unsigned int files_app_event(window_t* w,
+                                    const gui_app_event_t* event) {
+    files_window_state_t* files = FILES_STATE(w);
+    int row_area = (w->h - TITLE_H) - 27;
+    int visible = row_area / ROW_H;
+    int max_scroll;
+    gui_rect_t track;
+    gui_rect_t thumb;
+    if (visible < 1) visible = 1;
+    track = make_rect(w->w - 10, 14, 10, row_area);
+    thumb = gui_widget_scroll_thumb(track, files->row_count, visible,
+                                    files->scroll);
+    max_scroll = files->row_count - visible;
+    if (max_scroll < 0) max_scroll = 0;
+    if (event->type == GUI_APP_EVENT_WHEEL) {
+        files->scroll -= event->wheel * 3;
+        if (files->scroll < 0) files->scroll = 0;
+        if (files->scroll > max_scroll) files->scroll = max_scroll;
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->type == GUI_APP_EVENT_POINTER_MOVE &&
+        w->pressed_widget == 1) {
+        files->scroll = gui_widget_scroll_offset(
+            track, files->row_count, visible, event->y,
+            files->scroll_drag_offset);
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->type == GUI_APP_EVENT_POINTER_UP &&
+        w->pressed_widget == 1) {
+        w->pressed_widget = 0;
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->type != GUI_APP_EVENT_POINTER_DOWN)
+        return GUI_APP_RESULT_NONE;
+    if (gui_widget_hit(track, event->x, event->y)) {
+        if (gui_widget_hit(thumb, event->x, event->y)) {
+            w->pressed_widget = 1;
+            files->scroll_drag_offset = event->y - thumb.y;
+        } else if (event->y < thumb.y)
+            files->scroll -= visible;
+        else
+            files->scroll += visible;
+        if (files->scroll < 0) files->scroll = 0;
+        if (files->scroll > max_scroll) files->scroll = max_scroll;
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->y >= 14 && event->y < 14 + visible * ROW_H) {
+        int row = (event->y - 14) / ROW_H + files->scroll;
+        if (row >= 0 && row < files->row_count) {
+            if (files->row_dir[row]) {
+                if (u_streq(files->rows[row], ".."))
+                    path_normalize_parent(files->cwd);
+                else
+                    path_append(files->cwd, files->rows[row],
+                                sizeof(files->cwd));
+                load_dir(w);
+            } else {
+                uint32_t now = event->ticks;
+                int widx = win_index(w);
+                int is_double = g_last_file_win == widx &&
+                    g_last_file_row == row &&
+                    (uint32_t)(now - g_last_file_tick) < 35u;
+                char target[256];
+                u_strcpy_n(target, files->cwd, sizeof(target));
+                path_append(target, files->rows[row], sizeof(target));
+                if (is_double) {
+                    launch_kind_t kind = launch_kind_for_path(target);
+                    if (kind == LAUNCH_EDIT) {
+                        action_editor(g_screen_width, g_screen_height, target);
+                        u_strcpy_n(files->status, "Opened in Editor",
+                                   sizeof(files->status));
+                    } else {
+                        queue_launch(w, target);
+                    }
+                    g_last_file_win = -1;
+                    g_last_file_row = -1;
+                    g_last_file_tick = 0;
+                } else {
+                    u_strcpy_n(files->status, "Double-click to open ",
+                               sizeof(files->status));
+                    u_strcat_n(files->status, files->rows[row],
+                               sizeof(files->status));
+                    g_last_file_win = widx;
+                    g_last_file_row = row;
+                    g_last_file_tick = now;
+                }
+            }
+        }
+    }
+    return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+}
+
+static unsigned int config_app_event(window_t* w,
+                                     const gui_app_event_t* event) {
+    if (event->type == GUI_APP_EVENT_POINTER_DOWN &&
+        point_in(event->x, event->y, 8, 26, w->w - 16, 20)) {
+        g_perf_visible = !g_perf_visible;
+        gui_config_save();
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->type == GUI_APP_EVENT_KEY &&
+        (event->key == KEY_ENTER || event->key == KEY_SPACE)) {
+        g_perf_visible = !g_perf_visible;
+        gui_config_save();
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    return GUI_APP_RESULT_NONE;
+}
+
+#define EDITOR_TOOLBAR_H 16
+#define EDITOR_STATUS_H 14
+#define EDITOR_LINE_H 8
+#define EDITOR_WIDGET_SAVE 1
+#define EDITOR_WIDGET_DISCARD 2
+#define EDITOR_WIDGET_CANCEL 3
+#define EDITOR_WIDGET_SCROLLBAR 10
+#define EDITOR_WIDGET_TEXT 11
+
+static void editor_set_status(editor_window_state_t* editor,
+                              const char* status) {
+    u_strcpy_n(editor->status, status, sizeof(editor->status));
+}
+
+static int editor_position_before(uint32_t ar, uint32_t ac,
+                                  uint32_t br, uint32_t bc) {
+    return ar < br || (ar == br && ac < bc);
+}
+
+static int editor_has_selection(const editor_window_state_t* editor) {
+    return editor->selection_active &&
+        (editor->anchor_row != editor->row ||
+         editor->anchor_column != editor->column);
+}
+
+static void editor_selection_bounds(const editor_window_state_t* editor,
+                                    uint32_t* first_row,
+                                    uint32_t* first_column,
+                                    uint32_t* last_row,
+                                    uint32_t* last_column) {
+    if (editor_position_before(editor->anchor_row, editor->anchor_column,
+                               editor->row, editor->column)) {
+        *first_row = editor->anchor_row;
+        *first_column = editor->anchor_column;
+        *last_row = editor->row;
+        *last_column = editor->column;
+    } else {
+        *first_row = editor->row;
+        *first_column = editor->column;
+        *last_row = editor->anchor_row;
+        *last_column = editor->anchor_column;
+    }
+}
+
+static void editor_clear_selection(editor_window_state_t* editor) {
+    editor->selection_active = 0;
+    editor->anchor_row = editor->row;
+    editor->anchor_column = editor->column;
+}
+
+static int editor_delete_selection(editor_window_state_t* editor) {
+    uint32_t first_row, first_column, last_row, last_column;
+    if (!editor_has_selection(editor)) return 0;
+    editor_selection_bounds(editor, &first_row, &first_column,
+                            &last_row, &last_column);
+    if (!editor_model_delete_range(&editor->model, first_row, first_column,
+                                   last_row, last_column)) return 0;
+    editor->row = first_row;
+    editor->column = first_column;
+    editor_clear_selection(editor);
+    return 1;
+}
+
+static int editor_copy_selection(editor_window_state_t* editor) {
+    uint32_t first_row, first_column, last_row, last_column;
+    unsigned int used = 0;
+    if (!editor_has_selection(editor)) return 0;
+    editor_selection_bounds(editor, &first_row, &first_column,
+                            &last_row, &last_column);
+    for (uint32_t row = first_row; row <= last_row; row++) {
+        uint32_t start = row == first_row ? first_column : 0u;
+        uint32_t end = row == last_row ? last_column :
+            editor_model_line_length(&editor->model, row);
+        const char* line = editor->model.lines[row];
+        for (uint32_t column = start;
+             column < end && used + 1u < GUI_CLIPBOARD_CAPACITY; column++)
+            g_editor_clipboard[used++] = line[column];
+        if (row != last_row && used + 1u < GUI_CLIPBOARD_CAPACITY)
+            g_editor_clipboard[used++] = '\n';
+    }
+    g_editor_clipboard[used] = '\0';
+    return 1;
+}
+
+static int editor_paste(editor_window_state_t* editor) {
+    int changed = 0;
+    if (!g_editor_clipboard[0]) return 0;
+    (void)editor_delete_selection(editor);
+    for (unsigned int i = 0; g_editor_clipboard[i]; i++) {
+        if (g_editor_clipboard[i] == '\n') {
+            if (!editor_model_split_line(&editor->model, editor->row,
+                                         editor->column)) break;
+            editor->row++;
+            editor->column = 0;
+            changed = 1;
+        } else {
+            if (!editor_model_insert_char(&editor->model, editor->row,
+                                          editor->column,
+                                          g_editor_clipboard[i])) break;
+            editor->column++;
+            changed = 1;
+        }
+    }
+    editor_clear_selection(editor);
+    return changed;
+}
+
+static int editor_visible_rows(const window_t* w) {
+    int rows = (w->h - TITLE_H - EDITOR_TOOLBAR_H - EDITOR_STATUS_H - 4) /
+               EDITOR_LINE_H;
+    return rows < 1 ? 1 : rows;
+}
+
+static int editor_visible_cols(const window_t* w) {
+    int cols = (w->w - 18) / 6;
+    return cols < 1 ? 1 : cols;
+}
+
+static void editor_clamp_view(window_t* w) {
+    editor_window_state_t* editor = EDITOR_STATE(w);
+    uint32_t len;
+    int rows = editor_visible_rows(w);
+    int cols = editor_visible_cols(w);
+    if (editor->model.count == 0) {
+        editor->row = 0;
+        editor->column = 0;
+    } else if (editor->row >= editor->model.count) {
+        editor->row = editor->model.count - 1u;
+    }
+    len = editor_model_line_length(&editor->model, editor->row);
+    if (editor->column > len) editor->column = len;
+    if (editor->row < editor->top) editor->top = editor->row;
+    if (editor->row >= editor->top + (uint32_t)rows)
+        editor->top = editor->row - (uint32_t)rows + 1u;
+    if (editor->column < editor->hscroll) editor->hscroll = editor->column;
+    if (editor->column >= editor->hscroll + (uint32_t)cols)
+        editor->hscroll = editor->column - (uint32_t)cols + 1u;
+}
+
+static gui_rect_t editor_confirm_button(const window_t* w, int choice) {
+    int panel_w = 244;
+    int panel_x = w->x + (w->w - panel_w) / 2;
+    int panel_y = w->y + TITLE_H + (w->h - TITLE_H - 74) / 2;
+    return make_rect(panel_x + 8 + (choice - 1) * 76,
+                     panel_y + 42, 68, 20);
+}
+
+static void editor_app_open(window_t* w, const char* argument) {
+    editor_window_state_t* editor = EDITOR_STATE(w);
+    editor_model_init(&editor->model, argument ? argument : "");
+    editor->caret_visible = 1;
+    editor->confirm_choice = EDITOR_WIDGET_SAVE;
+    editor->next_blink = sys_get_ticks() + SMALLOS_TIMER_HZ / 2u;
+    if (!editor_model_load(&editor->model))
+        editor_set_status(editor, "Unable to load file");
+    else
+        editor_set_status(editor, "F2 or Ctrl+S saves");
+}
+
+static void editor_app_close(window_t* w) {
+    if (w->state) editor_model_destroy(&EDITOR_STATE(w)->model);
+}
+
+static void editor_app_draw(gfx_surface_t* s, window_t* w, int mx, int my) {
+    editor_window_state_t* editor = EDITOR_STATE(w);
+    int by = w->y + TITLE_H;
+    int rows = editor_visible_rows(w);
+    int cols = editor_visible_cols(w);
+    int text_y = by + EDITOR_TOOLBAR_H + 2;
+    char location[64];
+    char number[16];
+    (void)mx;
+    (void)my;
+    fillr(s, w->x, by, w->w, w->h - TITLE_H, 0x00FFFFFFu);
+    draw_fixed_text(s, w->x + 4, by + 4, editor->model.path,
+                    cols, COL_TEXT);
+    hline(s, w->x, by + EDITOR_TOOLBAR_H, w->w, COL_FRAME);
+    for (int i = 0; i < rows; i++) {
+        uint32_t row = editor->top + (uint32_t)i;
+        uint32_t selection_start = 0, selection_end = 0;
+        int row_selected = 0;
+        if (row >= editor->model.count) break;
+        if (editor_has_selection(editor)) {
+            uint32_t first_row, first_column, last_row, last_column;
+            editor_selection_bounds(editor, &first_row, &first_column,
+                                    &last_row, &last_column);
+            if (row >= first_row && row <= last_row) {
+                uint32_t line_len = editor_model_line_length(&editor->model,
+                                                              row);
+                selection_start = row == first_row ? first_column : 0u;
+                selection_end = row == last_row ? last_column : line_len + 1u;
+                row_selected = selection_end > selection_start;
+                if (row_selected) {
+                    uint32_t visible_start = selection_start > editor->hscroll ?
+                        selection_start : editor->hscroll;
+                    uint32_t visible_end = selection_end < editor->hscroll +
+                        (uint32_t)cols ? selection_end :
+                        editor->hscroll + (uint32_t)cols;
+                    if (visible_end > visible_start)
+                        fillr(s, w->x + 4 +
+                              (int)(visible_start - editor->hscroll) * 6,
+                              text_y + i * EDITOR_LINE_H,
+                              (int)(visible_end - visible_start) * 6,
+                              7, COL_HILIGHT);
+                }
+            }
+        }
+        draw_fixed_text(s, w->x + 4, text_y + i * EDITOR_LINE_H,
+                        editor->model.lines[row] +
+                            (editor->hscroll < editor_model_line_length(
+                                &editor->model, row) ? editor->hscroll :
+                                editor_model_line_length(&editor->model, row)),
+                        cols, COL_TEXT);
+        if (row_selected) {
+            uint32_t line_len = editor_model_line_length(&editor->model, row);
+            uint32_t visible_start = selection_start > editor->hscroll ?
+                selection_start : editor->hscroll;
+            uint32_t visible_end = selection_end < editor->hscroll +
+                (uint32_t)cols ? selection_end : editor->hscroll +
+                (uint32_t)cols;
+            if (visible_end > line_len) visible_end = line_len;
+            for (uint32_t column = visible_start; column < visible_end;
+                 column++)
+                draw_char(s, w->x + 4 +
+                          (int)(column - editor->hscroll) * 6,
+                          text_y + i * EDITOR_LINE_H,
+                          editor->model.lines[row][column], COL_HILIGHT_T);
+        }
+    }
+    if (editor->caret_visible && !editor->confirm_close &&
+        editor->row >= editor->top &&
+        editor->row < editor->top + (uint32_t)rows) {
+        int caret_col = (int)(editor->column - editor->hscroll);
+        if (caret_col >= 0 && caret_col < cols)
+            vline(s, w->x + 4 + caret_col * 6,
+                  text_y + ((int)editor->row - (int)editor->top) * EDITOR_LINE_H,
+                  7, COL_TITLE_BG);
+    }
+    hline(s, w->x, w->y + w->h - EDITOR_STATUS_H, w->w, COL_FRAME);
+    draw_text(s, w->x + 4, w->y + w->h - 10,
+              editor->model.dirty ? "*" : " ", COL_TEXT);
+    u_strcpy_n(location, "Ln ", sizeof(location));
+    utoa10(editor->row + 1u, number);
+    u_strcat_n(location, number, sizeof(location));
+    u_strcat_n(location, " Col ", sizeof(location));
+    utoa10(editor->column + 1u, number);
+    u_strcat_n(location, number, sizeof(location));
+    u_strcat_n(location, "  ", sizeof(location));
+    u_strcat_n(location, editor->status, sizeof(location));
+    draw_text(s, w->x + 16, w->y + w->h - 10, location, COL_SUBTEXT);
+    gui_widget_scrollbar(s,
+        make_rect(w->x + w->w - 10, text_y, 10, rows * EDITOR_LINE_H),
+        (int)editor->model.count, rows, (int)editor->top,
+        (gui_widget_state_t){0,
+            w->pressed_widget == EDITOR_WIDGET_SCROLLBAR, 0, 0},
+        &GUI_WIDGET_THEME);
+
+    if (editor->confirm_close) {
+        int panel_w = 244;
+        int panel_x = w->x + (w->w - panel_w) / 2;
+        int panel_y = w->y + TITLE_H + (w->h - TITLE_H - 74) / 2;
+        fillr(s, panel_x, panel_y, panel_w, 74, COL_WIN_BG);
+        rect(s, panel_x, panel_y, panel_w, 74, COL_FRAME);
+        draw_text(s, panel_x + 8, panel_y + 10,
+                  "Save changes before closing?", COL_TEXT);
+        for (int choice = 1; choice <= 3; choice++) {
+            gui_widget_state_t state = {w->focused_widget == choice,
+                w->pressed_widget == choice,
+                editor->confirm_choice == choice, 0};
+            const char* label = choice == 1 ? "Save" :
+                                choice == 2 ? "Discard" : "Cancel";
+            gui_widget_button(s, editor_confirm_button(w, choice), label,
+                              state, &GUI_WIDGET_THEME, draw_text);
+        }
+    }
+    rect(s, w->x, w->y, w->w, w->h, COL_FRAME);
+}
+
+static unsigned int editor_confirm_event(window_t* w,
+                                         const gui_app_event_t* event) {
+    editor_window_state_t* editor = EDITOR_STATE(w);
+    if (event->type == GUI_APP_EVENT_POINTER_MOVE) {
+        int sx = w->x + event->x;
+        int sy = w->y + TITLE_H + event->y;
+        int hovered = 0;
+        for (int choice = 1; choice <= 3; choice++) {
+            if (gui_widget_hit(editor_confirm_button(w, choice), sx, sy))
+                hovered = choice;
+        }
+        if (hovered != w->focused_widget) {
+            w->focused_widget = hovered;
+            return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+        }
+        return GUI_APP_RESULT_HANDLED;
+    }
+    if (event->type == GUI_APP_EVENT_POINTER_DOWN) {
+        int sx = w->x + event->x;
+        int sy = w->y + TITLE_H + event->y;
+        for (int choice = 1; choice <= 3; choice++) {
+            if (gui_widget_hit(editor_confirm_button(w, choice), sx, sy)) {
+                editor->confirm_choice = choice;
+                w->focused_widget = choice;
+                w->pressed_widget = choice;
+                break;
+            }
+        }
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->type == GUI_APP_EVENT_POINTER_UP) {
+        int sx = w->x + event->x;
+        int sy = w->y + TITLE_H + event->y;
+        int pressed = w->pressed_widget;
+        w->pressed_widget = 0;
+        if (pressed >= 1 && pressed <= 3 &&
+            gui_widget_hit(editor_confirm_button(w, pressed), sx, sy)) {
+            editor->confirm_choice = pressed;
+            if (pressed == EDITOR_WIDGET_SAVE) {
+                if (editor_model_save(&editor->model))
+                    return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_CLOSE;
+                editor_set_status(editor, "Save failed");
+                editor->confirm_close = 0;
+            } else if (pressed == EDITOR_WIDGET_DISCARD) {
+                editor->model.dirty = 0;
+                return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_CLOSE;
+            } else {
+                editor->confirm_close = 0;
+            }
+        }
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->type != GUI_APP_EVENT_KEY)
+        return GUI_APP_RESULT_HANDLED;
+    if (event->key == KEY_ESC) {
+        editor->confirm_close = 0;
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->key == KEY_LEFT || event->key == KEY_UP) {
+        editor->confirm_choice--;
+        if (editor->confirm_choice < 1) editor->confirm_choice = 3;
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->key == KEY_RIGHT || event->key == KEY_DOWN ||
+        event->key == KEY_TAB) {
+        editor->confirm_choice++;
+        if (editor->confirm_choice > 3) editor->confirm_choice = 1;
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->key == KEY_ENTER) {
+        if (editor->confirm_choice == EDITOR_WIDGET_SAVE) {
+            if (editor_model_save(&editor->model))
+                return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_CLOSE;
+            editor_set_status(editor, "Save failed");
+            editor->confirm_close = 0;
+            return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+        }
+        if (editor->confirm_choice == EDITOR_WIDGET_DISCARD)
+        {
+            editor->model.dirty = 0;
+            return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_CLOSE;
+        }
+        editor->confirm_close = 0;
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    return GUI_APP_RESULT_HANDLED;
+}
+
+static void editor_pointer_position(window_t* w, int x, int y,
+                                    uint32_t* row, uint32_t* column) {
+    editor_window_state_t* editor = EDITOR_STATE(w);
+    int text_y = EDITOR_TOOLBAR_H + 2;
+    int visual_row = (y - text_y) / EDITOR_LINE_H;
+    if (y < text_y) visual_row = 0;
+    if (visual_row >= editor_visible_rows(w))
+        visual_row = editor_visible_rows(w) - 1;
+    *row = editor->top + (uint32_t)visual_row;
+    if (editor->model.count == 0) *row = 0;
+    else if (*row >= editor->model.count) *row = editor->model.count - 1u;
+    *column = editor->hscroll +
+        (uint32_t)((x > 4 ? x - 4 : 0) / 6);
+    if (*column > editor_model_line_length(&editor->model, *row))
+        *column = editor_model_line_length(&editor->model, *row);
+}
+
+static unsigned int editor_app_event(window_t* w,
+                                     const gui_app_event_t* event) {
+    editor_window_state_t* editor = EDITOR_STATE(w);
+    uint32_t len;
+    int selection_deleted = 0;
+    int rows = editor_visible_rows(w);
+    gui_rect_t scroll_track = make_rect(w->w - 10,
+        EDITOR_TOOLBAR_H + 2, 10, rows * EDITOR_LINE_H);
+    gui_rect_t scroll_thumb = gui_widget_scroll_thumb(scroll_track,
+        (int)editor->model.count, rows, (int)editor->top);
+    if (editor->confirm_close) return editor_confirm_event(w, event);
+    if (event->type == GUI_APP_EVENT_CLOSE_REQUEST) {
+        if (!editor->model.dirty) return GUI_APP_RESULT_CLOSE;
+        editor->confirm_close = 1;
+        editor->confirm_choice = EDITOR_WIDGET_SAVE;
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW |
+               GUI_APP_RESULT_KEEP_OPEN;
+    }
+    if (event->type == GUI_APP_EVENT_TICK) {
+        editor->caret_visible = !editor->caret_visible;
+        return GUI_APP_RESULT_REDRAW;
+    }
+    if (event->type == GUI_APP_EVENT_RESIZE) {
+        editor_clamp_view(w);
+        return GUI_APP_RESULT_REDRAW;
+    }
+    if (event->type == GUI_APP_EVENT_WHEEL) {
+        int max_top = (int)editor->model.count - rows;
+        int top = (int)editor->top - event->wheel * 3;
+        if (max_top < 0) max_top = 0;
+        if (top < 0) top = 0;
+        if (top > max_top) top = max_top;
+        editor->top = (uint32_t)top;
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->type == GUI_APP_EVENT_POINTER_MOVE &&
+        w->pressed_widget == EDITOR_WIDGET_SCROLLBAR) {
+        editor->top = (uint32_t)gui_widget_scroll_offset(
+            scroll_track, (int)editor->model.count, rows, event->y,
+            editor->scroll_drag_offset);
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->type == GUI_APP_EVENT_POINTER_MOVE &&
+        w->pressed_widget == EDITOR_WIDGET_TEXT) {
+        editor_pointer_position(w, event->x, event->y,
+                                &editor->row, &editor->column);
+        editor->selection_active = 1;
+        editor->caret_visible = 1;
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->type == GUI_APP_EVENT_POINTER_UP &&
+        (w->pressed_widget == EDITOR_WIDGET_SCROLLBAR ||
+         w->pressed_widget == EDITOR_WIDGET_TEXT)) {
+        if (w->pressed_widget == EDITOR_WIDGET_TEXT &&
+            !editor_has_selection(editor)) editor_clear_selection(editor);
+        w->pressed_widget = 0;
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->type == GUI_APP_EVENT_POINTER_DOWN) {
+        if (gui_widget_hit(scroll_track, event->x, event->y)) {
+            if (gui_widget_hit(scroll_thumb, event->x, event->y)) {
+                w->pressed_widget = EDITOR_WIDGET_SCROLLBAR;
+                editor->scroll_drag_offset = event->y - scroll_thumb.y;
+            } else {
+                int max_top = (int)editor->model.count - rows;
+                int top = (int)editor->top +
+                    (event->y < scroll_thumb.y ? -rows : rows);
+                if (max_top < 0) max_top = 0;
+                if (top < 0) top = 0;
+                if (top > max_top) top = max_top;
+                editor->top = (uint32_t)top;
+            }
+        } else if (event->y >= EDITOR_TOOLBAR_H + 2 &&
+                   event->y < EDITOR_TOOLBAR_H + 2 +
+                       rows * EDITOR_LINE_H) {
+            editor_pointer_position(w, event->x, event->y,
+                                    &editor->row, &editor->column);
+            editor->anchor_row = editor->row;
+            editor->anchor_column = editor->column;
+            editor->selection_active = 1;
+            w->pressed_widget = EDITOR_WIDGET_TEXT;
+            editor->caret_visible = 1;
+        }
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->type != GUI_APP_EVENT_KEY) return GUI_APP_RESULT_NONE;
+    if ((event->modifiers & SYS_INPUT_KEY_CTRL) &&
+        (event->key == KEY_S || event->ascii == 's' || event->ascii == 'S')) {
+        editor_set_status(editor, editor_model_save(&editor->model)
+            ? "Saved" : "Save failed");
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if ((event->modifiers & SYS_INPUT_KEY_CTRL) &&
+        (event->key == KEY_A || event->ascii == 'a' || event->ascii == 'A')) {
+        if (editor->model.count) {
+            editor->anchor_row = 0;
+            editor->anchor_column = 0;
+            editor->row = editor->model.count - 1u;
+            editor->column = editor_model_line_length(&editor->model,
+                                                       editor->row);
+            editor->selection_active = 1;
+            editor_clamp_view(w);
+        }
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if ((event->modifiers & SYS_INPUT_KEY_CTRL) &&
+        (event->key == KEY_C || event->ascii == 'c' || event->ascii == 'C')) {
+        editor_set_status(editor, editor_copy_selection(editor) ?
+                          "Copied" : "Nothing selected");
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if ((event->modifiers & SYS_INPUT_KEY_CTRL) &&
+        (event->key == KEY_X || event->ascii == 'x' || event->ascii == 'X')) {
+        if (editor_copy_selection(editor) && editor_delete_selection(editor))
+            editor_set_status(editor, "Cut");
+        else
+            editor_set_status(editor, "Nothing selected");
+        editor_clamp_view(w);
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if ((event->modifiers & SYS_INPUT_KEY_CTRL) &&
+        (event->key == KEY_V || event->ascii == 'v' || event->ascii == 'V')) {
+        editor_set_status(editor, editor_paste(editor) ?
+                          "Pasted" : "Clipboard empty");
+        editor_clamp_view(w);
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    {
+        int navigation = event->key == KEY_UP || event->key == KEY_DOWN ||
+            event->key == KEY_LEFT || event->key == KEY_RIGHT ||
+            event->key == KEY_HOME || event->key == KEY_END ||
+            event->key == KEY_PAGEUP || event->key == KEY_PAGEDOWN;
+        if (navigation && (event->modifiers & SYS_INPUT_KEY_SHIFT)) {
+            if (!editor->selection_active) {
+                editor->anchor_row = editor->row;
+                editor->anchor_column = editor->column;
+                editor->selection_active = 1;
+            }
+        } else if (navigation) {
+            editor_clear_selection(editor);
+        } else if (event->key == KEY_BACKSPACE || event->key == KEY_DELETE ||
+                   event->key == KEY_ENTER || event->key == KEY_TAB ||
+                   (event->ascii & 0xFFu) >= 32u) {
+            selection_deleted = editor_delete_selection(editor);
+        }
+    }
+    if (event->key == KEY_F2) {
+        editor_set_status(editor, editor_model_save(&editor->model)
+            ? "Saved" : "Save failed");
+    } else if (event->key == KEY_ESC) {
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_CLOSE;
+    } else if (event->key == KEY_UP) {
+        if (editor->row > 0) editor->row--;
+    } else if (event->key == KEY_DOWN) {
+        if (editor->row + 1u < editor->model.count) editor->row++;
+    } else if (event->key == KEY_LEFT) {
+        if (editor->column > 0) editor->column--;
+        else if (editor->row > 0) {
+            editor->row--;
+            editor->column = editor_model_line_length(&editor->model,
+                                                       editor->row);
+        }
+    } else if (event->key == KEY_RIGHT) {
+        len = editor_model_line_length(&editor->model, editor->row);
+        if (editor->column < len) editor->column++;
+        else if (editor->row + 1u < editor->model.count) {
+            editor->row++;
+            editor->column = 0;
+        }
+    } else if (event->key == KEY_HOME) {
+        editor->column = 0;
+    } else if (event->key == KEY_END) {
+        editor->column = editor_model_line_length(&editor->model, editor->row);
+    } else if (event->key == KEY_PAGEUP) {
+        uint32_t amount = (uint32_t)editor_visible_rows(w);
+        editor->row = amount > editor->row ? 0 : editor->row - amount;
+    } else if (event->key == KEY_PAGEDOWN) {
+        editor->row += (uint32_t)editor_visible_rows(w);
+        if (editor->model.count && editor->row >= editor->model.count)
+            editor->row = editor->model.count - 1u;
+    } else if (event->key == KEY_BACKSPACE && !selection_deleted) {
+        (void)editor_model_backspace(&editor->model, &editor->row,
+                                     &editor->column);
+    } else if (event->key == KEY_DELETE && !selection_deleted) {
+        (void)editor_model_delete(&editor->model, editor->row, editor->column);
+    } else if ((event->key == KEY_BACKSPACE || event->key == KEY_DELETE) &&
+               selection_deleted) {
+        /* The selection deletion is the complete key action. */
+    } else if (event->key == KEY_ENTER) {
+        if (editor_model_split_line(&editor->model, editor->row,
+                                    editor->column)) {
+            editor->row++;
+            editor->column = 0;
+        }
+    } else if (event->key == KEY_TAB) {
+        for (int i = 0; i < 4; i++) {
+            if (!editor_model_insert_char(&editor->model, editor->row,
+                                          editor->column, ' ')) break;
+            editor->column++;
+        }
+    } else if ((event->ascii & 0xFFu) >= 32u) {
+        if (editor_model_insert_char(&editor->model, editor->row,
+                                     editor->column,
+                                     (char)(event->ascii & 0xFFu)))
+            editor->column++;
+        else
+            editor_set_status(editor, "Line too long");
+    } else {
+        return GUI_APP_RESULT_NONE;
+    }
+    editor->caret_visible = 1;
+    editor_clamp_view(w);
+    return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+}
+
 static const window_app_ops_t WINDOW_APPS[] = {
-    {0, 0, 0, 0, 0},
-    {"Files", sizeof(files_window_state_t), files_app_open, 0, files_app_draw},
-    {"System", 0, 0, 0, system_app_draw},
-    {"Config", 0, 0, 0, config_app_draw},
-    {"About", 0, 0, 0, about_app_draw},
-    {"Shell", sizeof(gui_shell_window_t), shell_app_open, shell_app_close,
-     shell_app_draw},
+    {0},
+    {"Files", sizeof(files_window_state_t), 360, 240, 220, 120, 0,
+     files_app_open, 0, files_app_draw, files_app_event},
+    {"System", 0, 280, 200, 200, 120, 0,
+     0, 0, system_app_draw, 0},
+    {"Config", 0, 260, 116, 220, 100, 0,
+     0, 0, config_app_draw, config_app_event},
+    {"About", 0, 280, 140, 220, 100, 0,
+     0, 0, about_app_draw, 0},
+    {"Shell", sizeof(gui_shell_window_t), 500, 320, 240, 120,
+     GUI_SHELL_POLL_TICKS, shell_app_open, shell_app_close,
+     shell_app_draw, shell_app_event},
+    {"Editor", sizeof(editor_window_state_t), 560, 380, 260, 140,
+     SMALLOS_TIMER_HZ / 2u, editor_app_open, editor_app_close,
+     editor_app_draw, editor_app_event},
 };
 
 static const window_app_ops_t* window_app_ops(win_type_t type) {
     if ((unsigned int)type >= sizeof(WINDOW_APPS) / sizeof(WINDOW_APPS[0]))
         return 0;
     return &WINDOW_APPS[type];
+}
+
+static unsigned int dispatch_app_event(window_t* w,
+                                       const gui_app_event_t* event) {
+    const window_app_ops_t* ops = w ? window_app_ops(w->type) : 0;
+    if (!w || !w->active || !ops || !ops->event) return GUI_APP_RESULT_NONE;
+    return ops->event(w, event);
+}
+
+static int request_window_close(window_t* w, int sw, int sh) {
+    gui_app_event_t event;
+    unsigned int result;
+    if (!w || !w->active) return 1;
+    memset(&event, 0, sizeof(event));
+    event.type = GUI_APP_EVENT_CLOSE_REQUEST;
+    event.width = w->w;
+    event.height = w->h - TITLE_H;
+    event.ticks = sys_get_ticks();
+    result = dispatch_app_event(w, &event);
+    if (result & GUI_APP_RESULT_REDRAW) invalidate_window(sw, sh, w);
+    if (result & GUI_APP_RESULT_KEEP_OPEN) return 0;
+    invalidate_window(sw, sh, w);
+    close_window(w);
+    invalidate_topbar(sw, sh);
+    return 1;
+}
+
+static unsigned int apply_app_result(window_t* w, unsigned int result,
+                                     int sw, int sh) {
+    if ((result & GUI_APP_RESULT_REDRAW) && w && w->active)
+        invalidate_window(sw, sh, w);
+    if ((result & GUI_APP_RESULT_CLOSE) && w && w->active)
+        (void)request_window_close(w, sw, sh);
+    return result;
 }
 
 static void draw_window(gfx_surface_t* s, window_t* w, int focused, int mx, int my) {
@@ -1270,7 +2062,8 @@ static window_t* build_window(win_type_t type,
                               int w,
                               int h,
                               int x,
-                              int y) {
+                              int y,
+                              const char* argument) {
     const window_app_ops_t* ops = window_app_ops(type);
     window_t* win = alloc_window();
     if (!win) return 0;
@@ -1280,6 +2073,10 @@ static window_t* build_window(win_type_t type,
         return 0;
     }
     win->type = type;
+    win->focused_widget = 0;
+    win->pressed_widget = 0;
+    win->next_tick = ops->tick_interval
+                   ? sys_get_ticks() + ops->tick_interval : 0u;
     if (ops->state_size) {
         win->state = malloc(ops->state_size);
         if (win->state) memset(win->state, 0, ops->state_size);
@@ -1289,15 +2086,15 @@ static window_t* build_window(win_type_t type,
         win->active = 0;
         return 0;
     }
-    win->w = w;
-    win->h = h;
+    win->w = w < ops->min_width ? ops->min_width : w;
+    win->h = h < ops->min_height ? ops->min_height : h;
     win->x = x;
     win->y = y;
     if (win->x < 4) win->x = 4;
     if (win->y < 20) win->y = 20;
     if (win->x > sw - 32) win->x = sw - 32;
     if (win->y > sh - TITLE_H) win->y = sh - TITLE_H;
-    if (ops->open) ops->open(win);
+    if (ops->open) ops->open(win, argument);
     return win;
 }
 
@@ -1309,44 +2106,59 @@ static void show_built_window(int sw, int sh, window_t* w) {
 static void action_files(int sw, int sh) {
     window_t* w = build_window(WT_FILES, sw, sh, 360, 240,
                                (sw - 360) / 2,
-                               (sh - 240) / 2);
+                               (sh - 240) / 2, 0);
     if (!w) return;
     show_built_window(sw, sh, w);
 }
 static void action_system(int sw, int sh) {
     window_t* w = build_window(WT_SYSTEM, sw, sh, 280, 200,
                                (sw - 280) / 2 + 40,
-                               (sh - 200) / 2 - 20);
+                               (sh - 200) / 2 - 20, 0);
     if (!w) return;
     show_built_window(sw, sh, w);
 }
 static void action_config(int sw, int sh) {
     window_t* w = build_window(WT_CONFIG, sw, sh, 260, 116,
                                (sw - 260) / 2 + 20,
-                               (sh - 116) / 2 + 10);
+                               (sh - 116) / 2 + 10, 0);
     if (!w) return;
     show_built_window(sw, sh, w);
 }
 static void action_about(int sw, int sh) {
     window_t* w = build_window(WT_ABOUT, sw, sh, 280, 140,
                                (sw - 280) / 2 - 40,
-                               (sh - 140) / 2 + 20);
+                               (sh - 140) / 2 + 20, 0);
     if (!w) return;
     show_built_window(sw, sh, w);
 }
 static void action_shell(int sw, int sh) {
     window_t* w = build_window(WT_SHELL, sw, sh, 500, 320,
                                (sw - 500) / 2,
-                               (sh - 320) / 2);
+                               (sh - 320) / 2, 0);
     if (!w) return;
     /* Shell startup can touch the inherited console before PTY setup settles. */
     invalidate_full(sw, sh);
     show_built_window(sw, sh, w);
 }
 
+static void action_editor(int sw, int sh, const char* path) {
+    const window_app_ops_t* ops = window_app_ops(WT_EDITOR);
+    int width = ops->default_width;
+    int height = ops->default_height;
+    window_t* w = build_window(WT_EDITOR, sw, sh, width, height,
+                               (sw - width) / 2,
+                               (sh - height) / 2, path);
+    if (!w) return;
+    show_built_window(sw, sh, w);
+}
+
 static void action_quit(int sw, int sh) {
-    (void)sw; (void)sh;
-    g_should_quit = 1;
+    int can_quit = 1;
+    for (int i = MAX_WINDOWS - 1; i >= 0; i--) {
+        if (g_wins[i].active && !request_window_close(&g_wins[i], sw, sh))
+            can_quit = 0;
+    }
+    if (can_quit) g_should_quit = 1;
 }
 
 #define ICON_COUNT 6
@@ -1455,27 +2267,6 @@ static void draw_top_bar(gfx_surface_t* s) {
     draw_text(s, w - 8 - (int)text_width(buf), 4, buf, COL_TEXT);
 }
 
-/* ---------------- cursor ---------------- */
-
-static void draw_cursor(gfx_surface_t* s, int mx, int my) {
-    static const unsigned char arrow[12][9] = {
-        {1,0,0,0,0,0,0,0,0}, {1,1,0,0,0,0,0,0,0},
-        {1,2,1,0,0,0,0,0,0}, {1,2,2,1,0,0,0,0,0},
-        {1,2,2,2,1,0,0,0,0}, {1,2,2,2,2,1,0,0,0},
-        {1,2,2,2,2,2,1,0,0}, {1,2,2,2,2,2,2,1,0},
-        {1,2,2,2,1,1,1,1,0}, {1,2,1,2,2,1,0,0,0},
-        {1,1,0,1,2,2,1,0,0}, {0,0,0,0,1,2,1,0,0},
-    };
-    for (int r = 0; r < 12; r++) {
-        for (int c = 0; c < 9; c++) {
-            int px = mx + c, py = my + r;
-            if (px < 0 || py < 0) continue;
-            if (arrow[r][c] == 1) gui_put_pixel(s, px, py, 0);
-            else if (arrow[r][c] == 2) gui_put_pixel(s, px, py, 0xFFFFFFu);
-        }
-    }
-}
-
 /* ---------------- compose ---------------- */
 
 static void compose_v2(gfx_surface_t* s, int mx, int my) {
@@ -1517,10 +2308,6 @@ static void compose_rect(gfx_surface_t* s, gui_rect_t r, int mx, int my) {
         draw_window(s, w, w == top, mx, my);
     }
     clip_clear();
-}
-
-static gui_rect_t cursor_screen_rect(int mx, int my) {
-    return make_rect(mx, my, CURSOR_W, CURSOR_H);
 }
 
 static int present_dirty_scene(gfx_context_t* gfx, int mx, int my) {
@@ -2012,10 +2799,6 @@ static gui_fp_t abs_to_screen_fp(unsigned int value, int max_value) {
     return (gui_fp_t)((scaled + 32767ull) / 65535ull);
 }
 
-static int g_last_file_win = -1;
-static int g_last_file_row = -1;
-static uint32_t g_last_file_tick = 0;
-
 static int point_in(int x, int y, int rx, int ry, int rw, int rh) {
     return x >= rx && x < rx + rw && y >= ry && y < ry + rh;
 }
@@ -2086,37 +2869,42 @@ static int read_input_coalesced(sys_input_event_t* events,
     return total;
 }
 
-static int shell_windows_need_poll(void) {
+static int apps_have_timers(void) {
     for (int i = 0; i < MAX_WINDOWS; i++) {
-        if (g_wins[i].active &&
-            g_wins[i].type == WT_SHELL) {
-            gui_shell_window_t* shell = SHELL_STATE(&g_wins[i]);
-            if (shell->backend == GUI_SHELL_BACKEND_PIPE_CHILD ||
-                shell->backend == GUI_SHELL_BACKEND_PTY_CHILD) {
-                return 1;
-            }
-        }
+        const window_app_ops_t* ops;
+        if (!g_wins[i].active) continue;
+        ops = window_app_ops(g_wins[i].type);
+        if (ops && ops->tick_interval) return 1;
     }
     return 0;
 }
 
-static int shell_poll_due(int shell_polling, uint32_t now) {
-    if (!shell_polling) {
-        g_shell_next_poll_tick = 0;
-        return 0;
+static int dispatch_due_app_ticks(int sw, int sh, uint32_t now) {
+    int dirty = 0;
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+        window_t* w = &g_wins[i];
+        const window_app_ops_t* ops;
+        gui_app_event_t event;
+        unsigned int result;
+        if (!w->active) continue;
+        ops = window_app_ops(w->type);
+        if (!ops || !ops->tick_interval) continue;
+        if (w->next_tick == 0u) w->next_tick = now + ops->tick_interval;
+        if (!tick_due(now, w->next_tick)) continue;
+        memset(&event, 0, sizeof(event));
+        event.type = GUI_APP_EVENT_TICK;
+        event.width = w->w;
+        event.height = w->h - TITLE_H;
+        event.ticks = now;
+        result = dispatch_app_event(w, &event);
+        apply_app_result(w, result, sw, sh);
+        if (result & GUI_APP_RESULT_REDRAW) dirty = 1;
+        if (w->active) w->next_tick = now + ops->tick_interval;
     }
-    if (g_shell_next_poll_tick == 0u ||
-        tick_due(now, g_shell_next_poll_tick)) {
-        return 1;
-    }
-    return 0;
+    return dirty;
 }
 
-static void shell_poll_schedule_next(uint32_t now) {
-    g_shell_next_poll_tick = now + GUI_SHELL_POLL_TICKS;
-}
-
-static uint32_t gui_wait_deadline(int shell_polling, uint32_t now) {
+static uint32_t gui_wait_deadline(uint32_t now) {
     uint32_t deadline = 0;
     int have_deadline = 0;
 
@@ -2125,14 +2913,16 @@ static uint32_t gui_wait_deadline(int shell_polling, uint32_t now) {
         have_deadline = 1;
     }
 
-    if (shell_polling) {
-        if (g_shell_next_poll_tick == 0u ||
-            tick_due(now, g_shell_next_poll_tick)) {
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+        const window_app_ops_t* ops;
+        if (!g_wins[i].active) continue;
+        ops = window_app_ops(g_wins[i].type);
+        if (!ops || !ops->tick_interval) continue;
+        if (g_wins[i].next_tick == 0u || tick_due(now, g_wins[i].next_tick))
             return now;
-        }
         deadline = have_deadline
-                 ? min_deadline(deadline, g_shell_next_poll_tick)
-                 : g_shell_next_poll_tick;
+                 ? min_deadline(deadline, g_wins[i].next_tick)
+                 : g_wins[i].next_tick;
         have_deadline = 1;
     }
 
@@ -2198,9 +2988,7 @@ static void handle_click(int mx, int my, gui_fp_t mxf, gui_fp_t myf, int sw, int
         int cx = w->x + w->w - CLOSE_W - 2;
         int cy = w->y + 2;
         if (point_in(mx, my, cx, cy, CLOSE_W - 2, TITLE_H - 4)) {
-            invalidate_window(sw, sh, w);
-            close_window(w);
-            invalidate_topbar(sw, sh);
+            (void)request_window_close(w, sw, sh);
             return;
         }
         if (point_in(mx, my,
@@ -2245,79 +3033,18 @@ static void handle_click(int mx, int my, gui_fp_t mxf, gui_fp_t myf, int sw, int
             invalidate_window(sw, sh, w);
         }
         z_push_top(win_index(w));
-
-        /* FILES: hit-test rows */
-        if (w->type == WT_FILES) {
-            files_window_state_t* files = FILES_STATE(w);
-            int by = w->y + TITLE_H;
-            int row_top = by + 14;
-            int row_area = (w->h - TITLE_H) - 27;
-            int visible = row_area / ROW_H;
-            if (visible < 1) visible = 1;
-            if (mx >= w->x && mx < w->x + w->w - 12 &&
-                my >= row_top && my < row_top + visible * ROW_H) {
-                int i = (my - row_top) / ROW_H;
-                int idx = i + files->scroll;
-                if (idx >= 0 && idx < files->row_count) {
-                    if (files->row_dir[idx]) {
-                        if (u_streq(files->rows[idx], "..")) {
-                            path_normalize_parent(files->cwd);
-                        } else {
-                            path_append(files->cwd, files->rows[idx], sizeof(files->cwd));
-                        }
-                        load_dir(w);
-                        invalidate_window(sw, sh, w);
-                    } else {
-                        uint32_t now = sys_get_ticks();
-                        int widx = win_index(w);
-                        int is_double =
-                            g_last_file_win == widx &&
-                            g_last_file_row == idx &&
-                            (uint32_t)(now - g_last_file_tick) < 35u;
-                        char target[256];
-                        u_strcpy_n(target, files->cwd, sizeof(target));
-                        path_append(target, files->rows[idx], sizeof(target));
-                        if (is_double) {
-                            queue_launch(w, target);
-                            invalidate_window(sw, sh, w);
-                            g_last_file_win = -1;
-                            g_last_file_row = -1;
-                            g_last_file_tick = 0;
-                        } else {
-                            u_strcpy_n(files->status, "Double-click to open ", sizeof(files->status));
-                            u_strcat_n(files->status, files->rows[idx], sizeof(files->status));
-                            invalidate_window(sw, sh, w);
-                            g_last_file_win = widx;
-                            g_last_file_row = idx;
-                            g_last_file_tick = now;
-                        }
-                    }
-                }
-            }
-            /* scrollbar hit: page up/down */
-            int sx = w->x + w->w - 10;
-            if (mx >= sx && mx < sx + 10) {
-                if (my < (w->y + w->h / 2)) {
-                    files->scroll -= visible;
-                    if (files->scroll < 0) files->scroll = 0;
-                } else {
-                    int max_scroll = files->row_count - visible;
-                    if (max_scroll < 0) max_scroll = 0;
-                    files->scroll += visible;
-                    if (files->scroll > max_scroll) files->scroll = max_scroll;
-                }
-                invalidate_window(sw, sh, w);
-            }
-        }
-        if (w->type == WT_CONFIG) {
-            int by = w->y + TITLE_H;
-            int row_y = by + 30;
-            if (point_in(mx, my, w->x + 8, row_y - 4, w->w - 16, 20)) {
-                g_perf_visible = !g_perf_visible;
-                gui_config_save();
-                invalidate_window(sw, sh, w);
-                invalidate_topbar(sw, sh);
-            }
+        {
+            gui_app_event_t event;
+            memset(&event, 0, sizeof(event));
+            event.type = GUI_APP_EVENT_POINTER_DOWN;
+            event.x = mx - w->x;
+            event.y = my - (w->y + TITLE_H);
+            event.width = w->w;
+            event.height = w->h - TITLE_H;
+            event.buttons = SYS_MOUSE_BUTTON_LEFT;
+            event.ticks = sys_get_ticks();
+            apply_app_result(w, dispatch_app_event(w, &event), sw, sh);
+            if (w->type == WT_CONFIG) invalidate_topbar(sw, sh);
         }
         return;
     }
@@ -2337,36 +3064,23 @@ static void handle_wheel(int mx, int my, int wheel, int sw, int sh) {
     if (!w) return;
     z_push_top(win_index(w));
 
-    if (w->type == WT_FILES) {
-        files_window_state_t* files = FILES_STATE(w);
-        int row_area = (w->h - TITLE_H) - 27;
-        int visible = row_area / ROW_H;
-        if (visible < 1) visible = 1;
-        int max_scroll = files->row_count - visible;
-        if (max_scroll < 0) max_scroll = 0;
-
-        files->scroll -= wheel * 3;
-        if (files->scroll < 0) files->scroll = 0;
-        if (files->scroll > max_scroll) files->scroll = max_scroll;
-        invalidate_window(sw, sh, w);
-    } else if (w->type == WT_SHELL) {
-        gui_shell_window_t* shell = SHELL_STATE(w);
-        int max_scroll = shell->line_count - 1;
-        if (max_scroll < 0) max_scroll = 0;
-
-        shell->scroll += wheel * 3;
-        if (shell->scroll < 0) shell->scroll = 0;
-        if (shell->scroll > max_scroll) shell->scroll = max_scroll;
-        invalidate_window(sw, sh, w);
+    {
+        gui_app_event_t event;
+        memset(&event, 0, sizeof(event));
+        event.type = GUI_APP_EVENT_WHEEL;
+        event.x = mx - w->x;
+        event.y = my - (w->y + TITLE_H);
+        event.width = w->w;
+        event.height = w->h - TITLE_H;
+        event.wheel = wheel;
+        event.ticks = sys_get_ticks();
+        apply_app_result(w, dispatch_app_event(w, &event), sw, sh);
     }
 }
 
 int gui_main(int argc, char** argv) {
     gfx_context_t gfx;
     int rc;
-
-    (void)argc;
-    (void)argv;
 
     u_puts("gui: starting (ESC or q to exit)\n");
     rc = gfx_open(&gfx);
@@ -2378,6 +3092,8 @@ int gui_main(int argc, char** argv) {
 
     int sw = (int)gfx.backbuffer.width;
     int sh = (int)gfx.backbuffer.height;
+    g_screen_width = sw;
+    g_screen_height = sh;
     gui_fp_t mxf = fp_from_int(sw / 2);
     gui_fp_t myf = fp_from_int(sh / 2);
     int mx = fp_to_int_round(mxf);
@@ -2396,6 +3112,7 @@ int gui_main(int argc, char** argv) {
     int presented_my = my;
     int last_hover = hover_key(mx, my);
     gui_config_load();
+    if (argc > 1 && argv[1] && argv[1][0]) action_editor(sw, sh, argv[1]);
     invalidate_full(sw, sh);
     perf_init();
 
@@ -2404,14 +3121,13 @@ int gui_main(int argc, char** argv) {
         int got = 0;
         unsigned int input_flags = SYS_INPUT_FLAG_NONBLOCK;
         uint32_t loop_now = sys_get_ticks();
-        int shell_polling = shell_windows_need_poll();
-        int shell_poll_due_now = shell_poll_due(shell_polling, loop_now);
+        int app_timers = apps_have_timers();
         int blocking_input_wait;
 
         if (!dirty &&
             !cursor_dirty &&
             g_launch_kind == LAUNCH_NONE &&
-            !shell_polling &&
+            !app_timers &&
             !gui_frame_pending()) {
             input_flags = 0;
         }
@@ -2435,28 +3151,27 @@ int gui_main(int argc, char** argv) {
                     (ev->flags & SYS_INPUT_KEY_PRESSED) != 0u) {
                     unsigned int a = ev->ascii & 0xFFu;
                     window_t* top = topmost();
-                    dirty = 1;
-                    if (top && top->type == WT_SHELL) {
-                        if (a == 27u || ev->key == KEY_ESC) {
-                            invalidate_window(sw, sh, top);
-                            close_window(top);
-                            invalidate_topbar(sw, sh);
-                        }
-                        else if (gui_shell_handle_key(SHELL_STATE(top), a, ev->key, ev->flags) == GUI_SHELL_KEY_CLOSE) {
-                            invalidate_window(sw, sh, top);
-                            close_window(top);
-                            invalidate_topbar(sw, sh);
-                        } else {
-                            invalidate_window(sw, sh, top);
-                        }
-                    } else {
+                    unsigned int app_result = GUI_APP_RESULT_NONE;
+                    if (top) {
+                        gui_app_event_t app_event;
+                        memset(&app_event, 0, sizeof(app_event));
+                        app_event.type = GUI_APP_EVENT_KEY;
+                        app_event.width = top->w;
+                        app_event.height = top->h - TITLE_H;
+                        app_event.key = ev->key;
+                        app_event.ascii = a;
+                        app_event.modifiers = ev->flags;
+                        app_event.ticks = ev->ticks;
+                        app_result = dispatch_app_event(top, &app_event);
+                        apply_app_result(top, app_result, sw, sh);
+                        if (g_dirty_count > 0) dirty = 1;
+                    }
+                    if (!(app_result & GUI_APP_RESULT_HANDLED)) {
                         if (a == 27u || ev->key == KEY_ESC ||
                             a == 'q' || a == 'Q') {
-                            g_should_quit = 1;
+                            action_quit(sw, sh);
                         } else if ((a == 'x' || a == 'X') && top) {
-                            invalidate_window(sw, sh, top);
-                            close_window(top);
-                            invalidate_topbar(sw, sh);
+                            (void)request_window_close(top, sw, sh);
                         } else if (a == 'f' || a == 'F') {
                             action_files(sw, sh);
                         } else if (a == 't' || a == 'T') {
@@ -2468,6 +3183,7 @@ int gui_main(int argc, char** argv) {
                         } else if (a == 'a' || a == 'A') {
                             action_about(sw, sh);
                         }
+                        if (g_dirty_count > 0) dirty = 1;
                     }
                 } else if (ev->type == SYS_INPUT_TYPE_MOUSE) {
                     int old_mx = mx;
@@ -2540,23 +3256,80 @@ int gui_main(int argc, char** argv) {
                     if (g_drag == DRAG_RESIZE && g_drag_idx >= 0) {
                         window_t* w = &g_wins[g_drag_idx];
                         if (w->active) {
+                            const window_app_ops_t* ops = window_app_ops(w->type);
                             int max_w = sw - w->x;
                             int max_h = sh - w->y;
+                            int min_w = ops ? ops->min_width : WINDOW_MIN_W;
+                            int min_h = ops ? ops->min_height : WINDOW_MIN_H;
                             int new_w;
                             int new_h;
-                            if (max_w < WINDOW_MIN_W) max_w = WINDOW_MIN_W;
-                            if (max_h < WINDOW_MIN_H) max_h = WINDOW_MIN_H;
+                            if (max_w < min_w) max_w = min_w;
+                            if (max_h < min_h) max_h = min_h;
                             new_w = clampi(g_resize_start_w + mx - g_resize_start_mx,
-                                         WINDOW_MIN_W, max_w);
+                                         min_w, max_w);
                             new_h = clampi(g_resize_start_h + my - g_resize_start_my,
-                                         WINDOW_MIN_H, max_h);
+                                         min_h, max_h);
                             if (new_w != w->w || new_h != w->h) {
+                                gui_app_event_t resize_event;
                                 invalidate_window(sw, sh, w);
                                 w->w = new_w;
                                 w->h = new_h;
+                                memset(&resize_event, 0, sizeof(resize_event));
+                                resize_event.type = GUI_APP_EVENT_RESIZE;
+                                resize_event.width = w->w;
+                                resize_event.height = w->h - TITLE_H;
+                                resize_event.ticks = ev->ticks;
+                                (void)dispatch_app_event(w, &resize_event);
                                 invalidate_window(sw, sh, w);
                                 dirty = 1;
                             }
+                        }
+                    }
+                    if (!left_now && prev_left) {
+                        window_t* target = 0;
+                        for (int i = 0; i < MAX_WINDOWS; i++) {
+                            if (g_wins[i].active && g_wins[i].pressed_widget) {
+                                target = &g_wins[i];
+                                break;
+                            }
+                        }
+                        if (!target) target = hit_window_z(mx, my);
+                        if (target) {
+                            gui_app_event_t app_event;
+                            memset(&app_event, 0, sizeof(app_event));
+                            app_event.type = GUI_APP_EVENT_POINTER_UP;
+                            app_event.x = mx - target->x;
+                            app_event.y = my - (target->y + TITLE_H);
+                            app_event.width = target->w;
+                            app_event.height = target->h - TITLE_H;
+                            app_event.ticks = ev->ticks;
+                            apply_app_result(target,
+                                dispatch_app_event(target, &app_event), sw, sh);
+                            if (g_dirty_count > 0) dirty = 1;
+                        }
+                    } else if ((mx != old_mx || my != old_my) &&
+                               g_drag == DRAG_NONE) {
+                        window_t* target = 0;
+                        for (int i = 0; i < MAX_WINDOWS; i++) {
+                            if (g_wins[i].active && g_wins[i].pressed_widget) {
+                                target = &g_wins[i];
+                                break;
+                            }
+                        }
+                        if (!target) target = hit_window_z(mx, my);
+                        if (target) {
+                            gui_app_event_t app_event;
+                            memset(&app_event, 0, sizeof(app_event));
+                            app_event.type = GUI_APP_EVENT_POINTER_MOVE;
+                            app_event.x = mx - target->x;
+                            app_event.y = my - (target->y + TITLE_H);
+                            app_event.width = target->w;
+                            app_event.height = target->h - TITLE_H;
+                            app_event.buttons = ev->buttons;
+                            app_event.ticks = ev->ticks;
+                            apply_app_result(target,
+                                dispatch_app_event(target, &app_event), sw, sh);
+                            if (g_dirty_count > 0) dirty = 1;
                         }
                     }
                     prev_left = left_now;
@@ -2570,17 +3343,7 @@ int gui_main(int argc, char** argv) {
             }
         }
 
-        if (shell_poll_due_now) {
-            for (int i = 0; i < MAX_WINDOWS; i++) {
-                if (g_wins[i].active && g_wins[i].type == WT_SHELL) {
-                    if (gui_shell_poll(SHELL_STATE(&g_wins[i]))) {
-                        invalidate_window(sw, sh, &g_wins[i]);
-                        dirty = 1;
-                    }
-                }
-            }
-            shell_poll_schedule_next(sys_get_ticks());
-        }
+        if (dispatch_due_app_ticks(sw, sh, sys_get_ticks())) dirty = 1;
 
         if (g_launch_kind != LAUNCH_NONE) {
             int launch_rc = run_queued_launch(&gfx, &sw, &sh);
@@ -2674,7 +3437,7 @@ int gui_main(int argc, char** argv) {
 
         if (!got) {
             uint32_t now = sys_get_ticks();
-            uint32_t deadline = gui_wait_deadline(shell_windows_need_poll(), now);
+            uint32_t deadline = gui_wait_deadline(now);
             if (deadline != 0u && !tick_due(now, deadline)) {
                 (void)smallos_input_wait_until(deadline);
             } else {

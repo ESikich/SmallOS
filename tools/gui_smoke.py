@@ -244,8 +244,22 @@ def run_gui_smoke(args):
         with open(args.serial, "r", encoding="utf-8", errors="replace") as log:
             offset = wait_for_prompt(monitor, log, 0, args.timeout)
 
+            tee_stdout("\n[smoke:gui] create editor fixture\n")
+            send_text(
+                monitor,
+                "edit tmp/gui_edit.txt -c a -c seed -c . -c wq",
+            )
+            send_key(monitor, "ret")
+            offset = wait_for_prompt_or_error(log, offset, args.timeout)
+
+            tee_stdout("[smoke:gui] create Files scrollbar fixtures\n")
+            for index in range(12):
+                send_text(monitor, f"mkdir gui_scroll_{index}")
+                send_key(monitor, "ret")
+                offset = wait_for_prompt_or_error(log, offset, args.timeout)
+
             tee_stdout("\n[smoke:gui] launch\n")
-            send_text(monitor, "gui")
+            send_text(monitor, "gui tmp/gui_edit.txt")
             send_key(monitor, "ret")
             offset = wait_for_marker_or_error(
                 log,
@@ -256,6 +270,48 @@ def run_gui_smoke(args):
 
             time.sleep(args.settle)
             os.makedirs(args.screenshot_dir, exist_ok=True)
+            editor = capture_screen(
+                monitor,
+                os.path.join(args.screenshot_dir, "gui-editor.ppm"),
+                args.timeout,
+            )
+
+            tee_stdout("[smoke:gui] edit, guard close, select, copy, paste, and save\n")
+            send_text(monitor, "saved_")
+            send_key(monitor, "f2")
+            send_text(monitor, "dirty_")
+            send_key(monitor, "esc")
+            time.sleep(args.settle)
+            confirm = capture_screen(
+                monitor,
+                os.path.join(args.screenshot_dir, "gui-editor-confirm.ppm"),
+                args.timeout,
+            )
+            if changed_bytes(editor, confirm) < 1000:
+                raise RuntimeError("dirty editor close did not show confirmation")
+            send_key(monitor, "esc")
+            time.sleep(args.settle)
+            edited = capture_screen(
+                monitor,
+                os.path.join(args.screenshot_dir, "gui-editor-edited.ppm"),
+                args.timeout,
+            )
+            send_key(monitor, "ctrl-a")
+            time.sleep(args.settle)
+            selected = capture_screen(
+                monitor,
+                os.path.join(args.screenshot_dir, "gui-editor-selected.ppm"),
+                args.timeout,
+            )
+            if changed_bytes(edited, selected) < 100:
+                raise RuntimeError("editor selection was not visibly highlighted")
+            send_key(monitor, "ctrl-c")
+            send_key(monitor, "end")
+            send_text(monitor, "_copy_")
+            send_key(monitor, "ctrl-v")
+            send_key(monitor, "f2")
+            send_key(monitor, "esc")
+            time.sleep(args.settle)
             desktop = capture_screen(
                 monitor,
                 os.path.join(args.screenshot_dir, "gui-desktop.ppm"),
@@ -273,8 +329,23 @@ def run_gui_smoke(args):
             if changed_bytes(desktop, files) < 10000:
                 raise RuntimeError("opening Files did not materially change the desktop")
 
+            tee_stdout("[smoke:gui] drag Files scrollbar\n")
+            move_mouse(monitor, 175, -87)
+            time.sleep(0.1)
+            set_mouse_buttons(monitor, 1)
+            move_mouse(monitor, 0, 180)
+            time.sleep(args.settle)
+            set_mouse_buttons(monitor, 0)
+            scrolled_files = capture_screen(
+                monitor,
+                os.path.join(args.screenshot_dir, "gui-files-scrolled.ppm"),
+                args.timeout,
+            )
+            if changed_bytes(files, scrolled_files) < 500:
+                raise RuntimeError("dragging Files scrollbar did not scroll")
+
             tee_stdout("[smoke:gui] resize Files\n")
-            move_mouse(monitor, 180, 120)
+            move_mouse(monitor, 3, 25)
             time.sleep(0.1)
             set_mouse_buttons(monitor, 1)
             move_mouse(monitor, 80, 60)
@@ -308,7 +379,17 @@ def run_gui_smoke(args):
 
             send_key(monitor, "esc")
             send_key(monitor, "q")
-            wait_for_prompt_or_error(log, offset, args.timeout)
+            offset = wait_for_prompt_or_error(log, offset, args.timeout)
+
+            tee_stdout("[smoke:gui] verify editor persistence\n")
+            send_text(monitor, "cat tmp/gui_edit.txt")
+            send_key(monitor, "ret")
+            wait_for_marker_or_error(
+                log,
+                offset,
+                "saved_dirty_seed_copy_saved_dirty_seed",
+                args.timeout,
+            )
 
         tee_stdout("[smoke:gui] PASS\n")
         ok = True

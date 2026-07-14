@@ -327,7 +327,8 @@ make smoke
 make smoke-reboot
 make smoke-halt
 make display-smoke
-make gui-smoke           # GUI screenshots, Files resize, PTY Shell, clean exit
+make gui-unit            # GUI geometry, controls, scrolling, editor-model tests
+make gui-smoke           # Editor selection/clipboard, Files, Shell, screenshots
 make usb-storage-smoke
 make usb-ramdisk-fallback-smoke
 make socket-eof-smoke

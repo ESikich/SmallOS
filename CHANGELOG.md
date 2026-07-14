@@ -11,6 +11,13 @@ wrappers in `src/user/posix`.
 
 ### Changed
 
+* **Event-driven GUI toolkit and windowed editor** (`src/user/gui/*`, `src/user/editor_model.*`, `src/user/edit.c`, `src/kernel/process.c`, `tools/gui_unit.c`, `tools/gui_smoke.py`, `Makefile`, `docs/`)
+  * Reworked desktop applications around explicit keyboard, pointer, wheel, resize, tick, and guarded-close events with handled/redraw/close results, reusable controls, application deadlines, bounded damage, and independent cursor presentation.
+  * Added draggable scrollbar thumbs with pointer capture, and routed Files, Shell, Config, System, About, and Editor interactions through the application callback path.
+  * Added an in-desktop text editor with shared `/bin/edit` line/file storage, keyboard and mouse navigation, scrolling, selection highlighting, a GUI-wide editor clipboard, save shortcuts, caret blinking, and Save/Discard/Cancel protection for dirty documents.
+  * Made Files open text-like entries in Editor windows and added `gui <text-path>` startup support while retaining external BMP/executable launching and the terminal `/bin/edit` interface.
+  * Kept terminal Ctrl+C signaling intact while allowing an exclusive display/input owner to consume structured Ctrl+C events for GUI copy shortcuts without a second terminal-side signal.
+  * Added host GUI/model unit coverage and expanded `make gui-smoke` to verify editing, selection, copy/paste persistence, scrollbar dragging, resize, guarded close, Shell integration, and cursor/background damage behavior.
 * **Kernel footprint and boot profiles** (`Makefile`, `src/drivers/{e1000,rtl8139,nic,ext2,fb_console}.c`, `src/kernel/{kernel,pmm,syscall}.c`, `docs/`)
   * Added `NIC_DRIVER=e1000|rtl8139|all` build profiles; VM builds default to e1000 while RTL8139 remains available for WYSE/Realtek-targeted images.
   * Moved E1000, RTL8139, and ext2 scratch buffers out of static `.bss` into PMM-backed allocations made only after the relevant device/filesystem path is active.
