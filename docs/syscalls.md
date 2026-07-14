@@ -1371,6 +1371,29 @@ handler returns through the libc restorer trampoline. The syscall resumes via
 the restored interrupt-return state, so the syscall dispatcher does not
 overwrite the restored `eax` value on success.
 
+### SYS_INPUT_FD_WAIT_UNTIL (150)
+
+```c
+int smallos_input_fd_wait_until(struct pollfd* fds,
+                                uint32_t nfds,
+                                uint32_t deadline_tick);
+```
+
+Blocks until the shared keyboard/mouse input queue is nonempty, at least one
+requested descriptor has poll readiness, or the absolute PIT tick deadline is
+reached. The kernel reuses the normal poll registration and sleeping-process
+deadline paths. It does not consume input; callers drain input with
+`SYS_INPUT_READ`. Ready descriptors receive the same `revents` values as
+ordinary `poll()`.
+
+The nonnegative return value is a mask of
+`SYS_INPUT_FD_WAIT_INPUT`, `SYS_INPUT_FD_WAIT_READY`, and
+`SYS_INPUT_FD_WAIT_DEADLINE`. The input and fd-ready bits may be combined when
+both are observed together; the deadline bit is returned when the deadline
+wins the wait. Invalid fd arrays, counts, or user pointers return the usual
+negative kernel error. `SYS_INPUT_READ`, `SYS_INPUT_WAIT_UNTIL`, and ordinary
+`poll()` remain available and ABI-compatible.
+
 ### SYS_BLOCK_READ_SECTOR (81)
 
 ```c

@@ -12,16 +12,20 @@ wrappers in `src/user/posix`.
 ### Changed
 
 * **Event-driven GUI toolkit and windowed editor** (`src/user/gui/*`, `src/user/editor_model.*`, `src/user/edit.c`, `src/kernel/process.c`, `tools/gui_unit.c`, `tools/gui_smoke.py`, `Makefile`, `docs/`)
+  * Replaced the top strip with a responsive bottom taskbar, registry-generated keyboard-accessible Start menu, paged window buttons, realtime clock/free-memory status, minimize/maximize controls, Alt+Tab, snapping, and a visible eight-window-limit notification.
+  * Unified built-in applications under one descriptor registry and opaque window handles with `gui_app_context_t` services. Files, Editor, System, Config, About, Viewer, Tasks, and Network now build as application modules instead of living in the desktop event loop.
+  * Added framework-owned filtered file-picker completion events plus native Viewer, Tasks, and Network applications with testable scaling, process-sorting/protection, and IPv4-validation models.
+  * Removed the full-screen `gfx_context_t` presentation buffer in favor of direct strided blits, added app-local damage and opaque-window subtraction, and added cumulative rendering/wakeup diagnostics through `gui --diagnostics`.
+  * Added `SYS_INPUT_FD_WAIT_UNTIL` so the desktop can sleep on input, PTY poll readiness, or application deadlines without a periodic 60 Hz idle loop while preserving older input waits and `poll()`.
   * Reworked desktop applications around explicit keyboard, pointer, wheel, resize, tick, and guarded-close events with handled/redraw/close results, reusable controls, application deadlines, bounded damage, and independent cursor presentation.
   * Added draggable scrollbar thumbs with pointer capture, and routed Files, Shell, Config, System, About, and Editor interactions through the application callback path.
   * Added an in-desktop text editor with shared `/bin/edit` line/file storage, keyboard and mouse navigation, scrolling, selection highlighting, a GUI-wide editor clipboard, save shortcuts, caret blinking, and Save/Discard/Cancel protection for dirty documents.
   * Made Files open text-like entries in Editor windows and added `gui <text-path>` startup support while retaining external BMP/executable launching and the terminal `/bin/edit` interface.
   * Kept terminal Ctrl+C signaling intact while allowing an exclusive display/input owner to consume structured Ctrl+C events for GUI copy shortcuts without a second terminal-side signal.
-  * Added host GUI/model unit coverage and expanded `make gui-smoke` to verify editing, selection, copy/paste persistence, scrollbar dragging, resize, guarded close, Shell integration, and cursor/background damage behavior.
+  * Added host GUI/model unit coverage and expanded `make gui-smoke` to verify editing, selection, copy/paste persistence, Files navigation, resize, guarded close, Start/native apps, Shell integration, diagnostic memory metrics, and cursor/background damage behavior.
   * Made dirty-scene presentation exclude the software cursor footprint, eliminating pointer flicker during editor caret-blink and other application redraws.
   * Made `make gui-smoke` remove its temporary editor files and Files-scrollbar directories before shutting down the guest.
   * Added reusable layout geometry and a shared, keyboard-focusable file picker with directory navigation, filename entry, wheel/page scrolling, and draggable scrollbar support; Editor now provides New, Open, and Save As toolbar actions plus Ctrl+N, Ctrl+O, and Ctrl+Shift+S shortcuts.
-  * Moved System, Config, and About presentation out of the desktop event-loop source into a focused built-in application module.
 * **Kernel footprint and boot profiles** (`Makefile`, `src/drivers/{e1000,rtl8139,nic,ext2,fb_console}.c`, `src/kernel/{kernel,pmm,syscall}.c`, `docs/`)
   * Added `NIC_DRIVER=e1000|rtl8139|all` build profiles; VM builds default to e1000 while RTL8139 remains available for WYSE/Realtek-targeted images.
   * Moved E1000, RTL8139, and ext2 scratch buffers out of static `.bss` into PMM-backed allocations made only after the relevant device/filesystem path is active.

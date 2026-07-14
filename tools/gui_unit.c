@@ -6,6 +6,12 @@
 #include "gui/layout.h"
 #include "gui/widgets.h"
 #include "gui/app_event.h"
+#include "gui/framework.h"
+#include "gui/desktop_model.h"
+#include "gui/network_model.h"
+#include "gui/occlusion.h"
+#include "gui/tasks_model.h"
+#include "gui/viewer_model.h"
 #include "editor_model.h"
 
 extern int printf(const char* format, ...);
@@ -72,6 +78,99 @@ static void test_window_stack(void) {
     check("window remove", gui_window_stack_top(&stack) == 5);
 }
 
+static void test_registry_and_desktop(void) {
+    static const gui_app_descriptor_t later = {
+        .title = "Later", .id = GUI_APP_EDITOR,
+        .launcher_label = "Later", .launcher_order = 8, .show_in_start = 1
+    };
+    static const gui_app_descriptor_t first = {
+        .title = "First", .id = GUI_APP_FILES,
+        .launcher_label = "First", .launcher_order = 1, .show_in_start = 1
+    };
+    gui_taskbar_layout_t layout;
+    const char* labels[] = {"Files", "Editor", "Shell"};
+    gui_app_registry_reset();
+    check("registry accepts unique apps",
+          gui_app_registry_add(&later) && gui_app_registry_add(&first) &&
+          !gui_app_registry_add(&first));
+    check("registry lookup and order",
+          gui_app_registry_find(GUI_APP_EDITOR) == &later &&
+          gui_app_registry_launcher_at(0) == &first &&
+          gui_app_registry_launcher_count() == 2);
+    layout = gui_taskbar_layout(640, 8);
+    check("taskbar paging at 640x480",
+          layout.paging && layout.button_width == 56 &&
+          layout.per_page > 0 && layout.page_count > 1);
+    layout = gui_taskbar_layout(1024, 4);
+    check("taskbar expands at 1024x768",
+          !layout.paging && layout.button_width == 120 && layout.per_page == 4);
+    layout = gui_taskbar_layout(800, 8);
+    check("taskbar layout at 800x600",
+          !layout.paging && layout.button_width >= 56 &&
+          layout.button_width <= 120);
+    check("taskbar page clamp",
+          gui_taskbar_clamp_page(gui_taskbar_layout(640, 8), 99) == 1);
+    check("start wraps navigation",
+          gui_start_move_selection(0, 3, -1) == 2 &&
+          gui_start_move_selection(2, 3, 1) == 0);
+    check("start first-letter selection",
+          gui_start_first_letter(labels, 3, 's') == 2);
+}
+
+static void test_occlusion(void) {
+    gui_rect_t output[GUI_VISIBLE_REGION_CAPACITY];
+    gui_rect_t cuts[] = {
+        {4, 0, 4, 10},
+        {0, 4, 10, 2},
+    };
+    int count = gui_visible_regions(gui_rect_make(0, 0, 10, 10),
+                                    cuts, 2, output,
+                                    GUI_VISIBLE_REGION_CAPACITY);
+    int area = 0;
+    for (int i = 0; i < count; i++) area += output[i].w * output[i].h;
+    check("occlusion subtracts multiple windows", count == 4 && area == 48);
+    check("occlusion fully covered", gui_visible_regions(
+        gui_rect_make(0, 0, 10, 10),
+        (gui_rect_t[]){{-1, -1, 20, 20}}, 1,
+        output, GUI_VISIBLE_REGION_CAPACITY) == 0);
+}
+
+static void test_native_models(void) {
+    int width, height;
+    gui_viewer_geometry_t geometry = {400, 300, 999, -999};
+    gui_ipv4_config_t config;
+    unsigned int prefix;
+    gui_task_model_row_t rows[] = {
+        {7, 2, 1, 4, 100, 20, "beta"},
+        {2, 1, 1, 9, 80, 10, "Alpha"},
+    };
+    gui_viewer_scaled_size(800, 400, 300, 200, 0, &width, &height);
+    check("viewer fit scaling", width == 300 && height == 150);
+    gui_viewer_scaled_size(800, 400, 300, 200, 100, &width, &height);
+    check("viewer 100 percent", width == 800 && height == 400);
+    gui_viewer_clamp_pan(&geometry, 200, 100);
+    check("viewer pan clamp", geometry.pan_x == 100 && geometry.pan_y == -100);
+    check("IPv4 validates static config",
+          gui_ipv4_validate("192.168.2.10", "24", "192.168.2.1", "",
+                            &config) == GUI_IPV4_VALID &&
+          config.netmask == 0xffffff00u);
+    check("IPv4 rejects network host",
+          gui_ipv4_validate("10.0.0.0", "24", "", "", 0) ==
+          GUI_IPV4_NETWORK_OR_BROADCAST);
+    check("IPv4 rejects outside gateway",
+          gui_ipv4_validate("10.0.0.2", "24", "10.0.1.1", "", 0) ==
+          GUI_IPV4_GATEWAY_OUTSIDE_SUBNET);
+    check("IPv4 rejects noncontiguous mask",
+          !gui_ipv4_mask_prefix(0xff00ff00u, &prefix));
+    gui_tasks_sort(rows, 2, 3, 1);
+    check("tasks default CPU sort", rows[0].pid == 2);
+    gui_tasks_sort(rows, 2, 1, 0);
+    check("tasks case-insensitive name sort", rows[0].pid == 2);
+    check("tasks process protection",
+          gui_tasks_is_protected(&rows[0], 2) &&
+          !gui_tasks_is_protected(&rows[1], 99));
+}
+
 static void test_widgets_and_canvas(void) {
     unsigned int pixels[64];
     gfx_surface_t surface = {8, 8, 8, pixels};
@@ -79,6 +178,7 @@ static void test_widgets_and_canvas(void) {
     gui_text_input_t input;
     gui_vlayout_t layout;
     gui_rect_t cell;
+    unsigned char enabled[4] = {1, 0, 1, 1};
     for (int i = 0; i < 64; i++) pixels[i] = 0;
     gui_canvas_set_clip(gui_rect_make(2, 2, 3, 3));
     gui_canvas_fill_rect(&surface, 0, 0, 8, 8, 7);
@@ -112,6 +212,16 @@ static void test_widgets_and_canvas(void) {
     check("text input editing",
           input.length == 2 && input.cursor == 1 &&
           input.text[0] == 'a' && input.text[1] == 'c');
+    check("focus traversal skips disabled",
+          gui_widget_focus_next(0, 4, 0, enabled) == 2 &&
+          gui_widget_focus_next(0, 4, 1, enabled) == 3);
+    for (int i = 0; i < 64; i++) pixels[i] = 0;
+    {
+        gui_widget_theme_t theme = {1, 2, 3, 4, 5, 6, 7};
+        gui_widget_progress(&surface, gui_rect_make(0, 0, 8, 4),
+                            1, 2, &theme);
+    }
+    check("progress clamps and fills", pixels[1 + 1 * 8] == 7);
 }
 
 static void test_editor_model(void) {
@@ -153,7 +263,10 @@ static void test_editor_model(void) {
 int main(void) {
     test_regions();
     test_window_stack();
+    test_registry_and_desktop();
+    test_occlusion();
     test_widgets_and_canvas();
+    test_native_models();
     test_editor_model();
     return failures ? 1 : 0;
 }

@@ -24,15 +24,27 @@
 #include "gui.h"
 #include "canvas.h"
 #include "app_event.h"
+#include "about_app.h"
+#include "app_services.h"
 #include "builtin_apps.h"
+#include "config_app.h"
 #include "cursor.h"
 #include "damage.h"
+#include "desktop_model.h"
+#include "editor_app.h"
 #include "file_picker.h"
+#include "files_app.h"
+#include "framework.h"
+#include "framework_internal.h"
+#include "native_apps.h"
+#include "occlusion.h"
 #include "region.h"
 #include "shell_window.h"
+#include "system_app.h"
 #include "widgets.h"
 #include "window.h"
 #include "../editor_model.h"
+#include "time.h"
 
 /* ---------------- colors ---------------- */
 
@@ -48,7 +60,7 @@
 #define COL_HILIGHT   0x000060A0u
 #define COL_HILIGHT_T 0x00FFFFFFu
 #define COL_BTN_BG    0x00E0E0E0u
-#define COL_TOPBAR    0x00FFFFFFu
+#define COL_BAR       0x00D4D0C8u
 #define COL_SHADOW    0x00606060u
 
 static const gui_widget_theme_t GUI_WIDGET_THEME = {
@@ -258,10 +270,28 @@ static void utoa10(unsigned int v, char* buf) {
     buf[j] = 0;
 }
 
+static unsigned int sample_self_ram(void) {
+    sys_procinfo_t info;
+    unsigned int pid = (unsigned int)sys_getpid();
+    if (sys_procinfo(&info) < 0) return 0;
+    for (unsigned int i = 0; i < info.out_count; i++)
+        if (info.entries[i].pid == pid) return info.entries[i].ram_bytes;
+    return 0;
+}
+
+static void diagnostic_append(char* line, unsigned int capacity,
+                              const char* name, unsigned int value) {
+    char number[16];
+    u_strcat_n(line, " ", capacity);
+    u_strcat_n(line, name, capacity);
+    u_strcat_n(line, "=", capacity);
+    utoa10(value, number);
+    u_strcat_n(line, number, capacity);
+}
+
 /* ---------------- window model ---------------- */
 
 #define MAX_WINDOWS GUI_WINDOW_CAPACITY
-#define MAX_ROWS    256
 #define INPUT_BATCH 32
 #define MOUSE_COALESCE_MAX INPUT_BATCH
 #define MOUSE_MERGE_MAX_DELTA 48
@@ -275,98 +305,40 @@ static void utoa10(unsigned int v, char* buf) {
 #define GUI_FRAME_FPS 60u
 #define GUI_FRAME_TICKS \
     ((SMALLOS_TIMER_HZ + GUI_FRAME_FPS - 1u) / GUI_FRAME_FPS)
-#define GUI_SHELL_POLL_FPS 60u
-#define GUI_SHELL_POLL_TICKS \
-    ((SMALLOS_TIMER_HZ + GUI_SHELL_POLL_FPS - 1u) / GUI_SHELL_POLL_FPS)
 #define GUI_CONFIG_PATH "/etc/gui.conf"
-#define GUI_CONFIG_MAX 128u
+#define GUI_CONFIG_MAX 256u
 
-typedef enum {
-    WT_FILES = 1,
-    WT_SYSTEM,
-    WT_CONFIG,
-    WT_ABOUT,
-    WT_SHELL,
-    WT_EDITOR,
-} win_type_t;
+#define WT_FILES GUI_APP_FILES
+#define WT_SYSTEM GUI_APP_SYSTEM
+#define WT_CONFIG GUI_APP_CONFIG
+#define WT_ABOUT GUI_APP_ABOUT
+#define WT_SHELL GUI_APP_SHELL
+#define WT_EDITOR GUI_APP_EDITOR
+typedef gui_app_id_t win_type_t;
 
-typedef struct {
-    int scroll;
-    int scroll_drag_offset;
-    char cwd[256];
-    char rows[MAX_ROWS][NAME_MAX + 1];
-    int row_dir[MAX_ROWS];
-    int row_count;
-    char status[80];
-} files_window_state_t;
-
-typedef struct {
-    editor_model_t model;
-    uint32_t row;
-    uint32_t column;
-    uint32_t top;
-    uint32_t hscroll;
-    uint32_t next_blink;
-    int caret_visible;
-    int confirm_close;
-    int confirm_choice;
-    uint32_t anchor_row;
-    uint32_t anchor_column;
-    int selection_active;
-    int scroll_drag_offset;
-    int pending_action;
-    int picker_active;
-    int picker_after_save_action;
-    gui_file_picker_t picker;
-    char status[80];
-} editor_window_state_t;
-
-typedef struct {
-    int   active;
-    win_type_t type;
-    int   x, y, w, h;
-    void* state;
-    int focused_widget;
-    int pressed_widget;
-    uint32_t next_tick;
-} window_t;
-
-typedef struct {
-    const char* title;
-    unsigned int state_size;
-    int default_width;
-    int default_height;
-    int min_width;
-    int min_height;
-    uint32_t tick_interval;
-    void (*open)(window_t* window, const char* argument);
-    void (*close)(window_t* window);
-    void (*draw)(gfx_surface_t* surface, window_t* window, int mx, int my);
-    unsigned int (*event)(window_t* window, const gui_app_event_t* event);
-} window_app_ops_t;
+typedef gui_window_t window_t;
+typedef gui_app_descriptor_t window_app_ops_t;
 
 static const window_app_ops_t* window_app_ops(win_type_t type);
 static void action_editor(int sw, int sh, const char* path);
+static void action_viewer(int sw, int sh, const char* path);
 
-#define FILES_STATE(w) ((files_window_state_t*)(w)->state)
 #define SHELL_STATE(w) ((gui_shell_window_t*)(w)->state)
-#define EDITOR_STATE(w) ((editor_window_state_t*)(w)->state)
 
 static window_t g_wins[MAX_WINDOWS];
 static int g_screen_width;
 static int g_screen_height;
-static int g_last_file_win = -1;
-static int g_last_file_row = -1;
-static uint32_t g_last_file_tick;
-#define GUI_CLIPBOARD_CAPACITY 8192u
-static char g_editor_clipboard[GUI_CLIPBOARD_CAPACITY];
 
 static int point_in(int x, int y, int rx, int ry, int rw, int rh);
 
-#define TITLE_H 14
+#define TITLE_H 18
 #define CLOSE_W 14
+#define TITLE_BUTTON_W 14
 #define ROW_H   12
 #define RESIZE_GRIP 10
+#define TASKBAR_H 24
+#define START_MENU_W 174
+#define START_MENU_ROW_H 18
 #define WINDOW_MIN_W 160
 #define WINDOW_MIN_H 80
 #define CURSOR_W GUI_CURSOR_WIDTH
@@ -395,6 +367,8 @@ static int g_resize_start_mx = 0, g_resize_start_my = 0;
 static int g_resize_start_w = 0, g_resize_start_h = 0;
 static int g_frame_pending = 0;
 static uint32_t g_frame_next_tick = 0;
+static int g_last_title_click_window = -1;
+static uint32_t g_last_title_click_tick = 0;
 
 static void icons_layout(int sw);
 
@@ -406,15 +380,58 @@ typedef struct {
     unsigned int input_events;
     unsigned int max_loop_gap;
     unsigned int max_present_ticks;
+    unsigned int composed_pixels;
+    unsigned int presented_pixels;
+    unsigned int dirty_regions;
+    unsigned int full_repaints;
+    unsigned int idle_wakeups;
+    unsigned int pty_wakeups;
     unsigned int shown_loops;
     unsigned int shown_presents;
     unsigned int shown_input_events;
     unsigned int shown_max_loop_gap;
     unsigned int shown_max_present_ticks;
+    unsigned int shown_composed_pixels;
+    unsigned int shown_presented_pixels;
+    unsigned int shown_dirty_regions;
+    unsigned int shown_full_repaints;
+    unsigned int shown_idle_wakeups;
+    unsigned int shown_pty_wakeups;
+    unsigned int total_loops;
+    unsigned int total_presents;
+    unsigned int total_input_events;
+    unsigned int total_composed_pixels;
+    unsigned int total_presented_pixels;
+    unsigned int total_dirty_regions;
+    unsigned int total_full_repaints;
+    unsigned int total_idle_wakeups;
+    unsigned int total_pty_wakeups;
 } gui_perf_t;
 
 static gui_perf_t g_perf;
 static int g_perf_visible = 0;
+static int g_diagnostics = 0;
+static unsigned int g_startup_ram_bytes = 0;
+
+static void diagnostics_print(void) {
+    char line[384];
+    u_strcpy_n(line, "gui: metrics", sizeof(line));
+    diagnostic_append(line, sizeof(line), "startup_ram", g_startup_ram_bytes);
+    diagnostic_append(line, sizeof(line), "saved_presentbuffer",
+                      (unsigned int)g_screen_width *
+                      (unsigned int)g_screen_height * 4u);
+    diagnostic_append(line, sizeof(line), "loops", g_perf.total_loops);
+    diagnostic_append(line, sizeof(line), "presents", g_perf.total_presents);
+    diagnostic_append(line, sizeof(line), "input", g_perf.total_input_events);
+    diagnostic_append(line, sizeof(line), "composed", g_perf.total_composed_pixels);
+    diagnostic_append(line, sizeof(line), "presented", g_perf.total_presented_pixels);
+    diagnostic_append(line, sizeof(line), "dirty", g_perf.total_dirty_regions);
+    diagnostic_append(line, sizeof(line), "full", g_perf.total_full_repaints);
+    diagnostic_append(line, sizeof(line), "idle", g_perf.total_idle_wakeups);
+    diagnostic_append(line, sizeof(line), "pty", g_perf.total_pty_wakeups);
+    u_strcat_n(line, "\n", sizeof(line));
+    u_puts(line);
+}
 
 static int line_starts_with(const char* s, const char* prefix) {
     while (*prefix) {
@@ -439,6 +456,18 @@ static void gui_config_parse_line(const char* line) {
         p = skip_config_spaces(p + 1);
         if (*p == '0') g_perf_visible = 0;
         else if (*p == '1') g_perf_visible = 1;
+        return;
+    }
+    {
+        const char* equals = p;
+        char key[32];
+        unsigned int length = 0;
+        while (*equals && *equals != '=') equals++;
+        if (*equals != '=') return;
+        while (p < equals && *p != ' ' && *p != '\t' &&
+               length + 1u < sizeof(key)) key[length++] = *p++;
+        key[length] = 0;
+        gui_native_network_pref_set(key, skip_config_spaces(equals + 1));
     }
 }
 
@@ -473,11 +502,21 @@ static void gui_config_load(void) {
 }
 
 static void gui_config_save(void) {
-    char buf[48];
+    char buf[GUI_CONFIG_MAX];
     int fd;
 
     u_strcpy_n(buf, "perf_visible=", sizeof(buf));
     u_strcat_n(buf, g_perf_visible ? "1\n" : "0\n", sizeof(buf));
+    u_strcat_n(buf, "theme=retro\n", sizeof(buf));
+    u_strcat_n(buf, "network_address=", sizeof(buf));
+    u_strcat_n(buf, gui_native_network_pref_get("network_address"), sizeof(buf));
+    u_strcat_n(buf, "\nnetwork_prefix=", sizeof(buf));
+    u_strcat_n(buf, gui_native_network_pref_get("network_prefix"), sizeof(buf));
+    u_strcat_n(buf, "\nnetwork_gateway=", sizeof(buf));
+    u_strcat_n(buf, gui_native_network_pref_get("network_gateway"), sizeof(buf));
+    u_strcat_n(buf, "\nnetwork_dns=", sizeof(buf));
+    u_strcat_n(buf, gui_native_network_pref_get("network_dns"), sizeof(buf));
+    u_strcat_n(buf, "\n", sizeof(buf));
 
     fd = sys_open_mode(GUI_CONFIG_PATH,
                        SYS_OPEN_MODE_WRITE |
@@ -489,7 +528,62 @@ static void gui_config_save(void) {
     (void)sys_close(fd);
 }
 
+void gui_app_services_draw_text(gfx_surface_t* surface, int x, int y,
+                                const char* text, unsigned int color) {
+    draw_text(surface, x, y, text, color);
+}
+
+const gui_builtin_style_t* gui_app_services_builtin_style(void) {
+    return &GUI_BUILTIN_STYLE;
+}
+
+const gui_widget_theme_t* gui_app_services_widget_theme(void) {
+    return &GUI_WIDGET_THEME;
+}
+
+int gui_app_services_performance_visible(void) {
+    return g_perf_visible;
+}
+
+void gui_app_services_performance_snapshot(gui_app_perf_snapshot_t* snapshot) {
+    if (!snapshot) return;
+    snapshot->composed_pixels = g_perf.shown_composed_pixels;
+    snapshot->presented_pixels = g_perf.shown_presented_pixels;
+    snapshot->dirty_regions = g_perf.shown_dirty_regions;
+    snapshot->full_repaints = g_perf.shown_full_repaints;
+    snapshot->idle_wakeups = g_perf.shown_idle_wakeups;
+    snapshot->pty_wakeups = g_perf.shown_pty_wakeups;
+}
+
+void gui_app_services_toggle_performance(void) {
+    g_perf_visible = !g_perf_visible;
+    gui_config_save();
+}
+
+void gui_preferences_save(void) {
+    gui_config_save();
+}
+
 static gui_window_stack_t g_window_stack;
+static int g_start_open = 0;
+static int g_start_selection = 0;
+static int g_taskbar_page = 0;
+static int g_focused_window = -1;
+static uint32_t g_clock_next_tick = 0;
+static char g_desktop_notice[64];
+static uint32_t g_desktop_notice_until = 0;
+static gui_file_picker_t g_shared_picker;
+static window_t* g_shared_picker_owner = 0;
+static gui_file_filter_t g_shared_picker_filter = GUI_FILE_FILTER_ANY;
+static int g_shared_picker_active = 0;
+
+static const gui_file_picker_style_t SHARED_PICKER_STYLE = {
+    COL_WIN_BG, COL_FRAME, COL_TEXT, COL_SUBTEXT,
+    COL_HILIGHT, COL_HILIGHT_T
+};
+
+static void invalidate_rect(int sw, int sh, gui_rect_t r);
+static void invalidate_topbar(int sw, int sh);
 
 static int win_index(window_t* w) { return (int)(w - g_wins); }
 
@@ -502,14 +596,17 @@ static void z_push_top(int win_index_val) {
 }
 
 static window_t* topmost(void) {
-    int index = gui_window_stack_top(&g_window_stack);
-    return index < 0 ? 0 : &g_wins[index];
+    for (int i = gui_window_stack_count(&g_window_stack) - 1; i >= 0; i--) {
+        window_t* w = &g_wins[gui_window_stack_at(&g_window_stack, i)];
+        if (w->active && !w->minimized) return w;
+    }
+    return 0;
 }
 
 static window_t* hit_window_z(int mx, int my) {
     for (int i = gui_window_stack_count(&g_window_stack) - 1; i >= 0; i--) {
         window_t* w = &g_wins[gui_window_stack_at(&g_window_stack, i)];
-        if (!w->active) continue;
+        if (!w->active || w->minimized) continue;
         if (mx >= w->x && mx < w->x + w->w &&
             my >= w->y && my < w->y + w->h) return w;
     }
@@ -526,14 +623,26 @@ static window_t* alloc_window(void) {
             return w;
         }
     }
+    u_strcpy_n(g_desktop_notice, "Window limit reached", sizeof(g_desktop_notice));
+    g_desktop_notice_until = sys_get_ticks() + SMALLOS_TIMER_HZ * 2u;
+    invalidate_rect(g_screen_width, g_screen_height,
+                    make_rect(0, g_screen_height - TASKBAR_H - 20,
+                              g_screen_width, 20));
     return 0;
 }
 
 static void close_window(window_t* w) {
     const window_app_ops_t* ops;
+    gui_app_context_t context;
     if (!w) return;
+    if (g_shared_picker_active && g_shared_picker_owner == w) {
+        g_shared_picker_active = 0;
+        g_shared_picker_owner = 0;
+    }
     ops = window_app_ops(w->type);
-    if (ops && ops->close) ops->close(w);
+    context.window = w;
+    context.state = w->state;
+    if (ops && ops->close) ops->close(&context);
     if (w->state) free(w->state);
     w->state = 0;
     z_remove_idx(win_index(w));
@@ -541,7 +650,7 @@ static void close_window(window_t* w) {
 }
 
 static gui_rect_t window_screen_rect(window_t* w) {
-    if (!w || !w->active) return make_rect(0, 0, 0, 0);
+    if (!w || !w->active || w->minimized) return make_rect(0, 0, 0, 0);
     return make_rect(w->x, w->y, w->w + 3, w->h + 3);
 }
 
@@ -551,6 +660,8 @@ static void dirty_clear(void) {
 
 static void invalidate_full(int sw, int sh) {
     gui_damage_full(&g_damage, sw, sh);
+    g_perf.full_repaints++;
+    g_perf.total_full_repaints++;
 }
 
 static void invalidate_rect(int sw, int sh, gui_rect_t r) {
@@ -561,9 +672,70 @@ static void invalidate_window(int sw, int sh, window_t* w) {
     invalidate_rect(sw, sh, window_screen_rect(w));
 }
 
+void gui_window_set_title(gui_window_t* window, const char* title) {
+    if (!window) return;
+    u_strcpy_n(window->title, title ? title : "",
+               sizeof(window->title));
+    invalidate_window(g_screen_width, g_screen_height, window);
+    invalidate_topbar(g_screen_width, g_screen_height);
+}
+
+void gui_window_invalidate_local(gui_window_t* window,
+                                 int x, int y, int width, int height) {
+    if (!window || !window->active || window->minimized ||
+        width <= 0 || height <= 0) return;
+    invalidate_rect(g_screen_width, g_screen_height,
+                    make_rect(window->x + x,
+                              window->y + TITLE_H + y,
+                              width, height));
+}
+
+void* gui_app_state(gui_app_context_t* context) {
+    return context ? context->state : 0;
+}
+
+gui_window_t* gui_app_window(gui_app_context_t* context) {
+    return context ? context->window : 0;
+}
+
+void gui_app_set_title(gui_app_context_t* context, const char* title) {
+    if (context) gui_window_set_title(context->window, title);
+}
+
+void gui_app_invalidate(gui_app_context_t* context,
+                        int x, int y, int width, int height) {
+    if (context)
+        gui_window_invalidate_local(context->window, x, y, width, height);
+}
+
+void gui_app_request_close(gui_app_context_t* context) {
+    if (context) gui_window_request_close(context->window);
+}
+
+gui_window_t* gui_app_open(gui_app_context_t* context,
+                           gui_app_id_t id, const char* argument) {
+    (void)context;
+    return gui_open_app(id, argument);
+}
+
+int gui_app_open_file_picker(gui_app_context_t* context,
+                             gui_file_request_mode_t mode,
+                             gui_file_filter_t filter,
+                             const char* initial_path) {
+    if (!context || !context->window || g_shared_picker_active) return 0;
+    gui_file_picker_init(&g_shared_picker,
+        mode == GUI_FILE_REQUEST_SAVE ? GUI_FILE_PICKER_SAVE
+                                      : GUI_FILE_PICKER_OPEN,
+        initial_path && initial_path[0] ? initial_path : "/");
+    g_shared_picker_owner = context->window;
+    g_shared_picker_filter = filter;
+    g_shared_picker_active = 1;
+    invalidate_full(g_screen_width, g_screen_height);
+    return 1;
+}
+
 static void invalidate_topbar(int sw, int sh) {
-    (void)sh;
-    invalidate_rect(sw, sh, make_rect(0, 0, sw, 15));
+    invalidate_rect(sw, sh, make_rect(0, sh - TASKBAR_H, sw, TASKBAR_H));
 }
 
 static void perf_init(void) {
@@ -581,6 +753,17 @@ static void perf_init(void) {
     g_perf.shown_input_events = 0;
     g_perf.shown_max_loop_gap = 0;
     g_perf.shown_max_present_ticks = 0;
+    g_perf.composed_pixels = g_perf.presented_pixels = 0;
+    g_perf.dirty_regions = g_perf.full_repaints = 0;
+    g_perf.idle_wakeups = g_perf.pty_wakeups = 0;
+    g_perf.shown_composed_pixels = g_perf.shown_presented_pixels = 0;
+    g_perf.shown_dirty_regions = g_perf.shown_full_repaints = 0;
+    g_perf.shown_idle_wakeups = g_perf.shown_pty_wakeups = 0;
+    g_perf.total_loops = g_perf.total_presents = 0;
+    g_perf.total_input_events = 0;
+    g_perf.total_composed_pixels = g_perf.total_presented_pixels = 0;
+    g_perf.total_dirty_regions = g_perf.total_full_repaints = 0;
+    g_perf.total_idle_wakeups = g_perf.total_pty_wakeups = 0;
 }
 
 static int perf_tick(int sw, int sh) {
@@ -589,6 +772,7 @@ static int perf_tick(int sw, int sh) {
 
     g_perf.last_loop = now;
     g_perf.loops++;
+    g_perf.total_loops++;
     if (gap > g_perf.max_loop_gap) {
         g_perf.max_loop_gap = gap;
     }
@@ -599,12 +783,21 @@ static int perf_tick(int sw, int sh) {
         g_perf.shown_input_events = g_perf.input_events;
         g_perf.shown_max_loop_gap = g_perf.max_loop_gap;
         g_perf.shown_max_present_ticks = g_perf.max_present_ticks;
+        g_perf.shown_composed_pixels = g_perf.composed_pixels;
+        g_perf.shown_presented_pixels = g_perf.presented_pixels;
+        g_perf.shown_dirty_regions = g_perf.dirty_regions;
+        g_perf.shown_full_repaints = g_perf.full_repaints;
+        g_perf.shown_idle_wakeups = g_perf.idle_wakeups;
+        g_perf.shown_pty_wakeups = g_perf.pty_wakeups;
         g_perf.window_start = now;
         g_perf.loops = 0;
         g_perf.presents = 0;
         g_perf.input_events = 0;
         g_perf.max_loop_gap = 0;
         g_perf.max_present_ticks = 0;
+        g_perf.composed_pixels = g_perf.presented_pixels = 0;
+        g_perf.dirty_regions = g_perf.full_repaints = 0;
+        g_perf.idle_wakeups = g_perf.pty_wakeups = 0;
         invalidate_topbar(sw, sh);
         return 1;
     }
@@ -614,6 +807,7 @@ static int perf_tick(int sw, int sh) {
 
 static void perf_note_input(unsigned int events) {
     g_perf.input_events += events;
+    g_perf.total_input_events += events;
 }
 
 static void perf_note_present(uint32_t start_tick) {
@@ -621,6 +815,7 @@ static void perf_note_present(uint32_t start_tick) {
     unsigned int ticks = now - start_tick;
 
     g_perf.presents++;
+    g_perf.total_presents++;
     if (ticks > g_perf.max_present_ticks) {
         g_perf.max_present_ticks = ticks;
     }
@@ -628,14 +823,9 @@ static void perf_note_present(uint32_t start_tick) {
 
 static void perf_resume_from_idle(void) {
     uint32_t now = sys_get_ticks();
-
-    g_perf.window_start = now;
     g_perf.last_loop = now;
-    g_perf.loops = 0;
-    g_perf.presents = 0;
-    g_perf.input_events = 0;
-    g_perf.max_loop_gap = 0;
-    g_perf.max_present_ticks = 0;
+    g_perf.idle_wakeups++;
+    g_perf.total_idle_wakeups++;
 }
 
 static gui_rect_t drag_preview_rect(void) {
@@ -709,25 +899,6 @@ static int tick_due(uint32_t now, uint32_t deadline) {
 
 static uint32_t min_deadline(uint32_t a, uint32_t b) {
     return tick_due(a, b) ? b : a;
-}
-
-/* ---------------- path utilities ---------------- */
-
-static void path_normalize_parent(char* path) {
-    /* drop trailing slash if not root */
-    unsigned int n = u_strlen(path);
-    if (n > 1 && path[n - 1] == '/') { path[n - 1] = 0; n--; }
-    /* find last '/' */
-    int last = -1;
-    for (unsigned int i = 0; i < n; i++) if (path[i] == '/') last = (int)i;
-    if (last <= 0) { u_strcpy_n(path, "/", 256); return; }
-    path[last] = 0;
-}
-
-static void path_append(char* path, const char* name, unsigned int cap) {
-    unsigned int n = u_strlen(path);
-    if (n == 0 || path[n - 1] != '/') u_strcat_n(path, "/", cap);
-    u_strcat_n(path, name, cap);
 }
 
 /* ---------------- file launcher ---------------- */
@@ -804,16 +975,21 @@ static launch_kind_t launch_kind_for_path(const char* path) {
     return LAUNCH_NONE;
 }
 
-static void queue_launch(window_t* w, const char* path) {
-    files_window_state_t* files = FILES_STATE(w);
+int gui_app_services_open_path(gui_app_context_t* context, const char* path) {
     launch_kind_t kind = launch_kind_for_path(path);
-    if (kind == LAUNCH_NONE) {
-        u_strcpy_n(files->status, "No launcher for this file type", sizeof(files->status));
-        return;
+    (void)context;
+    if (kind == LAUNCH_EDIT) {
+        return gui_app_open(context, GUI_APP_EDITOR, path) ? 1 : 0;
     }
-    g_launch_kind = kind;
-    u_strcpy_n(g_launch_path, path, sizeof(g_launch_path));
-    u_strcpy_n(files->status, "Launching...", sizeof(files->status));
+    if (kind == LAUNCH_BMP) {
+        return gui_app_open(context, GUI_APP_VIEWER, path) ? 2 : 0;
+    }
+    if (kind == LAUNCH_ELF) {
+        g_launch_kind = kind;
+        u_strcpy_n(g_launch_path, path, sizeof(g_launch_path));
+        return 3;
+    }
+    return 0;
 }
 
 static int run_queued_launch(gfx_context_t* gfx, int* sw, int* sh) {
@@ -873,99 +1049,33 @@ static int run_queued_launch(gfx_context_t* gfx, int* sw, int* sh) {
     return 1;
 }
 
-/* ---------------- file load ---------------- */
-
-static void load_dir(window_t* w) {
-    files_window_state_t* files = FILES_STATE(w);
-    files->row_count = 0;
-    files->scroll = 0;
-
-    /* synthesize ".." for non-root */
-    if (!u_streq(files->cwd, "/")) {
-        u_strcpy_n(files->rows[files->row_count], "..", NAME_MAX + 1);
-        files->row_dir[files->row_count] = 1;
-        files->row_count++;
-    }
-
-    DIR* d = opendir(files->cwd);
-    if (!d) {
-        u_strcpy_n(files->rows[files->row_count], "<cannot open>", NAME_MAX + 1);
-        files->row_dir[files->row_count] = 0;
-        files->row_count++;
-        return;
-    }
-
-    struct dirent* e;
-    while ((e = readdir(d)) != 0 && files->row_count < MAX_ROWS) {
-        u_strcpy_n(files->rows[files->row_count], e->d_name, NAME_MAX + 1);
-        files->row_dir[files->row_count] = e->d_is_dir;
-        files->row_count++;
-    }
-    closedir(d);
-}
-
 /* ---------------- drawing windows ---------------- */
+
+static void draw_title_button(gfx_surface_t* s, int x, int y, int kind) {
+    fillr(s, x, y, TITLE_BUTTON_W - 2, TITLE_H - 4, COL_WIN_BG);
+    rect(s, x, y, TITLE_BUTTON_W - 2, TITLE_H - 4, COL_FRAME);
+    if (kind == 0) {
+        hline(s, x + 3, y + TITLE_H - 8, 6, COL_FRAME);
+    } else if (kind == 1) {
+        rect(s, x + 3, y + 3, 6, 6, COL_FRAME);
+    } else {
+        int ix = x + 3, iy = y + 3;
+        for (int i = 0; i < 6; i++) {
+            gui_put_pixel(s, ix + i, iy + i, COL_FRAME);
+            gui_put_pixel(s, ix + 5 - i, iy + i, COL_FRAME);
+        }
+    }
+}
 
 static void draw_title_bar(gfx_surface_t* s, window_t* w, int focused, const char* title) {
     unsigned int bg = focused ? COL_TITLE_BG : COL_TITLE_IDLE_BG;
     fillr(s, w->x, w->y, w->w, TITLE_H, bg);
-    draw_text(s, w->x + 4, w->y + 4, title, COL_TITLE_FG);
-    /* close button */
+    draw_text(s, w->x + 4, w->y + 6, title, COL_TITLE_FG);
     int cx = w->x + w->w - CLOSE_W - 2;
     int cy = w->y + 2;
-    fillr(s, cx, cy, CLOSE_W - 2, TITLE_H - 4, COL_WIN_BG);
-    rect(s, cx, cy, CLOSE_W - 2, TITLE_H - 4, COL_FRAME);
-    /* draw 'x' inside */
-    int ix = cx + 2, iy = cy + 2;
-    for (int i = 0; i < 6; i++) {
-        gui_put_pixel(s, ix + i, iy + i, COL_FRAME);
-        gui_put_pixel(s, ix + 5 - i, iy + i, COL_FRAME);
-    }
-}
-
-static void draw_files_body(gfx_surface_t* s, window_t* w, int mx, int my) {
-    files_window_state_t* files = FILES_STATE(w);
-    int bx = w->x;
-    int by = w->y + TITLE_H;
-    int bw = w->w;
-    int bh = w->h - TITLE_H;
-    fillr(s, bx, by, bw, bh, COL_WIN_BG);
-
-    /* breadcrumb */
-    draw_text(s, bx + 4, by + 2, "Path:", COL_SUBTEXT);
-    draw_text(s, bx + 36, by + 2, files->cwd, COL_TEXT);
-    hline(s, bx, by + 12, bw, COL_FRAME);
-
-    int row_top = by + 14;
-    int status_h = 13;
-    int row_area = bh - 14 - status_h;
-    int visible = row_area / ROW_H;
-    if (visible < 1) visible = 1;
-
-    for (int i = 0; i < visible && (i + files->scroll) < files->row_count; i++) {
-        int idx = i + files->scroll;
-        int ry = row_top + i * ROW_H;
-        int hover = (mx >= bx && mx < bx + bw - 12 && my >= ry && my < ry + ROW_H);
-        if (hover) fillr(s, bx, ry, bw - 12, ROW_H, COL_HILIGHT);
-        unsigned int color = hover ? COL_HILIGHT_T : COL_TEXT;
-        /* tiny icon: [D] for dir, [F] for file */
-        draw_text(s, bx + 4, ry + 2, files->row_dir[idx] ? "[D]" : "[F]", color);
-        draw_text(s, bx + 28, ry + 2, files->rows[idx], color);
-    }
-
-    gui_widget_scrollbar(s, make_rect(bx + bw - 10, by + 14, 10, row_area),
-                         files->row_count, visible, files->scroll,
-                         (gui_widget_state_t){0,
-                             w->pressed_widget == 1, 0, 0},
-                         &GUI_WIDGET_THEME);
-
-    hline(s, bx, by + bh - status_h, bw, COL_FRAME);
-    if (files->status[0]) {
-        draw_text(s, bx + 4, by + bh - status_h + 4, files->status, COL_SUBTEXT);
-    }
-
-    /* outer frame */
-    rect(s, w->x, w->y, w->w, w->h, COL_FRAME);
+    draw_title_button(s, cx - TITLE_BUTTON_W * 2, cy, 0);
+    draw_title_button(s, cx - TITLE_BUTTON_W, cy, 1);
+    draw_title_button(s, cx, cy, 2);
 }
 
 static void draw_shell_body(gfx_surface_t* s, window_t* w) {
@@ -1038,62 +1148,28 @@ static void draw_shell_body(gfx_surface_t* s, window_t* w) {
     rect(s, w->x, w->y, w->w, w->h, COL_FRAME);
 }
 
-static void files_app_open(window_t* w, const char* argument) {
-    files_window_state_t* files = FILES_STATE(w);
-    (void)argument;
-    u_strcpy_n(files->cwd, "/", sizeof(files->cwd));
-    u_strcpy_n(files->status, "Double-click files to open", sizeof(files->status));
-    load_dir(w);
-}
-
-static void shell_app_open(window_t* w, const char* argument) {
+static void shell_app_open(gui_app_context_t* context, const char* argument) {
+    window_t* w = context->window;
     (void)argument;
     gui_shell_open(SHELL_STATE(w));
 }
 
-static void shell_app_close(window_t* w) {
+static void shell_app_close(gui_app_context_t* context) {
+    window_t* w = context->window;
     if (w->state) gui_shell_close(SHELL_STATE(w));
 }
 
-static void files_app_draw(gfx_surface_t* s, window_t* w, int mx, int my) {
-    draw_files_body(s, w, mx, my);
-}
-
-static void system_app_draw(gfx_surface_t* s, window_t* w, int mx, int my) {
-    (void)mx;
-    (void)my;
-    gui_builtin_draw_system(s,
-        make_rect(w->x, w->y + TITLE_H, w->w, w->h - TITLE_H),
-        &GUI_BUILTIN_STYLE, draw_text);
-    rect(s, w->x, w->y, w->w, w->h, COL_FRAME);
-}
-
-static void config_app_draw(gfx_surface_t* s, window_t* w, int mx, int my) {
-    (void)mx;
-    (void)my;
-    gui_builtin_draw_config(s,
-        make_rect(w->x, w->y + TITLE_H, w->w, w->h - TITLE_H),
-        g_perf_visible, &GUI_BUILTIN_STYLE, &GUI_WIDGET_THEME, draw_text);
-    rect(s, w->x, w->y, w->w, w->h, COL_FRAME);
-}
-
-static void about_app_draw(gfx_surface_t* s, window_t* w, int mx, int my) {
-    (void)mx;
-    (void)my;
-    gui_builtin_draw_about(s,
-        make_rect(w->x, w->y + TITLE_H, w->w, w->h - TITLE_H),
-        &GUI_BUILTIN_STYLE, draw_text);
-    rect(s, w->x, w->y, w->w, w->h, COL_FRAME);
-}
-
-static void shell_app_draw(gfx_surface_t* s, window_t* w, int mx, int my) {
+static void shell_app_draw(gfx_surface_t* s, gui_app_context_t* context,
+                           int mx, int my) {
+    window_t* w = context->window;
     (void)mx;
     (void)my;
     draw_shell_body(s, w);
 }
 
-static unsigned int shell_app_event(window_t* w,
+static unsigned int shell_app_event(gui_app_context_t* context,
                                     const gui_app_event_t* event) {
+    window_t* w = context->window;
     gui_shell_window_t* shell = SHELL_STATE(w);
     if (event->type == GUI_APP_EVENT_KEY) {
         if (event->key == KEY_ESC || (event->ascii & 0xFFu) == 27u)
@@ -1118,959 +1194,37 @@ static unsigned int shell_app_event(window_t* w,
     return GUI_APP_RESULT_NONE;
 }
 
-static unsigned int files_app_event(window_t* w,
-                                    const gui_app_event_t* event) {
-    files_window_state_t* files = FILES_STATE(w);
-    int row_area = (w->h - TITLE_H) - 27;
-    int visible = row_area / ROW_H;
-    int max_scroll;
-    gui_rect_t track;
-    gui_rect_t thumb;
-    if (visible < 1) visible = 1;
-    track = make_rect(w->w - 10, 14, 10, row_area);
-    thumb = gui_widget_scroll_thumb(track, files->row_count, visible,
-                                    files->scroll);
-    max_scroll = files->row_count - visible;
-    if (max_scroll < 0) max_scroll = 0;
-    if (event->type == GUI_APP_EVENT_WHEEL) {
-        files->scroll -= event->wheel * 3;
-        if (files->scroll < 0) files->scroll = 0;
-        if (files->scroll > max_scroll) files->scroll = max_scroll;
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if (event->type == GUI_APP_EVENT_POINTER_MOVE &&
-        w->pressed_widget == 1) {
-        files->scroll = gui_widget_scroll_offset(
-            track, files->row_count, visible, event->y,
-            files->scroll_drag_offset);
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if (event->type == GUI_APP_EVENT_POINTER_UP &&
-        w->pressed_widget == 1) {
-        w->pressed_widget = 0;
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if (event->type != GUI_APP_EVENT_POINTER_DOWN)
-        return GUI_APP_RESULT_NONE;
-    if (gui_widget_hit(track, event->x, event->y)) {
-        if (gui_widget_hit(thumb, event->x, event->y)) {
-            w->pressed_widget = 1;
-            files->scroll_drag_offset = event->y - thumb.y;
-        } else if (event->y < thumb.y)
-            files->scroll -= visible;
-        else
-            files->scroll += visible;
-        if (files->scroll < 0) files->scroll = 0;
-        if (files->scroll > max_scroll) files->scroll = max_scroll;
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if (event->y >= 14 && event->y < 14 + visible * ROW_H) {
-        int row = (event->y - 14) / ROW_H + files->scroll;
-        if (row >= 0 && row < files->row_count) {
-            if (files->row_dir[row]) {
-                if (u_streq(files->rows[row], ".."))
-                    path_normalize_parent(files->cwd);
-                else
-                    path_append(files->cwd, files->rows[row],
-                                sizeof(files->cwd));
-                load_dir(w);
-            } else {
-                uint32_t now = event->ticks;
-                int widx = win_index(w);
-                int is_double = g_last_file_win == widx &&
-                    g_last_file_row == row &&
-                    (uint32_t)(now - g_last_file_tick) < 35u;
-                char target[256];
-                u_strcpy_n(target, files->cwd, sizeof(target));
-                path_append(target, files->rows[row], sizeof(target));
-                if (is_double) {
-                    launch_kind_t kind = launch_kind_for_path(target);
-                    if (kind == LAUNCH_EDIT) {
-                        action_editor(g_screen_width, g_screen_height, target);
-                        u_strcpy_n(files->status, "Opened in Editor",
-                                   sizeof(files->status));
-                    } else {
-                        queue_launch(w, target);
-                    }
-                    g_last_file_win = -1;
-                    g_last_file_row = -1;
-                    g_last_file_tick = 0;
-                } else {
-                    u_strcpy_n(files->status, "Double-click to open ",
-                               sizeof(files->status));
-                    u_strcat_n(files->status, files->rows[row],
-                               sizeof(files->status));
-                    g_last_file_win = widx;
-                    g_last_file_row = row;
-                    g_last_file_tick = now;
-                }
-            }
-        }
-    }
-    return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-}
-
-static unsigned int config_app_event(window_t* w,
-                                     const gui_app_event_t* event) {
-    if (event->type == GUI_APP_EVENT_POINTER_DOWN &&
-        point_in(event->x, event->y, 8, 26, w->w - 16, 20)) {
-        g_perf_visible = !g_perf_visible;
-        gui_config_save();
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if (event->type == GUI_APP_EVENT_KEY &&
-        (event->key == KEY_ENTER || event->key == KEY_SPACE)) {
-        g_perf_visible = !g_perf_visible;
-        gui_config_save();
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    return GUI_APP_RESULT_NONE;
-}
-
-#define EDITOR_TOOLBAR_H 24
-#define EDITOR_STATUS_H 14
-#define EDITOR_LINE_H 8
-#define EDITOR_WIDGET_SAVE 1
-#define EDITOR_WIDGET_DISCARD 2
-#define EDITOR_WIDGET_CANCEL 3
-#define EDITOR_WIDGET_SCROLLBAR 10
-#define EDITOR_WIDGET_TEXT 11
-#define EDITOR_WIDGET_NEW 20
-#define EDITOR_WIDGET_OPEN 21
-#define EDITOR_WIDGET_SAVE_AS 22
-#define EDITOR_WIDGET_PICKER 30
-#define EDITOR_PENDING_NONE 0
-#define EDITOR_PENDING_CLOSE 1
-#define EDITOR_PENDING_NEW 2
-#define EDITOR_PENDING_OPEN 3
-
-static const gui_file_picker_style_t EDITOR_PICKER_STYLE = {
-    COL_WIN_BG, COL_FRAME, COL_TEXT, COL_SUBTEXT,
-    COL_HILIGHT, COL_HILIGHT_T
+static const window_app_ops_t SHELL_DESCRIPTOR = {
+    "Shell", sizeof(gui_shell_window_t), 500, 320, 240, 120,
+     0, shell_app_open, shell_app_close,
+     shell_app_draw, shell_app_event, WT_SHELL, 1, "shell", "Shell", 2, 1
 };
 
-static void editor_set_status(editor_window_state_t* editor,
-                              const char* status) {
-    u_strcpy_n(editor->status, status, sizeof(editor->status));
+static void init_app_registry(void) {
+    gui_app_registry_reset();
+    (void)gui_app_registry_add(&SHELL_DESCRIPTOR);
+    (void)gui_app_registry_add(gui_system_app_descriptor());
+    (void)gui_app_registry_add(gui_config_app_descriptor());
+    (void)gui_app_registry_add(gui_about_app_descriptor());
+    (void)gui_app_registry_add(gui_files_app_descriptor());
+    (void)gui_app_registry_add(gui_editor_app_descriptor());
+    (void)gui_app_registry_add(gui_native_app_descriptor(GUI_APP_VIEWER));
+    (void)gui_app_registry_add(gui_native_app_descriptor(GUI_APP_TASKS));
+    (void)gui_app_registry_add(gui_native_app_descriptor(GUI_APP_NETWORK));
 }
-
-static gui_rect_t editor_toolbar_button(const window_t* w, int widget,
-                                        int absolute) {
-    int x = widget == EDITOR_WIDGET_NEW ? 4 :
-            widget == EDITOR_WIDGET_OPEN ? 48 : 92;
-    int width = widget == EDITOR_WIDGET_SAVE_AS ? 60 : 40;
-    return make_rect(x + (absolute ? w->x : 0),
-                     3 + (absolute ? w->y + TITLE_H : 0), width, 18);
-}
-
-static gui_rect_t editor_picker_bounds(const window_t* w, int absolute) {
-    int width = w->w - 40;
-    int height = w->h - TITLE_H - 40;
-    if (width > 430) width = 430;
-    if (height > 300) height = 300;
-    if (width < 220) width = 220;
-    if (height < 100) height = 100;
-    return make_rect((w->w - width) / 2 + (absolute ? w->x : 0),
-        20 + (absolute ? w->y + TITLE_H : 0), width, height);
-}
-
-static void editor_reset_view(editor_window_state_t* editor) {
-    editor->row = 0;
-    editor->column = 0;
-    editor->top = 0;
-    editor->hscroll = 0;
-    editor->anchor_row = 0;
-    editor->anchor_column = 0;
-    editor->selection_active = 0;
-    editor->caret_visible = 1;
-}
-
-static void editor_new_document(editor_window_state_t* editor) {
-    editor_model_destroy(&editor->model);
-    editor_model_init(&editor->model, "");
-    editor_reset_view(editor);
-    editor_set_status(editor, "New document - use Save As");
-}
-
-static void editor_open_document(editor_window_state_t* editor,
-                                 const char* path) {
-    editor_model_destroy(&editor->model);
-    editor_model_init(&editor->model, path);
-    editor_reset_view(editor);
-    if (!editor_model_load(&editor->model))
-        editor_set_status(editor, "Unable to load file");
-    else
-        editor_set_status(editor, "Opened");
-}
-
-static void editor_show_picker(window_t* w, gui_file_picker_mode_t mode,
-                               int after_save_action) {
-    editor_window_state_t* editor = EDITOR_STATE(w);
-    gui_file_picker_init(&editor->picker, mode, editor->model.path);
-    editor->picker_active = 1;
-    editor->picker_after_save_action = after_save_action;
-    w->focused_widget = EDITOR_WIDGET_PICKER;
-    w->pressed_widget = 0;
-}
-
-static int editor_position_before(uint32_t ar, uint32_t ac,
-                                  uint32_t br, uint32_t bc) {
-    return ar < br || (ar == br && ac < bc);
-}
-
-static int editor_has_selection(const editor_window_state_t* editor) {
-    return editor->selection_active &&
-        (editor->anchor_row != editor->row ||
-         editor->anchor_column != editor->column);
-}
-
-static void editor_selection_bounds(const editor_window_state_t* editor,
-                                    uint32_t* first_row,
-                                    uint32_t* first_column,
-                                    uint32_t* last_row,
-                                    uint32_t* last_column) {
-    if (editor_position_before(editor->anchor_row, editor->anchor_column,
-                               editor->row, editor->column)) {
-        *first_row = editor->anchor_row;
-        *first_column = editor->anchor_column;
-        *last_row = editor->row;
-        *last_column = editor->column;
-    } else {
-        *first_row = editor->row;
-        *first_column = editor->column;
-        *last_row = editor->anchor_row;
-        *last_column = editor->anchor_column;
-    }
-}
-
-static void editor_clear_selection(editor_window_state_t* editor) {
-    editor->selection_active = 0;
-    editor->anchor_row = editor->row;
-    editor->anchor_column = editor->column;
-}
-
-static int editor_delete_selection(editor_window_state_t* editor) {
-    uint32_t first_row, first_column, last_row, last_column;
-    if (!editor_has_selection(editor)) return 0;
-    editor_selection_bounds(editor, &first_row, &first_column,
-                            &last_row, &last_column);
-    if (!editor_model_delete_range(&editor->model, first_row, first_column,
-                                   last_row, last_column)) return 0;
-    editor->row = first_row;
-    editor->column = first_column;
-    editor_clear_selection(editor);
-    return 1;
-}
-
-static int editor_copy_selection(editor_window_state_t* editor) {
-    uint32_t first_row, first_column, last_row, last_column;
-    unsigned int used = 0;
-    if (!editor_has_selection(editor)) return 0;
-    editor_selection_bounds(editor, &first_row, &first_column,
-                            &last_row, &last_column);
-    for (uint32_t row = first_row; row <= last_row; row++) {
-        uint32_t start = row == first_row ? first_column : 0u;
-        uint32_t end = row == last_row ? last_column :
-            editor_model_line_length(&editor->model, row);
-        const char* line = editor->model.lines[row];
-        for (uint32_t column = start;
-             column < end && used + 1u < GUI_CLIPBOARD_CAPACITY; column++)
-            g_editor_clipboard[used++] = line[column];
-        if (row != last_row && used + 1u < GUI_CLIPBOARD_CAPACITY)
-            g_editor_clipboard[used++] = '\n';
-    }
-    g_editor_clipboard[used] = '\0';
-    return 1;
-}
-
-static int editor_paste(editor_window_state_t* editor) {
-    int changed = 0;
-    if (!g_editor_clipboard[0]) return 0;
-    (void)editor_delete_selection(editor);
-    for (unsigned int i = 0; g_editor_clipboard[i]; i++) {
-        if (g_editor_clipboard[i] == '\n') {
-            if (!editor_model_split_line(&editor->model, editor->row,
-                                         editor->column)) break;
-            editor->row++;
-            editor->column = 0;
-            changed = 1;
-        } else {
-            if (!editor_model_insert_char(&editor->model, editor->row,
-                                          editor->column,
-                                          g_editor_clipboard[i])) break;
-            editor->column++;
-            changed = 1;
-        }
-    }
-    editor_clear_selection(editor);
-    return changed;
-}
-
-static int editor_visible_rows(const window_t* w) {
-    int rows = (w->h - TITLE_H - EDITOR_TOOLBAR_H - EDITOR_STATUS_H - 4) /
-               EDITOR_LINE_H;
-    return rows < 1 ? 1 : rows;
-}
-
-static int editor_visible_cols(const window_t* w) {
-    int cols = (w->w - 18) / 6;
-    return cols < 1 ? 1 : cols;
-}
-
-static void editor_clamp_view(window_t* w) {
-    editor_window_state_t* editor = EDITOR_STATE(w);
-    uint32_t len;
-    int rows = editor_visible_rows(w);
-    int cols = editor_visible_cols(w);
-    if (editor->model.count == 0) {
-        editor->row = 0;
-        editor->column = 0;
-    } else if (editor->row >= editor->model.count) {
-        editor->row = editor->model.count - 1u;
-    }
-    len = editor_model_line_length(&editor->model, editor->row);
-    if (editor->column > len) editor->column = len;
-    if (editor->row < editor->top) editor->top = editor->row;
-    if (editor->row >= editor->top + (uint32_t)rows)
-        editor->top = editor->row - (uint32_t)rows + 1u;
-    if (editor->column < editor->hscroll) editor->hscroll = editor->column;
-    if (editor->column >= editor->hscroll + (uint32_t)cols)
-        editor->hscroll = editor->column - (uint32_t)cols + 1u;
-}
-
-static gui_rect_t editor_confirm_button(const window_t* w, int choice) {
-    int panel_w = 244;
-    int panel_x = w->x + (w->w - panel_w) / 2;
-    int panel_y = w->y + TITLE_H + (w->h - TITLE_H - 74) / 2;
-    return make_rect(panel_x + 8 + (choice - 1) * 76,
-                     panel_y + 42, 68, 20);
-}
-
-static void editor_app_open(window_t* w, const char* argument) {
-    editor_window_state_t* editor = EDITOR_STATE(w);
-    editor_model_init(&editor->model, argument ? argument : "");
-    editor->caret_visible = 1;
-    editor->confirm_choice = EDITOR_WIDGET_SAVE;
-    editor->next_blink = sys_get_ticks() + SMALLOS_TIMER_HZ / 2u;
-    if (!editor_model_load(&editor->model))
-        editor_set_status(editor, "Unable to load file");
-    else
-        editor_set_status(editor, "F2 or Ctrl+S saves");
-}
-
-static void editor_app_close(window_t* w) {
-    if (w->state) editor_model_destroy(&EDITOR_STATE(w)->model);
-}
-
-static void editor_app_draw(gfx_surface_t* s, window_t* w, int mx, int my) {
-    editor_window_state_t* editor = EDITOR_STATE(w);
-    int by = w->y + TITLE_H;
-    int rows = editor_visible_rows(w);
-    int cols = editor_visible_cols(w);
-    int text_y = by + EDITOR_TOOLBAR_H + 2;
-    char location[64];
-    char number[16];
-    (void)mx;
-    (void)my;
-    fillr(s, w->x, by, w->w, w->h - TITLE_H, 0x00FFFFFFu);
-    for (int widget = EDITOR_WIDGET_NEW;
-         widget <= EDITOR_WIDGET_SAVE_AS; widget++) {
-        const char* label = widget == EDITOR_WIDGET_NEW ? "New" :
-                            widget == EDITOR_WIDGET_OPEN ? "Open" : "Save As";
-        gui_widget_button(s, editor_toolbar_button(w, widget, 1), label,
-            (gui_widget_state_t){w->focused_widget == widget,
-                w->pressed_widget == widget, 0, 0},
-            &GUI_WIDGET_THEME, draw_text);
-    }
-    draw_fixed_text(s, w->x + 158, by + 8,
-                    editor->model.path[0] ? editor->model.path : "Untitled",
-                    cols > 26 ? cols - 26 : 1, COL_TEXT);
-    hline(s, w->x, by + EDITOR_TOOLBAR_H, w->w, COL_FRAME);
-    for (int i = 0; i < rows; i++) {
-        uint32_t row = editor->top + (uint32_t)i;
-        uint32_t selection_start = 0, selection_end = 0;
-        int row_selected = 0;
-        if (row >= editor->model.count) break;
-        if (editor_has_selection(editor)) {
-            uint32_t first_row, first_column, last_row, last_column;
-            editor_selection_bounds(editor, &first_row, &first_column,
-                                    &last_row, &last_column);
-            if (row >= first_row && row <= last_row) {
-                uint32_t line_len = editor_model_line_length(&editor->model,
-                                                              row);
-                selection_start = row == first_row ? first_column : 0u;
-                selection_end = row == last_row ? last_column : line_len + 1u;
-                row_selected = selection_end > selection_start;
-                if (row_selected) {
-                    uint32_t visible_start = selection_start > editor->hscroll ?
-                        selection_start : editor->hscroll;
-                    uint32_t visible_end = selection_end < editor->hscroll +
-                        (uint32_t)cols ? selection_end :
-                        editor->hscroll + (uint32_t)cols;
-                    if (visible_end > visible_start)
-                        fillr(s, w->x + 4 +
-                              (int)(visible_start - editor->hscroll) * 6,
-                              text_y + i * EDITOR_LINE_H,
-                              (int)(visible_end - visible_start) * 6,
-                              7, COL_HILIGHT);
-                }
-            }
-        }
-        draw_fixed_text(s, w->x + 4, text_y + i * EDITOR_LINE_H,
-                        editor->model.lines[row] +
-                            (editor->hscroll < editor_model_line_length(
-                                &editor->model, row) ? editor->hscroll :
-                                editor_model_line_length(&editor->model, row)),
-                        cols, COL_TEXT);
-        if (row_selected) {
-            uint32_t line_len = editor_model_line_length(&editor->model, row);
-            uint32_t visible_start = selection_start > editor->hscroll ?
-                selection_start : editor->hscroll;
-            uint32_t visible_end = selection_end < editor->hscroll +
-                (uint32_t)cols ? selection_end : editor->hscroll +
-                (uint32_t)cols;
-            if (visible_end > line_len) visible_end = line_len;
-            for (uint32_t column = visible_start; column < visible_end;
-                 column++)
-                draw_char(s, w->x + 4 +
-                          (int)(column - editor->hscroll) * 6,
-                          text_y + i * EDITOR_LINE_H,
-                          editor->model.lines[row][column], COL_HILIGHT_T);
-        }
-    }
-    if (editor->caret_visible && !editor->confirm_close &&
-        editor->row >= editor->top &&
-        editor->row < editor->top + (uint32_t)rows) {
-        int caret_col = (int)(editor->column - editor->hscroll);
-        if (caret_col >= 0 && caret_col < cols)
-            vline(s, w->x + 4 + caret_col * 6,
-                  text_y + ((int)editor->row - (int)editor->top) * EDITOR_LINE_H,
-                  7, COL_TITLE_BG);
-    }
-    hline(s, w->x, w->y + w->h - EDITOR_STATUS_H, w->w, COL_FRAME);
-    draw_text(s, w->x + 4, w->y + w->h - 10,
-              editor->model.dirty ? "*" : " ", COL_TEXT);
-    u_strcpy_n(location, "Ln ", sizeof(location));
-    utoa10(editor->row + 1u, number);
-    u_strcat_n(location, number, sizeof(location));
-    u_strcat_n(location, " Col ", sizeof(location));
-    utoa10(editor->column + 1u, number);
-    u_strcat_n(location, number, sizeof(location));
-    u_strcat_n(location, "  ", sizeof(location));
-    u_strcat_n(location, editor->status, sizeof(location));
-    draw_text(s, w->x + 16, w->y + w->h - 10, location, COL_SUBTEXT);
-    gui_widget_scrollbar(s,
-        make_rect(w->x + w->w - 10, text_y, 10, rows * EDITOR_LINE_H),
-        (int)editor->model.count, rows, (int)editor->top,
-        (gui_widget_state_t){0,
-            w->pressed_widget == EDITOR_WIDGET_SCROLLBAR, 0, 0},
-        &GUI_WIDGET_THEME);
-
-    if (editor->confirm_close) {
-        int panel_w = 244;
-        int panel_x = w->x + (w->w - panel_w) / 2;
-        int panel_y = w->y + TITLE_H + (w->h - TITLE_H - 74) / 2;
-        fillr(s, panel_x, panel_y, panel_w, 74, COL_WIN_BG);
-        rect(s, panel_x, panel_y, panel_w, 74, COL_FRAME);
-        draw_text(s, panel_x + 8, panel_y + 10,
-                  "Save changes before closing?", COL_TEXT);
-        for (int choice = 1; choice <= 3; choice++) {
-            gui_widget_state_t state = {w->focused_widget == choice,
-                w->pressed_widget == choice,
-                editor->confirm_choice == choice, 0};
-            const char* label = choice == 1 ? "Save" :
-                                choice == 2 ? "Discard" : "Cancel";
-            gui_widget_button(s, editor_confirm_button(w, choice), label,
-                              state, &GUI_WIDGET_THEME, draw_text);
-        }
-    }
-    if (editor->picker_active) {
-        gui_file_picker_draw(s, &editor->picker,
-            editor_picker_bounds(w, 1), &GUI_WIDGET_THEME,
-            &EDITOR_PICKER_STYLE, draw_text);
-    }
-    rect(s, w->x, w->y, w->w, w->h, COL_FRAME);
-}
-
-static unsigned int editor_execute_action(window_t* w, int action) {
-    editor_window_state_t* editor = EDITOR_STATE(w);
-    editor->pending_action = EDITOR_PENDING_NONE;
-    editor->confirm_close = 0;
-    if (action == EDITOR_PENDING_CLOSE)
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_CLOSE;
-    if (action == EDITOR_PENDING_NEW) {
-        editor_new_document(editor);
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if (action == EDITOR_PENDING_OPEN) {
-        editor_show_picker(w, GUI_FILE_PICKER_OPEN, EDITOR_PENDING_NONE);
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    return GUI_APP_RESULT_HANDLED;
-}
-
-static unsigned int editor_request_action(window_t* w, int action) {
-    editor_window_state_t* editor = EDITOR_STATE(w);
-    if (!editor->model.dirty) return editor_execute_action(w, action);
-    editor->pending_action = action;
-    editor->confirm_close = 1;
-    editor->confirm_choice = EDITOR_WIDGET_SAVE;
-    w->focused_widget = EDITOR_WIDGET_SAVE;
-    return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW |
-           GUI_APP_RESULT_KEEP_OPEN;
-}
-
-static unsigned int editor_picker_event(window_t* w,
-                                         const gui_app_event_t* event) {
-    editor_window_state_t* editor = EDITOR_STATE(w);
-    gui_file_picker_result_t result = gui_file_picker_event(
-        &editor->picker, event, editor_picker_bounds(w, 0));
-    if (editor->picker.pressed)
-        w->pressed_widget = EDITOR_WIDGET_PICKER;
-    else if (w->pressed_widget == EDITOR_WIDGET_PICKER)
-        w->pressed_widget = 0;
-    if (result == GUI_FILE_PICKER_RESULT_CANCEL) {
-        editor->picker_active = 0;
-        editor->picker_after_save_action = EDITOR_PENDING_NONE;
-        editor->pending_action = EDITOR_PENDING_NONE;
-        w->focused_widget = 0;
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if (result == GUI_FILE_PICKER_RESULT_ACCEPT) {
-        const char* path = gui_file_picker_path(&editor->picker);
-        if (editor->picker.mode == GUI_FILE_PICKER_OPEN) {
-            editor_open_document(editor, path);
-            editor->picker_active = 0;
-            w->focused_widget = 0;
-            return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-        }
-        u_strcpy_n(editor->model.path, path, sizeof(editor->model.path));
-        if (!editor_model_save(&editor->model)) {
-            editor_set_status(editor, "Save failed");
-            return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-        }
-        {
-            int after_save = editor->picker_after_save_action;
-            editor->picker_active = 0;
-            editor->picker_after_save_action = EDITOR_PENDING_NONE;
-            w->focused_widget = 0;
-            editor_set_status(editor, "Saved");
-            if (after_save != EDITOR_PENDING_NONE)
-                return editor_execute_action(w, after_save);
-        }
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    return result == GUI_FILE_PICKER_RESULT_REDRAW
-        ? GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW
-        : GUI_APP_RESULT_HANDLED;
-}
-
-static unsigned int editor_apply_confirm_choice(window_t* w, int choice) {
-    editor_window_state_t* editor = EDITOR_STATE(w);
-    int action = editor->pending_action;
-    if (choice == EDITOR_WIDGET_SAVE) {
-        if (!editor->model.path[0]) {
-            editor->confirm_close = 0;
-            editor_show_picker(w, GUI_FILE_PICKER_SAVE, action);
-            return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW |
-                   GUI_APP_RESULT_KEEP_OPEN;
-        }
-        if (editor_model_save(&editor->model))
-            return editor_execute_action(w, action);
-        editor_set_status(editor, "Save failed");
-        editor->confirm_close = 0;
-        editor->pending_action = EDITOR_PENDING_NONE;
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW |
-               GUI_APP_RESULT_KEEP_OPEN;
-    }
-    if (choice == EDITOR_WIDGET_DISCARD) {
-        editor->model.dirty = 0;
-        return editor_execute_action(w, action);
-    }
-    editor->confirm_close = 0;
-    editor->pending_action = EDITOR_PENDING_NONE;
-    w->focused_widget = 0;
-    return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW |
-           GUI_APP_RESULT_KEEP_OPEN;
-}
-
-static unsigned int editor_confirm_event(window_t* w,
-                                         const gui_app_event_t* event) {
-    editor_window_state_t* editor = EDITOR_STATE(w);
-    if (event->type == GUI_APP_EVENT_CLOSE_REQUEST)
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_KEEP_OPEN;
-    if (event->type == GUI_APP_EVENT_POINTER_MOVE) {
-        int sx = w->x + event->x;
-        int sy = w->y + TITLE_H + event->y;
-        int hovered = 0;
-        for (int choice = 1; choice <= 3; choice++) {
-            if (gui_widget_hit(editor_confirm_button(w, choice), sx, sy))
-                hovered = choice;
-        }
-        if (hovered != w->focused_widget) {
-            w->focused_widget = hovered;
-            return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-        }
-        return GUI_APP_RESULT_HANDLED;
-    }
-    if (event->type == GUI_APP_EVENT_POINTER_DOWN) {
-        int sx = w->x + event->x;
-        int sy = w->y + TITLE_H + event->y;
-        for (int choice = 1; choice <= 3; choice++) {
-            if (gui_widget_hit(editor_confirm_button(w, choice), sx, sy)) {
-                editor->confirm_choice = choice;
-                w->focused_widget = choice;
-                w->pressed_widget = choice;
-                break;
-            }
-        }
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if (event->type == GUI_APP_EVENT_POINTER_UP) {
-        int sx = w->x + event->x;
-        int sy = w->y + TITLE_H + event->y;
-        int pressed = w->pressed_widget;
-        w->pressed_widget = 0;
-        if (pressed >= 1 && pressed <= 3 &&
-            gui_widget_hit(editor_confirm_button(w, pressed), sx, sy)) {
-            editor->confirm_choice = pressed;
-            return editor_apply_confirm_choice(w, pressed);
-        }
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if (event->type != GUI_APP_EVENT_KEY)
-        return GUI_APP_RESULT_HANDLED;
-    if (event->key == KEY_ESC) {
-        return editor_apply_confirm_choice(w, EDITOR_WIDGET_CANCEL);
-    }
-    if (event->key == KEY_LEFT || event->key == KEY_UP) {
-        editor->confirm_choice--;
-        if (editor->confirm_choice < 1) editor->confirm_choice = 3;
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if (event->key == KEY_RIGHT || event->key == KEY_DOWN ||
-        event->key == KEY_TAB) {
-        editor->confirm_choice++;
-        if (editor->confirm_choice > 3) editor->confirm_choice = 1;
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if (event->key == KEY_ENTER) {
-        return editor_apply_confirm_choice(w, editor->confirm_choice);
-    }
-    return GUI_APP_RESULT_HANDLED;
-}
-
-static void editor_pointer_position(window_t* w, int x, int y,
-                                    uint32_t* row, uint32_t* column) {
-    editor_window_state_t* editor = EDITOR_STATE(w);
-    int text_y = EDITOR_TOOLBAR_H + 2;
-    int visual_row = (y - text_y) / EDITOR_LINE_H;
-    if (y < text_y) visual_row = 0;
-    if (visual_row >= editor_visible_rows(w))
-        visual_row = editor_visible_rows(w) - 1;
-    *row = editor->top + (uint32_t)visual_row;
-    if (editor->model.count == 0) *row = 0;
-    else if (*row >= editor->model.count) *row = editor->model.count - 1u;
-    *column = editor->hscroll +
-        (uint32_t)((x > 4 ? x - 4 : 0) / 6);
-    if (*column > editor_model_line_length(&editor->model, *row))
-        *column = editor_model_line_length(&editor->model, *row);
-}
-
-static unsigned int editor_app_event(window_t* w,
-                                     const gui_app_event_t* event) {
-    editor_window_state_t* editor = EDITOR_STATE(w);
-    uint32_t len;
-    int selection_deleted = 0;
-    int rows = editor_visible_rows(w);
-    gui_rect_t scroll_track = make_rect(w->w - 10,
-        EDITOR_TOOLBAR_H + 2, 10, rows * EDITOR_LINE_H);
-    gui_rect_t scroll_thumb = gui_widget_scroll_thumb(scroll_track,
-        (int)editor->model.count, rows, (int)editor->top);
-    if (editor->picker_active) {
-        if (event->type == GUI_APP_EVENT_CLOSE_REQUEST) {
-            editor->picker_active = 0;
-            editor->picker_after_save_action = EDITOR_PENDING_NONE;
-            editor->pending_action = EDITOR_PENDING_NONE;
-            return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW |
-                   GUI_APP_RESULT_KEEP_OPEN;
-        }
-        return editor_picker_event(w, event);
-    }
-    if (editor->confirm_close) return editor_confirm_event(w, event);
-    if (event->type == GUI_APP_EVENT_CLOSE_REQUEST) {
-        return editor_request_action(w, EDITOR_PENDING_CLOSE);
-    }
-    if (event->type == GUI_APP_EVENT_TICK) {
-        editor->caret_visible = !editor->caret_visible;
-        return GUI_APP_RESULT_REDRAW;
-    }
-    if (event->type == GUI_APP_EVENT_RESIZE) {
-        editor_clamp_view(w);
-        return GUI_APP_RESULT_REDRAW;
-    }
-    if (event->type == GUI_APP_EVENT_WHEEL) {
-        int max_top = (int)editor->model.count - rows;
-        int top = (int)editor->top - event->wheel * 3;
-        if (max_top < 0) max_top = 0;
-        if (top < 0) top = 0;
-        if (top > max_top) top = max_top;
-        editor->top = (uint32_t)top;
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if (event->type == GUI_APP_EVENT_POINTER_MOVE &&
-        w->pressed_widget == EDITOR_WIDGET_SCROLLBAR) {
-        editor->top = (uint32_t)gui_widget_scroll_offset(
-            scroll_track, (int)editor->model.count, rows, event->y,
-            editor->scroll_drag_offset);
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if (event->type == GUI_APP_EVENT_POINTER_MOVE &&
-        w->pressed_widget == EDITOR_WIDGET_TEXT) {
-        editor_pointer_position(w, event->x, event->y,
-                                &editor->row, &editor->column);
-        editor->selection_active = 1;
-        editor->caret_visible = 1;
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if (event->type == GUI_APP_EVENT_POINTER_UP &&
-        (w->pressed_widget == EDITOR_WIDGET_SCROLLBAR ||
-         w->pressed_widget == EDITOR_WIDGET_TEXT)) {
-        if (w->pressed_widget == EDITOR_WIDGET_TEXT &&
-            !editor_has_selection(editor)) editor_clear_selection(editor);
-        w->pressed_widget = 0;
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if (event->type == GUI_APP_EVENT_POINTER_UP &&
-        w->pressed_widget >= EDITOR_WIDGET_NEW &&
-        w->pressed_widget <= EDITOR_WIDGET_SAVE_AS) {
-        int widget = w->pressed_widget;
-        w->pressed_widget = 0;
-        if (gui_widget_hit(editor_toolbar_button(w, widget, 0),
-                           event->x, event->y)) {
-            if (widget == EDITOR_WIDGET_NEW)
-                return editor_request_action(w, EDITOR_PENDING_NEW);
-            if (widget == EDITOR_WIDGET_OPEN)
-                return editor_request_action(w, EDITOR_PENDING_OPEN);
-            editor_show_picker(w, GUI_FILE_PICKER_SAVE, EDITOR_PENDING_NONE);
-        }
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if (event->type == GUI_APP_EVENT_POINTER_DOWN) {
-        for (int widget = EDITOR_WIDGET_NEW;
-             widget <= EDITOR_WIDGET_SAVE_AS; widget++) {
-            if (gui_widget_hit(editor_toolbar_button(w, widget, 0),
-                               event->x, event->y)) {
-                w->focused_widget = widget;
-                w->pressed_widget = widget;
-                return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-            }
-        }
-        if (gui_widget_hit(scroll_track, event->x, event->y)) {
-            if (gui_widget_hit(scroll_thumb, event->x, event->y)) {
-                w->pressed_widget = EDITOR_WIDGET_SCROLLBAR;
-                editor->scroll_drag_offset = event->y - scroll_thumb.y;
-            } else {
-                int max_top = (int)editor->model.count - rows;
-                int top = (int)editor->top +
-                    (event->y < scroll_thumb.y ? -rows : rows);
-                if (max_top < 0) max_top = 0;
-                if (top < 0) top = 0;
-                if (top > max_top) top = max_top;
-                editor->top = (uint32_t)top;
-            }
-        } else if (event->y >= EDITOR_TOOLBAR_H + 2 &&
-                   event->y < EDITOR_TOOLBAR_H + 2 +
-                       rows * EDITOR_LINE_H) {
-            editor_pointer_position(w, event->x, event->y,
-                                    &editor->row, &editor->column);
-            editor->anchor_row = editor->row;
-            editor->anchor_column = editor->column;
-            editor->selection_active = 1;
-            w->pressed_widget = EDITOR_WIDGET_TEXT;
-            editor->caret_visible = 1;
-        }
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if (event->type != GUI_APP_EVENT_KEY) return GUI_APP_RESULT_NONE;
-    if ((event->modifiers & SYS_INPUT_KEY_CTRL) &&
-        (event->key == KEY_N || event->ascii == 'n' || event->ascii == 'N'))
-        return editor_request_action(w, EDITOR_PENDING_NEW);
-    if ((event->modifiers & SYS_INPUT_KEY_CTRL) &&
-        (event->key == KEY_O || event->ascii == 'o' || event->ascii == 'O'))
-        return editor_request_action(w, EDITOR_PENDING_OPEN);
-    if ((event->modifiers & SYS_INPUT_KEY_CTRL) &&
-        (event->modifiers & SYS_INPUT_KEY_SHIFT) &&
-        (event->key == KEY_S || event->ascii == 's' || event->ascii == 'S')) {
-        editor_show_picker(w, GUI_FILE_PICKER_SAVE, EDITOR_PENDING_NONE);
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if ((event->modifiers & SYS_INPUT_KEY_CTRL) &&
-        (event->key == KEY_S || event->ascii == 's' || event->ascii == 'S')) {
-        if (!editor->model.path[0]) {
-            editor_show_picker(w, GUI_FILE_PICKER_SAVE, EDITOR_PENDING_NONE);
-            return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-        }
-        editor_set_status(editor, editor_model_save(&editor->model)
-            ? "Saved" : "Save failed");
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if ((event->modifiers & SYS_INPUT_KEY_CTRL) &&
-        (event->key == KEY_A || event->ascii == 'a' || event->ascii == 'A')) {
-        if (editor->model.count) {
-            editor->anchor_row = 0;
-            editor->anchor_column = 0;
-            editor->row = editor->model.count - 1u;
-            editor->column = editor_model_line_length(&editor->model,
-                                                       editor->row);
-            editor->selection_active = 1;
-            editor_clamp_view(w);
-        }
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if ((event->modifiers & SYS_INPUT_KEY_CTRL) &&
-        (event->key == KEY_C || event->ascii == 'c' || event->ascii == 'C')) {
-        editor_set_status(editor, editor_copy_selection(editor) ?
-                          "Copied" : "Nothing selected");
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if ((event->modifiers & SYS_INPUT_KEY_CTRL) &&
-        (event->key == KEY_X || event->ascii == 'x' || event->ascii == 'X')) {
-        if (editor_copy_selection(editor) && editor_delete_selection(editor))
-            editor_set_status(editor, "Cut");
-        else
-            editor_set_status(editor, "Nothing selected");
-        editor_clamp_view(w);
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    if ((event->modifiers & SYS_INPUT_KEY_CTRL) &&
-        (event->key == KEY_V || event->ascii == 'v' || event->ascii == 'V')) {
-        editor_set_status(editor, editor_paste(editor) ?
-                          "Pasted" : "Clipboard empty");
-        editor_clamp_view(w);
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-    }
-    {
-        int navigation = event->key == KEY_UP || event->key == KEY_DOWN ||
-            event->key == KEY_LEFT || event->key == KEY_RIGHT ||
-            event->key == KEY_HOME || event->key == KEY_END ||
-            event->key == KEY_PAGEUP || event->key == KEY_PAGEDOWN;
-        if (navigation && (event->modifiers & SYS_INPUT_KEY_SHIFT)) {
-            if (!editor->selection_active) {
-                editor->anchor_row = editor->row;
-                editor->anchor_column = editor->column;
-                editor->selection_active = 1;
-            }
-        } else if (navigation) {
-            editor_clear_selection(editor);
-        } else if (event->key == KEY_BACKSPACE || event->key == KEY_DELETE ||
-                   event->key == KEY_ENTER || event->key == KEY_TAB ||
-                   (event->ascii & 0xFFu) >= 32u) {
-            selection_deleted = editor_delete_selection(editor);
-        }
-    }
-    if (event->key == KEY_F2) {
-        if (!editor->model.path[0]) {
-            editor_show_picker(w, GUI_FILE_PICKER_SAVE, EDITOR_PENDING_NONE);
-            return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-        }
-        editor_set_status(editor, editor_model_save(&editor->model)
-            ? "Saved" : "Save failed");
-    } else if (event->key == KEY_ESC) {
-        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_CLOSE;
-    } else if (event->key == KEY_UP) {
-        if (editor->row > 0) editor->row--;
-    } else if (event->key == KEY_DOWN) {
-        if (editor->row + 1u < editor->model.count) editor->row++;
-    } else if (event->key == KEY_LEFT) {
-        if (editor->column > 0) editor->column--;
-        else if (editor->row > 0) {
-            editor->row--;
-            editor->column = editor_model_line_length(&editor->model,
-                                                       editor->row);
-        }
-    } else if (event->key == KEY_RIGHT) {
-        len = editor_model_line_length(&editor->model, editor->row);
-        if (editor->column < len) editor->column++;
-        else if (editor->row + 1u < editor->model.count) {
-            editor->row++;
-            editor->column = 0;
-        }
-    } else if (event->key == KEY_HOME) {
-        editor->column = 0;
-    } else if (event->key == KEY_END) {
-        editor->column = editor_model_line_length(&editor->model, editor->row);
-    } else if (event->key == KEY_PAGEUP) {
-        uint32_t amount = (uint32_t)editor_visible_rows(w);
-        editor->row = amount > editor->row ? 0 : editor->row - amount;
-    } else if (event->key == KEY_PAGEDOWN) {
-        editor->row += (uint32_t)editor_visible_rows(w);
-        if (editor->model.count && editor->row >= editor->model.count)
-            editor->row = editor->model.count - 1u;
-    } else if (event->key == KEY_BACKSPACE && !selection_deleted) {
-        (void)editor_model_backspace(&editor->model, &editor->row,
-                                     &editor->column);
-    } else if (event->key == KEY_DELETE && !selection_deleted) {
-        (void)editor_model_delete(&editor->model, editor->row, editor->column);
-    } else if ((event->key == KEY_BACKSPACE || event->key == KEY_DELETE) &&
-               selection_deleted) {
-        /* The selection deletion is the complete key action. */
-    } else if (event->key == KEY_ENTER) {
-        if (editor_model_split_line(&editor->model, editor->row,
-                                    editor->column)) {
-            editor->row++;
-            editor->column = 0;
-        }
-    } else if (event->key == KEY_TAB) {
-        for (int i = 0; i < 4; i++) {
-            if (!editor_model_insert_char(&editor->model, editor->row,
-                                          editor->column, ' ')) break;
-            editor->column++;
-        }
-    } else if ((event->ascii & 0xFFu) >= 32u) {
-        if (editor_model_insert_char(&editor->model, editor->row,
-                                     editor->column,
-                                     (char)(event->ascii & 0xFFu)))
-            editor->column++;
-        else
-            editor_set_status(editor, "Line too long");
-    } else {
-        return GUI_APP_RESULT_NONE;
-    }
-    editor->caret_visible = 1;
-    editor_clamp_view(w);
-    return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
-}
-
-static const window_app_ops_t WINDOW_APPS[] = {
-    {0},
-    {"Files", sizeof(files_window_state_t), 360, 240, 220, 120, 0,
-     files_app_open, 0, files_app_draw, files_app_event},
-    {"System", 0, 280, 200, 200, 120, 0,
-     0, 0, system_app_draw, 0},
-    {"Config", 0, 260, 116, 220, 100, 0,
-     0, 0, config_app_draw, config_app_event},
-    {"About", 0, 280, 140, 220, 100, 0,
-     0, 0, about_app_draw, 0},
-    {"Shell", sizeof(gui_shell_window_t), 500, 320, 240, 120,
-     GUI_SHELL_POLL_TICKS, shell_app_open, shell_app_close,
-     shell_app_draw, shell_app_event},
-    {"Editor", sizeof(editor_window_state_t), 560, 380, 260, 140,
-     SMALLOS_TIMER_HZ / 2u, editor_app_open, editor_app_close,
-     editor_app_draw, editor_app_event},
-};
 
 static const window_app_ops_t* window_app_ops(win_type_t type) {
-    if ((unsigned int)type >= sizeof(WINDOW_APPS) / sizeof(WINDOW_APPS[0]))
-        return 0;
-    return &WINDOW_APPS[type];
+    return gui_app_registry_find(type);
 }
 
 static unsigned int dispatch_app_event(window_t* w,
                                        const gui_app_event_t* event) {
     const window_app_ops_t* ops = w ? window_app_ops(w->type) : 0;
+    gui_app_context_t context;
     if (!w || !w->active || !ops || !ops->event) return GUI_APP_RESULT_NONE;
-    return ops->event(w, event);
+    context.window = w;
+    context.state = w->state;
+    return ops->event(&context, event);
 }
 
 static int request_window_close(window_t* w, int sw, int sh) {
@@ -2100,15 +1254,110 @@ static unsigned int apply_app_result(window_t* w, unsigned int result,
     return result;
 }
 
+static gui_rect_t shared_picker_bounds(void) {
+    int width = g_screen_width - 80;
+    int height = g_screen_height - TASKBAR_H - 80;
+    if (width > 560) width = 560;
+    if (height > 400) height = 400;
+    if (width < 280) width = 280;
+    if (height < 180) height = 180;
+    return make_rect((g_screen_width - width) / 2,
+                     (g_screen_height - TASKBAR_H - height) / 2,
+                     width, height);
+}
+
+static int shared_picker_path_allowed(const char* path) {
+    if (g_shared_picker_filter == GUI_FILE_FILTER_ANY) return 1;
+    if (g_shared_picker_filter == GUI_FILE_FILTER_BMP)
+        return s_ends_with(path, ".bmp") || s_ends_with(path, ".BMP");
+    return is_text_like_file(path);
+}
+
+static int handle_shared_picker_event(const gui_app_event_t* event,
+                                      int sw, int sh) {
+    gui_file_picker_result_t result;
+    gui_app_event_t completion;
+    window_t* owner = g_shared_picker_owner;
+    if (!g_shared_picker_active) return 0;
+    result = gui_file_picker_event(&g_shared_picker, event,
+                                   shared_picker_bounds());
+    if (result == GUI_FILE_PICKER_RESULT_ACCEPT &&
+        !shared_picker_path_allowed(gui_file_picker_path(&g_shared_picker))) {
+        u_strcpy_n(g_desktop_notice,
+                   g_shared_picker_filter == GUI_FILE_FILTER_BMP
+                   ? "Choose a BMP file" : "Choose a text file",
+                   sizeof(g_desktop_notice));
+        g_desktop_notice_until = sys_get_ticks() + SMALLOS_TIMER_HZ * 2u;
+        invalidate_full(sw, sh);
+        return 1;
+    }
+    if (result == GUI_FILE_PICKER_RESULT_ACCEPT ||
+        result == GUI_FILE_PICKER_RESULT_CANCEL) {
+        memset(&completion, 0, sizeof(completion));
+        completion.type = result == GUI_FILE_PICKER_RESULT_ACCEPT
+                        ? GUI_APP_EVENT_FILE_SELECTED
+                        : GUI_APP_EVENT_FILE_CANCELLED;
+        completion.path = result == GUI_FILE_PICKER_RESULT_ACCEPT
+                        ? gui_file_picker_path(&g_shared_picker) : 0;
+        completion.file_filter = (unsigned int)g_shared_picker_filter;
+        completion.ticks = event->ticks;
+        g_shared_picker_active = 0;
+        g_shared_picker_owner = 0;
+        if (owner && owner->active)
+            apply_app_result(owner, dispatch_app_event(owner, &completion),
+                             sw, sh);
+        invalidate_full(sw, sh);
+        return 1;
+    }
+    if (result == GUI_FILE_PICKER_RESULT_REDRAW) {
+        invalidate_full(sw, sh);
+        return 1;
+    }
+    return 1;
+}
+
+static void sync_window_focus(int sw, int sh) {
+    window_t* top = topmost();
+    int next = top ? win_index(top) : -1;
+    gui_app_event_t event;
+    unsigned int result;
+    if (next == g_focused_window) return;
+    memset(&event, 0, sizeof(event));
+    event.ticks = sys_get_ticks();
+    if (g_focused_window >= 0 && g_focused_window < MAX_WINDOWS &&
+        g_wins[g_focused_window].active) {
+        window_t* old = &g_wins[g_focused_window];
+        event.type = GUI_APP_EVENT_FOCUS_LOST;
+        event.width = old->w;
+        event.height = old->h - TITLE_H;
+        result = dispatch_app_event(old, &event);
+        if (result & GUI_APP_RESULT_REDRAW) invalidate_window(sw, sh, old);
+    }
+    g_focused_window = next;
+    if (next >= 0 && g_wins[next].active) {
+        window_t* focused = &g_wins[next];
+        event.type = GUI_APP_EVENT_FOCUS_GAINED;
+        event.width = focused->w;
+        event.height = focused->h - TITLE_H;
+        result = dispatch_app_event(focused, &event);
+        if (result & GUI_APP_RESULT_REDRAW)
+            invalidate_window(sw, sh, focused);
+    }
+}
+
 static void draw_window(gfx_surface_t* s, window_t* w, int focused, int mx, int my) {
     const window_app_ops_t* ops = window_app_ops(w->type);
+    gui_app_context_t context;
     /* drop shadow */
     fillr(s, w->x + 3, w->y + w->h, w->w, 3, COL_SHADOW);
     fillr(s, w->x + w->w, w->y + 3, 3, w->h, COL_SHADOW);
 
     fillr(s, w->x, w->y, w->w, w->h, COL_WIN_BG);
-    draw_title_bar(s, w, focused, ops ? ops->title : "");
-    if (ops && ops->draw) ops->draw(s, w, mx, my);
+    draw_title_bar(s, w, focused,
+                   w->title[0] ? w->title : (ops ? ops->title : ""));
+    context.window = w;
+    context.state = w->state;
+    if (ops && ops->draw) ops->draw(s, &context, mx, my);
 
     /* Bottom-right resize grip. */
     for (int i = 0; i < 3; i++) {
@@ -2190,6 +1439,7 @@ static void icon_quit(gfx_surface_t* s, int x, int y) {
 }
 
 static int g_should_quit = 0;
+static void show_built_window(int sw, int sh, window_t* w);
 
 static window_t* build_window(win_type_t type,
                               int sw,
@@ -2208,6 +1458,7 @@ static window_t* build_window(win_type_t type,
         return 0;
     }
     win->type = type;
+    u_strcpy_n(win->title, ops->title, sizeof(win->title));
     win->focused_widget = 0;
     win->pressed_widget = 0;
     win->next_tick = ops->tick_interval
@@ -2228,9 +1479,39 @@ static window_t* build_window(win_type_t type,
     if (win->x < 4) win->x = 4;
     if (win->y < 20) win->y = 20;
     if (win->x > sw - 32) win->x = sw - 32;
-    if (win->y > sh - TITLE_H) win->y = sh - TITLE_H;
-    if (ops->open) ops->open(win, argument);
+    if (win->y > sh - TASKBAR_H - TITLE_H) win->y = sh - TASKBAR_H - TITLE_H;
+    win->restore_x = win->x;
+    win->restore_y = win->y;
+    win->restore_w = win->w;
+    win->restore_h = win->h;
+    if (ops->open) {
+        gui_app_context_t context = {win, win->state};
+        ops->open(&context, argument);
+    }
     return win;
+}
+
+gui_window_t* gui_open_app(gui_app_id_t id, const char* argument) {
+    const window_app_ops_t* ops = window_app_ops(id);
+    window_t* window;
+    int width;
+    int height;
+    if (!ops || g_screen_width <= 0 || g_screen_height <= 0) return 0;
+    width = ops->default_width;
+    height = ops->default_height;
+    window = build_window(id, g_screen_width, g_screen_height,
+                          width, height,
+                          (g_screen_width - width) / 2,
+                          (g_screen_height - TASKBAR_H - height) / 2,
+                          argument);
+    if (window) show_built_window(g_screen_width, g_screen_height, window);
+    return window;
+}
+
+void gui_window_request_close(gui_window_t* window) {
+    if (window) (void)request_window_close(window,
+                                           g_screen_width,
+                                           g_screen_height);
 }
 
 static void show_built_window(int sw, int sh, window_t* w) {
@@ -2287,6 +1568,39 @@ static void action_editor(int sw, int sh, const char* path) {
     show_built_window(sw, sh, w);
 }
 
+static void action_editor_blank(int sw, int sh) {
+    action_editor(sw, sh, 0);
+}
+
+static void action_viewer(int sw, int sh, const char* path) {
+    const window_app_ops_t* ops = window_app_ops(GUI_APP_VIEWER);
+    window_t* w = build_window(GUI_APP_VIEWER, sw, sh,
+                               ops->default_width, ops->default_height,
+                               (sw - ops->default_width) / 2,
+                               (sh - ops->default_height) / 2, path);
+    if (w) show_built_window(sw, sh, w);
+}
+
+static void action_viewer_blank(int sw, int sh) { action_viewer(sw, sh, 0); }
+
+static void action_tasks(int sw, int sh) {
+    const window_app_ops_t* ops = window_app_ops(GUI_APP_TASKS);
+    window_t* w = build_window(GUI_APP_TASKS, sw, sh,
+                               ops->default_width, ops->default_height,
+                               (sw - ops->default_width) / 2,
+                               (sh - ops->default_height) / 2, 0);
+    if (w) show_built_window(sw, sh, w);
+}
+
+static void action_network(int sw, int sh) {
+    const window_app_ops_t* ops = window_app_ops(GUI_APP_NETWORK);
+    window_t* w = build_window(GUI_APP_NETWORK, sw, sh,
+                               ops->default_width, ops->default_height,
+                               (sw - ops->default_width) / 2,
+                               (sh - ops->default_height) / 2, 0);
+    if (w) show_built_window(sw, sh, w);
+}
+
 static void action_quit(int sw, int sh) {
     int can_quit = 1;
     for (int i = MAX_WINDOWS - 1; i >= 0; i--) {
@@ -2296,7 +1610,28 @@ static void action_quit(int sw, int sh) {
     if (can_quit) g_should_quit = 1;
 }
 
-#define ICON_COUNT 6
+static int start_entry_count(void) {
+    return (int)gui_app_registry_launcher_count() + 1;
+}
+
+static const char* start_entry_label(int index) {
+    const gui_app_descriptor_t* descriptor;
+    if (index == (int)gui_app_registry_launcher_count()) return "Quit";
+    descriptor = gui_app_registry_launcher_at((unsigned int)index);
+    return descriptor ? descriptor->launcher_label : "";
+}
+
+static void start_entry_activate(int index, int sw, int sh) {
+    const gui_app_descriptor_t* descriptor;
+    if (index == (int)gui_app_registry_launcher_count()) {
+        action_quit(sw, sh);
+        return;
+    }
+    descriptor = gui_app_registry_launcher_at((unsigned int)index);
+    if (descriptor) (void)gui_open_app(descriptor->id, 0);
+}
+
+#define ICON_COUNT 2
 static icon_t g_icons[ICON_COUNT];
 
 static void icons_layout(int sw) {
@@ -2306,14 +1641,6 @@ static void icons_layout(int sw) {
     g_icons[0].draw = icon_files;             g_icons[0].action = action_files;
     g_icons[1].x = x; g_icons[1].y = y + 60;  g_icons[1].label = "Shell";
     g_icons[1].draw = icon_terminal;          g_icons[1].action = action_shell;
-    g_icons[2].x = x; g_icons[2].y = y + 120; g_icons[2].label = "System";
-    g_icons[2].draw = icon_system;            g_icons[2].action = action_system;
-    g_icons[3].x = x; g_icons[3].y = y + 180; g_icons[3].label = "Config";
-    g_icons[3].draw = icon_config;            g_icons[3].action = action_config;
-    g_icons[4].x = x; g_icons[4].y = y + 240; g_icons[4].label = "About";
-    g_icons[4].draw = icon_about;             g_icons[4].action = action_about;
-    g_icons[5].x = x; g_icons[5].y = y + 300; g_icons[5].label = "Quit";
-    g_icons[5].draw = icon_quit;              g_icons[5].action = action_quit;
 }
 
 static int icon_hit(int mx, int my) {
@@ -2343,7 +1670,7 @@ static void draw_icons(gfx_surface_t* s, int hover_idx) {
     }
 }
 
-/* ---------------- background + top bar ---------------- */
+/* ---------------- background + desktop shell ---------------- */
 
 static void draw_desktop(gfx_surface_t* s) {
     int x0 = 0;
@@ -2368,46 +1695,155 @@ static void draw_desktop(gfx_surface_t* s) {
     }
 }
 
-static void draw_top_bar(gfx_surface_t* s) {
-    int w = (int)s->width;
-    fillr(s, 0, 0, w, 14, COL_TOPBAR);
-    hline(s, 0, 14, w, COL_FRAME);
+static int active_window_count(void) {
+    int count = 0;
+    for (int i = 0; i < MAX_WINDOWS; i++) if (g_wins[i].active) count++;
+    return count;
+}
 
-    char buf[96], num[16];
+static gui_taskbar_layout_t taskbar_layout(int sw) {
+    gui_taskbar_layout_t layout;
+    int count = active_window_count();
+    layout = gui_taskbar_layout(sw, count);
+    g_taskbar_page = gui_taskbar_clamp_page(layout, g_taskbar_page);
+    return layout;
+}
+
+static gui_rect_t taskbar_window_bounds(int sw, int sh, int window_index) {
+    gui_taskbar_layout_t layout = taskbar_layout(sw);
+    int x = layout.first_x;
+    int ordinal = 0;
+    int first = g_taskbar_page * layout.per_page;
+    int last = first + layout.per_page;
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+        if (!g_wins[i].active) continue;
+        if (ordinal >= first && ordinal < last) {
+            if (i == window_index)
+                return make_rect(x, sh - TASKBAR_H + 3,
+                                 layout.button_width - 3,
+                                 TASKBAR_H - 6);
+            x += layout.button_width;
+        }
+        ordinal++;
+    }
+    return make_rect(0, 0, 0, 0);
+}
+
+static gui_rect_t start_menu_bounds(int sh) {
+    int count = start_entry_count();
+    return make_rect(2,
+                     sh - TASKBAR_H - count * START_MENU_ROW_H - 4,
+                     START_MENU_W,
+                     count * START_MENU_ROW_H + 4);
+}
+
+static void draw_start_menu(gfx_surface_t* s) {
+    gui_rect_t menu;
+    if (!g_start_open) return;
+    menu = start_menu_bounds((int)s->height);
+    fillr(s, menu.x, menu.y, menu.w, menu.h, COL_BAR);
+    rect(s, menu.x, menu.y, menu.w, menu.h, COL_FRAME);
+    for (int i = 0; i < start_entry_count(); i++) {
+        int y = menu.y + 2 + i * START_MENU_ROW_H;
+        if (i == g_start_selection) {
+            fillr(s, menu.x + 2, y, menu.w - 4, START_MENU_ROW_H,
+                  COL_HILIGHT);
+        }
+        draw_text(s, menu.x + 10, y + 6, start_entry_label(i),
+                  i == g_start_selection ? COL_HILIGHT_T : COL_TEXT);
+    }
+}
+
+static void draw_taskbar(gfx_surface_t* s) {
+    int sw = (int)s->width;
+    int sh = (int)s->height;
+    int y = sh - TASKBAR_H;
+    gui_taskbar_layout_t layout = taskbar_layout(sw);
+    int x = layout.first_x;
+    int ordinal = 0;
+    int first = g_taskbar_page * layout.per_page;
+    int last = first + layout.per_page;
+    char status[96];
+    char num[16];
+    char clock_text[8] = "--:--";
     sys_fsinfo_t fs;
-    if (sys_fsinfo(&fs) == 0) {
-        u_strcpy_n(buf, "Free: ", sizeof(buf));
-        utoa10(fs.free_bytes / 1024u, num);
-        u_strcat_n(buf, num, sizeof(buf));
-        u_strcat_n(buf, " KB", sizeof(buf));
-        draw_text(s, 8, 4, buf, COL_TEXT);
+    struct timespec ts;
+    struct tm tm;
+    window_t* focused = topmost();
+
+    fillr(s, 0, y, sw, TASKBAR_H, COL_BAR);
+    hline(s, 0, y, sw, COL_FRAME);
+    gui_widget_button(s, make_rect(4, y + 3, 50, TASKBAR_H - 6), "Start",
+                      (gui_widget_state_t){0, g_start_open, g_start_open, 0},
+                      &GUI_WIDGET_THEME, draw_text);
+
+    if (layout.paging) {
+        gui_widget_button(s, make_rect(58, y + 3, 17, TASKBAR_H - 6), "<",
+                          (gui_widget_state_t){0, 0, 0, g_taskbar_page == 0},
+                          &GUI_WIDGET_THEME, draw_text);
+        gui_widget_button(s, make_rect(sw - 207, y + 3, 17, TASKBAR_H - 6), ">",
+                          (gui_widget_state_t){0, 0, 0,
+                              g_taskbar_page + 1 >= layout.page_count},
+                          &GUI_WIDGET_THEME, draw_text);
     }
 
-    u_strcpy_n(buf, "ESC/Q", sizeof(buf));
-    if (g_perf_visible) {
-        u_strcat_n(buf, "  GUI ", sizeof(buf));
-        utoa10(g_perf.shown_presents, num);
-        u_strcat_n(buf, num, sizeof(buf));
-        u_strcat_n(buf, "u ", sizeof(buf));
-        utoa10(g_perf.shown_input_events, num);
-        u_strcat_n(buf, num, sizeof(buf));
-        u_strcat_n(buf, "i max ", sizeof(buf));
-        utoa10(g_perf.shown_max_loop_gap, num);
-        u_strcat_n(buf, num, sizeof(buf));
-        u_strcat_n(buf, "/", sizeof(buf));
-        utoa10(g_perf.shown_max_present_ticks, num);
-        u_strcat_n(buf, num, sizeof(buf));
-        u_strcat_n(buf, "t", sizeof(buf));
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+        gui_widget_state_t state;
+        if (!g_wins[i].active) continue;
+        if (ordinal < first || ordinal >= last) {
+            ordinal++;
+            continue;
+        }
+        state.hovered = 0;
+        state.pressed = 0;
+        state.focused = &g_wins[i] == focused && !g_wins[i].minimized;
+        state.disabled = 0;
+        gui_widget_button(s, make_rect(x, y + 3,
+                                      layout.button_width - 3,
+                                      TASKBAR_H - 6),
+                          g_wins[i].title, state, &GUI_WIDGET_THEME, draw_text);
+        x += layout.button_width;
+        ordinal++;
     }
-    draw_text(s, w - 8 - (int)text_width(buf), 4, buf, COL_TEXT);
+
+    u_strcpy_n(status, "Free ", sizeof(status));
+    if (sys_fsinfo(&fs) == 0) {
+        utoa10(fs.free_bytes / 1024u, num);
+        u_strcat_n(status, num, sizeof(status));
+        u_strcat_n(status, "K", sizeof(status));
+    } else {
+        u_strcat_n(status, "?", sizeof(status));
+    }
+    if (g_perf_visible) {
+        u_strcat_n(status, " P", sizeof(status));
+        utoa10(g_perf.shown_presents, num);
+        u_strcat_n(status, num, sizeof(status));
+    }
+    if (clock_gettime(CLOCK_REALTIME, &ts) == 0 && gmtime_r(&ts.tv_sec, &tm)) {
+        clock_text[0] = (char)('0' + (tm.tm_hour / 10));
+        clock_text[1] = (char)('0' + (tm.tm_hour % 10));
+        clock_text[3] = (char)('0' + (tm.tm_min / 10));
+        clock_text[4] = (char)('0' + (tm.tm_min % 10));
+    }
+    draw_text(s, sw - 184, y + 9, status, COL_TEXT);
+    draw_text(s, sw - 40, y + 9, clock_text, COL_TEXT);
+
+    if (g_desktop_notice[0] &&
+        !tick_due(sys_get_ticks(), g_desktop_notice_until)) {
+        int notice_w = (int)text_width(g_desktop_notice) + 12;
+        fillr(s, sw - notice_w - 4, y - 20, notice_w, 18, COL_WIN_BG);
+        rect(s, sw - notice_w - 4, y - 20, notice_w, 18, COL_FRAME);
+        draw_text(s, sw - notice_w + 2, y - 14, g_desktop_notice, COL_TEXT);
+    }
 }
 
 /* ---------------- compose ---------------- */
 
 static void compose_v2(gfx_surface_t* s, int mx, int my) {
+    g_perf.composed_pixels += s->width * s->height;
+    g_perf.total_composed_pixels += s->width * s->height;
     clip_clear();
     draw_desktop(s);
-    draw_top_bar(s);
 
     int hi = icon_hit(mx, my);
     if (hit_window_z(mx, my)) hi = -1;
@@ -2416,33 +1852,98 @@ static void compose_v2(gfx_surface_t* s, int mx, int my) {
     window_t* top = topmost();
     for (int i = 0; i < gui_window_stack_count(&g_window_stack); i++) {
         window_t* w = &g_wins[gui_window_stack_at(&g_window_stack, i)];
-        if (!w->active) continue;
+        if (!w->active || w->minimized) continue;
         draw_window(s, w, w == top, mx, my);
     }
+    draw_start_menu(s);
+    if (g_shared_picker_active)
+        gui_file_picker_draw(s, &g_shared_picker, shared_picker_bounds(),
+                             &GUI_WIDGET_THEME, &SHARED_PICKER_STYLE,
+                             draw_text);
+    draw_taskbar(s);
 }
 
 static int present_cursor_rect(gfx_context_t* gfx, int mx, int my, int draw);
 
-static void compose_rect(gfx_surface_t* s, gui_rect_t r, int mx, int my) {
-    clip_set(r);
-    draw_desktop(s);
+static unsigned int compose_rect(gfx_surface_t* s, gui_rect_t r,
+                                 int mx, int my) {
+    gui_rect_t opaque[GUI_WINDOW_CAPACITY + 3];
+    gui_rect_t visible[GUI_VISIBLE_REGION_CAPACITY];
+    int window_count = gui_window_stack_count(&g_window_stack);
+    unsigned int pixels = 0;
+    int opaque_count = 0;
+    int visible_count;
+    int hi = icon_hit(mx, my);
+    window_t* top = topmost();
 
-    if (rect_intersects(r, make_rect(0, 0, (int)s->width, 15))) {
-        draw_top_bar(s);
+    if (hit_window_z(mx, my)) hi = -1;
+    if (g_shared_picker_active)
+        opaque[opaque_count++] = shared_picker_bounds();
+    if (g_start_open) opaque[opaque_count++] = start_menu_bounds((int)s->height);
+    opaque[opaque_count++] = make_rect(0, (int)s->height - TASKBAR_H,
+                                       (int)s->width, TASKBAR_H);
+    for (int i = window_count - 1; i >= 0; i--) {
+        window_t* w = &g_wins[gui_window_stack_at(&g_window_stack, i)];
+        if (w->active && !w->minimized)
+            opaque[opaque_count++] = make_rect(w->x, w->y, w->w, w->h);
+    }
+    visible_count = gui_visible_regions(r, opaque, opaque_count,
+                                        visible, GUI_VISIBLE_REGION_CAPACITY);
+    if (visible_count < 0) visible_count = 1, visible[0] = r;
+    for (int p = 0; p < visible_count; p++) {
+        clip_set(visible[p]);
+        draw_desktop(s);
+        draw_icons(s, hi);
+        pixels += (unsigned int)visible[p].w * (unsigned int)visible[p].h;
     }
 
-    int hi = icon_hit(mx, my);
-    if (hit_window_z(mx, my)) hi = -1;
-    draw_icons(s, hi);
-
-    window_t* top = topmost();
-    for (int i = 0; i < gui_window_stack_count(&g_window_stack); i++) {
+    for (int i = 0; i < window_count; i++) {
         window_t* w = &g_wins[gui_window_stack_at(&g_window_stack, i)];
-        if (!w->active) continue;
-        if (!rect_intersects(r, window_screen_rect(w))) continue;
-        draw_window(s, w, w == top, mx, my);
+        opaque_count = 0;
+        if (!w->active || w->minimized ||
+            !rect_intersects(r, window_screen_rect(w))) continue;
+        if (g_shared_picker_active)
+            opaque[opaque_count++] = shared_picker_bounds();
+        if (g_start_open)
+            opaque[opaque_count++] = start_menu_bounds((int)s->height);
+        opaque[opaque_count++] = make_rect(0, (int)s->height - TASKBAR_H,
+                                           (int)s->width, TASKBAR_H);
+        for (int above = window_count - 1; above > i; above--) {
+            window_t* covering =
+                &g_wins[gui_window_stack_at(&g_window_stack, above)];
+            if (covering->active && !covering->minimized)
+                opaque[opaque_count++] = make_rect(covering->x, covering->y,
+                                                   covering->w, covering->h);
+        }
+        visible_count = gui_visible_regions(r, opaque, opaque_count,
+                                            visible, GUI_VISIBLE_REGION_CAPACITY);
+        if (visible_count < 0) visible_count = 1, visible[0] = r;
+        for (int p = 0; p < visible_count; p++) {
+            if (!rect_intersects(visible[p], window_screen_rect(w))) continue;
+            clip_set(visible[p]);
+            draw_window(s, w, w == top, mx, my);
+            pixels += (unsigned int)visible[p].w * (unsigned int)visible[p].h;
+        }
+    }
+    clip_set(r);
+    if (g_start_open && rect_intersects(r, start_menu_bounds((int)s->height))) {
+        draw_start_menu(s);
+        pixels += (unsigned int)r.w * (unsigned int)r.h;
+    }
+    if (g_shared_picker_active &&
+        rect_intersects(r, shared_picker_bounds())) {
+        gui_file_picker_draw(s, &g_shared_picker, shared_picker_bounds(),
+                             &GUI_WIDGET_THEME, &SHARED_PICKER_STYLE,
+                             draw_text);
+        pixels += (unsigned int)r.w * (unsigned int)r.h;
+    }
+    if (rect_intersects(r, make_rect(0, (int)s->height - TASKBAR_H,
+                                     (int)s->width, TASKBAR_H))) {
+        draw_taskbar(s);
+        pixels += (unsigned int)r.w * (unsigned int)r.h;
     }
     clip_clear();
+    return pixels;
 }
 
 static int present_dirty_scene(gfx_context_t* gfx,
@@ -2460,7 +1961,12 @@ static int present_dirty_scene(gfx_context_t* gfx,
         gui_rect_t pieces[4];
         int piece_count;
         if (rect_empty(r)) continue;
-        compose_rect(&gfx->backbuffer, r, mx, my);
+        unsigned int composed;
+        g_perf.dirty_regions++;
+        g_perf.total_dirty_regions++;
+        composed = compose_rect(&gfx->backbuffer, r, mx, my);
+        g_perf.composed_pixels += composed;
+        g_perf.total_composed_pixels += composed;
 
         cursor_touched |= rect_intersects(r, cursor);
         piece_count = gui_rect_exclude(r, cursor, pieces);
@@ -2472,6 +1978,9 @@ static int present_dirty_scene(gfx_context_t* gfx,
                 return -1;
             }
             perf_note_present(present_start);
+            g_perf.presented_pixels += (unsigned int)p.w * (unsigned int)p.h;
+            g_perf.total_presented_pixels +=
+                (unsigned int)p.w * (unsigned int)p.h;
         }
     }
     if (cursor_touched) {
@@ -2532,6 +2041,9 @@ static int present_frame_with_cursor(gfx_context_t* gfx, int mx, int my) {
         return -1;
     }
     perf_note_present(present_start);
+    g_perf.presented_pixels += gfx->backbuffer.width * gfx->backbuffer.height;
+    g_perf.total_presented_pixels +=
+        gfx->backbuffer.width * gfx->backbuffer.height;
     if (present_cursor_rect(gfx, mx, my, 1) < 0) {
         return -1;
     }
@@ -2774,16 +2286,20 @@ static int present_drag_preview_rect(gfx_context_t* gfx,
     int sw;
     int sh;
 
-    if (!gfx || !gfx->backbuffer.pixels || !gfx->presentbuffer.pixels) return -1;
+    if (!gfx || !gfx->backbuffer.pixels) return -1;
     sw = (int)gfx->backbuffer.width;
     sh = (int)gfx->backbuffer.height;
     r = rect_clip_screen(r, sw, sh);
     if (rect_empty(r)) return 0;
-    if ((unsigned int)r.w * (unsigned int)r.h >
-        gfx->presentbuffer.width * gfx->presentbuffer.height) {
-        return -1;
+    {
+        unsigned int needed = (unsigned int)r.w * (unsigned int)r.h;
+        unsigned int available = gfx->scratch.width * gfx->scratch.height;
+        if (!gfx->scratch.pixels || available < needed) {
+            gfx_surface_free(&gfx->scratch);
+            if (!gfx_surface_alloc(&gfx->scratch, needed, 1u)) return -1;
+        }
     }
-    tmp = gfx->presentbuffer.pixels;
+    tmp = gfx->scratch.pixels;
 
     for (int y = 0; y < r.h; y++) {
         unsigned int* src = gfx->backbuffer.pixels +
@@ -3015,14 +2531,193 @@ static int read_input_coalesced(sys_input_event_t* events,
     return total;
 }
 
-static int apps_have_timers(void) {
-    for (int i = 0; i < MAX_WINDOWS; i++) {
-        const window_app_ops_t* ops;
-        if (!g_wins[i].active) continue;
-        ops = window_app_ops(g_wins[i].type);
-        if (ops && ops->tick_interval) return 1;
+static void dispatch_window_resize(window_t* w, uint32_t ticks) {
+    gui_app_event_t event;
+    if (!w || !w->active) return;
+    memset(&event, 0, sizeof(event));
+    event.type = GUI_APP_EVENT_RESIZE;
+    event.width = w->w;
+    event.height = w->h - TITLE_H;
+    event.ticks = ticks;
+    (void)dispatch_app_event(w, &event);
+}
+
+static void window_toggle_maximize(window_t* w, int sw, int sh) {
+    if (!w || !w->active) return;
+    if (w->maximized) {
+        w->x = w->restore_x;
+        w->y = w->restore_y;
+        w->w = w->restore_w;
+        w->h = w->restore_h;
+        w->maximized = 0;
+    } else {
+        w->restore_x = w->x;
+        w->restore_y = w->y;
+        w->restore_w = w->w;
+        w->restore_h = w->h;
+        w->x = 0;
+        w->y = 0;
+        w->w = sw;
+        w->h = sh - TASKBAR_H;
+        w->maximized = 1;
+    }
+    w->minimized = 0;
+    z_push_top(win_index(w));
+    dispatch_window_resize(w, sys_get_ticks());
+    invalidate_full(sw, sh);
+}
+
+static void window_snap(window_t* w, int sw, int sh, int side) {
+    if (!w || !w->active) return;
+    if (!w->maximized) {
+        w->restore_x = w->x;
+        w->restore_y = w->y;
+        w->restore_w = w->w;
+        w->restore_h = w->h;
+    }
+    w->maximized = 0;
+    w->x = side < 0 ? 0 : sw / 2;
+    w->y = 0;
+    w->w = side < 0 ? sw / 2 : sw - sw / 2;
+    w->h = sh - TASKBAR_H;
+    dispatch_window_resize(w, sys_get_ticks());
+    invalidate_full(sw, sh);
+}
+
+static void window_minimize(window_t* w, int sw, int sh) {
+    if (!w || !w->active || w->minimized) return;
+    w->minimized = 1;
+    invalidate_full(sw, sh);
+}
+
+static void window_restore_focus(window_t* w, int sw, int sh) {
+    if (!w || !w->active) return;
+    w->minimized = 0;
+    z_push_top(win_index(w));
+    invalidate_full(sw, sh);
+}
+
+static void cycle_windows(int sw, int sh) {
+    int count = gui_window_stack_count(&g_window_stack);
+    int current = -1;
+    window_t* top = topmost();
+    if (count <= 0) return;
+    if (top) {
+        for (int i = 0; i < count; i++) {
+            if (gui_window_stack_at(&g_window_stack, i) == win_index(top)) {
+                current = i;
+                break;
+            }
+        }
+    }
+    for (int step = 1; step <= count; step++) {
+        int pos = (current + step) % count;
+        window_t* w = &g_wins[gui_window_stack_at(&g_window_stack, pos)];
+        if (w->active) {
+            window_restore_focus(w, sw, sh);
+            return;
+        }
+    }
+}
+
+static int handle_desktop_shell_click(int mx, int my, int sw, int sh) {
+    int bar_y = sh - TASKBAR_H;
+    gui_rect_t start = make_rect(4, bar_y + 3, 50, TASKBAR_H - 6);
+
+    if (g_start_open) {
+        gui_rect_t menu = start_menu_bounds(sh);
+        if (point_in(mx, my, menu.x, menu.y, menu.w, menu.h)) {
+            int row = (my - menu.y - 2) / START_MENU_ROW_H;
+            if (row >= 0 && row < start_entry_count()) {
+                g_start_selection = row;
+                g_start_open = 0;
+                invalidate_full(sw, sh);
+                start_entry_activate(row, sw, sh);
+            }
+            return 1;
+        }
+    }
+
+    if (point_in(mx, my, start.x, start.y, start.w, start.h)) {
+        g_start_open = !g_start_open;
+        g_start_selection = 0;
+        invalidate_full(sw, sh);
+        return 1;
+    }
+
+    if (my >= bar_y) {
+        gui_taskbar_layout_t layout = taskbar_layout(sw);
+        if (layout.paging &&
+            point_in(mx, my, 58, bar_y + 3, 17, TASKBAR_H - 6)) {
+            if (g_taskbar_page > 0) g_taskbar_page--;
+            invalidate_topbar(sw, sh);
+            return 1;
+        }
+        if (layout.paging &&
+            point_in(mx, my, sw - 207, bar_y + 3, 17, TASKBAR_H - 6)) {
+            if (g_taskbar_page + 1 < layout.page_count) g_taskbar_page++;
+            invalidate_topbar(sw, sh);
+            return 1;
+        }
+        for (int i = 0; i < MAX_WINDOWS; i++) {
+            gui_rect_t bounds;
+            window_t* top;
+            if (!g_wins[i].active) continue;
+            bounds = taskbar_window_bounds(sw, sh, i);
+            if (!point_in(mx, my, bounds.x, bounds.y, bounds.w, bounds.h))
+                continue;
+            top = topmost();
+            if (&g_wins[i] == top && !g_wins[i].minimized)
+                window_minimize(&g_wins[i], sw, sh);
+            else
+                window_restore_focus(&g_wins[i], sw, sh);
+            g_start_open = 0;
+            return 1;
+        }
+        if (g_start_open) {
+            g_start_open = 0;
+            invalidate_full(sw, sh);
+        }
+        return 1;
+    }
+
+    if (g_start_open) {
+        g_start_open = 0;
+        invalidate_full(sw, sh);
+        return 1;
     }
     return 0;
+}
+
+static int handle_start_key(unsigned int key, unsigned int ascii,
+                            int sw, int sh) {
+    if (!g_start_open) return 0;
+    if (key == KEY_ESC) {
+        g_start_open = 0;
+    } else if (key == KEY_UP) {
+        g_start_selection = gui_start_move_selection(
+            g_start_selection, start_entry_count(), -1);
+    } else if (key == KEY_DOWN || key == KEY_TAB) {
+        g_start_selection = gui_start_move_selection(
+            g_start_selection, start_entry_count(), 1);
+    } else if (key == KEY_ENTER) {
+        int selection = g_start_selection;
+        g_start_open = 0;
+        invalidate_full(sw, sh);
+        start_entry_activate(selection, sw, sh);
+        return 1;
+    } else if (ascii >= 'a' && ascii <= 'z') {
+        const char* labels[16];
+        int count = start_entry_count();
+        int match;
+        for (int i = 0; i < count; i++) labels[i] = start_entry_label(i);
+        match = gui_start_first_letter(labels, count, (char)ascii);
+        if (match >= 0) g_start_selection = match;
+    } else {
+        return 1;
+    }
+    invalidate_full(sw, sh);
+    return 1;
 }
 
 static int dispatch_due_app_ticks(int sw, int sh, uint32_t now) {
@@ -3034,6 +2729,7 @@ static int dispatch_due_app_ticks(int sw, int sh, uint32_t now) {
         unsigned int result;
         if (!w->active) continue;
         ops = window_app_ops(w->type);
+        if (w->minimized && (!ops || !ops->background_ticks)) continue;
         if (!ops || !ops->tick_interval) continue;
         if (w->next_tick == 0u) w->next_tick = now + ops->tick_interval;
         if (!tick_due(now, w->next_tick)) continue;
@@ -3044,18 +2740,57 @@ static int dispatch_due_app_ticks(int sw, int sh, uint32_t now) {
         event.ticks = now;
         result = dispatch_app_event(w, &event);
         apply_app_result(w, result, sw, sh);
-        if (result & GUI_APP_RESULT_REDRAW) dirty = 1;
+        if (((result & GUI_APP_RESULT_REDRAW) || g_dirty_count > 0) &&
+            !w->minimized) dirty = 1;
         if (w->active) w->next_tick = now + ops->tick_interval;
     }
     return dirty;
+}
+
+static int poll_shell_windows(int sw, int sh) {
+    int dirty = 0;
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+        window_t* w = &g_wins[i];
+        if (!w->active || w->type != WT_SHELL || !w->state) continue;
+        if (gui_shell_poll(SHELL_STATE(w))) {
+            if (!w->minimized) {
+                invalidate_window(sw, sh, w);
+                dirty = 1;
+            }
+        }
+    }
+    return dirty;
+}
+
+static unsigned int shell_poll_fds(struct pollfd* fds, unsigned int capacity) {
+    unsigned int count = 0;
+    for (int i = 0; i < MAX_WINDOWS && count < capacity; i++) {
+        int fd;
+        if (!g_wins[i].active || g_wins[i].type != WT_SHELL ||
+            !g_wins[i].state) continue;
+        fd = gui_shell_poll_fd(SHELL_STATE(&g_wins[i]));
+        if (fd < 0) continue;
+        fds[count].fd = fd;
+        fds[count].events = POLLIN | POLLHUP | POLLERR;
+        fds[count].revents = 0;
+        count++;
+    }
+    return count;
 }
 
 static uint32_t gui_wait_deadline(uint32_t now) {
     uint32_t deadline = 0;
     int have_deadline = 0;
 
+    if (g_clock_next_tick && !tick_due(now, g_clock_next_tick)) {
+        deadline = g_clock_next_tick;
+        have_deadline = 1;
+    }
+
     if (gui_frame_pending() && !gui_frame_due(now)) {
-        deadline = gui_frame_deadline();
+        deadline = have_deadline
+                 ? min_deadline(deadline, gui_frame_deadline())
+                 : gui_frame_deadline();
         have_deadline = 1;
     }
 
@@ -3063,6 +2798,7 @@ static uint32_t gui_wait_deadline(uint32_t now) {
         const window_app_ops_t* ops;
         if (!g_wins[i].active) continue;
         ops = window_app_ops(g_wins[i].type);
+        if (g_wins[i].minimized && (!ops || !ops->background_ticks)) continue;
         if (!ops || !ops->tick_interval) continue;
         if (g_wins[i].next_tick == 0u || tick_due(now, g_wins[i].next_tick))
             return now;
@@ -3083,20 +2819,6 @@ static int hover_key(int mx, int my) {
         return icon >= 0 ? 1000 + icon : 0;
     }
 
-    if (w->type == WT_FILES) {
-        files_window_state_t* files = FILES_STATE(w);
-        int by = w->y + TITLE_H;
-        int row_top = by + 14;
-        int row_area = (w->h - TITLE_H) - 27;
-        int visible = row_area / ROW_H;
-        if (visible < 1) visible = 1;
-        if (mx >= w->x && mx < w->x + w->w - 12 &&
-            my >= row_top && my < row_top + visible * ROW_H) {
-            int row = (my - row_top) / ROW_H + files->scroll;
-            return 2000 + win_index(w) * 512 + row;
-        }
-    }
-
     return 3000 + win_index(w);
 }
 
@@ -3107,27 +2829,12 @@ static int invalidate_hover_key(int sw, int sh, int key) {
         return 1;
     }
 
-    if (key >= 2000 && key < 3000) {
-        int encoded = key - 2000;
-        int widx = encoded / 512;
-        int row = encoded % 512;
-        if (widx >= 0 && widx < MAX_WINDOWS) {
-            window_t* w = &g_wins[widx];
-            if (w->active && w->type == WT_FILES) {
-                files_window_state_t* files = FILES_STATE(w);
-                int by = w->y + TITLE_H;
-                int row_top = by + 14;
-                int ry = row_top + (row - files->scroll) * ROW_H;
-                invalidate_rect(sw, sh, make_rect(w->x, ry, w->w - 12, ROW_H));
-                return 1;
-            }
-        }
-    }
-
     return 0;
 }
 
 static void handle_click(int mx, int my, gui_fp_t mxf, gui_fp_t myf, int sw, int sh) {
+    if (handle_desktop_shell_click(mx, my, sw, sh)) return;
+
     /* close button on any window? */
     window_t* w = hit_window_z(mx, my);
     if (w) {
@@ -3137,7 +2844,17 @@ static void handle_click(int mx, int my, gui_fp_t mxf, gui_fp_t myf, int sw, int
             (void)request_window_close(w, sw, sh);
             return;
         }
-        if (point_in(mx, my,
+        if (point_in(mx, my, cx - TITLE_BUTTON_W, cy,
+                     TITLE_BUTTON_W - 2, TITLE_H - 4)) {
+            window_toggle_maximize(w, sw, sh);
+            return;
+        }
+        if (point_in(mx, my, cx - TITLE_BUTTON_W * 2, cy,
+                     TITLE_BUTTON_W - 2, TITLE_H - 4)) {
+            window_minimize(w, sw, sh);
+            return;
+        }
+        if (!w->maximized && point_in(mx, my,
                      w->x + w->w - RESIZE_GRIP,
                      w->y + w->h - RESIZE_GRIP,
                      RESIZE_GRIP,
@@ -3156,10 +2873,29 @@ static void handle_click(int mx, int my, gui_fp_t mxf, gui_fp_t myf, int sw, int
         }
         /* title bar: raise + start drag */
         if (point_in(mx, my, w->x, w->y, w->w, TITLE_H)) {
+            uint32_t now = sys_get_ticks();
+            if (g_last_title_click_window == win_index(w) &&
+                (uint32_t)(now - g_last_title_click_tick) <=
+                    SMALLOS_TIMER_HZ / 3u) {
+                g_last_title_click_window = -1;
+                g_last_title_click_tick = 0;
+                window_toggle_maximize(w, sw, sh);
+                return;
+            }
+            g_last_title_click_window = win_index(w);
+            g_last_title_click_tick = now;
             window_t* old_top = topmost();
             if (old_top && old_top != w) invalidate_window(sw, sh, old_top);
             invalidate_window(sw, sh, w);
             z_push_top(win_index(w));
+            if (w->maximized) {
+                w->x = w->restore_x;
+                w->y = w->restore_y;
+                w->w = w->restore_w;
+                w->h = w->restore_h;
+                w->maximized = 0;
+                dispatch_window_resize(w, now);
+            }
             g_drag = DRAG_MOVE;
             g_drag_idx = win_index(w);
             g_drag_dx_fp = mxf - fp_from_int(w->x);
@@ -3227,6 +2963,14 @@ static void handle_wheel(int mx, int my, int wheel, int sw, int sh) {
 int gui_main(int argc, char** argv) {
     gfx_context_t gfx;
     int rc;
+    const char* initial_path = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if (argv[i] && u_streq(argv[i], "--diagnostics"))
+            g_diagnostics = 1;
+        else if (argv[i] && argv[i][0] && !initial_path)
+            initial_path = argv[i];
+    }
 
     u_puts("gui: starting (ESC or q to exit)\n");
     rc = gfx_open(&gfx);
@@ -3247,6 +2991,15 @@ int gui_main(int argc, char** argv) {
 
     gui_window_stack_init(&g_window_stack);
     icons_layout(sw);
+    {
+        gui_native_ui_t native_ui = {
+            draw_text, text_width, &GUI_WIDGET_THEME,
+            COL_WIN_BG, COL_FRAME, COL_TEXT, COL_SUBTEXT,
+            COL_HILIGHT, COL_HILIGHT_T
+        };
+        gui_native_apps_init(&native_ui);
+    }
+    init_app_registry();
 
     /* drain any stale mouse delta */
     { sys_mouse_state_t m; (void)sys_mouse_read(&m); }
@@ -3258,31 +3011,24 @@ int gui_main(int argc, char** argv) {
     int presented_my = my;
     int last_hover = hover_key(mx, my);
     gui_config_load();
-    if (argc > 1 && argv[1] && argv[1][0]) action_editor(sw, sh, argv[1]);
+    if (initial_path) action_editor(sw, sh, initial_path);
     invalidate_full(sw, sh);
     perf_init();
+    g_startup_ram_bytes = sample_self_ram();
+    g_clock_next_tick = sys_get_ticks() + SMALLOS_TIMER_HZ * 60u;
 
     while (!g_should_quit) {
         sys_input_event_t events[INPUT_BATCH];
         int got = 0;
         unsigned int input_flags = SYS_INPUT_FLAG_NONBLOCK;
-        uint32_t loop_now = sys_get_ticks();
-        int app_timers = apps_have_timers();
-        int blocking_input_wait;
 
-        if (!dirty &&
-            !cursor_dirty &&
-            g_launch_kind == LAUNCH_NONE &&
-            !app_timers &&
-            !gui_frame_pending()) {
-            input_flags = 0;
+        if (g_clock_next_tick && tick_due(sys_get_ticks(), g_clock_next_tick)) {
+            invalidate_topbar(sw, sh);
+            dirty = 1;
+            g_clock_next_tick = sys_get_ticks() + SMALLOS_TIMER_HZ * 60u;
         }
-        blocking_input_wait = input_flags == 0;
 
         int n = read_input_coalesced(events, INPUT_BATCH, input_flags);
-        if (blocking_input_wait) {
-            perf_resume_from_idle();
-        }
         if (perf_tick(sw, sh)) {
             dirty = 1;
         }
@@ -3298,6 +3044,48 @@ int gui_main(int argc, char** argv) {
                     unsigned int a = ev->ascii & 0xFFu;
                     window_t* top = topmost();
                     unsigned int app_result = GUI_APP_RESULT_NONE;
+                    if (g_shared_picker_active) {
+                        gui_app_event_t picker_event;
+                        memset(&picker_event, 0, sizeof(picker_event));
+                        picker_event.type = GUI_APP_EVENT_KEY;
+                        picker_event.key = ev->key;
+                        picker_event.ascii = a;
+                        picker_event.modifiers = ev->flags;
+                        picker_event.ticks = ev->ticks;
+                        (void)handle_shared_picker_event(&picker_event, sw, sh);
+                        dirty = 1;
+                        continue;
+                    }
+                    if ((ev->flags & SYS_INPUT_KEY_ALT) &&
+                        ev->key == KEY_TAB) {
+                        cycle_windows(sw, sh);
+                        dirty = 1;
+                        continue;
+                    }
+                    if ((ev->flags & SYS_INPUT_KEY_ALT) && top &&
+                        ev->key == KEY_F9) {
+                        window_minimize(top, sw, sh);
+                        dirty = 1;
+                        continue;
+                    }
+                    if ((ev->flags & SYS_INPUT_KEY_ALT) && top &&
+                        ev->key == KEY_F10) {
+                        window_toggle_maximize(top, sw, sh);
+                        dirty = 1;
+                        continue;
+                    }
+                    if ((ev->flags & SYS_INPUT_KEY_CTRL) &&
+                        ev->key == KEY_ESC) {
+                        g_start_open = !g_start_open;
+                        g_start_selection = 0;
+                        invalidate_full(sw, sh);
+                        dirty = 1;
+                        continue;
+                    }
+                    if (handle_start_key(ev->key, a, sw, sh)) {
+                        dirty = 1;
+                        continue;
+                    }
                     if (top) {
                         gui_app_event_t app_event;
                         memset(&app_event, 0, sizeof(app_event));
@@ -3348,11 +3136,33 @@ int gui_main(int argc, char** argv) {
                     if (mx != old_mx || my != old_my) {
                         cursor_dirty = 1;
                     }
+                    int left_now =
+                        (ev->buttons & SYS_MOUSE_BUTTON_LEFT) != 0;
+                    if (g_shared_picker_active) {
+                        gui_app_event_t picker_event;
+                        memset(&picker_event, 0, sizeof(picker_event));
+                        picker_event.x = mx;
+                        picker_event.y = my;
+                        picker_event.buttons = ev->buttons;
+                        picker_event.wheel = ev->wheel;
+                        picker_event.ticks = ev->ticks;
+                        if (ev->wheel)
+                            picker_event.type = GUI_APP_EVENT_WHEEL;
+                        else if (left_now && !prev_left)
+                            picker_event.type = GUI_APP_EVENT_POINTER_DOWN;
+                        else if (!left_now && prev_left)
+                            picker_event.type = GUI_APP_EVENT_POINTER_UP;
+                        else
+                            picker_event.type = GUI_APP_EVENT_POINTER_MOVE;
+                        (void)handle_shared_picker_event(&picker_event, sw, sh);
+                        prev_left = left_now;
+                        dirty = 1;
+                        continue;
+                    }
                     if (ev->wheel != 0) {
                         handle_wheel(mx, my, ev->wheel, sw, sh);
                         dirty = 1;
                     }
-                    int left_now = (ev->buttons & SYS_MOUSE_BUTTON_LEFT) != 0;
                     if (left_now && !prev_left) {
                         handle_click(mx, my, mxf, myf, sw, sh);
                         if (g_dirty_count > 0) dirty = 1;
@@ -3372,6 +3182,18 @@ int gui_main(int argc, char** argv) {
                                 invalidate_window(sw, sh, w);
                                 w->x = g_drag_preview_x;
                                 w->y = g_drag_preview_y;
+                                if (my <= 2) {
+                                    w->x = w->restore_x;
+                                    w->y = w->restore_y;
+                                    w->w = w->restore_w;
+                                    w->h = w->restore_h;
+                                    w->maximized = 0;
+                                    window_toggle_maximize(w, sw, sh);
+                                } else if (mx <= 2) {
+                                    window_snap(w, sw, sh, -1);
+                                } else if (mx >= sw - 3) {
+                                    window_snap(w, sw, sh, 1);
+                                }
                                 invalidate_window(sw, sh, w);
                                 dirty = 1;
                             }
@@ -3387,8 +3209,8 @@ int gui_main(int argc, char** argv) {
                                                              -w->w + 32,
                                                              sw - 32);
                             gui_fp_t new_y_fp = fp_clamp_int(myf - g_drag_dy_fp,
-                                                             16,
-                                                             sh - TITLE_H);
+                                                             0,
+                                                             sh - TASKBAR_H - TITLE_H);
                             int new_x = fp_to_int_round(new_x_fp);
                             int new_y = fp_to_int_round(new_y_fp);
                             if (new_x != g_drag_preview_x || new_y != g_drag_preview_y) {
@@ -3404,7 +3226,7 @@ int gui_main(int argc, char** argv) {
                         if (w->active) {
                             const window_app_ops_t* ops = window_app_ops(w->type);
                             int max_w = sw - w->x;
-                            int max_h = sh - w->y;
+                            int max_h = sh - TASKBAR_H - w->y;
                             int min_w = ops ? ops->min_width : WINDOW_MIN_W;
                             int min_h = ops ? ops->min_height : WINDOW_MIN_H;
                             int new_w;
@@ -3489,6 +3311,8 @@ int gui_main(int argc, char** argv) {
             }
         }
 
+        if (poll_shell_windows(sw, sh)) dirty = 1;
+        sync_window_focus(sw, sh);
         if (dispatch_due_app_ticks(sw, sh, sys_get_ticks())) dirty = 1;
 
         if (g_launch_kind != LAUNCH_NONE) {
@@ -3585,8 +3409,16 @@ int gui_main(int argc, char** argv) {
         if (!got) {
             uint32_t now = sys_get_ticks();
             uint32_t deadline = gui_wait_deadline(now);
-            if (deadline != 0u && !tick_due(now, deadline)) {
-                (void)smallos_input_wait_until(deadline);
+            struct pollfd fds[MAX_WINDOWS];
+            unsigned int fd_count = shell_poll_fds(fds, MAX_WINDOWS);
+            if (deadline == 0u || !tick_due(now, deadline)) {
+                int wait_result = smallos_input_fd_wait_until(fds, fd_count,
+                                                               deadline);
+                if (wait_result & SYS_INPUT_FD_WAIT_READY) {
+                    g_perf.pty_wakeups++;
+                    g_perf.total_pty_wakeups++;
+                }
+                perf_resume_from_idle();
             } else {
                 sys_yield();
             }
@@ -3597,6 +3429,7 @@ int gui_main(int argc, char** argv) {
         if (g_wins[i].active) close_window(&g_wins[i]);
     }
     gfx_close(&gfx);
+    if (g_diagnostics) diagnostics_print();
     u_puts("gui: exiting\n");
     return 0;
 }

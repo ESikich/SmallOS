@@ -582,7 +582,12 @@ enum {
     SYS_FCHDIR          = 146, /* change process cwd to directory fd */
     SYS_SIGACTION       = 147, /* install/query process signal action */
     SYS_SIGPROCMASK     = 148, /* update/query process signal mask */
-    SYS_SIGRETURN       = 149  /* return from user signal handler */
+    SYS_SIGRETURN       = 149, /* return from user signal handler */
+    SYS_INPUT_FD_WAIT_UNTIL = 150 /* wait for input, poll fds, or deadline */
 };
+
+#define SYS_INPUT_FD_WAIT_INPUT    0x01u
+#define SYS_INPUT_FD_WAIT_READY    0x02u
+#define SYS_INPUT_FD_WAIT_DEADLINE 0x04u
 
 #endif

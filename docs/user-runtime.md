@@ -198,9 +198,13 @@ Framebuffer programs should use `gfx.h` rather than calling display syscalls
 directly. `gfx.c` owns display acquire/release, XRGB8888 surface allocation,
 rectangle copying, full-frame and rectangle presentation, temporary overlay
 presentation through `gfx_present_surface()`, mapped framebuffer setup, and
-indexed 8-bit palette presentation. `gfx_indexed.h` adds an 8-bit shadow
-framebuffer and dirty-rectangle tracking for Fractint-style programs, while
-`gfx_text.h` provides bitmap text cells on top of a `gfx_surface_t`.
+indexed 8-bit palette presentation. Rectangle presentation uses strided blits
+directly from the backbuffer; `gfx_context_t` no longer keeps a second
+full-screen presentation surface. Its scratch surface is allocated lazily only
+for operations that need packed or temporary pixels. `gfx_indexed.h` adds an
+8-bit shadow framebuffer and dirty-rectangle tracking for Fractint-style
+programs, while `gfx_text.h` provides bitmap text cells on top of a
+`gfx_surface_t`.
 
 Programs that already manage their own framebuffers can use `gfx_map()` after
 acquiring the display. It wraps `SYS_DISPLAY_MAP`, records the user virtual

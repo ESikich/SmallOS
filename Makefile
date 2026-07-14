@@ -436,13 +436,20 @@ KERNEL_OBJS=$(patsubst $(SRC_DIR)/%.asm,$(OBJ_DIR)/%.o,$(KERNEL_ASM_SRCS)) \
             $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(KERNEL_C_SRCS))
 
 USER_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(USER_SRCS))
-GUI_OBJS=$(OBJ_DIR)/user/gui/app.o $(OBJ_DIR)/user/gui/builtin_apps.o \
-	$(OBJ_DIR)/user/gui/canvas.o \
+GUI_OBJS=$(OBJ_DIR)/user/gui/app.o $(OBJ_DIR)/user/gui/app_registry.o \
+	$(OBJ_DIR)/user/gui/about_app.o $(OBJ_DIR)/user/gui/config_app.o \
+	$(OBJ_DIR)/user/gui/builtin_apps.o $(OBJ_DIR)/user/gui/desktop_model.o \
+	$(OBJ_DIR)/user/gui/canvas.o $(OBJ_DIR)/user/gui/editor_app.o \
 	$(OBJ_DIR)/user/gui/cursor.o $(OBJ_DIR)/user/gui/damage.o \
-	$(OBJ_DIR)/user/gui/file_picker.o $(OBJ_DIR)/user/gui/layout.o \
-	$(OBJ_DIR)/user/gui/region.o $(OBJ_DIR)/user/gui/window.o \
+	$(OBJ_DIR)/user/gui/file_picker.o $(OBJ_DIR)/user/gui/files_app.o \
+	$(OBJ_DIR)/user/gui/layout.o \
+	$(OBJ_DIR)/user/gui/native_apps.o $(OBJ_DIR)/user/gui/network_model.o \
+	$(OBJ_DIR)/user/gui/system_app.o \
+	$(OBJ_DIR)/user/gui/occlusion.o $(OBJ_DIR)/user/gui/region.o \
+	$(OBJ_DIR)/user/gui/tasks_model.o $(OBJ_DIR)/user/gui/viewer_model.o \
+	$(OBJ_DIR)/user/gui/window.o \
 	$(OBJ_DIR)/user/gui/widgets.o $(OBJ_DIR)/user/gui/shell_window.o \
-	$(OBJ_DIR)/user/editor_model.o
+	$(OBJ_DIR)/user/editor_model.o $(OBJ_DIR)/user/image_bmp.o
 USER_SHELL_OBJS=$(OBJ_DIR)/user/shell/app.o
 USER_LIBC_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(filter $(USER_DIR)/%.c,$(USER_LIBC_SRCS))) \
                $(patsubst $(USER_DIR)/%.asm,$(OBJ_DIR)/user/%.o,$(filter $(USER_DIR)/%.asm,$(USER_LIBC_SRCS)))
@@ -1333,6 +1340,9 @@ gui-unit: | dirs
 		-Isrc/user/gui tools/gui_unit.c src/user/gui/region.c \
 		src/user/gui/window.c src/user/gui/canvas.c src/user/gui/cursor.c \
 		src/user/gui/damage.c src/user/gui/layout.c src/user/gui/widgets.c \
+		src/user/gui/app_registry.c src/user/gui/desktop_model.c \
+		src/user/gui/network_model.c src/user/gui/occlusion.c \
+		src/user/gui/tasks_model.c src/user/gui/viewer_model.c \
 		src/user/editor_model.c -o $(TOOLS_DIR)/gui_unit
 	$(TOOLS_DIR)/gui_unit
 

@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "uapi_input.h"
+#include "uapi_poll.h"
 #include "uapi_syscall.h"
 
 static inline int smallos_input_syscall1(int num, uint32_t arg1) {
@@ -37,6 +38,13 @@ static inline int smallos_input_read(sys_input_event_t* out_events,
 
 static inline int smallos_input_wait_until(uint32_t deadline_ticks) {
     return smallos_input_syscall1(SYS_INPUT_WAIT_UNTIL, deadline_ticks);
+}
+
+static inline int smallos_input_fd_wait_until(struct pollfd* fds,
+                                               uint32_t nfds,
+                                               uint32_t deadline_ticks) {
+    return smallos_input_syscall3(SYS_INPUT_FD_WAIT_UNTIL,
+                                  (uint32_t)fds, nfds, deadline_ticks);
 }
 
 #endif /* SMALLOS_INPUT_H */

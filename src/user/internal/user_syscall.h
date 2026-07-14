@@ -592,6 +592,11 @@ static inline int sys_input_wait_until(uint32_t deadline) {
     return syscall1(SYS_INPUT_WAIT_UNTIL, deadline);
 }
 
+static inline int sys_input_fd_wait_until(struct pollfd* fds, uint32_t nfds,
+                                          uint32_t deadline) {
+    return syscall3(SYS_INPUT_FD_WAIT_UNTIL, (uint32_t)fds, nfds, deadline);
+}
+
 static inline int sys_sound_op(uint32_t op, uint32_t arg1, uint32_t arg2) {
     return syscall3(SYS_SOUND_OP, op, arg1, arg2);
 }

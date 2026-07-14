@@ -40,6 +40,17 @@ typedef enum {
     GUI_TEXT_INPUT_DELETE,
 } gui_text_input_command_t;
 
+typedef struct {
+    const char* label;
+    int enabled;
+    int checked;
+} gui_menu_item_t;
+
+typedef struct {
+    const char* text;
+    int width;
+} gui_table_column_t;
+
 int gui_widget_hit(gui_rect_t bounds, int x, int y);
 void gui_widget_label(gfx_surface_t* surface, gui_rect_t bounds,
                       const char* text, unsigned int color,
@@ -66,6 +77,37 @@ void gui_widget_text_field(gfx_surface_t* surface, gui_rect_t bounds,
                            gui_widget_state_t state,
                            const gui_widget_theme_t* theme,
                            gui_widget_text_fn draw_text);
+void gui_widget_menu(gfx_surface_t* surface, gui_rect_t bounds,
+                     const gui_menu_item_t* items, int count, int selected,
+                     const gui_widget_theme_t* theme,
+                     gui_widget_text_fn draw_text);
+void gui_widget_list_row(gfx_surface_t* surface, gui_rect_t bounds,
+                         const char* text, int selected,
+                         gui_widget_state_t state,
+                         const gui_widget_theme_t* theme,
+                         gui_widget_text_fn draw_text);
+void gui_widget_table_header(gfx_surface_t* surface, gui_rect_t bounds,
+                             const gui_table_column_t* columns, int count,
+                             int sorted_column, int descending,
+                             const gui_widget_theme_t* theme,
+                             gui_widget_text_fn draw_text);
+void gui_widget_radio(gfx_surface_t* surface, gui_rect_t bounds,
+                      const char* text, int selected,
+                      gui_widget_state_t state,
+                      const gui_widget_theme_t* theme,
+                      gui_widget_text_fn draw_text);
+void gui_widget_progress(gfx_surface_t* surface, gui_rect_t bounds,
+                         int value, int maximum,
+                         const gui_widget_theme_t* theme);
+void gui_widget_tooltip(gfx_surface_t* surface, gui_rect_t bounds,
+                        const char* text, const gui_widget_theme_t* theme,
+                        gui_widget_text_fn draw_text);
+void gui_widget_modal(gfx_surface_t* surface, gui_rect_t bounds,
+                      const char* title, const char* message,
+                      const gui_widget_theme_t* theme,
+                      gui_widget_text_fn draw_text);
+int gui_widget_focus_next(int current, int count, int reverse,
+                          const unsigned char* enabled);
 void gui_text_input_init(gui_text_input_t* input, const char* text);
 int gui_text_input_insert(gui_text_input_t* input, char ch);
 int gui_text_input_command(gui_text_input_t* input,

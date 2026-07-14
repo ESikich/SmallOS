@@ -492,7 +492,18 @@ The GUI layers a clipped canvas, bounded damage collector, reusable controls,
 software cursor, and z-order stack over `gfx.c`. Application types receive
 keyboard, pointer, wheel, resize, tick, and guarded-close events and return
 explicit handled/redraw/close results. Private state exists only while its
-window is open. Scene changes are copied by dirty rectangle; events that
+window is open. A single descriptor registry owns launcher labels/order, icons,
+size constraints, tick policy, and callbacks. Public application callbacks use
+`gui_app_context_t`; the public window value is an opaque handle. Files,
+Editor, System, Config, About, Viewer, Tasks, and Network are compiled as
+application modules, while the desktop loop owns policy rather than
+application-specific event branches. Context services provide state access,
+dynamic titles, local invalidation, close requests, registered-app launching,
+and the framework-owned filtered file picker.
+
+The bottom taskbar, generated Start menu, window stacking, minimize/restore,
+maximize, snapping, Alt+Tab, and the fixed eight-window limit form the desktop
+shell. Scene changes are copied by dirty rectangle; events that
 produce no pixel damage never become implicit full-screen repaints. Dirty
 scene rectangles are presented around the software cursor footprint before the
 cursor overlay is refreshed, preventing application ticks such as editor caret
@@ -506,8 +517,12 @@ so no kernel clipboard ABI is required. Reusable layout helpers compute inset,
 stacked, and equal-row control geometry. The shared file-picker state owns
 directory enumeration, filename input, focus traversal, scrolling, and pointer
 capture while the hosting application decides what an accepted Open or Save As
-path means. System, Config, and About presentation lives in a separate built-in
-application module rather than the desktop event loop.
+path means. Composition walks windows front-to-back and subtracts opaque frame
+and client regions before drawing lower layers. Shadows stay non-opaque, and a
+bounded-region overflow safely falls back to the original dirty rectangle.
+The second full-screen graphics presentation surface was removed; strided
+display blits now present directly from the backbuffer, with bounded scratch
+allocation reserved for operations that truly require packed pixels.
 When the framebuffer backend can page flip, the display owner can also map the
 page-flip aperture with `SYS_DISPLAY_MAP` and present already-rendered hidden
 pages with `SYS_DISPLAY_PRESENT_PAGE`. That path is intentionally lower level
@@ -647,9 +662,13 @@ absolute-pointer events when the VMware backdoor is present, and accepts
 relative packets injected by the OHCI USB boot mouse path. All paths store
 accumulated `dx`/`dy` plus button bits. User programs can call `SYS_MOUSE_READ`
 to copy and clear the accumulated movement, or use `SYS_INPUT_READ` when they
-want queued keyboard and mouse events together. GUI-style event loops that need
-both immediate input wakeups and paced redraws can use `SYS_INPUT_WAIT_UNTIL`
-to sleep until either input arrives or an absolute tick deadline is reached.
+want queued keyboard and mouse events together. GUI-style event loops can use
+`SYS_INPUT_FD_WAIT_UNTIL` to sleep until input arrives, one of their poll fds is
+ready, or an absolute tick deadline is reached. The older
+`SYS_INPUT_WAIT_UNTIL` input/deadline operation and ordinary `poll()` remain
+compatible. The GUI uses the combined wait for PTY readiness and application
+deadlines, so a quiet desktop or Shell does not require a periodic 60 Hz loop;
+60 FPS pacing is retained only for dragging and explicit animation.
 
 OHCI USB boot HID is claimed after storage mount so real USB boots can load the
 shell from the same device path first. The first HID probe runs before the shell
@@ -990,7 +1009,7 @@ SYS_BRK / user heap — per-process heap break managed in user space through `SY
 SYS_OPEN_WRITE / SYS_WRITEFD / SYS_LSEEK / SYS_FSYNC / SYS_UNLINK / SYS_UNLINKAT / SYS_RENAME / SYS_RENAMEAT / SYS_STAT / SYS_STAT_FULL / SYS_FSTATAT_FULL / SYS_LSTAT_FULL / SYS_LINK / SYS_LINKAT / SYS_SYMLINK / SYS_SYMLINKAT / SYS_READLINK / SYS_READLINKAT / SYS_CHMOD / SYS_CHOWN / SYS_UTIMENS / SYS_UTIMENSAT / SYS_MKDIRAT / SYS_MKNOD / SYS_FTRUNCATE / SYS_FCHMOD / SYS_FCHOWN / SYS_FUTIMENS / SYS_GETUID / SYS_SETUID / SYS_GETGID / SYS_SETGID / SYS_UMASK — VFS-backed writable file handles plus path metadata, credentials, umask, directory-fd resolution, and file management for compiler-style tools and BusyBox/POSIX applets; dirty writable handles flush on close, append/read-write modes preserve existing bytes, link counts and symlink traversal are maintained by ext2, permissions are enforced from ext2 mode bits and process credentials, and stdout/stderr writes also use fd-backed console handles
 SYS_SOCKET / SYS_BIND / SYS_LISTEN / SYS_ACCEPT / SYS_ACCEPT4 / SYS_CONNECT / SYS_SEND / SYS_RECV / SYS_SHUTDOWN / SYS_GETSOCKNAME / SYS_GETPEERNAME — socket ABI for passive TCP servers, FTP userland, and client-style active opens; fd handles point at kernel socket objects, TCP streams are backed by a global 4-tuple TCP table plus lazy 4 KiB RX rings and 16 KiB TX rings, basic `shutdown()` half-close state is implemented, and socket readiness plugs into the same handle poll path
 SYS_PIPE / SYS_PIPE2 / SYS_DUP* / SYS_FCNTL / SYS_POLL / SYS_EPOLL_* / SYS_TIMERFD_* / SYS_SIGNALFD — pipes, descriptor duplication, descriptor flags, and event-loop shims for shell pipelines and cserve-style guest services; socket waits register on socket wait queues, console fd waits register on the keyboard waiter used by `SYS_READ`, timerfd handles register read waiters that timer IRQs can wake when timerfds expire, and signalfd handles can be woken by kernel SIGINT/SIGTERM delivery
-SYS_INPUT_READ / SYS_INPUT_WAIT_UNTIL — shared keyboard/mouse event queue for GUI-style programs; callers can drain queued events or sleep until input arrives or a frame deadline is reached
+SYS_INPUT_READ / SYS_INPUT_WAIT_UNTIL / SYS_INPUT_FD_WAIT_UNTIL — shared keyboard/mouse input plus compatible input/deadline and combined input/poll-fd/deadline waits for event-driven GUI programs
 SYS_CLOCK_GETTIME / SYS_CLOCK_SETTIME / SYS_NTP_SYNC — realtime clock syscalls; `CLOCK_MONOTONIC` reports uptime, `CLOCK_REALTIME` is maintained as an offset from uptime and can be set directly or by the tiny NTP client
 SYS_PROCINFO — scheduler/process diagnostic snapshot used by `/bin/top` for live CPU tick deltas, process state, and task-owned RAM estimates
 CPUID + diagnostic syscalls — `/bin/cpuz` prints CPU vendor/brand/features/cache and combines existing memory, display, USB, network, and storage snapshots into one hardware summary

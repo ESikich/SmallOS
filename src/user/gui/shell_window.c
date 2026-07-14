@@ -1371,6 +1371,12 @@ int gui_shell_poll(gui_shell_window_t* shell) {
     return dirty;
 }
 
+int gui_shell_poll_fd(const gui_shell_window_t* shell) {
+    if (!shell || (shell->backend != GUI_SHELL_BACKEND_PIPE_CHILD &&
+                   shell->backend != GUI_SHELL_BACKEND_PTY_CHILD)) return -1;
+    return shell->stdout_fd;
+}
+
 gui_shell_key_result_t gui_shell_handle_key(gui_shell_window_t* shell,
                                             unsigned int ascii,
                                             unsigned int key,

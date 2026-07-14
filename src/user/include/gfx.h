@@ -21,7 +21,6 @@ typedef struct gfx_indexed_surface {
 typedef struct gfx_context {
     sys_display_info_t info;
     gfx_surface_t backbuffer;
-    gfx_surface_t presentbuffer;
     gfx_surface_t scratch;
     sys_display_map_info_t map;
     int acquired;

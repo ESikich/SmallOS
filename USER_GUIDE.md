@@ -434,13 +434,35 @@ SDL for this path. Bounded host/guest probes live in
 when changing timer, input, or sound code because it exercises Wolf's
 post-level bonus-counting waits.
 
-The GUI opens a desktop with Files, Shell, System, Config, About, and Quit
-icons. Shell windows run real child shells through PTYs. The Config window can
-toggle the GUI perf readout; on writable ATA-backed boots the setting is saved
-in `/etc/gui.conf`, while USB mass-storage boots are read-only for now. Drag a
-window's title bar to move it or its bottom-right grip to resize it. When a
-text-entry window is not focused, `F`, `T`, `S`, `C`, and `A` open the matching
-windows, `X` closes the focused window, and `Q` or Escape exits the desktop.
+The GUI opens a desktop with a 24-pixel bottom taskbar. Files and Shell remain
+as desktop shortcuts; the Start menu launches Files, Editor, Shell, Viewer,
+Tasks, Network, System, Config, and About, while Quit remains a desktop-shell
+command. Use the pointer, arrow keys, Enter, Escape, or an application's first
+letter in Start. Taskbar buttons restore and focus inactive windows; clicking
+the focused window's button minimizes it. The right side shows free memory,
+the realtime clock, and an optional compact performance readout.
+
+Shell windows run real child shells through PTYs. The Config window toggles the
+GUI performance readout; on writable ATA-backed boots the setting and retained
+network form values are saved in `/etc/gui.conf`, while USB mass-storage boots
+are read-only for now. Drag a title bar to move a window or its bottom-right
+grip to resize it. Title-bar buttons minimize, maximize/restore, and close.
+Double-click a title bar or press Alt+F10 to maximize, use Alt+F9 to minimize,
+and use Alt+Tab to cycle windows, including restoring a minimized selection.
+Dragging to the top maximizes; dragging to the left or right edge snaps to half
+the usable desktop. `X` closes the focused window, and `Q` or Escape exits when
+no application consumes the key.
+
+Files supports keyboard row navigation, directories-first case-insensitive
+sorting, New Folder, Rename, Delete, and Properties. Deleting a directory that
+is not empty is rejected. BMP files open in Viewer and text-like files open in
+Editor without leaving the desktop; executables retain the fullscreen
+release/wait/reacquire compatibility path. Viewer supports fit, 100%, zoom,
+and keyboard or pointer panning. Tasks shows live process CPU/memory data and
+offers protected, confirmed SIGTERM termination. Network shows link, address,
+DHCP, packet, and socket state and can renew DHCP, clear configuration, or
+apply validated static IPv4 settings.
+
 Double-click a text file in Files, or run `gui <text-path>`, to edit it inside
 the desktop. The Editor toolbar provides New, Open, and Save As; Ctrl+N,
 Ctrl+O, and Ctrl+Shift+S provide the same workflows from the keyboard. F2 or

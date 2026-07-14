@@ -627,6 +627,12 @@ void syscall_handler_main(syscall_regs_t* regs) {
                             regs->ebx);
             break;
 
+        case SYS_INPUT_FD_WAIT_UNTIL:
+            regs->eax = (unsigned int)sys_input_fd_wait_until_impl(
+                            regs, (struct pollfd*)regs->ebx,
+                            regs->ecx, regs->edx);
+            break;
+
         case SYS_SOUND_OP:
             regs->eax = (unsigned int)sys_sound_op_impl(
                             regs->ebx,

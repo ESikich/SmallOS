@@ -113,6 +113,132 @@ void gui_widget_text_field(gfx_surface_t* s, gui_rect_t b, const char* text,
     }
 }
 
+void gui_widget_menu(gfx_surface_t* s, gui_rect_t b,
+                     const gui_menu_item_t* items, int count, int selected,
+                     const gui_widget_theme_t* theme,
+                     gui_widget_text_fn draw_text) {
+    int row_h;
+    if (!s || !items || !theme || count <= 0) return;
+    row_h = b.h / count;
+    if (row_h < 1) row_h = 1;
+    gui_canvas_fill_rect(s, b.x, b.y, b.w, b.h, theme->face);
+    gui_canvas_rect(s, b.x, b.y, b.w, b.h, theme->frame);
+    for (int i = 0; i < count; i++) {
+        int y = b.y + i * row_h;
+        unsigned int color = items[i].enabled ? theme->text : theme->disabled;
+        if (i == selected && items[i].enabled)
+            gui_canvas_fill_rect(s, b.x + 1, y, b.w - 2, row_h,
+                                 theme->accent);
+        if (items[i].checked && draw_text)
+            draw_text(s, b.x + 3, y + (row_h - 7) / 2, "x", color);
+        if (draw_text && items[i].label)
+            draw_text(s, b.x + 13, y + (row_h - 7) / 2,
+                      items[i].label, color);
+    }
+}
+
+void gui_widget_list_row(gfx_surface_t* s, gui_rect_t b, const char* text,
+                         int selected, gui_widget_state_t state,
+                         const gui_widget_theme_t* theme,
+                         gui_widget_text_fn draw_text) {
+    if (!s || !theme) return;
+    gui_canvas_fill_rect(s, b.x, b.y, b.w, b.h,
+                         selected ? theme->accent :
+                         state.hovered ? theme->face_hover : theme->face);
+    if (state.focused)
+        gui_canvas_rect(s, b.x, b.y, b.w, b.h, theme->frame);
+    if (draw_text && text)
+        draw_text(s, b.x + 3, b.y + (b.h - 7) / 2, text, theme->text);
+}
+
+void gui_widget_table_header(gfx_surface_t* s, gui_rect_t b,
+                             const gui_table_column_t* columns, int count,
+                             int sorted_column, int descending,
+                             const gui_widget_theme_t* theme,
+                             gui_widget_text_fn draw_text) {
+    int x = b.x;
+    if (!s || !columns || !theme) return;
+    gui_canvas_fill_rect(s, b.x, b.y, b.w, b.h, theme->face_pressed);
+    for (int i = 0; i < count && x < b.x + b.w; i++) {
+        int width = columns[i].width;
+        if (width < 1) width = 1;
+        gui_canvas_rect(s, x, b.y, width, b.h, theme->frame);
+        if (draw_text && columns[i].text)
+            draw_text(s, x + 3, b.y + (b.h - 7) / 2,
+                      columns[i].text, theme->text);
+        if (i == sorted_column && draw_text)
+            draw_text(s, x + width - 9, b.y + (b.h - 7) / 2,
+                      descending ? "v" : "^", theme->accent);
+        x += width;
+    }
+}
+
+void gui_widget_radio(gfx_surface_t* s, gui_rect_t b, const char* text,
+                      int selected, gui_widget_state_t state,
+                      const gui_widget_theme_t* theme,
+                      gui_widget_text_fn draw_text) {
+    int cy;
+    if (!s || !theme) return;
+    cy = b.y + b.h / 2;
+    gui_canvas_rect(s, b.x, cy - 5, 11, 11,
+                    state.focused ? theme->accent : theme->frame);
+    if (selected) gui_canvas_fill_rect(s, b.x + 3, cy - 2, 5, 5,
+                                       theme->accent);
+    if (draw_text && text)
+        draw_text(s, b.x + 15, b.y + (b.h - 7) / 2, text,
+                  state.disabled ? theme->disabled : theme->text);
+}
+
+void gui_widget_progress(gfx_surface_t* s, gui_rect_t b, int value,
+                         int maximum, const gui_widget_theme_t* theme) {
+    int fill;
+    if (!s || !theme || b.w <= 0 || b.h <= 0) return;
+    if (maximum < 1) maximum = 1;
+    if (value < 0) value = 0;
+    if (value > maximum) value = maximum;
+    fill = (b.w - 2) * value / maximum;
+    gui_canvas_fill_rect(s, b.x, b.y, b.w, b.h, theme->face);
+    gui_canvas_rect(s, b.x, b.y, b.w, b.h, theme->frame);
+    if (fill > 0) gui_canvas_fill_rect(s, b.x + 1, b.y + 1,
+                                      fill, b.h - 2, theme->accent);
+}
+
+void gui_widget_tooltip(gfx_surface_t* s, gui_rect_t b, const char* text,
+                        const gui_widget_theme_t* theme,
+                        gui_widget_text_fn draw_text) {
+    if (!s || !theme) return;
+    gui_canvas_fill_rect(s, b.x, b.y, b.w, b.h, theme->face_hover);
+    gui_canvas_rect(s, b.x, b.y, b.w, b.h, theme->frame);
+    if (draw_text && text) draw_text(s, b.x + 4, b.y + 4, text, theme->text);
+}
+
+void gui_widget_modal(gfx_surface_t* s, gui_rect_t b, const char* title,
+                      const char* message, const gui_widget_theme_t* theme,
+                      gui_widget_text_fn draw_text) {
+    if (!s || !theme) return;
+    gui_canvas_fill_rect(s, b.x, b.y, b.w, b.h, theme->face);
+    gui_canvas_rect(s, b.x, b.y, b.w, b.h, theme->accent);
+    gui_canvas_fill_rect(s, b.x + 1, b.y + 1, b.w - 2, 16,
+                         theme->face_pressed);
+    if (draw_text && title) draw_text(s, b.x + 5, b.y + 5,
+                                      title, theme->text);
+    if (draw_text && message) draw_text(s, b.x + 7, b.y + 25,
+                                        message, theme->text);
+}
+
+int gui_widget_focus_next(int current, int count, int reverse,
+                          const unsigned char* enabled) {
+    int position = current;
+    if (count <= 0) return -1;
+    for (int step = 0; step < count; step++) {
+        position += reverse ? -1 : 1;
+        if (position < 0) position = count - 1;
+        if (position >= count) position = 0;
+        if (!enabled || enabled[position]) return position;
+    }
+    return -1;
+}
+
 void gui_text_input_init(gui_text_input_t* input, const char* text) {
     int length = 0;
     if (!input) return;

@@ -1,5 +1,6 @@
 #include "syscall_internal.h"
 #include "keyboard.h"
+#include "input.h"
 #include "klib.h"
 #include "paging.h"
 #include "pmm.h"
@@ -202,6 +203,53 @@ static void sys_poll_clear_waits(process_t* proc) {
     wait_queue_remove_proc(proc);
     if (keyboard_get_waiting_process() == (void*)proc) {
         keyboard_set_waiting_process(0);
+    }
+    input_forget_waiting_process(proc);
+}
+
+int sys_input_fd_wait_until_impl(syscall_regs_t* regs, struct pollfd* fds,
+                                 unsigned int nfds, unsigned int deadline) {
+    process_t* proc = (process_t*)sched_current();
+    int has_deadline = deadline != 0u;
+    (void)regs;
+    if (!proc) return -EINVAL;
+    if (nfds > POLL_MAX_FDS) return -EINVAL;
+    if (nfds && !user_count_bytes_ok((unsigned int)fds, nfds,
+                                     sizeof(struct pollfd), 0)) return -EFAULT;
+    for (;;) {
+        unsigned int result = 0u;
+        unsigned int ready = nfds ? sys_poll_snapshot(proc, fds, nfds) : 0u;
+        if (input_available()) result |= SYS_INPUT_FD_WAIT_INPUT;
+        if (ready) result |= SYS_INPUT_FD_WAIT_READY;
+        if (result) {
+            sys_poll_clear_waits(proc);
+            return (int)result;
+        }
+        if (has_deadline && (int)(timer_get_ticks() - deadline) >= 0) {
+            sys_poll_clear_waits(proc);
+            return SYS_INPUT_FD_WAIT_DEADLINE;
+        }
+        proc->sleep_until = has_deadline ? deadline : 0u;
+        proc->state = has_deadline ? PROCESS_STATE_SLEEPING
+                                   : PROCESS_STATE_WAITING;
+        input_set_waiting_process(proc);
+        if (nfds) {
+            int rc = sys_poll_register_fd_waits(proc, fds, nfds);
+            if (rc < 0) {
+                proc->state = PROCESS_STATE_RUNNING;
+                sys_poll_clear_waits(proc);
+                return rc;
+            }
+        }
+        ready = nfds ? sys_poll_snapshot(proc, fds, nfds) : 0u;
+        if (input_available() || ready) {
+            proc->state = PROCESS_STATE_RUNNING;
+            sys_poll_clear_waits(proc);
+            return (input_available() ? SYS_INPUT_FD_WAIT_INPUT : 0) |
+                   (ready ? SYS_INPUT_FD_WAIT_READY : 0);
+        }
+        sys_wait_until_current_running(proc);
+        sys_poll_clear_waits(proc);
     }
 }
 

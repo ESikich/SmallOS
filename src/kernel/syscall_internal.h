@@ -69,6 +69,8 @@ int sys_usb_diag_op_impl(unsigned int op, unsigned int arg);
 int sys_usb_mouse_op_impl(unsigned int op, unsigned int port);
 int sys_input_read_impl(syscall_regs_t* regs, sys_input_event_t* out_events, unsigned int max_events, unsigned int flags);
 int sys_input_wait_until_impl(syscall_regs_t* regs, unsigned int deadline);
+int sys_input_fd_wait_until_impl(syscall_regs_t* regs, struct pollfd* fds,
+                                 unsigned int nfds, unsigned int deadline);
 int sys_sound_op_impl(unsigned int op, unsigned int arg1, unsigned int arg2);
 int sys_write_impl(const char* buf, unsigned int len);
 int sys_putc_impl(unsigned int ch);

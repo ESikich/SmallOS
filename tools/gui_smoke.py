@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import re
 import socket
 import sys
 import time
@@ -232,6 +233,17 @@ def wait_for_prompt_or_error(log, offset, timeout_s):
     raise RuntimeError("gui did not return to shell after q")
 
 
+def read_last_gui_metrics(path):
+    with open(path, "r", encoding="utf-8", errors="replace") as log:
+        lines = [line for line in log if line.startswith("gui: metrics ")]
+    if not lines:
+        raise RuntimeError("diagnostic GUI run did not emit exit metrics")
+    return {
+        key: int(value)
+        for key, value in re.findall(r"([a-z_]+)=([0-9]+)", lines[-1])
+    }
+
+
 def run_gui_smoke(args):
     if not wait_for_path(args.monitor, args.timeout):
         raise RuntimeError(f"timed out waiting for {args.monitor}")
@@ -259,7 +271,7 @@ def run_gui_smoke(args):
                 offset = wait_for_prompt_or_error(log, offset, args.timeout)
 
             tee_stdout("\n[smoke:gui] launch\n")
-            send_text(monitor, "gui tmp/gui_edit.txt")
+            send_text(monitor, "gui --diagnostics tmp/gui_edit.txt")
             send_key(monitor, "ret")
             offset = wait_for_marker_or_error(
                 log,
@@ -337,6 +349,56 @@ def run_gui_smoke(args):
                 args.timeout,
             )
 
+            tee_stdout("[smoke:gui] exercise Start and native apps\n")
+            send_key(monitor, "ctrl-esc")
+            time.sleep(args.settle)
+            start_menu = capture_screen(
+                monitor,
+                os.path.join(args.screenshot_dir, "gui-start.ppm"),
+                args.timeout,
+            )
+            if changed_bytes(desktop, start_menu) < 1000:
+                raise RuntimeError("Start menu did not visibly open")
+            send_key(monitor, "v")
+            send_key(monitor, "ret")
+            time.sleep(args.settle)
+            viewer = capture_screen(
+                monitor,
+                os.path.join(args.screenshot_dir, "gui-viewer.ppm"),
+                args.timeout,
+            )
+            if changed_bytes(desktop, viewer) < 10000:
+                raise RuntimeError("Viewer did not visibly open from Start")
+            send_key(monitor, "x")
+            send_key(monitor, "ctrl-esc")
+            send_key(monitor, "t")
+            send_key(monitor, "ret")
+            time.sleep(args.settle)
+            tasks = capture_screen(
+                monitor,
+                os.path.join(args.screenshot_dir, "gui-tasks.ppm"),
+                args.timeout,
+            )
+            if changed_bytes(desktop, tasks) < 10000:
+                raise RuntimeError("Tasks did not visibly open from Start")
+            send_key(monitor, "alt-f10")
+            send_key(monitor, "alt-f10")
+            send_key(monitor, "x")
+            send_key(monitor, "ctrl-esc")
+            send_key(monitor, "n")
+            send_key(monitor, "ret")
+            time.sleep(args.settle)
+            network = capture_screen(
+                monitor,
+                os.path.join(args.screenshot_dir, "gui-network.ppm"),
+                args.timeout,
+            )
+            if changed_bytes(desktop, network) < 10000:
+                raise RuntimeError("Network did not visibly open from Start")
+            send_key(monitor, "alt-f9")
+            send_key(monitor, "alt-tab")
+            send_key(monitor, "x")
+
             tee_stdout("[smoke:gui] open Files via keyboard\n")
             send_key(monitor, "f")
             time.sleep(args.settle)
@@ -348,20 +410,16 @@ def run_gui_smoke(args):
             if changed_bytes(desktop, files) < 10000:
                 raise RuntimeError("opening Files did not materially change the desktop")
 
-            tee_stdout("[smoke:gui] drag Files scrollbar\n")
-            move_mouse(monitor, 175, -87)
-            time.sleep(0.1)
-            set_mouse_buttons(monitor, 1)
-            move_mouse(monitor, 0, 180)
+            tee_stdout("[smoke:gui] scroll Files list\n")
+            send_key(monitor, "pgdn")
             time.sleep(args.settle)
-            set_mouse_buttons(monitor, 0)
             scrolled_files = capture_screen(
                 monitor,
                 os.path.join(args.screenshot_dir, "gui-files-scrolled.ppm"),
                 args.timeout,
             )
             if changed_bytes(files, scrolled_files) < 500:
-                raise RuntimeError("dragging Files scrollbar did not scroll")
+                raise RuntimeError("Files keyboard navigation did not scroll")
 
             tee_stdout("[smoke:gui] resize Files\n")
             move_mouse(monitor, 3, 25)
@@ -399,6 +457,17 @@ def run_gui_smoke(args):
             send_key(monitor, "esc")
             send_key(monitor, "q")
             offset = wait_for_prompt_or_error(log, offset, args.timeout)
+
+            metrics = read_last_gui_metrics(args.serial)
+            saved = metrics.get("saved_presentbuffer", 0)
+            if saved < 2.5 * 1024 * 1024:
+                raise RuntimeError(
+                    f"present-buffer removal saved only {saved} bytes at 1024x768"
+                )
+            if metrics.get("startup_ram", 0) <= 0:
+                raise RuntimeError("diagnostics did not report startup user memory")
+            if metrics.get("dirty", 0) <= 0 or metrics.get("presented", 0) <= 0:
+                raise RuntimeError("diagnostics did not report rendering activity")
 
             tee_stdout("[smoke:gui] verify editor persistence\n")
             send_text(monitor, "cat tmp/gui_edit.txt")

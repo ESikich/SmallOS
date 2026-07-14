@@ -12,6 +12,10 @@ typedef enum {
     GUI_APP_EVENT_RESIZE,
     GUI_APP_EVENT_TICK,
     GUI_APP_EVENT_CLOSE_REQUEST,
+    GUI_APP_EVENT_FOCUS_GAINED,
+    GUI_APP_EVENT_FOCUS_LOST,
+    GUI_APP_EVENT_FILE_SELECTED,
+    GUI_APP_EVENT_FILE_CANCELLED,
 } gui_app_event_type_t;
 
 typedef struct {
@@ -26,6 +30,8 @@ typedef struct {
     unsigned int modifiers;
     unsigned int buttons;
     uint32_t ticks;
+    const char* path;
+    unsigned int file_filter;
 } gui_app_event_t;
 
 enum {

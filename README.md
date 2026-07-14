@@ -36,6 +36,10 @@ BusyBox-backed Unix compatibility layer inside the guest.
   `/var/log/boot.txt`, graphical boot splash that covers final startup work,
   PS/2 keyboard, retrying OHCI USB boot keyboard/mouse probing, PS/2 plus
   VMware mouse input, and several graphics demos.
+- In-process bitmap desktop with a bottom taskbar and keyboard-accessible Start
+  menu, eight-window manager, Files and Shell shortcuts, windowed Editor,
+  Viewer, Tasks, Network, System, Config, and About applications, local-damage
+  composition, and compatibility handoff for fullscreen programs.
 - PCI networking with e1000 and RTL8139 NIC support, DHCP, ARP, IPv4,
   UDP/NTP clock sync, UDP DNS resolver traffic, runtime `ip`/`ipconfig`
   inspection and configuration,
@@ -327,8 +331,8 @@ make smoke
 make smoke-reboot
 make smoke-halt
 make display-smoke
-make gui-unit            # GUI layout, controls, scrolling, editor-model tests
-make gui-smoke           # Editor dialogs/clipboard, Files, Shell, screenshots
+make gui-unit            # registry, layout, controls, app models, damage tests
+make gui-smoke           # desktop/window/app workflows, diagnostics, screenshots
 make usb-storage-smoke
 make usb-ramdisk-fallback-smoke
 make socket-eof-smoke

@@ -56,6 +56,7 @@ typedef struct {
 void gui_shell_open(gui_shell_window_t* shell);
 void gui_shell_close(gui_shell_window_t* shell);
 int gui_shell_poll(gui_shell_window_t* shell);
+int gui_shell_poll_fd(const gui_shell_window_t* shell);
 void gui_shell_set_terminal_size(gui_shell_window_t* shell,
                                  unsigned int rows,
                                  unsigned int cols);

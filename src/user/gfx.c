@@ -21,11 +21,6 @@ int gfx_open(gfx_context_t* gfx) {
         return -4;
     }
 
-    if (!gfx_surface_alloc(&gfx->presentbuffer, gfx->info.width, gfx->info.height)) {
-        gfx_close(gfx);
-        return -4;
-    }
-
     gfx_clear(&gfx->backbuffer, 0);
     return 0;
 }
@@ -71,7 +66,6 @@ void gfx_close(gfx_context_t* gfx) {
     gfx->mapped = 0;
     memset(&gfx->map, 0, sizeof(gfx->map));
     gfx_surface_free(&gfx->backbuffer);
-    gfx_surface_free(&gfx->presentbuffer);
     gfx_surface_free(&gfx->scratch);
 
     if (gfx->acquired) {
@@ -183,8 +177,7 @@ int gfx_display_fill(gfx_context_t* gfx, unsigned int x, unsigned int y,
 }
 
 int gfx_present(gfx_context_t* gfx) {
-    if (!gfx || !gfx->acquired || !gfx->backbuffer.pixels ||
-        !gfx->presentbuffer.pixels) {
+    if (!gfx || !gfx->acquired || !gfx->backbuffer.pixels) {
         return -1;
     }
 
@@ -195,8 +188,7 @@ int gfx_present(gfx_context_t* gfx) {
 
 int gfx_present_rect(gfx_context_t* gfx, unsigned int x, unsigned int y,
                      unsigned int w, unsigned int h) {
-    if (!gfx || !gfx->acquired || !gfx->backbuffer.pixels ||
-        !gfx->presentbuffer.pixels) {
+    if (!gfx || !gfx->acquired || !gfx->backbuffer.pixels) {
         return -1;
     }
     if (x >= gfx->backbuffer.width || y >= gfx->backbuffer.height ||
@@ -208,16 +200,6 @@ int gfx_present_rect(gfx_context_t* gfx, unsigned int x, unsigned int y,
     }
     if (h > gfx->backbuffer.height - y) {
         h = gfx->backbuffer.height - y;
-    }
-
-    if (w < gfx->backbuffer.pitch_pixels / 4u ||
-        w * h < 32768u) {
-        for (unsigned int row = 0; row < h; row++) {
-            memcpy(gfx->presentbuffer.pixels + row * w,
-                   gfx->backbuffer.pixels + (y + row) * gfx->backbuffer.pitch_pixels + x,
-                   w * sizeof(unsigned int));
-        }
-        return sys_display_blit(x, y, w, h, gfx->presentbuffer.pixels);
     }
 
     return sys_display_blit_stride(
