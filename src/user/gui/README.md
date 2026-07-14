@@ -3,7 +3,10 @@
 `/bin/gui` still enters through `src/user/gui.c`, but the desktop code now lives
 under this folder so the GUI can grow into separate modules.
 
-- `app.c`: desktop, windows, icons, drawing, and event dispatch.
+- `app.c`: desktop applications, composition, and event dispatch.
+- `canvas.c`: clipped pixel, rectangle, and line drawing primitives.
+- `region.c`: rectangle intersection, clipping, union, and dirty-region merging.
+- `window.c`: bounded window z-order and focus stack.
 - `shell_window.c`: shell-window state, scrollback, prompt handling, and the
   shell backend. It prefers a PTY-backed `/bin/shell` child process, keeps
   pipe-backed child launching as a compatibility fallback, and falls back to
@@ -25,6 +28,21 @@ The desktop owns the framebuffer while it is active, so launching a full-screen
 program temporarily releases the display, waits for that child to exit, then
 reacquires the display and redraws the desktop.
 
+## Rendering, Damage, And Pacing
+
+The desktop composes windows into a full-screen software surface, but presents
+only the dirty rectangles recorded by input, application, and timer events.
+Dirty regions are clipped to the display and nearby regions are merged when
+the merged copy is reasonably compact. A logical event that records no pixel
+damage is a no-op; it must not be promoted to a full-screen repaint.
+
+The mouse pointer is an immediate software overlay rather than part of the
+composed desktop surface. Pointer motion restores the old cursor rectangle and
+draws the new one without waiting for the paced window frame. Hover changes
+invalidate only controls whose appearance changes, such as desktop icons and
+Files rows. In particular, crossing an undecorated window boundary records no
+scene damage, which prevents a scene repaint from briefly covering the cursor.
+
 ## Config And Pacing
 
 The Config window currently owns desktop-local settings. It can toggle the GUI
@@ -36,6 +54,17 @@ are paced to 60 FPS. The system timer is 300 Hz, so that cadence lands on an
 exact five-tick frame interval. Shell PTY output is polled on the same 60 FPS
 cadence so quiet shell windows do not keep the desktop awake or compete with
 pointer motion.
+
+Window application types are registered through a small callback table with
+title, state size, open, close, and draw operations. Files and Shell allocate
+their larger private state only while those windows are open. Windows can be
+resized from their bottom-right grip; PTY dimensions follow the visible Shell
+grid.
+
+Keyboard shortcuts work when a Shell window is not focused: `F` opens Files,
+`T` opens Shell, `S` opens System, `C` opens Config, `A` opens About, and `X`
+closes the focused window. `Q` or Escape exits the desktop. Escape closes a
+focused Shell window first.
 
 ## Shell Window
 

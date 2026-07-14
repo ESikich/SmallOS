@@ -19,9 +19,13 @@
 #include "user_lib.h"
 #include "gfx.h"
 #include "smallos_input.h"
+#include "keyboard.h"
 #include "dirent.h"
 #include "gui.h"
+#include "canvas.h"
+#include "region.h"
 #include "shell_window.h"
+#include "window.h"
 
 /* ---------------- colors ---------------- */
 
@@ -40,14 +44,23 @@
 #define COL_TOPBAR    0x00FFFFFFu
 #define COL_SHADOW    0x00606060u
 
-typedef struct {
-    int x, y, w, h;
-} gui_rect_t;
-
 typedef int gui_fp_t;
 
-static gui_rect_t g_clip_rect;
-static int g_clip_enabled = 0;
+#define make_rect gui_rect_make
+#define rect_empty gui_rect_empty
+#define rect_intersects gui_rect_intersects
+#define rect_union gui_rect_union
+#define rect_should_merge gui_rect_should_merge
+#define rect_clip_screen gui_rect_clip
+#define clip_set gui_canvas_set_clip
+#define clip_clear gui_canvas_clear_clip
+#define gui_put_pixel gui_canvas_put_pixel
+#define fillr gui_canvas_fill_rect
+#define hline gui_canvas_hline
+#define vline gui_canvas_vline
+#define rect gui_canvas_rect
+#define g_clip_enabled gui_canvas_has_clip()
+#define g_clip_rect (*gui_canvas_clip())
 
 /* ---------------- 5x7 bitmap font ---------------- */
 
@@ -128,9 +141,6 @@ static const unsigned char* glyph_for(char ch) {
     return 0;
 }
 
-static void fillr(gfx_surface_t* s, int x, int y, int w, int h, unsigned int c);
-static void gui_put_pixel(gfx_surface_t* s, int x, int y, unsigned int color);
-
 static void draw_char(gfx_surface_t* s, int x, int y, char ch, unsigned int color) {
     const unsigned char* g = glyph_for(ch);
     if (!g) { fillr(s, x + 1, y + 6, 2, 1, color); return; }
@@ -202,127 +212,6 @@ static void draw_fixed_text(gfx_surface_t* s,
     }
 }
 
-/* ---------------- rectangles + primitives ---------------- */
-
-static gui_rect_t make_rect(int x, int y, int w, int h) {
-    gui_rect_t r;
-    r.x = x; r.y = y; r.w = w; r.h = h;
-    return r;
-}
-
-static int rect_empty(gui_rect_t r) {
-    return r.w <= 0 || r.h <= 0;
-}
-
-static int rect_intersects(gui_rect_t a, gui_rect_t b) {
-    return !rect_empty(a) && !rect_empty(b) &&
-           a.x < b.x + b.w && b.x < a.x + a.w &&
-           a.y < b.y + b.h && b.y < a.y + a.h;
-}
-
-static int rect_touches(gui_rect_t a, gui_rect_t b) {
-    return !rect_empty(a) && !rect_empty(b) &&
-           a.x <= b.x + b.w + 1 && b.x <= a.x + a.w + 1 &&
-           a.y <= b.y + b.h + 1 && b.y <= a.y + a.h + 1;
-}
-
-static gui_rect_t rect_union(gui_rect_t a, gui_rect_t b) {
-    int x0 = a.x < b.x ? a.x : b.x;
-    int y0 = a.y < b.y ? a.y : b.y;
-    int x1 = (a.x + a.w) > (b.x + b.w) ? (a.x + a.w) : (b.x + b.w);
-    int y1 = (a.y + a.h) > (b.y + b.h) ? (a.y + a.h) : (b.y + b.h);
-    return make_rect(x0, y0, x1 - x0, y1 - y0);
-}
-
-static unsigned int rect_area(gui_rect_t r) {
-    if (rect_empty(r)) return 0;
-    return (unsigned int)r.w * (unsigned int)r.h;
-}
-
-static int rect_should_merge(gui_rect_t a, gui_rect_t b) {
-    gui_rect_t u;
-    unsigned int separate;
-
-    if (!rect_touches(a, b)) return 0;
-    u = rect_union(a, b);
-    separate = rect_area(a) + rect_area(b);
-    return rect_area(u) <= separate * 2u;
-}
-
-static gui_rect_t rect_clip_screen(gui_rect_t r, int sw, int sh) {
-    int x0 = r.x;
-    int y0 = r.y;
-    int x1 = r.x + r.w;
-    int y1 = r.y + r.h;
-    if (x0 < 0) x0 = 0;
-    if (y0 < 0) y0 = 0;
-    if (x1 > sw) x1 = sw;
-    if (y1 > sh) y1 = sh;
-    return make_rect(x0, y0, x1 - x0, y1 - y0);
-}
-
-static void clip_set(gui_rect_t r) {
-    g_clip_rect = r;
-    g_clip_enabled = 1;
-}
-
-static void clip_clear(void) {
-    g_clip_enabled = 0;
-}
-
-static void gui_put_pixel(gfx_surface_t* s, int x, int y, unsigned int color) {
-    if (!s || !s->pixels || x < 0 || y < 0 ||
-        x >= (int)s->width || y >= (int)s->height) {
-        return;
-    }
-    if (g_clip_enabled &&
-        (x < g_clip_rect.x || x >= g_clip_rect.x + g_clip_rect.w ||
-         y < g_clip_rect.y || y >= g_clip_rect.y + g_clip_rect.h)) {
-        return;
-    }
-    s->pixels[(unsigned int)y * s->pitch_pixels + (unsigned int)x] = color;
-}
-
-static void fillr(gfx_surface_t* s, int x, int y, int w, int h, unsigned int c);
-
-static void hline(gfx_surface_t* s, int x, int y, int w, unsigned int c) {
-    if (w > 0) fillr(s, x, y, w, 1, c);
-}
-static void vline(gfx_surface_t* s, int x, int y, int h, unsigned int c) {
-    if (h > 0) fillr(s, x, y, 1, h, c);
-}
-static void rect(gfx_surface_t* s, int x, int y, int w, int h, unsigned int c) {
-    if (w <= 0 || h <= 0) return;
-    hline(s, x, y, w, c); hline(s, x, y + h - 1, w, c);
-    vline(s, x, y, h, c); vline(s, x + w - 1, y, h, c);
-}
-static void fillr(gfx_surface_t* s, int x, int y, int w, int h, unsigned int c) {
-    int x0 = x;
-    int y0 = y;
-    int x1 = x + w;
-    int y1 = y + h;
-
-    if (!s || !s->pixels || w <= 0 || h <= 0) return;
-    if (x0 < 0) x0 = 0;
-    if (y0 < 0) y0 = 0;
-    if (x1 > (int)s->width) x1 = (int)s->width;
-    if (y1 > (int)s->height) y1 = (int)s->height;
-    if (g_clip_enabled) {
-        if (x0 < g_clip_rect.x) x0 = g_clip_rect.x;
-        if (y0 < g_clip_rect.y) y0 = g_clip_rect.y;
-        if (x1 > g_clip_rect.x + g_clip_rect.w) x1 = g_clip_rect.x + g_clip_rect.w;
-        if (y1 > g_clip_rect.y + g_clip_rect.h) y1 = g_clip_rect.y + g_clip_rect.h;
-    }
-    if (x1 <= x0 || y1 <= y0) return;
-
-    for (int py = y0; py < y1; py++) {
-        unsigned int* row = s->pixels + (unsigned int)py * s->pitch_pixels + (unsigned int)x0;
-        for (int px = x0; px < x1; px++) {
-            *row++ = c;
-        }
-    }
-}
-
 /* ---------------- string helpers ---------------- */
 
 static unsigned int u_strlen(const char* s) {
@@ -353,7 +242,7 @@ static void utoa10(unsigned int v, char* buf) {
 
 /* ---------------- window model ---------------- */
 
-#define MAX_WINDOWS 8
+#define MAX_WINDOWS GUI_WINDOW_CAPACITY
 #define MAX_ROWS    256
 #define INPUT_BATCH 32
 #define DIRTY_MAX   32
@@ -384,26 +273,42 @@ typedef enum {
 } win_type_t;
 
 typedef struct {
+    int scroll;
+    char cwd[256];
+    char rows[MAX_ROWS][NAME_MAX + 1];
+    int row_dir[MAX_ROWS];
+    int row_count;
+    char status[80];
+} files_window_state_t;
+
+typedef struct {
     int   active;
-    int   z;            /* unused; kept for layout stability */
     win_type_t type;
     int   x, y, w, h;
-    int   scroll;       /* row offset, FILES */
-    /* FILES-specific */
-    char  cwd[256];
-    char  rows[MAX_ROWS][NAME_MAX + 1];
-    int   row_dir[MAX_ROWS];
-    int   row_count;
-    int   need_reload;
-    char  status[80];
-    gui_shell_window_t shell;
+    void* state;
 } window_t;
+
+typedef struct {
+    const char* title;
+    unsigned int state_size;
+    void (*open)(window_t* window);
+    void (*close)(window_t* window);
+    void (*draw)(gfx_surface_t* surface, window_t* window, int mx, int my);
+} window_app_ops_t;
+
+static const window_app_ops_t* window_app_ops(win_type_t type);
+
+#define FILES_STATE(w) ((files_window_state_t*)(w)->state)
+#define SHELL_STATE(w) ((gui_shell_window_t*)(w)->state)
 
 static window_t g_wins[MAX_WINDOWS];
 
 #define TITLE_H 14
 #define CLOSE_W 14
 #define ROW_H   12
+#define RESIZE_GRIP 10
+#define WINDOW_MIN_W 160
+#define WINDOW_MIN_H 80
 #define CURSOR_W 9
 #define CURSOR_H 12
 #define CURSOR_MOVE_MAX_W 64
@@ -416,6 +321,7 @@ static int g_dirty_full = 0;
 typedef enum {
     DRAG_NONE = 0,
     DRAG_MOVE,
+    DRAG_RESIZE,
 } drag_mode_t;
 
 static drag_mode_t g_drag = DRAG_NONE;
@@ -424,6 +330,8 @@ static gui_fp_t g_drag_dx_fp = 0, g_drag_dy_fp = 0;
 static int g_drag_preview_x = 0, g_drag_preview_y = 0;
 static int g_drag_overlay_visible = 0;
 static int g_drag_overlay_x = 0, g_drag_overlay_y = 0;
+static int g_resize_start_mx = 0, g_resize_start_my = 0;
+static int g_resize_start_w = 0, g_resize_start_h = 0;
 static int g_frame_pending = 0;
 static uint32_t g_frame_next_tick = 0;
 static uint32_t g_shell_next_poll_tick = 0;
@@ -521,33 +429,26 @@ static void gui_config_save(void) {
     (void)sys_close(fd);
 }
 
-/* z-order: g_zorder[0..count) holds indexes into g_wins, back to front. */
-static int g_zorder[MAX_WINDOWS];
-static int g_zorder_count = 0;
+static gui_window_stack_t g_window_stack;
 
 static int win_index(window_t* w) { return (int)(w - g_wins); }
 
 static void z_remove_idx(int win_index_val) {
-    int j = 0;
-    for (int i = 0; i < g_zorder_count; i++) {
-        if (g_zorder[i] != win_index_val) g_zorder[j++] = g_zorder[i];
-    }
-    g_zorder_count = j;
+    gui_window_stack_remove(&g_window_stack, win_index_val);
 }
 
 static void z_push_top(int win_index_val) {
-    z_remove_idx(win_index_val);
-    g_zorder[g_zorder_count++] = win_index_val;
+    gui_window_stack_raise(&g_window_stack, win_index_val);
 }
 
 static window_t* topmost(void) {
-    if (g_zorder_count == 0) return 0;
-    return &g_wins[g_zorder[g_zorder_count - 1]];
+    int index = gui_window_stack_top(&g_window_stack);
+    return index < 0 ? 0 : &g_wins[index];
 }
 
 static window_t* hit_window_z(int mx, int my) {
-    for (int i = g_zorder_count - 1; i >= 0; i--) {
-        window_t* w = &g_wins[g_zorder[i]];
+    for (int i = gui_window_stack_count(&g_window_stack) - 1; i >= 0; i--) {
+        window_t* w = &g_wins[gui_window_stack_at(&g_window_stack, i)];
         if (!w->active) continue;
         if (mx >= w->x && mx < w->x + w->w &&
             my >= w->y && my < w->y + w->h) return w;
@@ -569,8 +470,12 @@ static window_t* alloc_window(void) {
 }
 
 static void close_window(window_t* w) {
+    const window_app_ops_t* ops;
     if (!w) return;
-    if (w->type == WT_SHELL) gui_shell_close(&w->shell);
+    ops = window_app_ops(w->type);
+    if (ops && ops->close) ops->close(w);
+    if (w->state) free(w->state);
+    w->state = 0;
     z_remove_idx(win_index(w));
     w->active = 0;
 }
@@ -859,14 +764,15 @@ static launch_kind_t launch_kind_for_path(const char* path) {
 }
 
 static void queue_launch(window_t* w, const char* path) {
+    files_window_state_t* files = FILES_STATE(w);
     launch_kind_t kind = launch_kind_for_path(path);
     if (kind == LAUNCH_NONE) {
-        u_strcpy_n(w->status, "No launcher for this file type", sizeof(w->status));
+        u_strcpy_n(files->status, "No launcher for this file type", sizeof(files->status));
         return;
     }
     g_launch_kind = kind;
     u_strcpy_n(g_launch_path, path, sizeof(g_launch_path));
-    u_strcpy_n(w->status, "Launching...", sizeof(w->status));
+    u_strcpy_n(files->status, "Launching...", sizeof(files->status));
 }
 
 static int run_queued_launch(gfx_context_t* gfx, int* sw, int* sh) {
@@ -927,29 +833,30 @@ static int run_queued_launch(gfx_context_t* gfx, int* sw, int* sh) {
 /* ---------------- file load ---------------- */
 
 static void load_dir(window_t* w) {
-    w->row_count = 0;
-    w->scroll = 0;
+    files_window_state_t* files = FILES_STATE(w);
+    files->row_count = 0;
+    files->scroll = 0;
 
     /* synthesize ".." for non-root */
-    if (!u_streq(w->cwd, "/")) {
-        u_strcpy_n(w->rows[w->row_count], "..", NAME_MAX + 1);
-        w->row_dir[w->row_count] = 1;
-        w->row_count++;
+    if (!u_streq(files->cwd, "/")) {
+        u_strcpy_n(files->rows[files->row_count], "..", NAME_MAX + 1);
+        files->row_dir[files->row_count] = 1;
+        files->row_count++;
     }
 
-    DIR* d = opendir(w->cwd);
+    DIR* d = opendir(files->cwd);
     if (!d) {
-        u_strcpy_n(w->rows[w->row_count], "<cannot open>", NAME_MAX + 1);
-        w->row_dir[w->row_count] = 0;
-        w->row_count++;
+        u_strcpy_n(files->rows[files->row_count], "<cannot open>", NAME_MAX + 1);
+        files->row_dir[files->row_count] = 0;
+        files->row_count++;
         return;
     }
 
     struct dirent* e;
-    while ((e = readdir(d)) != 0 && w->row_count < MAX_ROWS) {
-        u_strcpy_n(w->rows[w->row_count], e->d_name, NAME_MAX + 1);
-        w->row_dir[w->row_count] = e->d_is_dir;
-        w->row_count++;
+    while ((e = readdir(d)) != 0 && files->row_count < MAX_ROWS) {
+        u_strcpy_n(files->rows[files->row_count], e->d_name, NAME_MAX + 1);
+        files->row_dir[files->row_count] = e->d_is_dir;
+        files->row_count++;
     }
     closedir(d);
 }
@@ -974,6 +881,7 @@ static void draw_title_bar(gfx_surface_t* s, window_t* w, int focused, const cha
 }
 
 static void draw_files_body(gfx_surface_t* s, window_t* w, int mx, int my) {
+    files_window_state_t* files = FILES_STATE(w);
     int bx = w->x;
     int by = w->y + TITLE_H;
     int bw = w->w;
@@ -982,7 +890,7 @@ static void draw_files_body(gfx_surface_t* s, window_t* w, int mx, int my) {
 
     /* breadcrumb */
     draw_text(s, bx + 4, by + 2, "Path:", COL_SUBTEXT);
-    draw_text(s, bx + 36, by + 2, w->cwd, COL_TEXT);
+    draw_text(s, bx + 36, by + 2, files->cwd, COL_TEXT);
     hline(s, bx, by + 12, bw, COL_FRAME);
 
     int row_top = by + 14;
@@ -991,32 +899,32 @@ static void draw_files_body(gfx_surface_t* s, window_t* w, int mx, int my) {
     int visible = row_area / ROW_H;
     if (visible < 1) visible = 1;
 
-    for (int i = 0; i < visible && (i + w->scroll) < w->row_count; i++) {
-        int idx = i + w->scroll;
+    for (int i = 0; i < visible && (i + files->scroll) < files->row_count; i++) {
+        int idx = i + files->scroll;
         int ry = row_top + i * ROW_H;
         int hover = (mx >= bx && mx < bx + bw - 12 && my >= ry && my < ry + ROW_H);
         if (hover) fillr(s, bx, ry, bw - 12, ROW_H, COL_HILIGHT);
         unsigned int color = hover ? COL_HILIGHT_T : COL_TEXT;
         /* tiny icon: [D] for dir, [F] for file */
-        draw_text(s, bx + 4, ry + 2, w->row_dir[idx] ? "[D]" : "[F]", color);
-        draw_text(s, bx + 28, ry + 2, w->rows[idx], color);
+        draw_text(s, bx + 4, ry + 2, files->row_dir[idx] ? "[D]" : "[F]", color);
+        draw_text(s, bx + 28, ry + 2, files->rows[idx], color);
     }
 
     /* scrollbar */
     int sx = bx + bw - 10;
     fillr(s, sx, by + 14, 10, row_area, COL_BTN_BG);
     vline(s, sx, by + 14, row_area, COL_FRAME);
-    if (w->row_count > visible) {
-        int thumb_h = row_area * visible / w->row_count;
+    if (files->row_count > visible) {
+        int thumb_h = row_area * visible / files->row_count;
         if (thumb_h < 8) thumb_h = 8;
-        int thumb_y = by + 14 + (row_area - thumb_h) * w->scroll /
-                                 (w->row_count - visible);
+        int thumb_y = by + 14 + (row_area - thumb_h) * files->scroll /
+                                 (files->row_count - visible);
         fillr(s, sx + 2, thumb_y, 6, thumb_h, COL_TITLE_BG);
     }
 
     hline(s, bx, by + bh - status_h, bw, COL_FRAME);
-    if (w->status[0]) {
-        draw_text(s, bx + 4, by + bh - status_h + 4, w->status, COL_SUBTEXT);
+    if (files->status[0]) {
+        draw_text(s, bx + 4, by + bh - status_h + 4, files->status, COL_SUBTEXT);
     }
 
     /* outer frame */
@@ -1137,6 +1045,7 @@ static void draw_about_body(gfx_surface_t* s, window_t* w) {
 }
 
 static void draw_shell_body(gfx_surface_t* s, window_t* w) {
+    gui_shell_window_t* shell = SHELL_STATE(w);
     int bx = w->x;
     int by = w->y + TITLE_H;
     int bw = w->w;
@@ -1145,7 +1054,7 @@ static void draw_shell_body(gfx_surface_t* s, window_t* w) {
 
     int line_h = 8;
     int pad = 4;
-    int pty_mode = w->shell.backend == GUI_SHELL_BACKEND_PTY_CHILD;
+    int pty_mode = shell->backend == GUI_SHELL_BACKEND_PTY_CHILD;
     int input_h = pty_mode ? 0 : line_h + 2;
     int rows_area = bh - input_h - pad * 2;
     int visible = rows_area / line_h;
@@ -1153,20 +1062,20 @@ static void draw_shell_body(gfx_surface_t* s, window_t* w) {
     int cols = (bw - 8) / 6;
     if (cols < 1) cols = 1;
     if (cols > GUI_SHELL_COLS) cols = GUI_SHELL_COLS;
-    gui_shell_set_terminal_size(&w->shell, (unsigned int)visible, (unsigned int)cols);
+    gui_shell_set_terminal_size(shell, (unsigned int)visible, (unsigned int)cols);
 
-    int start = w->shell.line_count - visible - w->shell.scroll;
+    int start = shell->line_count - visible - shell->scroll;
     if (start < 0) start = 0;
     int ty = by + pad;
     for (int i = 0; i < visible; i++) {
-        if ((start + i) >= w->shell.line_count) break;
-        draw_fixed_text(s, bx + 4, ty, w->shell.lines[start + i], cols, 0x00C8C8C8u);
+        if ((start + i) >= shell->line_count) break;
+        draw_fixed_text(s, bx + 4, ty, shell->lines[start + i], cols, 0x00C8C8C8u);
         ty += line_h;
     }
 
     if (pty_mode) {
-        int cursor_row = w->shell.cursor_row - start;
-        int cursor_col = w->shell.cursor_col;
+        int cursor_row = shell->cursor_row - start;
+        int cursor_col = shell->cursor_col;
         if (cursor_row >= 0 && cursor_row < visible) {
             if (cursor_col < 0) cursor_col = 0;
             if (cursor_col > cols) cursor_col = cols;
@@ -1185,11 +1094,11 @@ static void draw_shell_body(gfx_surface_t* s, window_t* w) {
     int iy = by + bh - input_h - 2;
     hline(s, bx, iy - 2, bw, 0x00404040u);
     char prompt[GUI_SHELL_COLS + 1];
-    gui_shell_format_prompt(&w->shell, prompt, sizeof(prompt));
+    gui_shell_format_prompt(shell, prompt, sizeof(prompt));
     draw_text(s, bx + 4, iy, prompt, 0x00FFFFFFu);
     /* cursor: a solid block right after input */
-    int cursor_chars = (w->shell.backend == GUI_SHELL_BACKEND_PTY_CHILD)
-        ? w->shell.pending_cursor
+    int cursor_chars = (shell->backend == GUI_SHELL_BACKEND_PTY_CHILD)
+        ? shell->pending_cursor
         : (int)u_strlen(prompt);
     if (cursor_chars < 0) cursor_chars = 0;
     if (cursor_chars > (int)u_strlen(prompt)) cursor_chars = (int)u_strlen(prompt);
@@ -1205,31 +1114,80 @@ static void draw_shell_body(gfx_surface_t* s, window_t* w) {
     rect(s, w->x, w->y, w->w, w->h, COL_FRAME);
 }
 
-static const char* window_title(window_t* w) {
-    switch (w->type) {
-        case WT_FILES:    return "Files";
-        case WT_SYSTEM:   return "System";
-        case WT_CONFIG:   return "Config";
-        case WT_ABOUT:    return "About";
-        case WT_SHELL:    return "Shell";
-    }
-    return "";
+static void files_app_open(window_t* w) {
+    files_window_state_t* files = FILES_STATE(w);
+    u_strcpy_n(files->cwd, "/", sizeof(files->cwd));
+    u_strcpy_n(files->status, "Double-click files to open", sizeof(files->status));
+    load_dir(w);
+}
+
+static void shell_app_open(window_t* w) {
+    gui_shell_open(SHELL_STATE(w));
+}
+
+static void shell_app_close(window_t* w) {
+    if (w->state) gui_shell_close(SHELL_STATE(w));
+}
+
+static void files_app_draw(gfx_surface_t* s, window_t* w, int mx, int my) {
+    draw_files_body(s, w, mx, my);
+}
+
+static void system_app_draw(gfx_surface_t* s, window_t* w, int mx, int my) {
+    (void)mx;
+    (void)my;
+    draw_system_body(s, w);
+}
+
+static void config_app_draw(gfx_surface_t* s, window_t* w, int mx, int my) {
+    (void)mx;
+    (void)my;
+    draw_config_body(s, w);
+}
+
+static void about_app_draw(gfx_surface_t* s, window_t* w, int mx, int my) {
+    (void)mx;
+    (void)my;
+    draw_about_body(s, w);
+}
+
+static void shell_app_draw(gfx_surface_t* s, window_t* w, int mx, int my) {
+    (void)mx;
+    (void)my;
+    draw_shell_body(s, w);
+}
+
+static const window_app_ops_t WINDOW_APPS[] = {
+    {0, 0, 0, 0, 0},
+    {"Files", sizeof(files_window_state_t), files_app_open, 0, files_app_draw},
+    {"System", 0, 0, 0, system_app_draw},
+    {"Config", 0, 0, 0, config_app_draw},
+    {"About", 0, 0, 0, about_app_draw},
+    {"Shell", sizeof(gui_shell_window_t), shell_app_open, shell_app_close,
+     shell_app_draw},
+};
+
+static const window_app_ops_t* window_app_ops(win_type_t type) {
+    if ((unsigned int)type >= sizeof(WINDOW_APPS) / sizeof(WINDOW_APPS[0]))
+        return 0;
+    return &WINDOW_APPS[type];
 }
 
 static void draw_window(gfx_surface_t* s, window_t* w, int focused, int mx, int my) {
+    const window_app_ops_t* ops = window_app_ops(w->type);
     /* drop shadow */
     fillr(s, w->x + 3, w->y + w->h, w->w, 3, COL_SHADOW);
     fillr(s, w->x + w->w, w->y + 3, 3, w->h, COL_SHADOW);
 
     fillr(s, w->x, w->y, w->w, w->h, COL_WIN_BG);
-    draw_title_bar(s, w, focused, window_title(w));
+    draw_title_bar(s, w, focused, ops ? ops->title : "");
+    if (ops && ops->draw) ops->draw(s, w, mx, my);
 
-    switch (w->type) {
-        case WT_FILES:    draw_files_body(s, w, mx, my); break;
-        case WT_SYSTEM:   draw_system_body(s, w); break;
-        case WT_CONFIG:   draw_config_body(s, w); break;
-        case WT_ABOUT:    draw_about_body(s, w); break;
-        case WT_SHELL:    draw_shell_body(s, w); break;
+    /* Bottom-right resize grip. */
+    for (int i = 0; i < 3; i++) {
+        int inset = 2 + i * 3;
+        hline(s, w->x + w->w - inset - 2, w->y + w->h - 2,
+              inset, COL_SHADOW);
     }
 }
 
@@ -1313,9 +1271,24 @@ static window_t* build_window(win_type_t type,
                               int h,
                               int x,
                               int y) {
+    const window_app_ops_t* ops = window_app_ops(type);
     window_t* win = alloc_window();
     if (!win) return 0;
+    if (!ops) {
+        z_remove_idx(win_index(win));
+        win->active = 0;
+        return 0;
+    }
     win->type = type;
+    if (ops->state_size) {
+        win->state = malloc(ops->state_size);
+        if (win->state) memset(win->state, 0, ops->state_size);
+    }
+    if (ops->state_size && !win->state) {
+        z_remove_idx(win_index(win));
+        win->active = 0;
+        return 0;
+    }
     win->w = w;
     win->h = h;
     win->x = x;
@@ -1324,6 +1297,7 @@ static window_t* build_window(win_type_t type,
     if (win->y < 20) win->y = 20;
     if (win->x > sw - 32) win->x = sw - 32;
     if (win->y > sh - TITLE_H) win->y = sh - TITLE_H;
+    if (ops->open) ops->open(win);
     return win;
 }
 
@@ -1337,9 +1311,6 @@ static void action_files(int sw, int sh) {
                                (sw - 360) / 2,
                                (sh - 240) / 2);
     if (!w) return;
-    u_strcpy_n(w->cwd, "/", sizeof(w->cwd));
-    u_strcpy_n(w->status, "Double-click files to open", sizeof(w->status));
-    load_dir(w);
     show_built_window(sw, sh, w);
 }
 static void action_system(int sw, int sh) {
@@ -1368,7 +1339,8 @@ static void action_shell(int sw, int sh) {
                                (sw - 500) / 2,
                                (sh - 320) / 2);
     if (!w) return;
-    gui_shell_open(&w->shell);
+    /* Shell startup can touch the inherited console before PTY setup settles. */
+    invalidate_full(sw, sh);
     show_built_window(sw, sh, w);
 }
 
@@ -1506,17 +1478,6 @@ static void draw_cursor(gfx_surface_t* s, int mx, int my) {
 
 /* ---------------- compose ---------------- */
 
-static window_t* topmost_window(void) {
-    window_t* top = 0;
-    int best = -1;
-    for (int i = 0; i < MAX_WINDOWS; i++) {
-        if (g_wins[i].active && g_wins[i].z > best) {
-            best = g_wins[i].z; top = &g_wins[i];
-        }
-    }
-    return top;
-}
-
 static void compose_v2(gfx_surface_t* s, int mx, int my) {
     clip_clear();
     draw_desktop(s);
@@ -1527,8 +1488,8 @@ static void compose_v2(gfx_surface_t* s, int mx, int my) {
     draw_icons(s, hi);
 
     window_t* top = topmost();
-    for (int i = 0; i < g_zorder_count; i++) {
-        window_t* w = &g_wins[g_zorder[i]];
+    for (int i = 0; i < gui_window_stack_count(&g_window_stack); i++) {
+        window_t* w = &g_wins[gui_window_stack_at(&g_window_stack, i)];
         if (!w->active) continue;
         draw_window(s, w, w == top, mx, my);
     }
@@ -1549,8 +1510,8 @@ static void compose_rect(gfx_surface_t* s, gui_rect_t r, int mx, int my) {
     draw_icons(s, hi);
 
     window_t* top = topmost();
-    for (int i = 0; i < g_zorder_count; i++) {
-        window_t* w = &g_wins[g_zorder[i]];
+    for (int i = 0; i < gui_window_stack_count(&g_window_stack); i++) {
+        window_t* w = &g_wins[gui_window_stack_at(&g_window_stack, i)];
         if (!w->active) continue;
         if (!rect_intersects(r, window_screen_rect(w))) continue;
         draw_window(s, w, w == top, mx, my);
@@ -2128,10 +2089,12 @@ static int read_input_coalesced(sys_input_event_t* events,
 static int shell_windows_need_poll(void) {
     for (int i = 0; i < MAX_WINDOWS; i++) {
         if (g_wins[i].active &&
-            g_wins[i].type == WT_SHELL &&
-            (g_wins[i].shell.backend == GUI_SHELL_BACKEND_PIPE_CHILD ||
-             g_wins[i].shell.backend == GUI_SHELL_BACKEND_PTY_CHILD)) {
-            return 1;
+            g_wins[i].type == WT_SHELL) {
+            gui_shell_window_t* shell = SHELL_STATE(&g_wins[i]);
+            if (shell->backend == GUI_SHELL_BACKEND_PIPE_CHILD ||
+                shell->backend == GUI_SHELL_BACKEND_PTY_CHILD) {
+                return 1;
+            }
         }
     }
     return 0;
@@ -2185,6 +2148,7 @@ static int hover_key(int mx, int my) {
     }
 
     if (w->type == WT_FILES) {
+        files_window_state_t* files = FILES_STATE(w);
         int by = w->y + TITLE_H;
         int row_top = by + 14;
         int row_area = (w->h - TITLE_H) - 27;
@@ -2192,7 +2156,7 @@ static int hover_key(int mx, int my) {
         if (visible < 1) visible = 1;
         if (mx >= w->x && mx < w->x + w->w - 12 &&
             my >= row_top && my < row_top + visible * ROW_H) {
-            int row = (my - row_top) / ROW_H + w->scroll;
+            int row = (my - row_top) / ROW_H + files->scroll;
             return 2000 + win_index(w) * 512 + row;
         }
     }
@@ -2200,11 +2164,11 @@ static int hover_key(int mx, int my) {
     return 3000 + win_index(w);
 }
 
-static void invalidate_hover_key(int sw, int sh, int key) {
+static int invalidate_hover_key(int sw, int sh, int key) {
     if (key >= 1000 && key < 1000 + ICON_COUNT) {
         int idx = key - 1000;
         invalidate_rect(sw, sh, make_rect(g_icons[idx].x - 2, g_icons[idx].y - 2, 36, 44));
-        return;
+        return 1;
     }
 
     if (key >= 2000 && key < 3000) {
@@ -2214,13 +2178,17 @@ static void invalidate_hover_key(int sw, int sh, int key) {
         if (widx >= 0 && widx < MAX_WINDOWS) {
             window_t* w = &g_wins[widx];
             if (w->active && w->type == WT_FILES) {
+                files_window_state_t* files = FILES_STATE(w);
                 int by = w->y + TITLE_H;
                 int row_top = by + 14;
-                int ry = row_top + (row - w->scroll) * ROW_H;
+                int ry = row_top + (row - files->scroll) * ROW_H;
                 invalidate_rect(sw, sh, make_rect(w->x, ry, w->w - 12, ROW_H));
+                return 1;
             }
         }
     }
+
+    return 0;
 }
 
 static void handle_click(int mx, int my, gui_fp_t mxf, gui_fp_t myf, int sw, int sh) {
@@ -2233,6 +2201,23 @@ static void handle_click(int mx, int my, gui_fp_t mxf, gui_fp_t myf, int sw, int
             invalidate_window(sw, sh, w);
             close_window(w);
             invalidate_topbar(sw, sh);
+            return;
+        }
+        if (point_in(mx, my,
+                     w->x + w->w - RESIZE_GRIP,
+                     w->y + w->h - RESIZE_GRIP,
+                     RESIZE_GRIP,
+                     RESIZE_GRIP)) {
+            window_t* old_top = topmost();
+            if (old_top && old_top != w) invalidate_window(sw, sh, old_top);
+            invalidate_window(sw, sh, w);
+            z_push_top(win_index(w));
+            g_drag = DRAG_RESIZE;
+            g_drag_idx = win_index(w);
+            g_resize_start_mx = mx;
+            g_resize_start_my = my;
+            g_resize_start_w = w->w;
+            g_resize_start_h = w->h;
             return;
         }
         /* title bar: raise + start drag */
@@ -2263,6 +2248,7 @@ static void handle_click(int mx, int my, gui_fp_t mxf, gui_fp_t myf, int sw, int
 
         /* FILES: hit-test rows */
         if (w->type == WT_FILES) {
+            files_window_state_t* files = FILES_STATE(w);
             int by = w->y + TITLE_H;
             int row_top = by + 14;
             int row_area = (w->h - TITLE_H) - 27;
@@ -2271,13 +2257,13 @@ static void handle_click(int mx, int my, gui_fp_t mxf, gui_fp_t myf, int sw, int
             if (mx >= w->x && mx < w->x + w->w - 12 &&
                 my >= row_top && my < row_top + visible * ROW_H) {
                 int i = (my - row_top) / ROW_H;
-                int idx = i + w->scroll;
-                if (idx >= 0 && idx < w->row_count) {
-                    if (w->row_dir[idx]) {
-                        if (u_streq(w->rows[idx], "..")) {
-                            path_normalize_parent(w->cwd);
+                int idx = i + files->scroll;
+                if (idx >= 0 && idx < files->row_count) {
+                    if (files->row_dir[idx]) {
+                        if (u_streq(files->rows[idx], "..")) {
+                            path_normalize_parent(files->cwd);
                         } else {
-                            path_append(w->cwd, w->rows[idx], sizeof(w->cwd));
+                            path_append(files->cwd, files->rows[idx], sizeof(files->cwd));
                         }
                         load_dir(w);
                         invalidate_window(sw, sh, w);
@@ -2289,8 +2275,8 @@ static void handle_click(int mx, int my, gui_fp_t mxf, gui_fp_t myf, int sw, int
                             g_last_file_row == idx &&
                             (uint32_t)(now - g_last_file_tick) < 35u;
                         char target[256];
-                        u_strcpy_n(target, w->cwd, sizeof(target));
-                        path_append(target, w->rows[idx], sizeof(target));
+                        u_strcpy_n(target, files->cwd, sizeof(target));
+                        path_append(target, files->rows[idx], sizeof(target));
                         if (is_double) {
                             queue_launch(w, target);
                             invalidate_window(sw, sh, w);
@@ -2298,8 +2284,8 @@ static void handle_click(int mx, int my, gui_fp_t mxf, gui_fp_t myf, int sw, int
                             g_last_file_row = -1;
                             g_last_file_tick = 0;
                         } else {
-                            u_strcpy_n(w->status, "Double-click to open ", sizeof(w->status));
-                            u_strcat_n(w->status, w->rows[idx], sizeof(w->status));
+                            u_strcpy_n(files->status, "Double-click to open ", sizeof(files->status));
+                            u_strcat_n(files->status, files->rows[idx], sizeof(files->status));
                             invalidate_window(sw, sh, w);
                             g_last_file_win = widx;
                             g_last_file_row = idx;
@@ -2312,13 +2298,13 @@ static void handle_click(int mx, int my, gui_fp_t mxf, gui_fp_t myf, int sw, int
             int sx = w->x + w->w - 10;
             if (mx >= sx && mx < sx + 10) {
                 if (my < (w->y + w->h / 2)) {
-                    w->scroll -= visible;
-                    if (w->scroll < 0) w->scroll = 0;
+                    files->scroll -= visible;
+                    if (files->scroll < 0) files->scroll = 0;
                 } else {
-                    int max_scroll = w->row_count - visible;
+                    int max_scroll = files->row_count - visible;
                     if (max_scroll < 0) max_scroll = 0;
-                    w->scroll += visible;
-                    if (w->scroll > max_scroll) w->scroll = max_scroll;
+                    files->scroll += visible;
+                    if (files->scroll > max_scroll) files->scroll = max_scroll;
                 }
                 invalidate_window(sw, sh, w);
             }
@@ -2352,23 +2338,25 @@ static void handle_wheel(int mx, int my, int wheel, int sw, int sh) {
     z_push_top(win_index(w));
 
     if (w->type == WT_FILES) {
+        files_window_state_t* files = FILES_STATE(w);
         int row_area = (w->h - TITLE_H) - 27;
         int visible = row_area / ROW_H;
         if (visible < 1) visible = 1;
-        int max_scroll = w->row_count - visible;
+        int max_scroll = files->row_count - visible;
         if (max_scroll < 0) max_scroll = 0;
 
-        w->scroll -= wheel * 3;
-        if (w->scroll < 0) w->scroll = 0;
-        if (w->scroll > max_scroll) w->scroll = max_scroll;
+        files->scroll -= wheel * 3;
+        if (files->scroll < 0) files->scroll = 0;
+        if (files->scroll > max_scroll) files->scroll = max_scroll;
         invalidate_window(sw, sh, w);
     } else if (w->type == WT_SHELL) {
-        int max_scroll = w->shell.line_count - 1;
+        gui_shell_window_t* shell = SHELL_STATE(w);
+        int max_scroll = shell->line_count - 1;
         if (max_scroll < 0) max_scroll = 0;
 
-        w->shell.scroll += wheel * 3;
-        if (w->shell.scroll < 0) w->shell.scroll = 0;
-        if (w->shell.scroll > max_scroll) w->shell.scroll = max_scroll;
+        shell->scroll += wheel * 3;
+        if (shell->scroll < 0) shell->scroll = 0;
+        if (shell->scroll > max_scroll) shell->scroll = max_scroll;
         invalidate_window(sw, sh, w);
     }
 }
@@ -2395,6 +2383,7 @@ int gui_main(int argc, char** argv) {
     int mx = fp_to_int_round(mxf);
     int my = fp_to_int_round(myf);
 
+    gui_window_stack_init(&g_window_stack);
     icons_layout(sw);
 
     /* drain any stale mouse delta */
@@ -2448,12 +2437,12 @@ int gui_main(int argc, char** argv) {
                     window_t* top = topmost();
                     dirty = 1;
                     if (top && top->type == WT_SHELL) {
-                        if (a == 27u) {
+                        if (a == 27u || ev->key == KEY_ESC) {
                             invalidate_window(sw, sh, top);
                             close_window(top);
                             invalidate_topbar(sw, sh);
                         }
-                        else if (gui_shell_handle_key(&top->shell, a, ev->key, ev->flags) == GUI_SHELL_KEY_CLOSE) {
+                        else if (gui_shell_handle_key(SHELL_STATE(top), a, ev->key, ev->flags) == GUI_SHELL_KEY_CLOSE) {
                             invalidate_window(sw, sh, top);
                             close_window(top);
                             invalidate_topbar(sw, sh);
@@ -2461,7 +2450,24 @@ int gui_main(int argc, char** argv) {
                             invalidate_window(sw, sh, top);
                         }
                     } else {
-                        if (a == 27u || a == 'q' || a == 'Q') { g_should_quit = 1; }
+                        if (a == 27u || ev->key == KEY_ESC ||
+                            a == 'q' || a == 'Q') {
+                            g_should_quit = 1;
+                        } else if ((a == 'x' || a == 'X') && top) {
+                            invalidate_window(sw, sh, top);
+                            close_window(top);
+                            invalidate_topbar(sw, sh);
+                        } else if (a == 'f' || a == 'F') {
+                            action_files(sw, sh);
+                        } else if (a == 't' || a == 'T') {
+                            action_shell(sw, sh);
+                        } else if (a == 's' || a == 'S') {
+                            action_system(sw, sh);
+                        } else if (a == 'c' || a == 'C') {
+                            action_config(sw, sh);
+                        } else if (a == 'a' || a == 'A') {
+                            action_about(sw, sh);
+                        }
                     }
                 } else if (ev->type == SYS_INPUT_TYPE_MOUSE) {
                     int old_mx = mx;
@@ -2531,12 +2537,34 @@ int gui_main(int argc, char** argv) {
                             }
                         }
                     }
+                    if (g_drag == DRAG_RESIZE && g_drag_idx >= 0) {
+                        window_t* w = &g_wins[g_drag_idx];
+                        if (w->active) {
+                            int max_w = sw - w->x;
+                            int max_h = sh - w->y;
+                            int new_w;
+                            int new_h;
+                            if (max_w < WINDOW_MIN_W) max_w = WINDOW_MIN_W;
+                            if (max_h < WINDOW_MIN_H) max_h = WINDOW_MIN_H;
+                            new_w = clampi(g_resize_start_w + mx - g_resize_start_mx,
+                                         WINDOW_MIN_W, max_w);
+                            new_h = clampi(g_resize_start_h + my - g_resize_start_my,
+                                         WINDOW_MIN_H, max_h);
+                            if (new_w != w->w || new_h != w->h) {
+                                invalidate_window(sw, sh, w);
+                                w->w = new_w;
+                                w->h = new_h;
+                                invalidate_window(sw, sh, w);
+                                dirty = 1;
+                            }
+                        }
+                    }
                     prev_left = left_now;
                     last_hover = hover_key(mx, my);
                     if (last_hover != old_hover) {
-                        invalidate_hover_key(sw, sh, old_hover);
-                        invalidate_hover_key(sw, sh, last_hover);
-                        dirty = 1;
+                        int hover_dirty = invalidate_hover_key(sw, sh, old_hover);
+                        hover_dirty |= invalidate_hover_key(sw, sh, last_hover);
+                        if (hover_dirty) dirty = 1;
                     }
                 }
             }
@@ -2545,7 +2573,7 @@ int gui_main(int argc, char** argv) {
         if (shell_poll_due_now) {
             for (int i = 0; i < MAX_WINDOWS; i++) {
                 if (g_wins[i].active && g_wins[i].type == WT_SHELL) {
-                    if (gui_shell_poll(&g_wins[i].shell)) {
+                    if (gui_shell_poll(SHELL_STATE(&g_wins[i]))) {
                         invalidate_window(sw, sh, &g_wins[i]);
                         dirty = 1;
                     }
@@ -2569,6 +2597,11 @@ int gui_main(int argc, char** argv) {
             invalidate_full(sw, sh);
         }
 
+        /* A logical event without pixel damage must not become a full repaint. */
+        if (dirty && g_dirty_count == 0) {
+            dirty = 0;
+        }
+
         if (dirty) {
             if (g_drag_overlay_visible) {
                 if (present_drag_preview(&gfx, drag_overlay_rect(), 0) < 0) {
@@ -2578,9 +2611,6 @@ int gui_main(int argc, char** argv) {
                 }
                 g_drag_overlay_visible = 0;
                 cursor_dirty = 1;
-            }
-            if (g_dirty_count == 0) {
-                invalidate_full(sw, sh);
             }
             if (present_dirty_scene(&gfx, mx, my) < 0) {
                 gfx_close(&gfx);
@@ -2653,6 +2683,9 @@ int gui_main(int argc, char** argv) {
         }
     }
 
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+        if (g_wins[i].active) close_window(&g_wins[i]);
+    }
     gfx_close(&gfx);
     u_puts("gui: exiting\n");
     return 0;

@@ -437,7 +437,10 @@ post-level bonus-counting waits.
 The GUI opens a desktop with Files, Shell, System, Config, About, and Quit
 icons. Shell windows run real child shells through PTYs. The Config window can
 toggle the GUI perf readout; on writable ATA-backed boots the setting is saved
-in `/etc/gui.conf`, while USB mass-storage boots are read-only for now.
+in `/etc/gui.conf`, while USB mass-storage boots are read-only for now. Drag a
+window's title bar to move it or its bottom-right grip to resize it. When a
+Shell window is not focused, `F`, `T`, `S`, `C`, and `A` open the matching
+windows, `X` closes the focused window, and `Q` or Escape exits the desktop.
 
 ## Testing A Build
 

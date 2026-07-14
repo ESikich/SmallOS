@@ -43,8 +43,62 @@ def monitor_send(sock, cmd):
     sock.sendall((cmd + "\n").encode("ascii"))
 
 
+def capture_screen(sock, path, timeout_s):
+    path = os.path.abspath(path)
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    monitor_send(sock, f"screendump {path}")
+    if not wait_for_path(path, timeout_s):
+        raise RuntimeError(f"timed out waiting for screenshot: {path}")
+    return read_ppm(path)
+
+
+def read_ppm(path):
+    with open(path, "rb") as image:
+        if image.readline().strip() != b"P6":
+            raise RuntimeError(f"unexpected screenshot format: {path}")
+        tokens = []
+        while len(tokens) < 3:
+            line = image.readline()
+            if not line:
+                raise RuntimeError(f"truncated screenshot header: {path}")
+            line = line.split(b"#", 1)[0]
+            tokens.extend(line.split())
+        width, height, maximum = (int(token) for token in tokens[:3])
+        if maximum != 255:
+            raise RuntimeError(f"unsupported screenshot depth: {maximum}")
+        pixels = image.read(width * height * 3)
+        if len(pixels) != width * height * 3:
+            raise RuntimeError(f"truncated screenshot pixels: {path}")
+        return width, height, pixels
+
+
+def changed_bytes(before, after):
+    if before[:2] != after[:2]:
+        raise RuntimeError("GUI screenshots changed dimensions")
+    return sum(a != b for a, b in zip(before[2], after[2]))
+
+
+def pixel_at(image, x, y):
+    width, height, pixels = image
+    if x < 0 or y < 0 or x >= width or y >= height:
+        raise RuntimeError("screenshot pixel coordinate is out of bounds")
+    offset = (y * width + x) * 3
+    return pixels[offset:offset + 3]
+
+
 def send_key(sock, key):
     monitor_send(sock, f"sendkey {key}")
+
+
+def move_mouse(sock, dx, dy):
+    monitor_send(sock, f"mouse_move {dx} {dy}")
+
+
+def set_mouse_buttons(sock, buttons):
+    monitor_send(sock, f"mouse_button {buttons}")
 
 
 def send_text(sock, text):
@@ -201,6 +255,58 @@ def run_gui_smoke(args):
             )
 
             time.sleep(args.settle)
+            os.makedirs(args.screenshot_dir, exist_ok=True)
+            desktop = capture_screen(
+                monitor,
+                os.path.join(args.screenshot_dir, "gui-desktop.ppm"),
+                args.timeout,
+            )
+
+            tee_stdout("[smoke:gui] open Files via keyboard\n")
+            send_key(monitor, "f")
+            time.sleep(args.settle)
+            files = capture_screen(
+                monitor,
+                os.path.join(args.screenshot_dir, "gui-files.ppm"),
+                args.timeout,
+            )
+            if changed_bytes(desktop, files) < 10000:
+                raise RuntimeError("opening Files did not materially change the desktop")
+
+            tee_stdout("[smoke:gui] resize Files\n")
+            move_mouse(monitor, 180, 120)
+            time.sleep(0.1)
+            set_mouse_buttons(monitor, 1)
+            move_mouse(monitor, 80, 60)
+            time.sleep(args.settle)
+            set_mouse_buttons(monitor, 0)
+            resized_files = capture_screen(
+                monitor,
+                os.path.join(args.screenshot_dir, "gui-files-resized.ppm"),
+                args.timeout,
+            )
+            if changed_bytes(files, resized_files) < 10000:
+                raise RuntimeError("resizing Files did not materially change the window")
+
+            tee_stdout("[smoke:gui] close Files and open Shell\n")
+            send_key(monitor, "x")
+            send_key(monitor, "t")
+            time.sleep(args.settle)
+            send_text(monitor, "echo gui_smoke")
+            send_key(monitor, "ret")
+            time.sleep(args.settle)
+            shell = capture_screen(
+                monitor,
+                os.path.join(args.screenshot_dir, "gui-shell.ppm"),
+                args.timeout,
+            )
+            if changed_bytes(desktop, shell) < 10000:
+                raise RuntimeError("opening Shell did not materially change the desktop")
+            for x, y in ((100, 100), (850, 650)):
+                if pixel_at(desktop, x, y) != pixel_at(shell, x, y):
+                    raise RuntimeError("Shell startup damaged the desktop background")
+
+            send_key(monitor, "esc")
             send_key(monitor, "q")
             wait_for_prompt_or_error(log, offset, args.timeout)
 
@@ -220,6 +326,7 @@ def main():
     parser.add_argument("--pidfile", default="/tmp/smallos.pid")
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--settle", type=float, default=0.5)
+    parser.add_argument("--screenshot-dir", default="build/smoke")
     args = parser.parse_args()
 
     try:

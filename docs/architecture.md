@@ -488,6 +488,13 @@ Those copy-style blit syscalls keep every framebuffer page coherent when page
 flipping is available, so dirty-rectangle applications such as `gui` can keep
 using normal backbuffer semantics without exposing stale pixels from a hidden
 page.
+The GUI layers a small clipped canvas, dirty-region operations, and a bounded
+z-order stack over `gfx.c`. Application types provide lifecycle and drawing
+callbacks and allocate private window state only while open. Scene changes are
+composed into the software backbuffer and copied by dirty rectangle; events
+that produce no pixel damage never become implicit full-screen repaints. The
+software mouse pointer is presented as an immediate overlay, so pointer motion
+can restore and redraw its small rectangles independently of the paced scene.
 When the framebuffer backend can page flip, the display owner can also map the
 page-flip aperture with `SYS_DISPLAY_MAP` and present already-rendered hidden
 pages with `SYS_DISPLAY_PRESENT_PAGE`. That path is intentionally lower level

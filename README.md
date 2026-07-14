@@ -327,7 +327,7 @@ make smoke
 make smoke-reboot
 make smoke-halt
 make display-smoke
-make gui-smoke
+make gui-smoke           # GUI screenshots, Files resize, PTY Shell, clean exit
 make usb-storage-smoke
 make usb-ramdisk-fallback-smoke
 make socket-eof-smoke

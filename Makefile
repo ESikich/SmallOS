@@ -436,7 +436,9 @@ KERNEL_OBJS=$(patsubst $(SRC_DIR)/%.asm,$(OBJ_DIR)/%.o,$(KERNEL_ASM_SRCS)) \
             $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(KERNEL_C_SRCS))
 
 USER_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(USER_SRCS))
-GUI_OBJS=$(OBJ_DIR)/user/gui/app.o $(OBJ_DIR)/user/gui/shell_window.o
+GUI_OBJS=$(OBJ_DIR)/user/gui/app.o $(OBJ_DIR)/user/gui/canvas.o \
+	$(OBJ_DIR)/user/gui/region.o $(OBJ_DIR)/user/gui/window.o \
+	$(OBJ_DIR)/user/gui/shell_window.o
 USER_SHELL_OBJS=$(OBJ_DIR)/user/shell/app.o
 USER_LIBC_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(filter $(USER_DIR)/%.c,$(USER_LIBC_SRCS))) \
                $(patsubst $(USER_DIR)/%.asm,$(OBJ_DIR)/user/%.o,$(filter $(USER_DIR)/%.asm,$(USER_LIBC_SRCS)))
@@ -1544,6 +1546,7 @@ gui-smoke:
 		--monitor $(MONITOR_SOCK) \
 		--serial $(SERIAL_LOG) \
 		--pidfile $(PIDFILE) \
+		--screenshot-dir $(SMOKE_DIR) \
 		--timeout $(SMOKE_TIMEOUT)
 
 display-smoke-one:
