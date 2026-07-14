@@ -64,8 +64,9 @@ verifies that the PPM is present, 1024x768, and not blank; for
 framebuffer backend is selected, and also requires a nonblank VGA text
 screenshot. `make gui-smoke` creates a text fixture, launches `/bin/gui` with
 that path, edits and saves it, exercises selection, copy/paste,
-New/Open/Save As, dirty-close confirmation and cancel, then opens and resizes
-Files and runs a command in a PTY-backed Shell. It checks screenshots,
+New/Open/Save As, dirty-close confirmation and cancel, verifies that an active
+modal blocks Start, then opens and resizes Files, creates a folder through the
+shared dialog, and runs a command in a PTY-backed Shell. It checks screenshots,
 untouched background pixels, the saved file contents, clean exit, and return to
 the shell prompt. The mouse resize path
 also crosses a window boundary, covering the cursor/damage transition used by
@@ -73,9 +74,12 @@ the pointer overlay. The Files path creates enough entries to drag its scrollbar
 thumb and verifies that the visible rows change. All guest filesystem fixtures
 created by the smoke are removed before the VM shuts down.
 
-`make gui-unit` provides fast host coverage for regions, damage, clipping,
-cursor drawing, z-order, scrollbar mapping, controls, editor range mutations,
-and event result flags; it also runs at the start of `make test`.
+`make gui-unit` provides fast host coverage for regions, damage, client-local
+clipping, cursor drawing, z-order and window management, registry dispatch,
+taskbar and Start layout, modal and focus behavior, controls, application
+models, editor range mutations, and event result flags. It also checks that
+`app.c` remains a runtime wrapper and application modules do not include
+private runtime headers, and runs at the start of `make test`.
 Keep these checks out of the regular `make test` loop until they have proven
 stable across host QEMU setups.
 

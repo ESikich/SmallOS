@@ -101,6 +101,7 @@ void gui_builtin_draw_system(gfx_surface_t* surface, gui_rect_t bounds,
 
 void gui_builtin_draw_config(gfx_surface_t* surface, gui_rect_t bounds,
                              int perf_visible,
+                             gui_widget_state_t control_state,
                              const gui_builtin_style_t* style,
                              const gui_widget_theme_t* theme,
                              gui_widget_text_fn draw_text) {
@@ -110,7 +111,7 @@ void gui_builtin_draw_config(gfx_surface_t* surface, gui_rect_t bounds,
     draw_text(surface, bounds.x + 12, bounds.y + 12, "GUI", style->subtext);
     gui_widget_checkbox(surface,
         gui_rect_make(bounds.x + 8, bounds.y + 26, bounds.w - 16, 20),
-        "Perf readout", perf_visible, (gui_widget_state_t){0, 0, 1, 0},
+        "Perf readout", perf_visible, control_state,
         theme, draw_text);
 }
 

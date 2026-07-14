@@ -239,6 +239,23 @@ int gui_widget_focus_next(int current, int count, int reverse,
     return -1;
 }
 
+unsigned int gui_widget_command_for_key(const gui_command_t* commands,
+                                        int count, unsigned int key,
+                                        unsigned int modifiers,
+                                        unsigned int modifier_mask) {
+    if (!commands || count <= 0) return 0;
+    for (int i = 0; i < count; i++) {
+        if (commands[i].enabled && commands[i].key == key &&
+            (commands[i].modifiers & modifier_mask) ==
+            (modifiers & modifier_mask)) return commands[i].id;
+    }
+    return 0;
+}
+
+int gui_widget_key_activates(unsigned int key) {
+    return key == 28u || key == 57u;
+}
+
 void gui_text_input_init(gui_text_input_t* input, const char* text) {
     int length = 0;
     if (!input) return;

@@ -331,8 +331,8 @@ make smoke
 make smoke-reboot
 make smoke-halt
 make display-smoke
-make gui-unit            # registry, layout, controls, app models, damage tests
-make gui-smoke           # desktop/window/app workflows, diagnostics, screenshots
+make gui-unit            # framework boundaries, controls, app models, damage tests
+make gui-smoke           # desktop/window/modal workflows, diagnostics, screenshots
 make usb-storage-smoke
 make usb-ramdisk-fallback-smoke
 make socket-eof-smoke

@@ -1,34 +1,44 @@
 #include "config_app.h"
 #include "app_services.h"
-#include "canvas.h"
-#include "framework_internal.h"
 #include "keyboard.h"
-
-#define TITLE_H 18
-#define COL_FRAME 0x00000000u
 
 static void config_draw(gfx_surface_t* surface, gui_app_context_t* context,
                         int mouse_x, int mouse_y) {
-    gui_window_t* window = context->window;
     (void)mouse_x; (void)mouse_y;
     gui_builtin_draw_config(surface,
-        gui_rect_make(window->x, window->y + TITLE_H,
-                      window->w, window->h - TITLE_H),
+        gui_rect_make(0, 0, (int)surface->width, (int)surface->height),
         gui_app_services_performance_visible(),
+        (gui_widget_state_t){0, gui_app_captured_control(context) == 1,
+                             gui_app_focused_control(context) == 1, 0},
         gui_app_services_builtin_style(), gui_app_services_widget_theme(),
         gui_app_services_draw_text);
-    gui_canvas_rect(surface, window->x, window->y,
-                    window->w, window->h, COL_FRAME);
 }
 
 static unsigned int config_event(gui_app_context_t* context,
                                  const gui_app_event_t* event) {
-    gui_window_t* window = context->window;
-    if ((event->type == GUI_APP_EVENT_POINTER_DOWN &&
-         event->x >= 8 && event->x < window->w - 8 &&
-         event->y >= 26 && event->y < 46) ||
-        (event->type == GUI_APP_EVENT_KEY &&
-         (event->key == KEY_ENTER || event->key == KEY_SPACE))) {
+    int width = 0;
+    gui_app_client_size(context, &width, 0);
+    int inside = event->x >= 8 && event->x < width - 8 &&
+                 event->y >= 26 && event->y < 46;
+    if (event->type == GUI_APP_EVENT_POINTER_DOWN && inside) {
+        gui_app_focus_control(context, 1);
+        gui_app_capture_pointer(context, 1);
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->type == GUI_APP_EVENT_POINTER_UP &&
+        gui_app_captured_control(context) == 1) {
+        gui_app_release_pointer(context);
+        if (!inside) return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+        gui_app_services_toggle_performance();
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->type == GUI_APP_EVENT_KEY && event->key == KEY_TAB) {
+        gui_app_focus_control(context, 1);
+        return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
+    }
+    if (event->type == GUI_APP_EVENT_KEY &&
+        gui_app_focused_control(context) == 1 &&
+        (event->key == KEY_ENTER || event->key == KEY_SPACE)) {
         gui_app_services_toggle_performance();
         return GUI_APP_RESULT_HANDLED | GUI_APP_RESULT_REDRAW;
     }

@@ -1,10 +1,5 @@
 #include "system_app.h"
 #include "app_services.h"
-#include "canvas.h"
-#include "framework_internal.h"
-
-#define TITLE_H 18
-#define COL_FRAME 0x00000000u
 #define COL_SUBTEXT 0x00404040u
 
 static void copy_text(char* dst, const char* src, unsigned int cap) {
@@ -40,31 +35,27 @@ static void append_value(char* line, unsigned int capacity,
 
 static void system_draw(gfx_surface_t* surface, gui_app_context_t* context,
                         int mouse_x, int mouse_y) {
-    gui_window_t* window = context->window;
     gui_app_perf_snapshot_t perf;
     char line[96];
     (void)mouse_x; (void)mouse_y;
     gui_builtin_draw_system(surface,
-        gui_rect_make(window->x, window->y + TITLE_H,
-                      window->w, window->h - TITLE_H),
+        gui_rect_make(0, 0, (int)surface->width, (int)surface->height),
         gui_app_services_builtin_style(), gui_app_services_draw_text);
     if (gui_app_services_performance_visible()) {
         gui_app_services_performance_snapshot(&perf);
         copy_text(line, "Compose ", sizeof(line));
         append_value(line, sizeof(line), "", perf.composed_pixels);
         append_value(line, sizeof(line), "  Present ", perf.presented_pixels);
-        gui_app_services_draw_text(surface, window->x + 8,
-            window->y + window->h - 30, line, COL_SUBTEXT);
+        gui_app_services_draw_text(surface, 8,
+            (int)surface->height - 30, line, COL_SUBTEXT);
         copy_text(line, "Dirty ", sizeof(line));
         append_value(line, sizeof(line), "", perf.dirty_regions);
         append_value(line, sizeof(line), " Full ", perf.full_repaints);
         append_value(line, sizeof(line), " Idle ", perf.idle_wakeups);
         append_value(line, sizeof(line), " PTY ", perf.pty_wakeups);
-        gui_app_services_draw_text(surface, window->x + 8,
-            window->y + window->h - 17, line, COL_SUBTEXT);
+        gui_app_services_draw_text(surface, 8,
+            (int)surface->height - 17, line, COL_SUBTEXT);
     }
-    gui_canvas_rect(surface, window->x, window->y,
-                    window->w, window->h, COL_FRAME);
 }
 
 static const gui_app_descriptor_t DESCRIPTOR = {

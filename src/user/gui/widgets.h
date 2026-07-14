@@ -51,6 +51,15 @@ typedef struct {
     int width;
 } gui_table_column_t;
 
+typedef struct gui_command {
+    unsigned int id;
+    const char* label;
+    unsigned int key;
+    unsigned int modifiers;
+    int enabled;
+    int checked;
+} gui_command_t;
+
 int gui_widget_hit(gui_rect_t bounds, int x, int y);
 void gui_widget_label(gfx_surface_t* surface, gui_rect_t bounds,
                       const char* text, unsigned int color,
@@ -108,6 +117,11 @@ void gui_widget_modal(gfx_surface_t* surface, gui_rect_t bounds,
                       gui_widget_text_fn draw_text);
 int gui_widget_focus_next(int current, int count, int reverse,
                           const unsigned char* enabled);
+unsigned int gui_widget_command_for_key(const gui_command_t* commands,
+                                        int count, unsigned int key,
+                                        unsigned int modifiers,
+                                        unsigned int modifier_mask);
+int gui_widget_key_activates(unsigned int key);
 void gui_text_input_init(gui_text_input_t* input, const char* text);
 int gui_text_input_insert(gui_text_input_t* input, char ch);
 int gui_text_input_command(gui_text_input_t* input,

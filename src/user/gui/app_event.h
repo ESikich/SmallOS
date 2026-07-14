@@ -16,6 +16,8 @@ typedef enum {
     GUI_APP_EVENT_FOCUS_LOST,
     GUI_APP_EVENT_FILE_SELECTED,
     GUI_APP_EVENT_FILE_CANCELLED,
+    GUI_APP_EVENT_FD_READY,
+    GUI_APP_EVENT_DIALOG_RESULT,
 } gui_app_event_type_t;
 
 typedef struct {
@@ -32,6 +34,11 @@ typedef struct {
     uint32_t ticks;
     const char* path;
     unsigned int file_filter;
+    int fd;
+    unsigned int fd_events;
+    unsigned int request_id;
+    unsigned int button_id;
+    const char* text;
 } gui_app_event_t;
 
 enum {

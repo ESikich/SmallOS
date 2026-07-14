@@ -18,6 +18,9 @@ typedef struct gui_native_ui {
 
 void gui_native_apps_init(const gui_native_ui_t* ui);
 const gui_app_descriptor_t* gui_native_app_descriptor(gui_app_id_t id);
+const gui_app_descriptor_t* gui_viewer_app_descriptor(void);
+const gui_app_descriptor_t* gui_tasks_app_descriptor(void);
+const gui_app_descriptor_t* gui_network_app_descriptor(void);
 void gui_native_network_pref_set(const char* key, const char* value);
 const char* gui_native_network_pref_get(const char* key);
 

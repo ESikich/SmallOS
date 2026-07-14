@@ -22,13 +22,9 @@ typedef enum gui_app_id {
 /* Window storage is owned by the window manager. Applications use this opaque
  * handle only through the context and framework operations below. */
 typedef struct gui_window gui_window_t;
+typedef struct gui_app_context gui_app_context_t;
 
 typedef unsigned int gui_app_event_result_t;
-
-typedef struct gui_app_context {
-    gui_window_t* window;
-    void* state;
-} gui_app_context_t;
 
 typedef struct gui_app_descriptor {
     const char* title;
@@ -50,7 +46,27 @@ typedef struct gui_app_descriptor {
     const char* launcher_label;
     int launcher_order;
     int show_in_start;
+    int (*wait_fd)(gui_app_context_t* context);
 } gui_app_descriptor_t;
+
+#define GUI_DIALOG_TEXT_CAPACITY 128
+#define GUI_DIALOG_BUTTON_CAPACITY 3
+
+typedef struct gui_dialog_button {
+    unsigned int id;
+    const char* label;
+    int is_default;
+    int is_cancel;
+} gui_dialog_button_t;
+
+typedef struct gui_dialog_request {
+    unsigned int request_id;
+    const char* title;
+    const char* message;
+    const char* initial_text;
+    const gui_dialog_button_t* buttons;
+    unsigned int button_count;
+} gui_dialog_request_t;
 
 typedef enum gui_file_filter {
     GUI_FILE_FILTER_ANY = 0,
@@ -81,6 +97,12 @@ const gui_app_descriptor_t* gui_app_registry_launcher_at(unsigned int index);
 
 void* gui_app_state(gui_app_context_t* context);
 gui_window_t* gui_app_window(gui_app_context_t* context);
+void gui_app_client_size(gui_app_context_t* context, int* width, int* height);
+int gui_app_focused_control(gui_app_context_t* context);
+void gui_app_focus_control(gui_app_context_t* context, int control_id);
+int gui_app_captured_control(gui_app_context_t* context);
+void gui_app_capture_pointer(gui_app_context_t* context, int control_id);
+void gui_app_release_pointer(gui_app_context_t* context);
 void gui_app_set_title(gui_app_context_t* context, const char* title);
 void gui_app_invalidate(gui_app_context_t* context,
                         int x, int y, int width, int height);
@@ -91,5 +113,7 @@ int gui_app_open_file_picker(gui_app_context_t* context,
                              gui_file_request_mode_t mode,
                              gui_file_filter_t filter,
                              const char* initial_path);
+int gui_app_open_dialog(gui_app_context_t* context,
+                        const gui_dialog_request_t* request);
 
 #endif

@@ -461,10 +461,13 @@ text output is visible, and fails if the framebuffer backend is selected
 anyway. `make gui-smoke` boots the normal framebuffer image, creates a text
 fixture, exercises the windowed editor's selection, clipboard, New, Open,
 Save As, ordinary save, and guarded-close paths, captures screenshots while
-opening, scrollbar-dragging, and mouse-resizing Files, then runs a command in a
-PTY-backed Shell. It verifies editor persistence, intact background pixels,
+opening, scrollbar-dragging, and mouse-resizing Files, verifies shared-modal
+input capture and Files folder creation, then runs a command in a PTY-backed
+Shell. It verifies editor persistence, cancellation recovery, intact background pixels,
 clean exit, return to the shell prompt, and removal of its temporary guest
-filesystem fixtures. `make gui-unit` runs the fast host-side GUI/model tests.
+filesystem fixtures. `make gui-unit` runs the fast host-side GUI/model tests,
+including registry, window-manager, modal/control, client-surface, application
+model, and module-boundary coverage.
 `make display-smoke` runs all three display smokes.
 The visual screenshot checks use QEMU's VNC display backend by default so the
 VM can stay daemonized while still rendering screenshots. They are

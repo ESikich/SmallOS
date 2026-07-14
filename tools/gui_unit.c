@@ -1,6 +1,8 @@
 #include "gui/region.h"
 #include "gui/window.h"
+#include "gui/window_manager.h"
 #include "gui/canvas.h"
+#include "gui/client_surface.h"
 #include "gui/cursor.h"
 #include "gui/damage.h"
 #include "gui/layout.h"
@@ -76,6 +78,34 @@ static void test_window_stack(void) {
           gui_window_stack_at(&stack, 0) == 5);
     gui_window_stack_remove(&stack, 2);
     check("window remove", gui_window_stack_top(&stack) == 5);
+}
+
+static void test_window_manager(void) {
+    gui_window_t* window;
+    int x, y, width, height;
+    gui_wm_init();
+    window = gui_wm_at(2);
+    gui_wm_set_active(window, 1);
+    gui_wm_set_app_id(window, GUI_APP_EDITOR);
+    gui_wm_set_geometry(window, 10, 20, 320, 200);
+    gui_wm_set_restore_geometry(window, 4, 8, 240, 160);
+    gui_wm_set_title(window, "Unit");
+    gui_wm_set_focused_control(window, 7);
+    gui_wm_set_captured_control(window, 8);
+    gui_wm_set_deadline(window, 123u);
+    gui_wm_restore_geometry(window, &x, &y, &width, &height);
+    check("opaque window manager state",
+          gui_wm_index(window) == 2 && gui_wm_active(window) &&
+          gui_wm_app_id(window) == GUI_APP_EDITOR &&
+          gui_wm_x(window) == 10 && gui_wm_y(window) == 20 &&
+          gui_wm_width(window) == 320 && gui_wm_height(window) == 200 &&
+          x == 4 && y == 8 && width == 240 && height == 160 &&
+          gui_wm_title(window)[0] == 'U' &&
+          gui_wm_focused_control(window) == 7 &&
+          gui_wm_captured_control(window) == 8 &&
+          gui_wm_deadline(window) == 123u);
+    gui_wm_reset(window);
+    check("window manager reset", !gui_wm_active(window));
 }
 
 static void test_registry_and_desktop(void) {
@@ -215,6 +245,21 @@ static void test_widgets_and_canvas(void) {
     check("focus traversal skips disabled",
           gui_widget_focus_next(0, 4, 0, enabled) == 2 &&
           gui_widget_focus_next(0, 4, 1, enabled) == 3);
+    {
+        gui_command_t commands[] = {
+            {10u, "Open", 24u, 2u, 1, 0},
+            {11u, "Save", 31u, 2u, 0, 0},
+        };
+        check("command shortcut resolves enabled action",
+              gui_widget_command_for_key(commands, 2, 24u, 2u,
+                                         7u) == 10u &&
+              gui_widget_command_for_key(commands, 2, 31u, 2u,
+                                         7u) == 0u);
+        check("button activation keys",
+              gui_widget_key_activates(28u) &&
+              gui_widget_key_activates(57u) &&
+              !gui_widget_key_activates(1u));
+    }
     for (int i = 0; i < 64; i++) pixels[i] = 0;
     {
         gui_widget_theme_t theme = {1, 2, 3, 4, 5, 6, 7};
@@ -222,6 +267,30 @@ static void test_widgets_and_canvas(void) {
                             1, 2, &theme);
     }
     check("progress clamps and fills", pixels[1 + 1 * 8] == 7);
+}
+
+static void test_client_surface(void) {
+    unsigned int pixels[20 * 12] = {0};
+    gfx_surface_t desktop = {20, 12, 20, pixels};
+    gfx_surface_t client;
+    gui_rect_t clip;
+    gui_rect_t screen_clip = gui_rect_make(6, 5, 5, 4);
+    int x, y;
+    check("client surface translation and clip",
+          gui_client_surface_prepare(&desktop, gui_rect_make(4, 3, 10, 6),
+                                     &screen_clip, &client, &clip) &&
+          client.pixels == &pixels[3 * 20 + 4] &&
+          client.width == 10 && client.height == 6 &&
+          client.pitch_pixels == 20 &&
+          rect_equal(clip, gui_rect_make(2, 2, 5, 4)));
+    gui_client_pointer(gui_rect_make(4, 3, 10, 6), 7, 5, &x, &y);
+    check("client pointer translation", x == 3 && y == 2);
+    gui_client_pointer(gui_rect_make(4, 3, 10, 6), 2, 5, &x, &y);
+    check("outside client pointer sentinel", x == -1 && y == -1);
+    check("partially visible client clipping",
+          gui_client_surface_prepare(&desktop, gui_rect_make(16, 9, 10, 8),
+                                     0, &client, &clip) &&
+          rect_equal(clip, gui_rect_make(0, 0, 4, 3)));
 }
 
 static void test_editor_model(void) {
@@ -263,9 +332,11 @@ static void test_editor_model(void) {
 int main(void) {
     test_regions();
     test_window_stack();
+    test_window_manager();
     test_registry_and_desktop();
     test_occlusion();
     test_widgets_and_canvas();
+    test_client_surface();
     test_native_models();
     test_editor_model();
     return failures ? 1 : 0;

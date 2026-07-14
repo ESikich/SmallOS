@@ -436,19 +436,31 @@ KERNEL_OBJS=$(patsubst $(SRC_DIR)/%.asm,$(OBJ_DIR)/%.o,$(KERNEL_ASM_SRCS)) \
             $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(KERNEL_C_SRCS))
 
 USER_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(USER_SRCS))
-GUI_OBJS=$(OBJ_DIR)/user/gui/app.o $(OBJ_DIR)/user/gui/app_registry.o \
+GUI_OBJS=$(OBJ_DIR)/user/gui/app.o $(OBJ_DIR)/user/gui/runtime.o \
+	$(OBJ_DIR)/user/gui/app_registry.o \
 	$(OBJ_DIR)/user/gui/about_app.o $(OBJ_DIR)/user/gui/config_app.o \
-	$(OBJ_DIR)/user/gui/builtin_apps.o $(OBJ_DIR)/user/gui/desktop_model.o \
+	$(OBJ_DIR)/user/gui/builtin_apps.o $(OBJ_DIR)/user/gui/builtin_registry.o \
+	$(OBJ_DIR)/user/gui/client_surface.o $(OBJ_DIR)/user/gui/desktop_model.o \
+	$(OBJ_DIR)/user/gui/compositor.o \
+	$(OBJ_DIR)/user/gui/desktop_shell.o \
 	$(OBJ_DIR)/user/gui/canvas.o $(OBJ_DIR)/user/gui/editor_app.o \
 	$(OBJ_DIR)/user/gui/cursor.o $(OBJ_DIR)/user/gui/damage.o \
 	$(OBJ_DIR)/user/gui/file_picker.o $(OBJ_DIR)/user/gui/files_app.o \
+	$(OBJ_DIR)/user/gui/framework_runtime.o \
 	$(OBJ_DIR)/user/gui/layout.o \
-	$(OBJ_DIR)/user/gui/native_apps.o $(OBJ_DIR)/user/gui/network_model.o \
+	$(OBJ_DIR)/user/gui/modal_manager.o \
+	$(OBJ_DIR)/user/gui/native_common.o $(OBJ_DIR)/user/gui/viewer_app.o \
+	$(OBJ_DIR)/user/gui/tasks_app.o $(OBJ_DIR)/user/gui/network_app.o \
+	$(OBJ_DIR)/user/gui/network_model.o \
 	$(OBJ_DIR)/user/gui/system_app.o \
-	$(OBJ_DIR)/user/gui/occlusion.o $(OBJ_DIR)/user/gui/region.o \
+	$(OBJ_DIR)/user/gui/occlusion.o $(OBJ_DIR)/user/gui/preferences.o \
+	$(OBJ_DIR)/user/gui/region.o \
 	$(OBJ_DIR)/user/gui/tasks_model.o $(OBJ_DIR)/user/gui/viewer_model.o \
 	$(OBJ_DIR)/user/gui/window.o \
-	$(OBJ_DIR)/user/gui/widgets.o $(OBJ_DIR)/user/gui/shell_window.o \
+	$(OBJ_DIR)/user/gui/widgets.o $(OBJ_DIR)/user/gui/theme.o \
+	$(OBJ_DIR)/user/gui/window_manager.o \
+	$(OBJ_DIR)/user/gui/shell_app.o \
+	$(OBJ_DIR)/user/gui/shell_window.o \
 	$(OBJ_DIR)/user/editor_model.o $(OBJ_DIR)/user/image_bmp.o
 USER_SHELL_OBJS=$(OBJ_DIR)/user/shell/app.o
 USER_LIBC_OBJS=$(patsubst $(USER_DIR)/%.c,$(OBJ_DIR)/user/%.o,$(filter $(USER_DIR)/%.c,$(USER_LIBC_SRCS))) \
@@ -1335,10 +1347,14 @@ QEMU_USB_STORAGE_FLAGS=-drive if=none,id=stick,format=raw,file=$(IMG_FILE) \
 .PHONY: all image img artifacts dirs deps fractint-source wolf3d-shareware-data wolf3d-source-probe check-third-party dyn-size-report dynamic-link-check dyn-reloc-inventory dynlink-negative-smoke run run-gtk run-sdl run-tap run-headless run-headless-tap run-usb-storage run-headless-usb-storage run-usb-storage-fallback run-headless-usb-storage-fallback usb-storage-smoke usb-ramdisk-fallback-smoke gui-unit test framebuffer-smoke vga-smoke gui-smoke display-smoke display-smoke-one socket-eof-smoke socket-parallel-smoke ftp-smoke ftp-loop-smoke cserve-smoke busybox-net-smoke tinyssh-smoke smoke smoke-reboot smoke-halt clean boot-layout-check image-layout-check qemu-image usb-image usb-vbe-image vmdk esxi-vmdk esxi-vmdk-build esxi-deploy esxi-serial-log esxi-smoke verify verify-display verify-network verify-full reset-disk tinycc-host tinycc-host-clean tinycc-smalos busybox-smalos binutils-smalos tinyssh-smalos FORCE
 
 gui-unit: | dirs
+	@! grep -Eq 'gfx_open|SYS_INPUT|draw_desktop|compose|modal|gui_wm_' src/user/gui/app.c
+	@! grep -l 'framework_internal.h' src/user/gui/*_app.c >/dev/null 2>&1
 	cc -std=c11 -O2 -Wno-pointer-to-int-cast -Wno-builtin-declaration-mismatch \
 		-Isrc/kernel -Isrc/user/include -Isrc/user/internal -Isrc/user \
 		-Isrc/user/gui tools/gui_unit.c src/user/gui/region.c \
-		src/user/gui/window.c src/user/gui/canvas.c src/user/gui/cursor.c \
+		src/user/gui/window.c src/user/gui/window_manager.c \
+		src/user/gui/canvas.c src/user/gui/client_surface.c \
+		src/user/gui/cursor.c \
 		src/user/gui/damage.c src/user/gui/layout.c src/user/gui/widgets.c \
 		src/user/gui/app_registry.c src/user/gui/desktop_model.c \
 		src/user/gui/network_model.c src/user/gui/occlusion.c \

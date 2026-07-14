@@ -301,7 +301,9 @@ def run_gui_smoke(args):
             )
             if changed_bytes(editor, confirm) < 1000:
                 raise RuntimeError("dirty editor close did not show confirmation")
-            send_key(monitor, "esc")
+            # The desktop modal consumes Ctrl+Esc before the Start shortcut;
+            # its Escape component still cancels the dialog.
+            send_key(monitor, "ctrl-esc")
             time.sleep(args.settle)
             edited = capture_screen(
                 monitor,
@@ -410,6 +412,22 @@ def run_gui_smoke(args):
             if changed_bytes(desktop, files) < 10000:
                 raise RuntimeError("opening Files did not materially change the desktop")
 
+            tee_stdout("[smoke:gui] create folder through shared modal\n")
+            send_key(monitor, "ctrl-n")
+            time.sleep(args.settle)
+            files_dialog = capture_screen(
+                monitor,
+                os.path.join(args.screenshot_dir, "gui-files-new-folder.ppm"),
+                args.timeout,
+            )
+            if changed_bytes(files, files_dialog) < 1000:
+                raise RuntimeError("Files New Folder did not show the shared modal")
+            for _ in range(10):
+                send_key(monitor, "backspace")
+            send_text(monitor, "gui_modal_dir")
+            send_key(monitor, "ret")
+            time.sleep(args.settle)
+
             tee_stdout("[smoke:gui] scroll Files list\n")
             send_key(monitor, "pgdn")
             time.sleep(args.settle)
@@ -492,6 +510,9 @@ def run_gui_smoke(args):
                 send_text(monitor, f"rmdir gui_scroll_{index}")
                 send_key(monitor, "ret")
                 offset = wait_for_prompt_or_error(log, offset, args.timeout)
+            send_text(monitor, "rmdir gui_modal_dir")
+            send_key(monitor, "ret")
+            offset = wait_for_prompt_or_error(log, offset, args.timeout)
             for path in ("tmp/gui_edit.txt", "tmp/gui_picker.txt"):
                 send_text(monitor, f"rm {path}")
                 send_key(monitor, "ret")

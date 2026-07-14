@@ -497,9 +497,22 @@ size constraints, tick policy, and callbacks. Public application callbacks use
 `gui_app_context_t`; the public window value is an opaque handle. Files,
 Editor, System, Config, About, Viewer, Tasks, and Network are compiled as
 application modules, while the desktop loop owns policy rather than
-application-specific event branches. Context services provide state access,
-dynamic titles, local invalidation, close requests, registered-app launching,
-and the framework-owned filtered file picker.
+application-specific event branches. Applications draw into clipped,
+client-local surfaces and cannot access mutable window or compositor fields.
+The theme module owns the fixed bitmap font, retro palette, text renderer, and
+shared control styles; preference parsing and persistence remain separate.
+The complete window record, fixed eight-slot array, z-order stack, focused
+window index, and hit testing are private to the window manager; other desktop
+services manipulate them through internal accessors.
+Context services provide state and client-size access, focus and pointer
+capture, dynamic titles, local invalidation, close requests, registered-app
+launching, and framework-owned filtered file-picker and dialog modals.
+The framework runtime is the sole constructor of opaque application contexts
+and owns descriptor lookup, lifecycle dispatch, timer deadlines, generic wait
+FD enumeration, and FD-ready delivery. The desktop shell separately owns
+wallpaper, shortcuts, Start, taskbar paging, clock state, and notices. The modal
+manager copies requests into bounded storage, captures all desktop input while
+active, and keeps result paths or text alive only for the result callback.
 
 The bottom taskbar, generated Start menu, window stacking, minimize/restore,
 maximize, snapping, Alt+Tab, and the fixed eight-window limit form the desktop
@@ -514,12 +527,21 @@ file-persistence model. GUI editor selections are anchor/caret ranges; keyboard
 and captured pointer motion update the caret, while range deletion stays in the
 shared model. The desktop owns an internal clipboard shared by editor windows,
 so no kernel clipboard ABI is required. Reusable layout helpers compute inset,
-stacked, and equal-row control geometry. The shared file-picker state owns
+stacked, and equal-row control geometry. Only one desktop-wide modal is active
+at a time. The modal manager owns copied picker/dialog requests, captures input
+before the desktop shell, dismisses silently with its owner, and dispatches
+transient button/text or picker results. The shared file-picker state owns
 directory enumeration, filename input, focus traversal, scrolling, and pointer
 capture while the hosting application decides what an accepted Open or Save As
 path means. Composition walks windows front-to-back and subtracts opaque frame
 and client regions before drawing lower layers. Shadows stay non-opaque, and a
 bounded-region overflow safely falls back to the original dirty rectangle.
+The current compositor module owns dirty-region storage, rolling and cumulative
+performance counters, and paced-frame deadlines. Scene traversal, cursor and
+dirty-rectangle presentation, drag overlays, compatibility handoff, and the
+combined input/deadline loop still reside in the desktop runtime; they are not
+application-visible and remain the principal runtime responsibilities left to
+extract.
 The second full-screen graphics presentation surface was removed; strided
 display blits now present directly from the backbuffer, with bounded scratch
 allocation reserved for operations that truly require packed pixels.
