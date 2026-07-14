@@ -493,13 +493,21 @@ software cursor, and z-order stack over `gfx.c`. Application types receive
 keyboard, pointer, wheel, resize, tick, and guarded-close events and return
 explicit handled/redraw/close results. Private state exists only while its
 window is open. Scene changes are copied by dirty rectangle; events that
-produce no pixel damage never become implicit full-screen repaints. The mouse
+produce no pixel damage never become implicit full-screen repaints. Dirty
+scene rectangles are presented around the software cursor footprint before the
+cursor overlay is refreshed, preventing application ticks such as editor caret
+blinks from briefly replacing the pointer with underlying scene pixels. The mouse
 pointer remains an immediate overlay that restores and redraws independently
 of the paced scene. The GUI and terminal editors share one line-buffer and
 file-persistence model. GUI editor selections are anchor/caret ranges; keyboard
 and captured pointer motion update the caret, while range deletion stays in the
 shared model. The desktop owns an internal clipboard shared by editor windows,
-so no kernel clipboard ABI is required.
+so no kernel clipboard ABI is required. Reusable layout helpers compute inset,
+stacked, and equal-row control geometry. The shared file-picker state owns
+directory enumeration, filename input, focus traversal, scrolling, and pointer
+capture while the hosting application decides what an accepted Open or Save As
+path means. System, Config, and About presentation lives in a separate built-in
+application module rather than the desktop event loop.
 When the framebuffer backend can page flip, the display owner can also map the
 page-flip aperture with `SYS_DISPLAY_MAP` and present already-rendered hidden
 pages with `SYS_DISPLAY_PRESENT_PAGE`. That path is intentionally lower level

@@ -3,11 +3,15 @@
 `/bin/gui` still enters through `src/user/gui.c`, but the desktop code now lives
 under this folder so the GUI can grow into separate modules.
 
-- `app.c`: desktop composition, window chrome, built-in applications, and the
-  main event loop.
+- `app.c`: desktop composition, window chrome, Files/Shell/Editor hosting, and
+  the main event loop.
+- `builtin_apps.c`: System, Config, and About presentation.
 - `canvas.c`: clipped pixel, rectangle, and line drawing primitives.
 - `cursor.c`: software pointer shape and bounds.
 - `damage.c`: bounded dirty-region collection and full-repaint fallback.
+- `file_picker.c`: reusable Open/Save As state, directory navigation, focus,
+  filename entry, and pointer/keyboard routing.
+- `layout.c`: inset, vertical-stack, and equal-row layout geometry.
 - `region.c`: rectangle intersection, clipping, union, and dirty-region merging.
 - `widgets.c`: buttons, checkboxes, scrollbars, labels, text fields, and the
   reusable single-line input model.
@@ -52,11 +56,13 @@ without global control state.
 Run `gui <text-path>` or double-click a text-like Files row to open a windowed
 editor. It supports character insertion, Enter, Tab, Backspace, Delete, arrow
 keys, Home/End, Page Up/Down, mouse caret placement, wheel scrolling, resize,
-F2 or Ctrl+S save, horizontal scrolling, and a blinking caret. Drag across text
+F2 or Ctrl+S save, horizontal scrolling, and a blinking caret. Its toolbar and
+Ctrl+N/Ctrl+O/Ctrl+Shift+S shortcuts provide New, Open, and Save As. Untitled
+documents route ordinary Save through the shared file picker. Drag across text
 or use Shift with navigation keys to select it. Ctrl+A selects all, and
 Ctrl+C/Ctrl+X/Ctrl+V use a clipboard shared by GUI editor windows. Closing a
 dirty document offers Save, Discard, and Cancel; save failures keep the window
-open.
+open. The same guard runs before New or Open replaces a dirty document.
 
 The line and file model is shared with `/bin/edit`, which remains the terminal
 editor and keeps its batch-command interface.
@@ -74,7 +80,9 @@ composed desktop surface. Pointer motion restores the old cursor rectangle and
 draws the new one without waiting for the paced window frame. Hover changes
 invalidate only controls whose appearance changes, such as desktop icons and
 Files rows. In particular, crossing an undecorated window boundary records no
-scene damage, which prevents a scene repaint from briefly covering the cursor.
+scene damage. Dirty rectangles that touch the cursor are split around its
+footprint, then the cursor rectangle is presented once from the newly composed
+scene, so application redraws cannot briefly expose the pixels beneath it.
 
 ## Config And Pacing
 

@@ -3,6 +3,7 @@
 #include "gui/canvas.h"
 #include "gui/cursor.h"
 #include "gui/damage.h"
+#include "gui/layout.h"
 #include "gui/widgets.h"
 #include "gui/app_event.h"
 #include "editor_model.h"
@@ -23,12 +24,26 @@ static int rect_equal(gui_rect_t a, gui_rect_t b) {
 static void test_regions(void) {
     gui_rect_t a = gui_rect_make(-4, 2, 10, 8);
     gui_rect_t b = gui_rect_make(5, 4, 8, 8);
+    gui_rect_t pieces[4];
+    int piece_count;
     check("region clip", rect_equal(gui_rect_clip(a, 20, 20),
                                      gui_rect_make(0, 2, 6, 8)));
     check("region intersection", gui_rect_intersects(a, b));
     check("region compact merge", gui_rect_should_merge(a, b));
     check("region union", rect_equal(gui_rect_union(a, b),
                                       gui_rect_make(-4, 2, 17, 10)));
+    piece_count = gui_rect_exclude(gui_rect_make(0, 0, 20, 20),
+                                   gui_rect_make(8, 6, 4, 8), pieces);
+    check("region excludes cursor footprint",
+          piece_count == 4 &&
+          rect_equal(pieces[0], gui_rect_make(0, 0, 20, 6)) &&
+          rect_equal(pieces[1], gui_rect_make(0, 14, 20, 6)) &&
+          rect_equal(pieces[2], gui_rect_make(0, 6, 8, 8)) &&
+          rect_equal(pieces[3], gui_rect_make(12, 6, 8, 8)));
+    piece_count = gui_rect_exclude(gui_rect_make(0, 0, 5, 5),
+                                   gui_rect_make(10, 10, 2, 2), pieces);
+    check("region preserves non-overlap",
+          piece_count == 1 && rect_equal(pieces[0], gui_rect_make(0, 0, 5, 5)));
     {
         gui_damage_t damage;
         gui_damage_clear(&damage);
@@ -62,6 +77,8 @@ static void test_widgets_and_canvas(void) {
     gfx_surface_t surface = {8, 8, 8, pixels};
     gui_rect_t thumb;
     gui_text_input_t input;
+    gui_vlayout_t layout;
+    gui_rect_t cell;
     for (int i = 0; i < 64; i++) pixels[i] = 0;
     gui_canvas_set_clip(gui_rect_make(2, 2, 3, 3));
     gui_canvas_fill_rect(&surface, 0, 0, 8, 8, 7);
@@ -80,6 +97,14 @@ static void test_widgets_and_canvas(void) {
     check("scroll drag maps offset",
           gui_widget_scroll_offset(gui_rect_make(0, 0, 10, 100),
                                    100, 20, 70, 10) == 60);
+    gui_vlayout_begin(&layout, gui_rect_make(10, 20, 100, 80), 4);
+    check("vertical layout advances",
+          rect_equal(gui_vlayout_take(&layout, 12),
+                     gui_rect_make(10, 20, 100, 12)) &&
+          rect_equal(gui_vlayout_take(&layout, 10),
+                     gui_rect_make(10, 36, 100, 10)));
+    cell = gui_layout_cell(gui_rect_make(0, 0, 100, 20), 3, 5, 1);
+    check("row layout cells", cell.x == 35 && cell.w == 30);
     gui_text_input_init(&input, "ac");
     gui_text_input_command(&input, GUI_TEXT_INPUT_LEFT);
     gui_text_input_insert(&input, 'b');

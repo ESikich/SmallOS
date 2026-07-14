@@ -310,6 +310,25 @@ def run_gui_smoke(args):
             send_text(monitor, "_copy_")
             send_key(monitor, "ctrl-v")
             send_key(monitor, "f2")
+            tee_stdout("[smoke:gui] new, Save As, and Open workflows\n")
+            send_key(monitor, "ctrl-n")
+            send_text(monitor, "newdocvalue")
+            send_key(monitor, "ctrl-s")
+            time.sleep(args.settle)
+            picker_dialog = capture_screen(
+                monitor,
+                os.path.join(args.screenshot_dir, "gui-editor-save-as.ppm"),
+                args.timeout,
+            )
+            if changed_bytes(selected, picker_dialog) < 1000:
+                raise RuntimeError("Save As did not show the shared file picker")
+            send_key(monitor, "tab")
+            send_text(monitor, "tmp/gui_picker.txt")
+            send_key(monitor, "ret")
+            send_key(monitor, "ctrl-o")
+            send_key(monitor, "down")
+            send_key(monitor, "down")
+            send_key(monitor, "ret")
             send_key(monitor, "esc")
             time.sleep(args.settle)
             desktop = capture_screen(
@@ -384,12 +403,30 @@ def run_gui_smoke(args):
             tee_stdout("[smoke:gui] verify editor persistence\n")
             send_text(monitor, "cat tmp/gui_edit.txt")
             send_key(monitor, "ret")
-            wait_for_marker_or_error(
+            offset = wait_for_marker_or_error(
                 log,
                 offset,
                 "saved_dirty_seed_copy_saved_dirty_seed",
                 args.timeout,
             )
+            send_text(monitor, "cat tmp/gui_picker.txt")
+            send_key(monitor, "ret")
+            offset = wait_for_marker_or_error(
+                log,
+                offset,
+                "newdocvalue",
+                args.timeout,
+            )
+
+            tee_stdout("[smoke:gui] clean fixtures\n")
+            for index in range(12):
+                send_text(monitor, f"rmdir gui_scroll_{index}")
+                send_key(monitor, "ret")
+                offset = wait_for_prompt_or_error(log, offset, args.timeout)
+            for path in ("tmp/gui_edit.txt", "tmp/gui_picker.txt"):
+                send_text(monitor, f"rm {path}")
+                send_key(monitor, "ret")
+                offset = wait_for_prompt_or_error(log, offset, args.timeout)
 
         tee_stdout("[smoke:gui] PASS\n")
         ok = True

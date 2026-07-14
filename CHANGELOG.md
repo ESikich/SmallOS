@@ -18,6 +18,10 @@ wrappers in `src/user/posix`.
   * Made Files open text-like entries in Editor windows and added `gui <text-path>` startup support while retaining external BMP/executable launching and the terminal `/bin/edit` interface.
   * Kept terminal Ctrl+C signaling intact while allowing an exclusive display/input owner to consume structured Ctrl+C events for GUI copy shortcuts without a second terminal-side signal.
   * Added host GUI/model unit coverage and expanded `make gui-smoke` to verify editing, selection, copy/paste persistence, scrollbar dragging, resize, guarded close, Shell integration, and cursor/background damage behavior.
+  * Made dirty-scene presentation exclude the software cursor footprint, eliminating pointer flicker during editor caret-blink and other application redraws.
+  * Made `make gui-smoke` remove its temporary editor files and Files-scrollbar directories before shutting down the guest.
+  * Added reusable layout geometry and a shared, keyboard-focusable file picker with directory navigation, filename entry, wheel/page scrolling, and draggable scrollbar support; Editor now provides New, Open, and Save As toolbar actions plus Ctrl+N, Ctrl+O, and Ctrl+Shift+S shortcuts.
+  * Moved System, Config, and About presentation out of the desktop event-loop source into a focused built-in application module.
 * **Kernel footprint and boot profiles** (`Makefile`, `src/drivers/{e1000,rtl8139,nic,ext2,fb_console}.c`, `src/kernel/{kernel,pmm,syscall}.c`, `docs/`)
   * Added `NIC_DRIVER=e1000|rtl8139|all` build profiles; VM builds default to e1000 while RTL8139 remains available for WYSE/Realtek-targeted images.
   * Moved E1000, RTL8139, and ext2 scratch buffers out of static `.bss` into PMM-backed allocations made only after the relevant device/filesystem path is active.

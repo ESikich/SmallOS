@@ -442,12 +442,17 @@ window's title bar to move it or its bottom-right grip to resize it. When a
 text-entry window is not focused, `F`, `T`, `S`, `C`, and `A` open the matching
 windows, `X` closes the focused window, and `Q` or Escape exits the desktop.
 Double-click a text file in Files, or run `gui <text-path>`, to edit it inside
-the desktop. F2 or Ctrl+S saves; navigation, typing, mouse placement, wheel
-scrolling, draggable scrollbar thumbs, and resizing work normally. Drag across
+the desktop. The Editor toolbar provides New, Open, and Save As; Ctrl+N,
+Ctrl+O, and Ctrl+Shift+S provide the same workflows from the keyboard. F2 or
+Ctrl+S saves, opening Save As automatically for an untitled document. The
+shared file picker supports directory navigation, filename entry, Tab focus,
+wheel scrolling, and draggable scrollbar thumbs. Navigation, typing, mouse
+placement, scrolling, and resizing work normally. Drag across
 text or hold Shift while navigating to highlight a selection. Ctrl+A selects
 all; Ctrl+C, Ctrl+X, and Ctrl+V copy, cut, and paste through a clipboard shared
 by the desktop's editor windows. Closing a modified document asks whether to
-save, discard, or cancel. The terminal-oriented `/bin/edit` remains available.
+save, discard, or cancel, including when New or Open would replace it. The
+terminal-oriented `/bin/edit` remains available.
 
 ## Testing A Build
 

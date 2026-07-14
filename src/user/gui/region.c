@@ -59,3 +59,47 @@ gui_rect_t gui_rect_clip(gui_rect_t r, int width, int height) {
     if (y1 > height) y1 = height;
     return gui_rect_make(x0, y0, x1 - x0, y1 - y0);
 }
+
+int gui_rect_exclude(gui_rect_t source, gui_rect_t cut, gui_rect_t out[4]) {
+    gui_rect_t overlap;
+    int count = 0;
+    int source_right;
+    int source_bottom;
+    int cut_right;
+    int cut_bottom;
+
+    if (!out || gui_rect_empty(source)) return 0;
+    if (!gui_rect_intersects(source, cut)) {
+        out[0] = source;
+        return 1;
+    }
+
+    source_right = source.x + source.w;
+    source_bottom = source.y + source.h;
+    cut_right = cut.x + cut.w;
+    cut_bottom = cut.y + cut.h;
+    overlap.x = source.x > cut.x ? source.x : cut.x;
+    overlap.y = source.y > cut.y ? source.y : cut.y;
+    overlap.w = (source_right < cut_right ? source_right : cut_right) - overlap.x;
+    overlap.h = (source_bottom < cut_bottom ? source_bottom : cut_bottom) - overlap.y;
+
+    if (overlap.y > source.y) {
+        out[count++] = gui_rect_make(source.x, source.y,
+                                     source.w, overlap.y - source.y);
+    }
+    if (overlap.y + overlap.h < source_bottom) {
+        out[count++] = gui_rect_make(source.x, overlap.y + overlap.h,
+                                     source.w,
+                                     source_bottom - (overlap.y + overlap.h));
+    }
+    if (overlap.x > source.x) {
+        out[count++] = gui_rect_make(source.x, overlap.y,
+                                     overlap.x - source.x, overlap.h);
+    }
+    if (overlap.x + overlap.w < source_right) {
+        out[count++] = gui_rect_make(overlap.x + overlap.w, overlap.y,
+                                     source_right - (overlap.x + overlap.w),
+                                     overlap.h);
+    }
+    return count;
+}
